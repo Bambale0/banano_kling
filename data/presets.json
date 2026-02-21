@@ -1,0 +1,239 @@
+{
+  "categories": {
+    "image_generation": {
+      "name": "🖼 Генерация изображений",
+      "description": "Создание фото и иллюстраций",
+      "presets": [
+        {
+          "id": "img_photo_realistic",
+          "name": "📸 Фотореалистичный портрет",
+          "prompt": "A photorealistic close-up portrait of {subject}, soft natural lighting from window, shallow depth of field, 85mm lens, professional photography, high detail skin texture, warm color grading",
+          "model": "gemini-3-pro-image-preview",
+          "aspect_ratio": "3:4",
+          "cost": 10,
+          "requires_input": true,
+          "input_prompt": "Опишите человека для портрета (например: 'молодая женщина с рыжими волосами'):",
+          "placeholders": ["subject"]
+        },
+        {
+          "id": "img_logo_design",
+          "name": "🎨 Логотип с текстом",
+          "prompt": "Create a modern minimalist logo for '{text}'. Clean {style} typography, centered composition, {color_scheme} color palette, professional brand identity, vector style, transparent background concept",
+          "model": "gemini-3-pro-image-preview",
+          "aspect_ratio": "1:1",
+          "cost": 15,
+          "requires_input": true,
+          "input_prompt": "Введите название компании:",
+          "placeholders": ["text", "style", "color_scheme"]
+        },
+        {
+          "id": "img_sticker",
+          "name": "😊 Стикер персонаж",
+          "prompt": "A kawaii-style sticker of a cute {character} with {expression}. Bold clean outlines, simple cel-shading, vibrant colors, white background, digital art",
+          "model": "gemini-2.5-flash-image",
+          "aspect_ratio": "1:1",
+          "cost": 5,
+          "requires_input": true,
+          "input_prompt": "Опишите персонажа (например: 'красная панда в шляпе'):",
+          "placeholders": ["character", "expression"]
+        },
+        {
+          "id": "img_landscape",
+          "name": "🏞 Пейзаж",
+          "prompt": "A breathtaking {landscape_type} landscape at {time_of_day}, dramatic lighting, volumetric clouds, highly detailed, cinematic composition, 8k quality",
+          "model": "gemini-3-pro-image-preview",
+          "aspect_ratio": "16:9",
+          "cost": 8,
+          "requires_input": true,
+          "input_prompt": "Опишите пейзаж (например: 'горные вершины на закате'):",
+          "placeholders": ["landscape_type", "time_of_day"]
+        },
+        {
+          "id": "img_abstract",
+          "name": "🌀 Абстрактное искусство",
+          "prompt": "Abstract art with {colors} color palette, {style} style, dynamic composition, flowing shapes, modern contemporary art, high resolution",
+          "model": "gemini-2.5-flash-image",
+          "aspect_ratio": "1:1",
+          "cost": 5,
+          "requires_input": false,
+          "placeholders": ["colors", "style"]
+        }
+      ]
+    },
+    "image_editing": {
+      "name": "✏️ Редактирование фото",
+      "description": "Изменение загруженных изображений",
+      "requires_upload": true,
+      "presets": [
+        {
+          "id": "edit_add_element",
+          "name": "➕ Добавить объект",
+          "prompt": "Using the provided image, add {element} to the scene. Ensure the addition matches the original lighting, perspective, and style. Seamless integration, photorealistic blend",
+          "model": "gemini-2.5-flash-image",
+          "cost": 8,
+          "requires_input": true,
+          "requires_upload": true,
+          "input_prompt": "Что добавить на фото?",
+          "placeholders": ["element"]
+        },
+        {
+          "id": "edit_style_transfer",
+          "name": "🎭 Сменить стиль",
+          "prompt": "Transform the provided image into {art_style} artistic style. Preserve the original composition and subject matter, but render with {art_style} characteristic techniques, colors, and brushwork",
+          "model": "gemini-2.5-flash-image",
+          "cost": 8,
+          "requires_input": true,
+          "requires_upload": true,
+          "input_prompt": "Выберите стиль (ван гог, аниме, киберпанк):",
+          "placeholders": ["art_style"]
+        },
+        {
+          "id": "edit_restore",
+          "name": "🔧 Реставрация фото",
+          "prompt": "Faithfully restore this image with high fidelity to modern photograph quality. Remove scratches, damage, and noise. Upscale to 4K resolution, enhance colors while preserving original character",
+          "model": "gemini-3-pro-image-preview",
+          "aspect_ratio": "original",
+          "cost": 12,
+          "requires_input": false,
+          "requires_upload": true,
+          "placeholders": []
+        },
+        {
+          "id": "edit_background",
+          "name": "🌄 Сменить фон",
+          "prompt": "Replace the background of this image with {background_description}. Keep the main subject unchanged, match lighting and perspective for realistic composite",
+          "model": "gemini-2.5-flash-image",
+          "cost": 10,
+          "requires_input": true,
+          "requires_upload": true,
+          "input_prompt": "Опишите новый фон:",
+          "placeholders": ["background_description"]
+        }
+      ]
+    },
+    "video_generation": {
+      "name": "🎬 Генерация видео",
+      "description": "Создание видео из текста или изображений",
+      "presets": [
+        {
+          "id": "vid_text_to_video",
+          "name": "📝 Текст → Видео",
+          "prompt": "{scene_description}. Cinematic camera movement, professional color grading, smooth motion, high quality",
+          "model": "kling-v3-pro",
+          "duration": 5,
+          "aspect_ratio": "16:9",
+          "cost": 25,
+          "requires_input": true,
+          "input_prompt": "Опишите сцену для видео:",
+          "placeholders": ["scene_description"]
+        },
+        {
+          "id": "vid_product_showcase",
+          "name": "📦 Продуктовое видео",
+          "prompt": "Professional product showcase video. Smooth 360-degree rotation, studio lighting, elegant reflections, premium commercial aesthetic",
+          "model": "kling-v3-std",
+          "duration": 5,
+          "aspect_ratio": "9:16",
+          "cost": 20,
+          "requires_upload": true,
+          "requires_input": false,
+          "placeholders": []
+        },
+        {
+          "id": "vid_nature_scene",
+          "name": "🌿 Природная сцена",
+          "prompt": "Peaceful nature scene with {nature_element}. Gentle movement, soft lighting, ambient atmosphere, cinematic quality",
+          "model": "kling-v3-std",
+          "duration": 5,
+          "aspect_ratio": "16:9",
+          "cost": 20,
+          "requires_input": true,
+          "input_prompt": "Опишите природную сцену:",
+          "placeholders": ["nature_element"]
+        }
+      ]
+    },
+    "video_editing": {
+      "name": "✂️ Видео-эффекты",
+      "description": "Обработка существующего видео",
+      "requires_video_upload": true,
+      "presets": [
+        {
+          "id": "vid_style_transfer",
+          "name": "🎨 Стиль для видео",
+          "prompt": "Apply {style} visual style to the reference video @Video1. Maintain motion patterns, transform aesthetic to match {style}",
+          "model": "kling-v3-omni-pro-r2v",
+          "duration": 5,
+          "cost": 30,
+          "requires_input": true,
+          "input_prompt": "Опишите желаемый стиль:",
+          "placeholders": ["style"]
+        },
+        {
+          "id": "vid_enhance",
+          "name": "✨ Улучшение качества",
+          "prompt": "Enhance video quality: improve resolution, stabilize motion, reduce noise, enhance colors and contrast for premium look",
+          "model": "kling-v3-omni-std",
+          "duration": 5,
+          "cost": 25,
+          "requires_input": false,
+          "placeholders": []
+        }
+      ]
+    }
+  },
+  "default_values": {
+    "styles": ["минимализм", "винтаж", "футуризм", "натуральный"],
+    "color_schemes": ["монохромный", "яркий", "пастельный", "тёмный"],
+    "expressions": ["радостное", "удивлённое", "задумчивое", "игривое"]
+  },
+  
+  "batch_modes": {
+    "grid_2x2": {
+      "id": "grid_2x2",
+      "name": "🎨 Сетка 2×2",
+      "description": "4 варианта в одном изображении",
+      "count": 4,
+      "discount_percent": 20,
+      "layout": "2x2",
+      "cost_multiplier": 3.2,
+      "gemini_model": "gemini-3-pro-image-preview",
+      "prompt_modifier": "Generate 4 variations of: {base_prompt}. Arrange in 2×2 grid with subtle differences in {variation_aspect}. All cohesive style.",
+      "variation_aspects": ["lighting", "angle", "mood", "composition"]
+    },
+    "batch_6": {
+      "id": "batch_6", 
+      "name": "⚡ Пакет ×6",
+      "description": "6 отдельных вариантов",
+      "count": 6,
+      "discount_percent": 15,
+      "cost_multiplier": 5.1,
+      "gemini_model": "gemini-2.5-flash-image",
+      "parallel": true,
+      "max_workers": 3,
+      "prompt_modifier": "Create variation {index}/6 of: {base_prompt}. Unique take, different {variation_aspect}."
+    },
+    "variations_3": {
+      "id": "variations_3",
+      "name": "🎭 3 вариации",
+      "description": "Три стилистических варианта",
+      "count": 3,
+      "discount_percent": 10,
+      "cost_multiplier": 2.7,
+      "gemini_model": "gemini-3-pro-image-preview",
+      "styles_per_variation": true,
+      "prompt_template": "Style {style}: {base_prompt}"
+    }
+  },
+  
+  "batch_settings": {
+    "max_batch_size": 10,
+    "timeout_seconds": 300,
+    "progress_update_interval": 5,
+    "auto_upscale_best": {
+      "enabled": true,
+      "cost": 5,
+      "description": "Апскейл выбранного до 4K"
+    }
+  }
+}

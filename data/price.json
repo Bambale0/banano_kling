@@ -1,0 +1,81 @@
+{
+  "currency": "RUB",
+  "credit_name": "банан",
+  "credit_name_plural": "бананов",
+  "credit_emoji": "🍌",
+  "credit_value": "1 банан = 1 генерация стандартного качества",
+  "packages": [
+    {
+      "id": "mini",
+      "name": "🍌 Мини",
+      "credits": 15,
+      "price_rub": 150,
+      "bonus_credits": 0,
+      "description": "Для пробы"
+    },
+    {
+      "id": "standard",
+      "name": "🍌🍌 Стандарт",
+      "credits": 30,
+      "price_rub": 250,
+      "bonus_credits": 0,
+      "description": "Популярный выбор"
+    },
+    {
+      "id": "optimal",
+      "name": "🍌🍌🍌 Оптимальный",
+      "credits": 50,
+      "price_rub": 400,
+      "bonus_credits": 0,
+      "popular": true,
+      "description": "Лучшее соотношение цена/количество"
+    },
+    {
+      "id": "pro",
+      "name": "🍌🍌🍌🍌 Про",
+      "credits": 100,
+      "price_rub": 700,
+      "bonus_credits": 0,
+      "description": "Для активных пользователей"
+    },
+    {
+      "id": "studio",
+      "name": "🍌🍌🍌🍌🍌 Студия",
+      "credits": 200,
+      "price_rub": 1400,
+      "bonus_credits": 0,
+      "description": "Максимальная выгода"
+    }
+  ],
+  "costs_reference": {
+    "gemini_2_5_flash": 1,
+    "gemini_3_pro": 2,
+    "kling_v3_std": 4,
+    "kling_v3_pro": 5,
+    "kling_v3_omni": 6
+  },
+  "batch_pricing": {
+    "base_costs": {
+      "gemini_2_5_flash": 1,
+      "gemini_3_pro": 2
+    },
+    "discount_tiers": [
+      {"min_items": 3, "discount": 10},
+      {"min_items": 4, "discount": 15},
+      {"min_items": 6, "discount": 20},
+      {"min_items": 10, "discount": 25}
+    ],
+    "pro_features": {
+      "batch_generation": true,
+      "priority_queue": true,
+      "4k_upscale": true,
+      "custom_aspect_ratios": ["21:9", "9:21", "4:5", "5:4"]
+    },
+    "upscale_costs": {
+      "2K": 5,
+      "4K": 10
+    }
+  },
+  "admin_ids": [123456789],
+  "support_contact": "@support_username"
+}
