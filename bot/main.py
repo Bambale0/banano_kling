@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sys
 import os
+import json
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,6 +14,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import Update
 from aiohttp import web
 from bot.config import config
 from bot.database import init_db
@@ -76,7 +78,25 @@ def setup_dispatcher() -> Dispatcher:
     return dp
 
 
-async def handle_kling_webhook(request):
+async def handle_telegram_webhook(request: web.Request, bot: Bot, dp: Dispatcher) -> web.Response:
+    """Обработчик вебхука от Telegram"""
+    try:
+        # Получаем данные из запроса
+        update_data = await request.json()
+        
+        # Создаём объект Update
+        update = Update(**update_data)
+        
+        # Обрабатываем обновление через диспетчер
+        await dp.feed_webhook_update(bot, update)
+        
+        return web.Response(text="OK", status=200)
+    except Exception as e:
+        logger.exception(f"Webhook error: {e}")
+        return web.Response(text="Internal Server Error", status=500)
+
+
+async def handle_kling_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kling API"""
     try:
         data = await request.json()
@@ -96,10 +116,10 @@ async def handle_kling_webhook(request):
             task = await get_task_by_id(task_id)
             if task:
                 # Отправляем видео пользователю
-                bot = Bot(token=config.BOT_TOKEN)
+                bot_instance = Bot(token=config.BOT_TOKEN)
 
                 try:
-                    await bot.send_video(
+                    await bot_instance.send_video(
                         chat_id=task.user_id,
                         video=video_url,
                         caption=f"✅ <b>Ваше видео готово!</b>\n\n"
@@ -112,7 +132,7 @@ async def handle_kling_webhook(request):
                 except Exception as e:
                     logger.error(f"Failed to send video: {e}")
                 finally:
-                    await bot.session.close()
+                    await bot_instance.session.close()
 
         return web.Response(status=200)
 
@@ -121,21 +141,24 @@ async def handle_kling_webhook(request):
         return web.Response(status=500)
 
 
-def setup_web_server(dp: Dispatcher, bot: Bot):
+def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
 
     # Вебхук Telegram
-    app.router.add_post(config.WEBHOOK_PATH, dp.webhook_handler)
+    async def telegram_webhook_handler(request: web.Request) -> web.Response:
+        return await handle_telegram_webhook(request, bot, dp)
+
+    app.router.add_post(config.WEBHOOK_PATH, telegram_webhook_handler)
 
     # Вебхук Т-Банка
-    app.router.add_post("/webhook/tbank", handle_tbank_webhook)
+    app.router.add_post("/tbank/webhook", handle_tbank_webhook)
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
 
     # Health check endpoint
-    async def health_check(request):
+    async def health_check(request: web.Request) -> web.Response:
         return web.Response(text="OK")
 
     app.router.add_get("/health", health_check)

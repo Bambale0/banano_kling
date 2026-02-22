@@ -1,4 +1,4 @@
-    #!/bin/bash
+#!/bin/bash
 
 # Скрипт остановки бота
 
@@ -12,45 +12,41 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}=== Остановка Telegram Bot ===${NC}"
 
-# Проверяем наличие PID файла
-if [ ! -f "bot.pid" ]; then
-    echo -e "${YELLOW}Бот не запущен (файл bot.pid не найден)${NC}"
-    exit 0
-fi
+# Сначала пробуем найти процессы бота через pkill (более надёжно)
+pkill -f "python.*bot.main" 2>/dev/null
 
-BOT_PID=$(cat bot.pid)
-
-# Проверяем, что процесс существует
-if ! ps -p $BOT_PID > /dev/null 2>&1; then
-    echo -e "${YELLOW}Бот уже остановлен (процесс $BOT_PID не найден)${NC}"
+# Также останавливаем по PID файлу если есть
+if [ -f "bot.pid" ]; then
+    BOT_PID=$(cat bot.pid)
+    
+    # Проверяем и убиваем основной процесс
+    if [ -n "$BOT_PID" ] && ps -p $BOT_PID > /dev/null 2>&1; then
+        echo -e "${YELLOW}Остановка бота (PID: $BOT_PID)...${NC}"
+        kill $BOT_PID 2>/dev/null
+        sleep 2
+        
+        # Принудительно если не остановился
+        if ps -p $BOT_PID > /dev/null 2>&1; then
+            kill -9 $BOT_PID 2>/dev/null
+            sleep 1
+        fi
+    fi
+    
     rm -f bot.pid
-    exit 0
 fi
 
-# Останавливаем процесс
-echo -e "${YELLOW}Остановка бота (PID: $BOT_PID)...${NC}"
-kill $BOT_PID 2>/dev/null
+# Дополнительная проверка - убиваем все процессы python с bot.main
+pkill -9 -f "python.*bot.main" 2>/dev/null
 
-# Ждём завершения
-sleep 2
+# Ждём завершения всех процессов
+sleep 1
 
-# Проверяем, остановился ли процесс
-if ps -p $BOT_PID > /dev/null 2>&1; then
-    echo -e "${YELLOW}Принудительная остановка...${NC}"
-    kill -9 $BOT_PID 2>/dev/null
-    sleep 1
-fi
-
-# Финальная проверка
-if ps -p $BOT_PID > /dev/null 2>&1; then
-    echo -e "${RED}✗ Не удалось остановить бота!${NC}"
+# Проверяем, что бот остановлен
+if pgrep -f "python.*bot.main" > /dev/null 2>&1; then
+    echo -e "${RED}✗ Не удалось полностью остановить бота!${NC}"
+    echo "Запущенные процессы bot:"
+    ps aux | grep "python.*bot.main" | grep -v grep
     exit 1
 else
     echo -e "${GREEN}✓ Бот успешно остановлен${NC}"
-    rm -f bot.pid
-fi
-
-# Опционально: деактивируем виртуальное окружение
-if [ -n "$VIRTUAL_ENV" ]; then
-    deactivate 2>/dev/null
 fi

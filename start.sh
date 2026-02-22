@@ -44,6 +44,9 @@ fi
 # Создаём директорию для логов
 mkdir -p logs
 
+# Очищаем логи при старте
+> logs/bot_output.log
+
 # Проверяем, не запущен ли уже бот
 if [ -f "bot.pid" ]; then
     OLD_PID=$(cat bot.pid)

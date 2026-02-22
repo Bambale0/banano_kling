@@ -282,6 +282,17 @@ async def update_transaction_status(order_id: str, status: str) -> bool:
         return True
 
 
+async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
+    """Получает telegram_id по внутреннему user_id"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT telegram_id FROM users WHERE id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row["telegram_id"] if row else None
+
+
 async def add_generation_task(
     user_id: int, task_id: str, type: str, preset_id: str
 ) -> bool:

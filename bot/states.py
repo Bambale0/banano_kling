@@ -11,6 +11,11 @@ class GenerationStates(StatesGroup):
     selecting_batch_count = (
         State()
     )  # Выбор количества изображений для пакетной генерации
+    
+    # Состояния для видео-опций
+    selecting_duration = State()  # Выбор длительности видео
+    selecting_aspect_ratio = State()  # Выбор формата видео
+    selecting_quality = State()  # Выбор качества видео
 
 
 class PaymentStates(StatesGroup):

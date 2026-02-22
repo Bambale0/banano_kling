@@ -15,6 +15,7 @@ class Config:
     TBANK_TERMINAL_KEY: str = os.getenv("TBANK_TERMINAL_KEY", "")
     TBANK_SECRET_KEY: str = os.getenv("TBANK_SECRET_KEY", "")
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
+    TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
     # AI Services API Keys
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
@@ -67,7 +68,7 @@ class Config:
 
     @property
     def tbank_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/tbank"
+        return f"{self.WEBHOOK_HOST}/tbank/webhook"
 
     @property
     def kling_notification_url(self) -> str:

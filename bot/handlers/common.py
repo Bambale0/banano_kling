@@ -21,17 +21,71 @@ async def cmd_start(message: types.Message):
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
 
     if args and args[0].startswith("success_"):
-        await message.answer(
-            "✅ <b>Спасибо за оплату!</b>\n\n"
-            "Кредиты будут начислены автоматически в течение минуты.",
-            parse_mode="HTML",
-        )
+        # Извлекаем order_id из аргумента
+        order_id = args[0].replace("success_", "")
+        
+        # Проверяем транзакцию в базе данных
+        from bot.database import get_transaction_by_order, add_credits, update_transaction_status
+        from bot.services.tbank_service import tbank_service
+        
+        transaction = await get_transaction_by_order(order_id)
+        
+        if transaction:
+            if transaction.status == "completed":
+                # Кредиты уже были начислены
+                await message.answer(
+                    f"✅ <b>Оплата уже обработана!</b>\n\n"
+                    f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
+                    reply_markup=get_main_menu_keyboard(user.credits),
+                    parse_mode="HTML",
+                )
+                return
+            elif transaction.status == "pending":
+                # Проверяем статус в Т-Банке
+                result = await tbank_service.get_state(transaction.payment_id)
+                if result and result.get("Status") == "CONFIRMED":
+                    # Начисляем кредиты
+                    await add_credits(message.from_user.id, transaction.credits)
+                    await update_transaction_status(order_id, "completed")
+                    
+                    # Получаем обновлённый баланс
+                    user = await get_or_create_user(message.from_user.id)
+                    
+                    await message.answer(
+                        f"🎉 <b>Оплата успешно обработана!</b>\n\n"
+                        f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+                        f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
+                        reply_markup=get_main_menu_keyboard(user.credits),
+                        parse_mode="HTML",
+                    )
+                    return
+                else:
+                    # Ожидаем подтверждения от банка
+                    await message.answer(
+                        "⏳ <b>Оплата в обработке...</b>\n\n"
+                        "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
+                        reply_markup=get_main_menu_keyboard(user.credits),
+                        parse_mode="HTML",
+                    )
+                    return
+        else:
+            await message.answer(
+                "❌ <b>Транзакция не найдена</b>\n\n"
+                "Пожалуйста, свяжитесь с поддержкой.",
+                reply_markup=get_main_menu_keyboard(user.credits),
+                parse_mode="HTML",
+            )
+            return
+            
     elif args and args[0].startswith("fail_"):
         await message.answer(
             "❌ <b>Оплата не была завершена</b>\n\n"
             "Вы можете попробовать снова в любое время.",
+            reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
+        return
 
     # Приветственное сообщение
     welcome_text = f"""
@@ -51,7 +105,7 @@ async def cmd_start(message: types.Message):
 """
 
     await message.answer(
-        welcome_text, reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
+        welcome_text, reply_markup=get_main_menu_keyboard(user.credits), parse_mode="HTML"
     )
 
 
@@ -140,7 +194,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         f"🏠 <b>Главное меню</b>\n\n"
         f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
         f"Выберите действие:",
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_keyboard(user.credits),
         parse_mode="HTML",
     )
 
@@ -148,6 +202,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "menu_balance")
 async def show_balance(callback: types.CallbackQuery):
     """Показывает баланс и статистику пользователя"""
+    user = await get_or_create_user(callback.from_user.id)
     stats = await get_user_stats(callback.from_user.id)
 
     balance_text = f"""
@@ -163,25 +218,32 @@ async def show_balance(callback: types.CallbackQuery):
 """
 
     await callback.message.edit_text(
-        balance_text, reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
+        balance_text, reply_markup=get_main_menu_keyboard(user.credits), parse_mode="HTML"
     )
 
 
 @router.callback_query(F.data.startswith("back_cat_"))
 async def back_to_category(callback: types.CallbackQuery):
     """Возврат к категории пресетов"""
-    from .generation import show_category
+    from bot.handlers.generation import show_category
 
     category = callback.data.replace("back_cat_", "")
-    # Создаём фиктивный callback для повторного использования обработчика
-    callback.data = f"cat_{category}"
-    await show_category(callback)
+    # Создаём новый callback object вместо изменения замороженного
+    new_callback = types.CallbackQuery(
+        id=callback.id,
+        from_user=callback.from_user,
+        chat_instance=callback.chat_instance,
+        data=f"cat_{category}",
+        message=callback.message
+    )
+    await show_category(new_callback)
 
 
 @router.message()
 async def echo_message(message: types.Message):
     """Обработчик всех остальных сообщений"""
+    user = await get_or_create_user(message.from_user.id)
     await message.answer(
         "🤔 Не понимаю это сообщение.\n\n" "Используйте кнопки меню или команду /start",
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_keyboard(user.credits),
     )

@@ -8,6 +8,7 @@ from bot.database import (
     add_credits,
     create_transaction,
     get_or_create_user,
+    get_telegram_id_by_user_id,
     get_transaction_by_order,
     get_user_credits,
     update_transaction_status,
@@ -201,31 +202,36 @@ async def handle_tbank_webhook(request):
             transaction = await get_transaction_by_order(order_id)
 
             if transaction and transaction.status == "pending":
-                # Начисляем кредиты
-                user = await get_or_create_user(transaction.user_id)
-                await add_credits(user.telegram_id, transaction.credits)
-                await update_transaction_status(order_id, "completed")
+                # Получаем telegram_id по internal user_id
+                telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+                
+                if telegram_id:
+                    # Начисляем кредиты
+                    await add_credits(telegram_id, transaction.credits)
+                    await update_transaction_status(order_id, "completed")
 
-                logger.info(
-                    f"Credits added: {transaction.credits} to user {user.telegram_id}"
-                )
-
-                # Уведомляем пользователя
-                try:
-                    bot = Bot(token=config.BOT_TOKEN)
-                    await bot.send_message(
-                        user.telegram_id,
-                        f"🎉 <b>Оплата успешна!</b>\n\n"
-                        f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
-                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
-                        f"Теперь вы можете создавать контент!",
-                        parse_mode="HTML",
+                    logger.info(
+                        f"Credits added: {transaction.credits} to user {telegram_id}"
                     )
-                    await bot.session.close()
-                except Exception as e:
-                    logger.error(f"Failed to notify user: {e}")
 
-        return web.Response(status=200)
+                    # Уведомляем пользователя
+                    try:
+                        bot = Bot(token=config.BOT_TOKEN)
+                        await bot.send_message(
+                            telegram_id,
+                            f"🎉 <b>Оплата успешна!</b>\n\n"
+                            f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+                            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+                            f"Теперь вы можете создавать контент!",
+                            parse_mode="HTML",
+                        )
+                        await bot.session.close()
+                    except Exception as e:
+                        logger.error(f"Failed to notify user: {e}")
+                else:
+                    logger.error(f"Cannot find telegram_id for user_id {transaction.user_id}")
+
+        return web.Response(text="OK", status=200)
 
     except Exception as e:
         logger.exception(f"Error processing T-Bank webhook: {e}")
