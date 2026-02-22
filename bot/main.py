@@ -65,15 +65,26 @@ async def on_shutdown(bot: Bot):
 
 
 def setup_dispatcher() -> Dispatcher:
-    """Настройка диспатчера с роутерами"""
+    """Настройка диспетчера с роутерами"""
     dp = Dispatcher()
 
-    # Подключаем роутеры
-    dp.include_router(common_router)  # /start, помощь
-    dp.include_router(generation_router)  # Генерация контента
-    dp.include_router(payments_router)  # Платежи и баланс
-    dp.include_router(batch_generation_router)  # Пакетная генерация PRO
-    dp.include_router(admin_router)  # Админ-команды
+    # ⭐ КРИТИЧЕСКИ ВАЖНО: Порядок роутеров в aiogram 3.x
+    # Первый зарегистрированный роутер имеет НАИВЫСШИЙ приоритет!
+    # Сообщение передаётся ВСЕМ роутерам одновременно, но обрабатывается
+    # тем, у кого более специфичный фильтр (например, StateFilter)
+    #
+    # Правильный порядок:
+    # 1. generation_router (FSM состояния - самые специфичные)
+    # 2. admin_router (админ команды)
+    # 3. payments_router (платежи)
+    # 4. batch_generation_router (пакетная генерация)
+    # 5. common_router (общие команды /start /help - самые общие)
+    
+    dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
+    dp.include_router(admin_router)       # Админ-команды
+    dp.include_router(payments_router)    # Платежи
+    dp.include_router(batch_generation_router)  # Пакетная генерация
+    dp.include_router(common_router)      # Общие команды - ПОСЛЕДНИЙ!
 
     return dp
 

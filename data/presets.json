@@ -247,9 +247,10 @@
     }
   },
   "default_values": {
-    "styles": ["минимализм", "винтаж", "футуризм", "натуральный"],
-    "color_schemes": ["монохромный", "яркий", "пастельный", "тёмный"],
-    "expressions": ["радостное", "удивлённое", "задумчивое", "игривое"]
+    "styles": ["minimalist", "vintage", "futuristic", "natural"],
+    "color_schemes": ["monochrome", "vibrant", "pastel", "dark"],
+    "expressions": ["joyful", "surprised", "thoughtful", "playful"],
+    "characters": ["cute cat", "cute dog", "cute bunny", "cute panda"]
   },
   
   "batch_modes": {

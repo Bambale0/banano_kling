@@ -13,9 +13,16 @@ class GeminiService:
     """Сервис для работы с Nano Banana / Gemini Image Generation API"""
 
     # Модели согласно banana_api.md
+    # OpenRouter model IDs
     MODELS = {
-        "flash": "gemini-2.5-flash-image",  # Быстрая генерация, до 1024px
-        "pro": "gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
+        "flash": "google/gemini-2.5-flash-image",  # Быстрая генерация
+        "pro": "google/gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
+    }
+    
+    # Native Gemini model names (for direct API calls)
+    NATIVE_MODELS = {
+        "flash": "gemini-2.5-flash-image",
+        "pro": "gemini-3-pro-image-preview",
     }
 
     # Поддерживаемые разрешения (согласно banana_api.md)
@@ -98,9 +105,10 @@ class GeminiService:
 
         # 2. Пробуем OpenRouter
         if self.openrouter_key:
-            or_model = self.MODELS.get("flash", "gemini-2.0-flash-exp:free")
-            if "pro" in model:
-                or_model = self.MODELS.get("pro", "gemini-2.5-pro-preview")
+            # Determine which OpenRouter model to use based on the requested model
+            or_model = self.MODELS.get("flash")  # Default to flash
+            if "pro" in model.lower():
+                or_model = self.MODELS.get("pro")  # Use pro model
 
             result = await self._generate_via_openrouter(
                 prompt=prompt,
@@ -232,6 +240,8 @@ class GeminiService:
         """Генерация через OpenRouter API"""
         try:
             from bot.config import config
+            import json
+            import re
 
             session = await self._get_session()
 
@@ -258,52 +268,165 @@ class GeminiService:
             headers = {
                 "Authorization": f"Bearer {self.openrouter_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/your_bot",
+                "HTTP-Referer": "https://t.me/your_bot ",
                 "X-Title": "Image Generation Bot",
             }
 
+            # Добавляем modalities для генерации изображений согласно документации OpenRouter
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": contents}],
+                "modalities": ["image", "text"],
             }
+
+            logger.info(f"OpenRouter request: model={model}")
 
             async with session.post(
                 f"{config.OPENROUTER_BASE_URL}/chat/completions",
                 headers=headers,
                 json=payload,
             ) as response:
-                if response.status == 200:
-                    data = await response.json()
+                response_text = await response.text()
+                logger.info(f"OpenRouter raw response ({response.status}): {response_text[:2000]}")
 
-                    if "choices" in data and len(data["choices"]) > 0:
-                        message = data["choices"][0].get("message", {})
-                        content = message.get("content", "")
+                if response.status != 200:
+                    logger.error(f"OpenRouter API error: {response.status}")
+                    return None
 
-                        if content and ("http" in content or "data:image" in content):
-                            import re
-                            url_match = re.search(
-                                r'https?://[^\s"\']+\.(png|jpg|jpeg|webp)', content
-                            )
-                            if url_match:
-                                img_url = url_match.group(0)
-                                async with session.get(img_url) as img_response:
+                try:
+                    data = json.loads(response_text)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON: {e}")
+                    return None
+
+                # Проверяем структуру ответа
+                if "choices" not in data or not data["choices"]:
+                    logger.error(f"No choices in response: {data.keys()}")
+                    return None
+
+                message = data["choices"][0].get("message", {})
+                
+                # === ОСНОВНОЙ ПУТЬ: поле images ===
+                images = message.get("images", [])
+                logger.info(f"Found {len(images)} images in message.images")
+                
+                if images and len(images) > 0:
+                    img_data = images[0]
+                    logger.info(f"First image type: {type(img_data)}, value: {str(img_data)[:200]}")
+                    
+                    # Вариант 1: строка base64 напрямую
+                    if isinstance(img_data, str):
+                        if img_data.startswith("data:image"):
+                            b64_data = img_data.split(",", 1)[1]
+                            return base64.b64decode(b64_data)
+                        else:
+                            # Чистый base64 без префикса
+                            return base64.b64decode(img_data)
+                    
+                    # Вариант 2: словарь с url
+                    elif isinstance(img_data, dict):
+                        img_url = img_data.get("url") or img_data.get("image_url", {}).get("url", "")
+                        if img_url:
+                            if img_url.startswith("data:image"):
+                                b64_data = img_url.split(",", 1)[1]
+                                return base64.b64decode(b64_data)
+                            else:
+                                # Скачиваем по URL
+                                async with session.get(img_url, timeout=30) as img_response:
                                     if img_response.status == 200:
                                         return await img_response.read()
+                                    else:
+                                        logger.error(f"Failed to download: {img_response.status}")
+                    
+                    # Вариант 3: bytes напрямую (маловероятно, но проверим)
+                    elif isinstance(img_data, bytes):
+                        return img_data
 
-                            if "data:image" in content:
-                                b64_data = content.split(",", 1)[1]
-                                return base64.b64decode(b64_data)
+                # === ЗАПАСНОЙ ПУТЬ: content с base64 ===
+                content = message.get("content", "")
+                if content:
+                    logger.info(f"Checking content, length: {len(content)}")
+                    
+                    # Ищем data URI
+                    if "data:image" in content:
+                        # Извлекаем все data URI
+                        data_uris = re.findall(r'data:image/[^;]+;base64,([A-Za-z0-9+/=]+)', content)
+                        if data_uris:
+                            logger.info(f"Found {len(data_uris)} base64 images in content")
+                            return base64.b64decode(data_uris[0])
+                    
+                    # Ищем URL изображения
+                    url_match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)', content, re.IGNORECASE)
+                    if url_match:
+                        img_url = url_match.group(0)
+                        logger.info(f"Found URL in content: {img_url[:50]}...")
+                        async with session.get(img_url, timeout=30) as img_response:
+                            if img_response.status == 200:
+                                return await img_response.read()
 
-                    logger.info(f"OpenRouter response: {data}")
-                else:
-                    error_text = await response.text()
-                    logger.error(f"OpenRouter API error: {response.status} - {error_text}")
-
-            return None
+                # === ПРОВЕРКА НА ВЛОЖЕННЫЕ ИЗОБРАЖЕНИЯ В ДРУГИХ ПОЛЯХ ===
+                # Иногда OpenRouter кладёт в другое место
+                for key in ["image", "attachments", "media", "files"]:
+                    if key in message:
+                        logger.info(f"Found alternative field '{key}': {type(message[key])}")
+                
+                logger.error(f"No image found in any expected field. Message keys: {message.keys()}")
+                return None
 
         except Exception as e:
             logger.exception(f"OpenRouter generation failed: {e}")
             return None
+
+    async def _debug_openrouter_response(self, prompt: str = "A simple red circle"):
+        """Метод для диагностики структуры ответа OpenRouter"""
+        from bot.config import config
+        
+        session = await self._get_session()
+        
+        payload = {
+            "model": "google/gemini-2.0-flash-exp:free",
+            "messages": [{"role": "user", "content": prompt}],
+            "modalities": ["image", "text"],
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {self.openrouter_key}",
+            "Content-Type": "application/json",
+        }
+        
+        async with session.post(
+            f"{config.OPENROUTER_BASE_URL}/chat/completions",
+            headers=headers,
+            json=payload,
+        ) as response:
+            data = await response.json()
+            
+            # Рекурсивно обходим структуру
+            def explore(obj, path="", max_depth=5, current_depth=0):
+                if current_depth > max_depth:
+                    return
+                
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        new_path = f"{path}.{k}" if path else k
+                        if isinstance(v, str) and len(v) > 100:
+                            # Вероятно base64 или URL
+                            preview = v[:100]
+                            logger.info(f"{new_path}: str(len={len(v)}, preview={preview}...)")
+                        elif isinstance(v, (dict, list)):
+                            explore(v, new_path, max_depth, current_depth + 1)
+                        else:
+                            logger.info(f"{new_path}: {type(v).__name__} = {v}")
+                elif isinstance(obj, list) and len(obj) > 0:
+                    logger.info(f"{path}: list[{len(obj)}]")
+                    for i, item in enumerate(obj[:3]):  # Первые 3 элемента
+                        explore(item, f"{path}[{i}]", max_depth, current_depth + 1)
+            
+            logger.info("=== OpenRouter Response Structure ===")
+            explore(data)
+            logger.info("======================================")
+            
+            return data
 
     async def _generate_via_native_gemini(
         self,

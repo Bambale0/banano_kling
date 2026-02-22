@@ -74,5 +74,13 @@ class Config:
     def kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"
 
+    @property
+    def static_base_url(self) -> str:
+        """URL для доступа к статическим файлам"""
+        if hasattr(self, 'STATIC_BASE_URL') and self.STATIC_BASE_URL:
+            return self.STATIC_BASE_URL
+        # По умолчанию используем WEBHOOK_HOST
+        return self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
+
 
 config = Config()

@@ -1,7 +1,11 @@
 import io
 import logging
+import os
 import random
 import time
+import uuid
+from datetime import datetime
+from typing import Optional
 
 from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
@@ -52,6 +56,42 @@ from bot.utils.help_texts import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+# =============================================================================
+# СЛУЖЕБНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ
+# =============================================================================
+
+def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
+    """
+    Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL.
+    """
+    try:
+        # Создаём поддиректорию по дате
+        date_str = datetime.now().strftime("%Y%m%d")
+        upload_dir = os.path.join("static", "uploads", date_str)
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Генерируем уникальное имя файла
+        file_id = str(uuid.uuid4())[:8]
+        filename = f"{file_id}.{file_ext}"
+        filepath = os.path.join(upload_dir, filename)
+        
+        # Сохраняем файл
+        with open(filepath, "wb") as f:
+            f.write(file_bytes)
+        
+        # Формируем публичный URL
+        # nginx настроен на /uploads/ -> static/uploads/
+        base_url = config.static_base_url
+        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        
+        logger.info(f"Saved uploaded file: {public_url}")
+        return public_url
+        
+    except Exception as e:
+        logger.exception(f"Error saving uploaded file: {e}")
+        return None
 
 
 # =============================================================================
@@ -574,9 +614,24 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
     image_bytes = await message.bot.download_file(file.file_path)
-
-    # Сохраняем в состояние
-    await state.update_data(uploaded_image=image_bytes.read())
+    
+    # Читаем байты для сохранения в память
+    image_data = image_bytes.read()
+    
+    # Сохраняем файл в папку static/uploads
+    image_url = save_uploaded_file(image_data, "png")
+    
+    if image_url:
+        logger.info(f"Image saved to static: {image_url}")
+        # Сохраняем и байты (для AI), и URL
+        await state.update_data(
+            uploaded_image=image_data,
+            uploaded_image_url=image_url
+        )
+    else:
+        # Fallback - только байты в память
+        logger.warning("Failed to save image to static, using in-memory only")
+        await state.update_data(uploaded_image=image_data)
 
     if preset.requires_input:
         await state.set_state(GenerationStates.waiting_for_input)

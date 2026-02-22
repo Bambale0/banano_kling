@@ -1,17 +1,23 @@
 import logging
 
-from aiogram import F, Router, types
-from aiogram.filters import Command, CommandStart
+from aiogram import Bot, F, Router, types
+from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from bot.database import get_or_create_user, get_user_stats
 from bot.keyboards import get_back_keyboard, get_main_menu_keyboard
 from bot.services.preset_manager import preset_manager
+from bot.states import GenerationStates, PaymentStates, AdminStates
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-@router.message(CommandStart())
+# ⭐ ВАЖНО: Все обработчики сообщений в common.py должны иметь StateFilter(None)
+# чтобы работать только когда пользователь НЕ в FSM-состоянии
+# Иначе они перехватят сообщения ДО FSM-хэндлеров в generation_router
+
+
+@router.message(CommandStart(), StateFilter(None))
 async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
     # Создаём или получаем пользователя
@@ -109,7 +115,7 @@ async def cmd_start(message: types.Message):
     )
 
 
-@router.message(Command("help"))
+@router.message(Command("help"), StateFilter(None))
 async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
     help_text = """
@@ -190,13 +196,25 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
     user = await get_or_create_user(callback.from_user.id)
 
-    await callback.message.edit_text(
-        f"🏠 <b>Главное меню</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
-        f"Выберите действие:",
-        reply_markup=get_main_menu_keyboard(user.credits),
-        parse_mode="HTML",
-    )
+    try:
+        await callback.message.edit_text(
+            f"🏠 <b>Главное меню</b>\n\n"
+            f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
+            f"Выберите действие:",
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        # Если сообщение нельзя отредактировать (например, нет текста или сообщение удалено)
+        logger.warning(f"Cannot edit message: {e}")
+        # Отправляем новое сообщение
+        await callback.message.answer(
+            f"🏠 <b>Главное меню</b>\n\n"
+            f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
+            f"Выберите действие:",
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "menu_balance")
@@ -223,27 +241,50 @@ async def show_balance(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("back_cat_"))
-async def back_to_category(callback: types.CallbackQuery):
+async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     """Возврат к категории пресетов"""
     from bot.handlers.generation import show_category
 
     category = callback.data.replace("back_cat_", "")
-    # Создаём новый callback object вместо изменения замороженного
-    new_callback = types.CallbackQuery(
-        id=callback.id,
-        from_user=callback.from_user,
-        chat_instance=callback.chat_instance,
-        data=f"cat_{category}",
-        message=callback.message
+    
+    # Вызываем show_category напрямую с callback
+    # show_category уже ожидает callback и bot
+    await callback.message.edit_text(
+        f"Загрузка категории {category}...",
+        reply_markup=None
     )
-    await show_category(new_callback)
+    
+    # Просто редактируем сообщение категории
+    from bot.services.preset_manager import preset_manager
+    presets = preset_manager.get_category_presets(category)
+    categories = preset_manager.get_categories()
+    
+    if not presets:
+        await callback.answer("Категория пуста")
+        return
+        
+    user_credits = 0  # Default value
+    from bot.database import get_user_credits
+    try:
+        user_credits = await get_user_credits(callback.from_user.id)
+    except:
+        pass
+        
+    from bot.keyboards import get_category_keyboard
+    await callback.message.edit_text(
+        f"📂 <b>{categories[category]['name']}</b>\n"
+        f"📝 {categories[category].get('description', '')}\n\n"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"Выберите пресет:",
+        reply_markup=get_category_keyboard(category, presets, user_credits),
+        parse_mode="HTML",
+    )
 
 
-@router.message()
-async def echo_message(message: types.Message):
-    """Обработчик всех остальных сообщений"""
-    user = await get_or_create_user(message.from_user.id)
-    await message.answer(
-        "🤔 Не понимаю это сообщение.\n\n" "Используйте кнопки меню или команду /start",
-        reply_markup=get_main_menu_keyboard(user.credits),
-    )
+# =============================================================================
+# ВАЖНО: НЕ ДОБАВЛЯЙТЕ СЮДА ОБРАБОТЧИКИ СООБЩЕНИЙ БЕЗ FSM STATE FILTER!
+# Это перехватит сообщения до FSM-хэндлеров в generation_router
+# =============================================================================
+
+# Для диагностики оставляем только callback_query обработчики
+# Все message хэндлеры должны быть в generation_router с явными StateFilter
