@@ -915,10 +915,25 @@ class KlingService:
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
                     if response.status == 200:
-                        return await response.json()
+                        # Проверяем Content-Type
+                        content_type = response.headers.get("Content-Type", "")
+                        
+                        if "application/json" in content_type:
+                            return await response.json()
+                        else:
+                            # Получили HTML (ошибка сервера)
+                            text = await response.text()
+                            logger.error(f"Kling API returned HTML instead of JSON: {text[:500]}")
+                            return None
                     else:
-                        data = await response.json()
-                        logger.error(f"Kling API error {response.status}: {data}")
+                        # Пробуем получить JSON
+                        try:
+                            data = await response.json()
+                            logger.error(f"Kling API error {response.status}: {data}")
+                        except:
+                            # HTML ошибка
+                            text = await response.text()
+                            logger.error(f"Kling API error {response.status}, HTML: {text[:500]}")
                         return None
 
             except asyncio.TimeoutError:
