@@ -426,3 +426,81 @@ def get_prompt_tips_keyboard(preset_id: str):
     builder.button(text="🔙 Назад", callback_data=f"preset_{preset_id}")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
+
+
+# =============================================================================
+# КЛАВИАТУРЫ ДЛЯ ПАКЕТНОЙ ГЕНЕРАЦИИ
+# =============================================================================
+
+def get_batch_mode_keyboard():
+    """Клавиатура выбора режима пакетной генерации"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(
+        text="⚡ Standard (до 10)",
+        callback_data="batch_mode_standard"
+    )
+    builder.button(
+        text="💎 Pro (до 5)",
+        callback_data="batch_mode_pro"
+    )
+    
+    builder.button(text="🔙 Назад", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def get_preset_selection_keyboard(presets: list, mode: str):
+    """Клавиатура выбора пресета для пакетной генерации"""
+    builder = InlineKeyboardBuilder()
+    
+    # Цена за изображение в зависимости от режима
+    base_cost = 3 if mode == "standard" else 15
+    
+    for preset in presets[:8]:  # Максимум 8 пресетов
+        builder.button(
+            text=f"{preset.name} ({base_cost}🍌)",
+            callback_data=f"batch_preset_{preset.id}"
+        )
+    
+    builder.button(
+        text="✏️ Свои промпты",
+        callback_data="batch_custom_prompts"
+    )
+    builder.button(
+        text="🔙 Назад",
+        callback_data="batch_generation"
+    )
+    
+    builder.adjust(1, repeat=True)
+    return builder.as_markup()
+
+
+def get_confirmation_keyboard(yes_data: str, no_data: str, yes_text: str = "✅ Да", no_text: str = "❌ Нет"):
+    """Универсальная клавиатура подтверждения"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text=yes_text, callback_data=yes_data)
+    builder.button(text=no_text, callback_data=no_data)
+    
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_batch_count_keyboard(preset_id: str, max_count: int):
+    """Клавиатура выбора количества изображений для пакетной генерации"""
+    builder = InlineKeyboardBuilder()
+    
+    counts = list(range(1, min(max_count + 1, 11)))  # 1-10 или меньше
+    
+    for count in counts:
+        builder.button(
+            text=f"{count} 🖼",
+            callback_data=f"batch_count_{preset_id}_{count}"
+        )
+    
+    builder.button(text="🔙 Назад", callback_data=f"batch_preset_{preset_id}")
+    
+    # По 5 в ряд
+    builder.adjust(5, repeat=True)
+    return builder.as_markup()

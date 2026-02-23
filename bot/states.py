@@ -33,3 +33,14 @@ class AdminStates(StatesGroup):
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
     waiting_credits_amount = State()  # Ввод количества кредитов
+
+
+class BatchGenerationStates(StatesGroup):
+    """Состояния для пакетной генерации"""
+    
+    selecting_mode = State()           # Выбор режима: pro или standard
+    selecting_preset = State()         # Выбор пресета
+    entering_prompts = State()         # Ввод промптов (один или несколько)
+    uploading_references = State()     # Загрузка референсных изображений
+    confirming_batch = State()         # Подтверждение перед запуском
+    selecting_batch_count = State()    # Количество изображений (для одиночного промпта)
