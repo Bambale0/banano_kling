@@ -134,13 +134,22 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         status = data.get("status")
 
         if status == "COMPLETED":
-            # Получаем URL видео
+            # Получаем URL видео - может быть в result.video_url или в generated массиве
             video_url = data.get("result", {}).get("video_url")
+            if not video_url:
+                # Пробуем получить из массива generated
+                generated = data.get("generated", [])
+                if generated and isinstance(generated, list):
+                    video_url = generated[0]
 
             # Находим задачу в БД
             from bot.database import complete_video_task, get_task_by_id
 
             task = await get_task_by_id(task_id)
+            if not video_url:
+                logger.error(f"No video URL in completed task: {data}")
+                return web.Response(status=200)
+            
             if task:
                 # Отправляем видео пользователю
                 bot_instance = Bot(token=config.BOT_TOKEN)
