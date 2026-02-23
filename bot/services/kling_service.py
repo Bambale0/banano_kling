@@ -212,48 +212,67 @@ class KlingService:
         shot_type: str,
         multi_shot: bool = False,
     ) -> Dict:
-        """Build payload for Kling v3 request"""
+        """Build payload for Kling v3 Pro/Std request"""
+        # Duration должен быть строкой
+        duration_str = str(min(max(duration, 3), 15))
+        
         payload = {
             "prompt": prompt,
-            "duration": str(min(max(duration, 3), 15)),
+            "duration": duration_str,
             "aspect_ratio": aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9",
-            "cfg_scale": min(max(cfg_scale, 0), 1),
+            "cfg_scale": min(max(cfg_scale, 0), 2),  # max 2 по документации
             "generate_audio": generate_audio,
-            "shot_type": shot_type,
         }
 
         if multi_shot:
             payload["multi_shot"] = True
+            payload["shot_type"] = shot_type
 
         if webhook_url:
             payload["webhook_url"] = webhook_url
         
-        # Используем image_list как в документации
-        if start_image_url or end_image_url:
-            image_list = []
-            if start_image_url:
-                image_list.append({
-                    "image_url": start_image_url,
-                    "type": "first_frame"
-                })
-            if end_image_url:
-                image_list.append({
-                    "image_url": end_image_url,
-                    "type": "end_frame"
-                })
-            payload["image_list"] = image_list
+        # ПРАВИЛЬНО по документации: start_image_url и end_image_url напрямую
+        if start_image_url:
+            payload["start_image_url"] = start_image_url
         
+        if end_image_url:
+            payload["end_image_url"] = end_image_url
+        
+        # ПРАВИЛЬНО: element_list, не elements
         if elements:
-            payload["elements"] = elements
+            element_list = []
+            for elem in elements:
+                if isinstance(elem, dict):
+                    # Проверяем правильный формат
+                    if "reference_image_urls" in elem or "frontal_image_url" in elem:
+                        element_list.append(elem)
+                    else:
+                        # Конвертация из старого формата
+                        element_list.append({
+                            "reference_image_urls": elem.get("reference_image_urls", []),
+                            "frontal_image_url": elem.get("frontal_image_url", elem.get("image_url"))
+                        })
+            if element_list:
+                payload["element_list"] = element_list
         
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
         
         if voice_ids:
-            payload["voice_ids"] = voice_ids[:2]  # Max 2 voices
+            payload["voice_ids"] = voice_ids[:2]  # Max 2
         
+        # ПРАВИЛЬНО: multi_prompt без index, duration как строка
         if multi_prompt:
-            payload["multi_prompt"] = multi_prompt
+            formatted_multi_prompt = []
+            for item in multi_prompt:
+                if isinstance(item, dict):
+                    formatted_multi_prompt.append({
+                        "prompt": item.get("prompt", ""),
+                        "duration": str(item.get("duration", 5))  # Строка!
+                    })
+                else:
+                    formatted_multi_prompt.append(item)
+            payload["multi_prompt"] = formatted_multi_prompt
 
         return payload
 
