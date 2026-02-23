@@ -30,22 +30,22 @@ logger = logging.getLogger(__name__)
 class KlingService:
     """Сервис для работы с Kling 3 API через Freepik"""
 
-    # API Endpoints
+    # API Endpoints (without /v1 prefix - it's already in base_url)
     ENDPOINTS = {
         # Kling 3 Pro/Standard
-        "v3_pro": "/v1/ai/video/kling-v3-pro",
-        "v3_std": "/v1/ai/video/kling-v3-std",
-        "v3_tasks": "/v1/ai/video/kling-v3",
+        "v3_pro": "/ai/video/kling-v3-pro",
+        "v3_std": "/ai/video/kling-v3-std",
+        "v3_tasks": "/ai/video/kling-v3",
         
         # Kling 3 Omni
-        "v3_omni_pro": "/v1/ai/video/kling-v3-omni-pro",
-        "v3_omni_std": "/v1/ai/video/kling-v3-omni-std",
-        "v3_omni_tasks": "/v1/ai/video/kling-v3-omni",
+        "v3_omni_pro": "/ai/video/kling-v3-omni-pro",
+        "v3_omni_std": "/ai/video/kling-v3-omni-std",
+        "v3_omni_tasks": "/ai/video/kling-v3-omni",
         
         # Kling 3 Omni Reference-to-Video
-        "v3_omni_pro_r2v": "/v1/ai/reference-to-video/kling-v3-omni-pro",
-        "v3_omni_std_r2v": "/v1/ai/reference-to-video/kling-v3-omni-std",
-        "v3_omni_r2v_tasks": "/v1/ai/reference-to-video/kling-v3-omni",
+        "v3_omni_pro_r2v": "/ai/reference-to-video/kling-v3-omni-pro",
+        "v3_omni_std_r2v": "/ai/reference-to-video/kling-v3-omni-std",
+        "v3_omni_r2v_tasks": "/ai/reference-to-video/kling-v3-omni",
     }
 
     # Valid parameters
@@ -79,6 +79,7 @@ class KlingService:
         voice_ids: Optional[List[str]] = None,
         multi_prompt: Optional[List[Dict]] = None,
         shot_type: str = "customize",
+        multi_shot: bool = False,
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-pro
@@ -94,11 +95,12 @@ class KlingService:
             end_image_url: Last frame image URL for I2V
             elements: List of elements for consistent identity
             negative_prompt: Undesired elements to avoid
-            cfg_scale: Prompt adherence (0-2, default 0.5)
+            cfg_scale: Prompt adherence (0-1, default 0.5)
             generate_audio: Whether to generate native audio
             voice_ids: Custom voice identifiers (max 2)
-            multi_prompt: Multi-shot prompts with durations
+            multi_prompt: Multi-shot prompts with durations (max 6 scenes)
             shot_type: "customize" or "intelligent"
+            multi_shot: Enable multi-shot mode for multi-scene videos
         
         Returns:
             Dict с task_id или None при ошибке
@@ -120,6 +122,7 @@ class KlingService:
             voice_ids=voice_ids,
             multi_prompt=multi_prompt,
             shot_type=shot_type,
+            multi_shot=multi_shot,
         )
 
         logger.info(f"Kling 3 Pro request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}")
@@ -141,6 +144,7 @@ class KlingService:
         voice_ids: Optional[List[str]] = None,
         multi_prompt: Optional[List[Dict]] = None,
         shot_type: str = "customize",
+        multi_shot: bool = False,
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-std
@@ -148,7 +152,24 @@ class KlingService:
         Generate AI video using Kling 3 Standard with text-to-video or image-to-video capabilities.
         Standard mode offers faster generation at slightly lower quality.
         
-        See generate_video_pro for parameter descriptions.
+        Args:
+            prompt: Text prompt describing the video (max 2500 chars)
+            duration: Duration in seconds (3-15)
+            aspect_ratio: Video ratio - "16:9", "9:16", "1:1"
+            webhook_url: Optional callback URL for async notifications
+            start_image_url: First frame image URL for I2V
+            end_image_url: Last frame image URL for I2V
+            elements: List of elements for consistent identity
+            negative_prompt: Undesired elements to avoid
+            cfg_scale: Prompt adherence (0-1, default 0.5)
+            generate_audio: Whether to generate native audio
+            voice_ids: Custom voice identifiers (max 2)
+            multi_prompt: Multi-shot prompts with durations (max 6 scenes)
+            shot_type: "customize" or "intelligent"
+            multi_shot: Enable multi-shot mode for multi-scene videos
+        
+        Returns:
+            Dict с task_id или None при ошибке
         """
         endpoint = self.ENDPOINTS["v3_std"]
         url = f"{self.base_url}{endpoint}"
@@ -167,6 +188,7 @@ class KlingService:
             voice_ids=voice_ids,
             multi_prompt=multi_prompt,
             shot_type=shot_type,
+            multi_shot=multi_shot,
         )
 
         logger.info(f"Kling 3 Std request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}")
@@ -188,25 +210,38 @@ class KlingService:
         voice_ids: Optional[List[str]],
         multi_prompt: Optional[List[Dict]],
         shot_type: str,
+        multi_shot: bool = False,
     ) -> Dict:
         """Build payload for Kling v3 request"""
         payload = {
             "prompt": prompt,
             "duration": str(min(max(duration, 3), 15)),
             "aspect_ratio": aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9",
-            "cfg_scale": min(max(cfg_scale, 0), 2),
+            "cfg_scale": min(max(cfg_scale, 0), 1),
             "generate_audio": generate_audio,
             "shot_type": shot_type,
         }
 
+        if multi_shot:
+            payload["multi_shot"] = True
+
         if webhook_url:
             payload["webhook_url"] = webhook_url
         
-        if start_image_url:
-            payload["start_image_url"] = start_image_url
-        
-        if end_image_url:
-            payload["end_image_url"] = end_image_url
+        # Используем image_list как в документации
+        if start_image_url or end_image_url:
+            image_list = []
+            if start_image_url:
+                image_list.append({
+                    "image_url": start_image_url,
+                    "type": "first_frame"
+                })
+            if end_image_url:
+                image_list.append({
+                    "image_url": end_image_url,
+                    "type": "end_frame"
+                })
+            payload["image_list"] = image_list
         
         if elements:
             payload["elements"] = elements
@@ -407,11 +442,20 @@ class KlingService:
         if webhook_url:
             payload["webhook_url"] = webhook_url
         
-        if start_image_url:
-            payload["start_image_url"] = start_image_url
-        
-        if end_image_url:
-            payload["end_image_url"] = end_image_url
+        # Используем image_list как в документации
+        if start_image_url or end_image_url:
+            image_list = []
+            if start_image_url:
+                image_list.append({
+                    "image_url": start_image_url,
+                    "type": "first_frame"
+                })
+            if end_image_url:
+                image_list.append({
+                    "image_url": end_image_url,
+                    "type": "end_frame"
+                })
+            payload["image_list"] = image_list
         
         if image_url:
             payload["image_url"] = image_url
@@ -847,7 +891,7 @@ class KlingService:
                             "status": data.get("data", {}).get("status", "CREATED"),
                         }
                     else:
-                        logger.error(f"Kling API error {response.status}: {data}")
+                        logger.error(f"Kling API error {response.status}: {data}, URL: {url}")
                         return None
 
             except asyncio.TimeoutError:

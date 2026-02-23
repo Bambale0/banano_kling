@@ -110,8 +110,24 @@ async def handle_telegram_webhook(request: web.Request, bot: Bot, dp: Dispatcher
 async def handle_kling_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kling API"""
     try:
-        data = await request.json()
-        logger.info(f"Kling webhook: {data}")
+        # Логируем все заголовки для отладки
+        logger.info(f"Kling webhook headers: {dict(request.headers)}")
+        
+        # Проверяем, есть ли данные в теле запроса
+        body = await request.text()
+        logger.info(f"Kling webhook raw body: {repr(body)}")
+        
+        if not body:
+            logger.warning("Kling webhook received empty body")
+            return web.Response(status=200)
+        
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Kling webhook received invalid JSON: {e}")
+            return web.Response(status=200)
+        
+        logger.info(f"Kling webhook parsed data: {data}")
 
         # Обработка завершения генерации видео
         task_id = data.get("task_id")
