@@ -875,42 +875,68 @@ async def upload_temp_image(image_bytes: bytes) -> str:
 @router.callback_query(F.data.startswith("duration_"))
 async def handle_duration_selection(callback: types.CallbackQuery, state: FSMContext):
     """Обработка выбора длительности видео"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        duration = int(parts[2])
-        
-        data = await state.get_data()
-        video_options = data.get("video_options", {})
-        video_options["duration"] = duration
-        await state.update_data(video_options=video_options)
-        
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            quality = video_options.get("quality", "std")
-            quality_emoji = "💎" if quality == "pro" else "⚡"
-            
-            text = f"🎯 <b>{preset.name}</b>\n\n"
-            text += f"🍌 Стоимость: <code>{preset.cost}</code>🍌\n"
-            
-            if hasattr(preset, 'description') and preset.description:
-                text += f"\n📝 {preset.description}\n"
-            
-            text += f"\n🎬 <b>Опции видео:</b>\n"
-            text += f"   ⏱ Длительность: <code>{duration} сек</code>\n"
-            text += f"   📐 Формат: <code>{video_options.get('aspect_ratio', '16:9')}</code>\n"
-            text += f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
-            text += f"   🔊 Звук: <code>{'ВКЛ' if video_options.get('generate_audio') else 'ВЫКЛ'}</code>\n"
-            
-            if preset.requires_input and preset.input_prompt:
-                text += f"\n📝 <i>{preset.input_prompt}</i>\n"
-            
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(preset_id, preset.requires_input, preset.category),
-                parse_mode="HTML",
-            )
+    # Формат: duration_preset_id_durations (preset_id может содержать underscores)
+    # Пример: duration_vid_text_to_video_std_5
+    callback_data = callback.data
+    prefix = "duration_"
     
+    if not callback_data.startswith(prefix):
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+    
+    # Убираем префикс
+    data_part = callback_data[len(prefix):]
+    
+    # Разделяем по последнему underscore - последняя часть это длительность
+    # Но нужно сохранить preset_id который может содержать underscores
+    # Поэтому просто берём последний элемент как duration, а всё остальное - preset_id
+    parts = data_part.rsplit("_", 1)
+    
+    if len(parts) != 2:
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+    
+    preset_id = parts[0]
+    duration_str = parts[1]
+    
+    # Защита от некорректных данных
+    try:
+        duration = int(duration_str)
+    except ValueError:
+        await callback.answer("Некорректные данные", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    video_options = data.get("video_options", {})
+    video_options["duration"] = duration
+    await state.update_data(video_options=video_options)
+    
+    preset = preset_manager.get_preset(preset_id)
+    if preset:
+        quality = video_options.get("quality", "std")
+        quality_emoji = "💎" if quality == "pro" else "⚡"
+        
+        text = f"🎯 <b>{preset.name}</b>\n\n"
+        text += f"🍌 Стоимость: <code>{preset.cost}</code>🍌\n"
+        
+        if hasattr(preset, 'description') and preset.description:
+            text += f"\n📝 {preset.description}\n"
+        
+        text += f"\n🎬 <b>Опции видео:</b>\n"
+        text += f"   ⏱ Длительность: <code>{duration} сек</code>\n"
+        text += f"   📐 Формат: <code>{video_options.get('aspect_ratio', '16:9')}</code>\n"
+        text += f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
+        text += f"   🔊 Звук: <code>{'ВКЛ' if video_options.get('generate_audio') else 'ВЫКЛ'}</code>\n"
+        
+        if preset.requires_input and preset.input_prompt:
+            text += f"\n📝 <i>{preset.input_prompt}</i>\n"
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_preset_action_keyboard(preset_id, preset.requires_input, preset.category),
+            parse_mode="HTML",
+        )
+
     await callback.answer()
 
 

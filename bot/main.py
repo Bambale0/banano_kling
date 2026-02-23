@@ -134,41 +134,61 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         status = data.get("status")
 
         if status == "COMPLETED":
-            # Получаем URL видео - может быть в result.video_url или в generated массиве
-            video_url = data.get("result", {}).get("video_url")
+            # Получаем URL видео из массива generated
+            # Webhook возвращает: {"status": "COMPLETED", "task_id": "...", "generated": ["https://..."]}
+            generated = data.get("generated", [])
+            
+            if not generated:
+                logger.error(f"No generated videos in completed task: {data}")
+                return web.Response(status=200)
+            
+            # ✅ Правильно: берем первый URL из массива и убираем пробелы
+            video_url = generated[0].strip() if isinstance(generated[0], str) else None
+            
             if not video_url:
-                # Пробуем получить из массива generated
-                generated = data.get("generated", [])
-                if generated and isinstance(generated, list):
-                    video_url = generated[0]
+                logger.error(f"Invalid video URL in generated array: {generated}")
+                return web.Response(status=200)
+            
+            logger.info(f"Extracted video URL: {video_url[:50]}...")
 
             # Находим задачу в БД
             from bot.database import complete_video_task, get_task_by_id
 
             task = await get_task_by_id(task_id)
-            if not video_url:
-                logger.error(f"No video URL in completed task: {data}")
+            
+            if not task:
+                logger.warning(f"Task {task_id} not found in database")
                 return web.Response(status=200)
             
-            if task:
-                # Отправляем видео пользователю
-                bot_instance = Bot(token=config.BOT_TOKEN)
+            logger.info(f"Found task for user {task.user_id}, preset: {task.preset_id}")
+            
+            # Отправляем видео пользователю
+            bot_instance = Bot(token=config.BOT_TOKEN)
 
+            try:
+                await bot_instance.send_video(
+                    chat_id=task.user_id,
+                    video=video_url,
+                    caption=f"✅ <b>Ваше видео готово!</b>\n\n"
+                    f"🎯 Пресет: {task.preset_id}",
+                    parse_mode="HTML",
+                    supports_streaming=True,
+                )
+
+                await complete_video_task(task_id, video_url)
+                logger.info(f"Video sent to user {task.user_id}")
+            except Exception as e:
+                logger.error(f"Failed to send video: {e}")
+                # Fallback — отправляем как ссылку
                 try:
-                    await bot_instance.send_video(
+                    await bot_instance.send_message(
                         chat_id=task.user_id,
-                        video=video_url,
-                        caption=f"✅ <b>Ваше видео готово!</b>\n\n"
-                        f"🎯 Пресет: {task.preset_id}",
-                        parse_mode="HTML",
+                        text=f"🎬 Ваше видео готово!\n\n{video_url}"
                     )
-
-                    await complete_video_task(task_id, video_url)
-                    logger.info(f"Video sent to user {task.user_id}")
-                except Exception as e:
-                    logger.error(f"Failed to send video: {e}")
-                finally:
-                    await bot_instance.session.close()
+                except Exception as fallback_error:
+                    logger.error(f"Failed to send fallback message: {fallback_error}")
+            finally:
+                await bot_instance.session.close()
 
         return web.Response(status=200)
 
