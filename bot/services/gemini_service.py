@@ -575,6 +575,7 @@ class GeminiService:
         instruction: str,
         model: str = "gemini-2.5-flash-image",
         enable_search: bool = False,
+        aspect_ratio: Optional[str] = None,
     ) -> Optional[bytes]:
         """
         Редактирование изображения (text-and-image-to-image)
@@ -588,6 +589,7 @@ class GeminiService:
             model=model,
             image_input=image_bytes,
             enable_search=enable_search,
+            aspect_ratio=aspect_ratio,
         )
 
     async def add_element(

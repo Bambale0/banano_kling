@@ -1,0 +1,26 @@
+{
+  "939259764": {
+    "user_id": 939259764,
+    "image_model": "pro",
+    "video_quality": "pro",
+    "default_aspect_ratio": "1:1"
+  },
+  "8466233055": {
+    "user_id": 8466233055,
+    "image_model": "flash",
+    "video_quality": "std",
+    "default_aspect_ratio": "1:1"
+  },
+  "339795159": {
+    "user_id": 339795159,
+    "image_model": "pro",
+    "video_quality": "std",
+    "default_aspect_ratio": "1:1"
+  },
+  "123456": {
+    "user_id": 123456,
+    "image_model": "flash",
+    "video_quality": "std",
+    "default_aspect_ratio": "1:1"
+  }
+}

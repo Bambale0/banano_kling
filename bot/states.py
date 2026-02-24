@@ -44,3 +44,37 @@ class BatchGenerationStates(StatesGroup):
     uploading_references = State()     # Загрузка референсных изображений
     confirming_batch = State()         # Подтверждение перед запуском
     selecting_batch_count = State()    # Количество изображений (для одиночного промпта)
+
+
+# =============================================================================
+# НОВЫЕ УПРОЩЁННЫЕ СОСТОЯНИЯ (ДЛЯ НОВОГО UX)
+# =============================================================================
+
+class ImageGenState(StatesGroup):
+    """Упрощённая генерация изображений"""
+    waiting_for_prompt = State()
+    waiting_for_aspect_ratio = State()
+    generating = State()
+
+
+class ImageEditState(StatesGroup):
+    """Упрощённое редактирование изображений"""
+    waiting_for_image = State()
+    waiting_for_prompt = State()
+    waiting_for_aspect_ratio = State()
+    generating = State()
+
+
+class VideoGenState(StatesGroup):
+    """Упрощённая генерация видео"""
+    waiting_for_prompt = State()
+    waiting_for_aspect_ratio = State()
+    waiting_for_duration = State()
+    generating = State()
+
+
+class SettingsState(StatesGroup):
+    """Настройки пользователя"""
+    main = State()
+    selecting_model = State()
+    selecting_video_quality = State()
