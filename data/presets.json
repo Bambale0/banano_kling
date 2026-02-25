@@ -253,44 +253,107 @@
     "characters": ["cute cat", "cute dog", "cute bunny", "cute panda"]
   },
   
-  "batch_modes": {
-    "grid_2x2": {
-      "id": "grid_2x2",
-      "name": "🎨 Сетка 2×2",
-      "description": "4 варианта в одном изображении",
-      "count": 4,
+  "batch_edit_modes": {
+    "edit_styles": {
+      "id": "edit_styles",
+      "name": "🎭 4 стиля",
+      "description": "4 разных стиля к фото",
+      "base_cost": 8,
       "discount_percent": 20,
-      "layout": "2x2",
-      "cost_multiplier": 3.2,
-      "gemini_model": "gemini-3-pro-image-preview",
-      "prompt_modifier": "Generate 4 variations of: {base_prompt}. Arrange in 2×2 grid with subtle differences in {variation_aspect}. All cohesive style.",
-      "variation_aspects": ["lighting", "angle", "mood", "composition"]
-    },
-    "batch_6": {
-      "id": "batch_6", 
-      "name": "⚡ Пакет ×6",
-      "description": "6 отдельных вариантов",
-      "count": 6,
-      "discount_percent": 15,
-      "cost_multiplier": 5.1,
+      "cost_multiplier": 0.8,
       "gemini_model": "gemini-2.5-flash-image",
-      "parallel": true,
-      "max_workers": 3,
-      "prompt_modifier": "Create variation {index}/6 of: {base_prompt}. Unique take, different {variation_aspect}."
+      "variations": [
+        {
+          "name": "Реализм",
+          "description": "Photorealistic style",
+          "prompt_template": "Transform this image into photorealistic style. Preserve all details, enhance realism, natural lighting, true-to-life colors."
+        },
+        {
+          "name": "Арт",
+          "description": "Artistic painting style",
+          "prompt_template": "Transform this image into artistic painting style. Rich brushstrokes, expressive colors, artistic interpretation."
+        },
+        {
+          "name": "Аниме",
+          "description": "Anime/manga style",
+          "prompt_template": "Transform this image into anime/manga style. Clean lines, vibrant colors, stylized features, Japanese animation aesthetic."
+        },
+        {
+          "name": "Минимализм",
+          "description": "Minimalist style",
+          "prompt_template": "Transform this image into minimalist style. Simplified forms, clean composition, essential elements only, modern aesthetic."
+        }
+      ]
     },
-    "variations_3": {
-      "id": "variations_3",
-      "name": "🎭 3 вариации",
-      "description": "Три стилистических варианта",
-      "count": 3,
+    "edit_effects": {
+      "id": "edit_effects",
+      "name": "✨ 6 эффектов",
+      "description": "6 различных эффектов к фото",
+      "base_cost": 8,
+      "discount_percent": 15,
+      "cost_multiplier": 1.2,
+      "gemini_model": "gemini-2.5-flash-image",
+      "variations": [
+        {
+          "name": "Золотой час",
+          "description": "Golden hour lighting",
+          "prompt_template": "Apply golden hour lighting to this image. Warm golden tones, soft shadows, magical sunset atmosphere."
+        },
+        {
+          "name": "Неон",
+          "description": "Neon cyberpunk effect",
+          "prompt_template": "Apply neon cyberpunk effect to this image. Glowing neon lights, futuristic atmosphere, vibrant purples and blues."
+        },
+        {
+          "name": "Винтаж",
+          "description": "Vintage retro effect",
+          "prompt_template": "Apply vintage retro effect to this image. Film grain, faded colors, nostalgic 1970s aesthetic."
+        },
+        {
+          "name": "HDR",
+          "description": "HDR enhancement",
+          "prompt_template": "Apply HDR effect to this image. Enhanced details, high contrast, vivid colors, dramatic lighting."
+        },
+        {
+          "name": "Боке",
+          "description": "Bokeh blur effect",
+          "prompt_template": "Apply bokeh effect to this image. Soft background blur, dreamy atmosphere, focus on subject."
+        },
+        {
+          "name": "Ч/Б",
+          "description": "Black and white",
+          "prompt_template": "Convert this image to black and white. Dramatic contrast, classic monochrome, timeless aesthetic."
+        }
+      ]
+    },
+    "edit_seasons": {
+      "id": "edit_seasons",
+      "name": "🎨 3 сезона",
+      "description": "3 сезонных вариации",
+      "base_cost": 8,
       "discount_percent": 10,
-      "cost_multiplier": 2.7,
-      "gemini_model": "gemini-3-pro-image-preview",
-      "styles_per_variation": true,
-      "prompt_template": "Style {style}: {base_prompt}"
+      "cost_multiplier": 0.5,
+      "gemini_model": "gemini-2.5-flash-image",
+      "variations": [
+        {
+          "name": "Весна",
+          "description": "Spring atmosphere",
+          "prompt_template": "Transform this image into spring season. Blooming flowers, fresh green colors, soft rain atmosphere, renewal."
+        },
+        {
+          "name": "Лето",
+          "description": "Summer atmosphere",
+          "prompt_template": "Transform this image into summer season. Bright sunlight, warm tones, vibrant colors, beach vibes."
+        },
+        {
+          "name": "Зима",
+          "description": "Winter atmosphere",
+          "prompt_template": "Transform this image into winter season. Snow covered, cool blue tones, frosty atmosphere, cozy feeling."
+        }
+      ]
     }
   },
-  
+
   "batch_settings": {
     "max_batch_size": 10,
     "timeout_seconds": 300,

@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from dataclasses import dataclass
 from typing import List
 
@@ -43,25 +43,27 @@ class Config:
     # Пути к JSON
     PRESETS_PATH: str = "data/presets.json"
     PRICE_PATH: str = "data/price.json"
-    
+
     # Админы (список ID через запятую)
     ADMIN_IDS_STR: str = os.getenv("ADMIN_IDS", "")
-    
+
     @property
     def admin_ids(self) -> List[int]:
         """Парсит список ID админов из строки"""
         if not self.ADMIN_IDS_STR:
             return []
         try:
-            return [int(id.strip()) for id in self.ADMIN_IDS_STR.split(",") if id.strip()]
+            return [
+                int(id.strip()) for id in self.ADMIN_IDS_STR.split(",") if id.strip()
+            ]
         except ValueError:
             logger.warning(f"Invalid ADMIN_IDS format: {self.ADMIN_IDS_STR}")
             return []
-    
+
     def is_admin(self, telegram_id: int) -> bool:
         """Проверяет, является ли пользователь админом"""
         return telegram_id in self.admin_ids
-    
+
     @property
     def webhook_url(self) -> str:
         return f"{self.WEBHOOK_HOST}{self.WEBHOOK_PATH}"
@@ -77,10 +79,12 @@ class Config:
     @property
     def static_base_url(self) -> str:
         """URL для доступа к статическим файлам"""
-        if hasattr(self, 'STATIC_BASE_URL') and self.STATIC_BASE_URL:
+        if hasattr(self, "STATIC_BASE_URL") and self.STATIC_BASE_URL:
             return self.STATIC_BASE_URL
         # По умолчанию используем WEBHOOK_HOST
-        return self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
+        return (
+            self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
+        )
 
 
 config = Config()

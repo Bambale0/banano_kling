@@ -1,38 +1,31 @@
 import asyncio
 import logging
+from typing import Optional
 
 from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
+
 from bot.config import config
+from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.preset_manager import preset_manager
+from bot.states import GenerationStates
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-# Клавиатуры для пакетной генерации
+# Клавиатуры для пакетного редактирования
 
 
-def get_batch_modes_keyboard():
-    """Выбор режима пакетной генерации"""
+def get_batch_upload_keyboard():
+    """Клавиатура для загрузки фото"""
     builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text="🎨 Сетка 2×2 (4 варианта, −20%)", callback_data="batchmode_grid_2x2"
-    )
-    builder.button(
-        text="⚡ Пакет ×6 (6 вариантов, −15%)", callback_data="batchmode_batch_6"
-    )
-    builder.button(
-        text="🎭 3 стиля (3 вариации, −10%)", callback_data="batchmode_variations_3"
-    )
-    builder.button(text="🔙 Назад", callback_data="back_main")
-
+    builder.button(text="✅ Готово, ввести промпт", callback_data="batch_done_upload")
+    builder.button(text="❌ Отмена", callback_data="cancel_batch")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -41,35 +34,31 @@ def get_batch_confirmation_keyboard(job_id: str, cost: int):
     """Подтверждение пакетной генерации"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(
-        text=f"▶️ Запустить за {cost}🍌", callback_data=f"batchrun_{job_id}"
-    )
+    builder.button(text=f"▶️ Запустить за {cost}🍌", callback_data=f"batchrun_{job_id}")
     builder.button(text="🔙 Отмена", callback_data="cancel_batch")
 
     return builder.as_markup()
 
 
+def get_batch_aspect_ratio_keyboard():
+    """Клавиатура выбора соотношения сторон"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="1:1 Квадрат", callback_data="batch_aspect_1:1")
+    builder.button(text="16:9 Широкий", callback_data="batch_aspect_16:9")
+    builder.button(text="9:16 Вертикальный", callback_data="batch_aspect_9:16")
+    builder.button(text="4:3 Классический", callback_data="batch_aspect_4:3")
+    builder.button(text="3:4 Портрет", callback_data="batch_aspect_3:4")
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+
 def get_results_gallery_keyboard(job_id: str, count: int, has_failed: bool = False):
-    """Навигация по результатам"""
+    """Навигация по результатам - только скачать и продолжить редактирование"""
     builder = InlineKeyboardBuilder()
 
-    # Кнопки выбора изображения
-    row = []
-    for i in range(count):
-        row.append(
-            InlineKeyboardButton(
-                text=str(i + 1), callback_data=f"batchview_{job_id}_{i}"
-            )
-        )
-        if len(row) == 5:  # Максимум 5 в ряд
-            builder.row(*row)
-            row = []
-    if row:
-        builder.row(*row)
-
-    # Дополнительные действия
-    builder.button(text="🔍 Апскейл выбранного", callback_data=f"batchupscale_{job_id}")
+    # Только скачать все и продолжить редактирование
     builder.button(text="📥 Скачать все", callback_data=f"batchdownload_{job_id}")
+    builder.button(text="✏️ Продолжить редактирование", callback_data="menu_batch_edit")
 
     if has_failed:
         builder.button(
@@ -77,7 +66,7 @@ def get_results_gallery_keyboard(job_id: str, count: int, has_failed: bool = Fal
         )
 
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(5, 1, 1, 1)
+    builder.adjust(1, 1, 1)
 
     return builder.as_markup()
 
@@ -97,60 +86,212 @@ def get_upscale_options_keyboard(job_id: str, item_index: int):
     return builder.as_markup()
 
 
+# Хранилище для загружаемых фото (в памяти)
+_batch_uploads: dict[int, list[bytes]] = {}
+_batch_upload_urls: dict[int, list[str]] = {}
+
+
+def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
+    """Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL."""
+    try:
+        import os
+        import uuid
+        from datetime import datetime
+
+        from bot.config import config
+
+        date_str = datetime.now().strftime("%Y%m%d")
+        upload_dir = os.path.join("static", "uploads", date_str)
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_id = str(uuid.uuid4())[:8]
+        filename = f"{file_id}.{file_ext}"
+        filepath = os.path.join(upload_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(file_bytes)
+
+        base_url = config.static_base_url
+        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+
+        logger.info(f"Saved batch upload: {public_url}")
+        return public_url
+
+    except Exception as e:
+        logger.exception(f"Error saving batch upload file: {e}")
+        return None
+
+
 # Обработчики
 
 
-@router.callback_query(F.data == "menu_batch_pro")
-async def show_batch_modes(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает режимы пакетной генерации"""
+@router.callback_query(F.data == "menu_batch_edit")
+async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext):
+    """Начало пакетного редактирования - загрузка фото"""
 
     user_credits = await get_user_credits(callback.from_user.id)
 
-    await callback.message.edit_text(
-        f"⚡ <b>Пакетная генерация PRO</b>\n\n"
+    # Очищаем предыдущие загрузки пользователя
+    _batch_uploads[callback.from_user.id] = []
+
+    text = (
+        f"✏️ <b>Пакетное редактирование фото</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
-        f"<b>Доступные режимы:</b>\n\n"
-        f"🎨 <b>Сетка 2×2</b> — 4 варианта в одном изображении\n"
-        f"   Экономия: 20% | Стоимость: ~3.2× от базовой\n\n"
-        f"⚡ <b>Пакет ×6</b> — 6 отдельных вариантов параллельно\n"
-        f"   Экономия: 15% | Стоимость: ~5.1× от базовой\n\n"
-        f"🎭 <b>3 стиля</b> — три стилистических варианта\n"
-        f"   Экономия: 10% | Стоимость: ~2.7× от базовой\n\n"
-        f"<i>Выберите режим для начала. Сначала выберите пресет в обычном меню генерации.</i>",
-        reply_markup=get_batch_modes_keyboard(),
+        f"<b>Как это работает:</b>\n"
+        f"1. Отправьте одно или несколько фото\n"
+        f"2. Когда загрузите все - нажмите «Готово»\n"
+        f"3. Введите промпт, что сделать с фото\n"
+        f"4. Получите результат!\n\n"
+        f"💰 Стоимость: <b>2🍌 за каждое фото</b>\n\n"
+        f"<i>Загрузите фото:</i>"
+    )
+
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_batch_upload_keyboard(),
+            parse_mode="HTML",
+        )
+    except Exception:
+        # Если сообщение нельзя отредактировать (например, это фото/видео)
+        await callback.message.answer(
+            text,
+            reply_markup=get_batch_upload_keyboard(),
+            parse_mode="HTML",
+        )
+    await state.set_state(GenerationStates.waiting_for_batch_image)
+
+
+@router.message(GenerationStates.waiting_for_batch_image)
+async def process_batch_image(message: types.Message, state: FSMContext):
+    """Обрабатывает загруженное фото для пакетного редактирования"""
+
+    # Получаем изображение
+    photo = message.photo[-1] if message.photo else None
+    if not photo:
+        await message.answer("❌ Пожалуйста, отправьте изображение.")
+        return
+
+    # Скачиваем фото
+    try:
+        file = await message.bot.get_file(photo.file_id)
+        image_bytes = await message.bot.download_file(file.file_path)
+        image_data = image_bytes.read()
+    except Exception as e:
+        logger.exception(f"Failed to download image: {e}")
+        await message.answer("❌ Ошибка загрузки изображения. Попробуйте снова.")
+        return
+
+    # Добавляем в список загрузок
+    user_id = message.from_user.id
+    if user_id not in _batch_uploads:
+        _batch_uploads[user_id] = []
+        _batch_upload_urls[user_id] = []
+
+    _batch_uploads[user_id].append(image_data)
+
+    # Сохраняем файл и получаем публичный URL для OpenRouter
+    image_url = _save_uploaded_file(image_data, "png")
+    if image_url:
+        _batch_upload_urls[user_id].append(image_url)
+
+    count = len(_batch_uploads[user_id])
+    cost = count * 2
+
+    await message.answer(
+        f"✅ <b>Фото добавлено!</b>\n"
+        f"📸 Всего загружено: <code>{count}</code>\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+        f"Можете загрузить ещё или нажмите «Готово»",
+        reply_markup=get_batch_upload_keyboard(),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("batchmode_"))
-async def configure_batch(callback: types.CallbackQuery, state: FSMContext):
-    """Настройка пакетной генерации"""
+@router.callback_query(F.data == "batch_done_upload")
+async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь завершил загрузку фото"""
 
-    mode = callback.data.replace("batchmode_", "")
+    user_id = callback.from_user.id
+    images = _batch_uploads.get(user_id, [])
+
+    if not images:
+        await callback.answer("Сначала загрузите хотя бы одно фото!", show_alert=True)
+        return
+
+    count = len(images)
+    cost = count * 3  # Pro модель = 3 банана
+
+    # Переходим к вводу промпта
+    await state.set_state(GenerationStates.waiting_for_batch_prompt)
+
+    await callback.message.edit_text(
+        f"✏️ <b>Введите промпт</b>\n\n"
+        f"📸 Загружено фото: <code>{count}</code>\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, 2K)\n\n"
+        f"Опишите, <b>что нужно сделать</b> с фото:\n"
+        f"• Изменить стиль\n"
+        f"• Добавить эффекты\n"
+        f"• Изменить фон\n"
+        f"• Что-то другое\n\n"
+        f"<i>Например: «Преврати в масляную живопись» или «Добавь закатный фон»</i>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(GenerationStates.waiting_for_batch_prompt)
+async def process_batch_prompt(message: types.Message, state: FSMContext):
+    """Обрабатывает введённый пользователем промпт"""
+
+    user_prompt = message.text.strip()
+    if not user_prompt:
+        await message.answer("❌ Пожалуйста, введите описание того, что хотите сделать.")
+        return
+
+    user_id = message.from_user.id
+    images = _batch_uploads.get(user_id, [])
+
+    if not images:
+        await message.answer("❌ Ошибка: фото не найдены. Начните заново.")
+        await state.clear()
+        return
+
+    # Сохраняем промпт и переходим к выбору aspect ratio
+    await state.update_data(batch_prompt=user_prompt)
+    await state.set_state(GenerationStates.waiting_for_batch_aspect_ratio)
+
+    await message.answer(
+        f"✏️ <b>Выберите формат изображения</b>\n\n"
+        f"📝 Промпт: <code>{user_prompt[:60]}{'...' if len(user_prompt) > 60 else ''}</code>\n\n"
+        f"Выберите соотношение сторон:",
+        reply_markup=get_batch_aspect_ratio_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("batch_aspect_"))
+async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор aspect ratio"""
+
+    aspect_ratio = callback.data.replace("batch_aspect_", "")
     data = await state.get_data()
-    preset_id = data.get("preset_id")
+    user_prompt = data.get("batch_prompt", "")
+    user_id = callback.from_user.id
+    images = _batch_uploads.get(user_id, [])
 
-    if not preset_id:
+    if not images or not user_prompt:
         await callback.answer(
-            "Сначала выберите пресет в обычном режиме", show_alert=True
+            "Ошибка: данные не найдены. Начните заново.", show_alert=True
         )
+        await state.clear()
         return
 
-    preset = preset_manager.get_preset(preset_id)
-    if not preset:
-        await callback.answer("Пресет не найден", show_alert=True)
-        return
-
-    # Получаем или запрашиваем базовый промпт
-    base_prompt = data.get("final_prompt") or preset.prompt
-
-    # Создаём задачу
+    # Создаём задачу редактирования
     job = await batch_service.create_batch_job(
-        user_id=callback.from_user.id,
-        mode=mode,
-        preset_id=preset_id,
-        base_prompt=base_prompt,
-        custom_params=data.get("custom_params"),
+        user_id=user_id,
+        images=images,
+        prompt=user_prompt,
+        aspect_ratio=aspect_ratio,
     )
 
     if not job:
@@ -158,39 +299,36 @@ async def configure_batch(callback: types.CallbackQuery, state: FSMContext):
             "❌ Ошибка создания задачи. Попробуйте позже.",
             reply_markup=get_main_menu_keyboard(),
         )
+        await state.clear()
         return
 
     # Проверяем баланс (админы могут бесплатно)
-    is_admin = config.is_admin(callback.from_user.id)
-    user_credits = await get_user_credits(callback.from_user.id)
-    
+    is_admin = config.is_admin(user_id)
+    user_credits = await get_user_credits(user_id)
+
     if not is_admin and user_credits < job.total_cost:
         await callback.message.edit_text(
             f"❌ <b>Недостаточно бананов!</b>\n\n"
             f"Требуется: <code>{job.total_cost}</code>🍌\n"
             f"Доступно: <code>{user_credits}</code>🍌\n\n"
-            f"💳 Пополните баланс для пакетной генерации.",
+            f"💳 Пополните баланс.",
             reply_markup=get_main_menu_keyboard(),
-            parse_mode="HTML",
         )
+        await state.clear()
+        _batch_uploads.pop(user_id, None)
         return
 
     # Сохраняем в состояние
     await state.update_data(batch_job_id=job.id, batch_cost=job.total_cost)
 
-    # Показываем подтверждение
-    batch_config = batch_service._get_batch_config(mode)
-
     await callback.message.edit_text(
-        f"⚡ <b>Подтверждение пакетной генерации</b>\n\n"
-        f"🎯 Режим: <b>{batch_config['name']}</b>\n"
-        f"📊 Количество: <code>{batch_config['count']}</code> вариантов\n"
-        f"🤖 Модель: <code>{batch_config['gemini_model']}</code>\n"
-        f"🍌 Стоимость: <code>{job.total_cost}</code>🍌 "
-        f"(экономия {batch_config['discount_percent']}%)\n\n"
-        f"📝 <b>Базовый промпт:</b>\n"
-        f"<code>{base_prompt[:150]}...</code>\n\n"
-        f"<i>Генерация займёт 30-120 секунд. Вы получите уведомление о прогрессе.</i>",
+        f"✏️ <b>Подтверждение пакетного редактирования</b>\n\n"
+        f"📝 <b>Промпт:</b>\n<code>{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}</code>\n\n"
+        f"📊 Фото: <code>{len(images)}</code>\n"
+        f"📐 Формат: <code>{aspect_ratio}</code>\n"
+        f"🤖 Модель: <code>Gemini Pro</code> (2K)\n"
+        f"💰 Стоимость: <code>{job.total_cost}</code>🍌\n\n"
+        f"<i>Нажмите кнопку ниже для запуска:</i>",
         reply_markup=get_batch_confirmation_keyboard(job.id, job.total_cost),
         parse_mode="HTML",
     )
@@ -198,14 +336,15 @@ async def configure_batch(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("batchrun_"))
 async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
-    """Запускает пакетную генерацию"""
+    """Запускает пакетное редактирование"""
 
     job_id = callback.data.replace("batchrun_", "")
     data = await state.get_data()
     cost = data.get("batch_cost", 0)
+    user_id = callback.from_user.id
 
     # Списываем кредиты
-    success = await deduct_credits(callback.from_user.id, cost)
+    success = await deduct_credits(user_id, cost)
     if not success:
         await callback.answer("Ошибка списания кредитов", show_alert=True)
         return
@@ -213,18 +352,23 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
     job = batch_service.get_job(job_id)
     if not job:
         # Возвращаем кредиты
-        await add_credits(callback.from_user.id, cost)
+        await add_credits(user_id, cost)
         await callback.message.edit_text(
             "❌ Задача не найдена. Кредиты возвращены.",
             reply_markup=get_main_menu_keyboard(),
         )
+        # Очищаем загруженные фото
+        _batch_uploads.pop(user_id, None)
         return
 
-    await callback.answer("🚀 Запускаю пакетную генерацию...")
+    # Очищаем загруженные фото
+    _batch_uploads.pop(user_id, None)
+
+    await callback.answer("🚀 Запускаю пакетное редактирование...")
 
     # Сообщение с прогрессом
     progress_msg = await callback.message.answer(
-        f"⏳ <b>Пакетная генерация запущена</b>\n\n"
+        f"⏳ <b>Пакетное редактирование запущено</b>\n\n"
         f"ID: <code>{job_id}</code>\n"
         f"Вариантов: <code>{len(job.items)}</code>\n"
         f"Прогресс: <code>0%</code>\n\n"
@@ -249,7 +393,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
 
         try:
             await progress_msg.edit_text(
-                f"⏳ <b>Пакетная генерация</b>\n\n"
+                f"⏳ <b>Пакетное редактирование</b>\n\n"
                 f"ID: <code>{job.id}</code>\n"
                 f"Прогресс: <code>{percent}%</code> [{bar}]\n"
                 f"Готово: <code>{sum(1 for i in job.items if i.status == BatchStatus.COMPLETED)}/{len(job.items)}</code>\n\n"
@@ -259,7 +403,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         except Exception:
             pass  # Игнорируем ошибки редактирования
 
-    # Запускаем генерацию
+    # Запускаем редактирование
     try:
         completed_job = await batch_service.execute_batch(job, update_progress)
 
@@ -277,7 +421,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         # Возвращаем кредиты при критической ошибке
         await add_credits(callback.from_user.id, cost)
         await callback.message.answer(
-            "❌ <b>Ошибка пакетной генерации</b>\n"
+            "❌ <b>Ошибка пакетного редактирования</b>\n"
             "Кредиты возвращены. Попробуйте позже.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
@@ -287,7 +431,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
 async def show_batch_results(
     callback: types.CallbackQuery, job, state: FSMContext, bot: Bot
 ):
-    """Показывает результаты пакетной генерации"""
+    """Показывает результаты пакетного редактирования"""
 
     successful = [i for i in job.items if i.result]
     failed = [i for i in job.items if i.status == BatchStatus.FAILED]
@@ -296,7 +440,7 @@ async def show_batch_results(
         # Полный возврат
         await add_credits(callback.from_user.id, job.total_cost)
         await callback.message.answer(
-            "❌ <b>Все генерации не удались</b>\n" "Кредиты полностью возвращены.",
+            "❌ <b>Все редактирования не удались</b>\n" "Кредиты полностью возвращены.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
@@ -309,7 +453,7 @@ async def show_batch_results(
     duration = job.completed_at - job.created_at if job.completed_at else 0
 
     caption = (
-        f"✅ <b>Пакетная генерация завершена!</b>\n\n"
+        f"✅ <b>Пакетное редактирование завершено!</b>\n\n"
         f"📊 Успешно: <code>{len(successful)}/{len(job.items)}</code>\n"
         f"⏱ Время: <code>{duration:.1f}</code> сек\n"
         f"🍌 Стоимость: <code>{job.total_cost}</code>🍌\n\n"
@@ -340,7 +484,7 @@ async def show_batch_results(
 
 @router.callback_query(F.data.startswith("batchview_"))
 async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает один результат в полном размере"""
+    """Показывает один результат в полном размере с публичным URL"""
 
     parts = callback.data.split("_")
     job_id = parts[1]
@@ -352,8 +496,8 @@ async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
         return
 
     item = job.items[item_index]
-    if not item.result:
-        await callback.answer("Этот вариант не был сгенерирован")
+    if not item.result_url:
+        await callback.answer("Этот вариант не был сгенерирован или URL недоступен")
         return
 
     # Показываем изображение с информацией
@@ -370,7 +514,7 @@ async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="🔙 К галерее", callback_data=f"batchback_{job_id}")
 
     await callback.message.answer_photo(
-        photo=types.BufferedInputFile(item.result, f"variant_{item.index}.png"),
+        photo=item.result_url,
         caption=info_text,
         reply_markup=builder.as_markup(),
         parse_mode="HTML",
@@ -443,7 +587,7 @@ async def execute_upscale(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("batchdownload_"))
 async def download_all_results(callback: types.CallbackQuery, bot: Bot):
-    """Отправляет все результаты как альбом"""
+    """Отправляет все результаты как альбом с публичными ссылками"""
 
     job_id = callback.data.replace("batchdownload_", "")
     job = batch_service.get_job(job_id)
@@ -452,16 +596,16 @@ async def download_all_results(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("Задача не найдена")
         return
 
-    successful = [i for i in job.items if i.result]
+    successful = [i for i in job.items if i.result_url]
     if not successful:
         await callback.answer("Нет результатов для скачивания")
         return
 
-    # Формируем медиа-группу (максимум 10)
+    # Формируем медиа-группу из публичных URL (максимум 10)
     media_group = []
     for i, item in enumerate(successful[:10]):
         media = types.InputMediaPhoto(
-            media=types.BufferedInputFile(item.result, f"result_{i}.png"),
+            media=item.result_url,
             caption=f"Вариант {i+1}" if i == 0 else None,
         )
         media_group.append(media)

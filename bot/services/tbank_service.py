@@ -47,7 +47,8 @@ class TBankService:
         success_url: str,
         fail_url: str,
         notification_url: str,
-        receipt: Optional[Dict] = None,
+        # FIXME: receipt отключен - клиент на НПД. Включить при переходе на другой режим.
+        # receipt: Optional[Dict] = None,
         data: Optional[Dict] = None,
     ) -> Optional[Dict]:
         """
@@ -80,8 +81,9 @@ class TBankService:
         payload = {**token_base, "Token": token}
 
         # Добавляем вложенные объекты (не участвуют в токене!)
-        if receipt:
-            payload["Receipt"] = receipt
+        # FIXME: Чеки отключены - клиент на НПД. Включить при переходе на другой режим.
+        # if receipt:
+        #     payload["Receipt"] = receipt
         if data:
             payload["DATA"] = data
 
@@ -129,17 +131,36 @@ class TBankService:
                 logger.exception(f"Get state exception: {e}")
                 return None
 
+    async def cancel(self, payment_id: str) -> Optional[Dict]:
+        """Отмена платежа и возврат денег"""
+        token_base = {"TerminalKey": self.terminal_key, "PaymentId": str(payment_id)}
+        token = self._generate_token(token_base)
+        payload = {**token_base, "Token": token}
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    f"{self.api_url}/Cancel",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    return await response.json()
+            except Exception as e:
+                logger.exception(f"Cancel exception: {e}")
+                return None
+
     def verify_notification(self, data: Dict[str, Any]) -> bool:
         """
         Проверка подписи входящего уведомления от Т-Банка.
-        
+
         Документация Т-Банк:
         1. Собрать массив параметров (только скаляры корневого уровня)
         2. Добавить Password
         3. Отсортировать по алфавиту
         4. Конкатенировать значения
         5. SHA-256 хеш
-        
+
         ВАЖНО: Для DEMO терминалов пропускаем проверку подписи,
         так как Т-Банк использует неизвестный специальный пароль.
         """
@@ -163,7 +184,7 @@ class TBankService:
         if is_demo:
             logger.info("DEMO terminal - skipping signature verification")
             return True
-        
+
         # Для реальных терминалов проверяем подпись
         token_params = {}
         for key, value in data.items():

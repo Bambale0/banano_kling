@@ -18,7 +18,7 @@ class GeminiService:
         "flash": "google/gemini-2.5-flash-image",  # Быстрая генерация
         "pro": "google/gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
     }
-    
+
     # Native Gemini model names (for direct API calls)
     NATIVE_MODELS = {
         "flash": "gemini-2.5-flash-image",
@@ -27,15 +27,23 @@ class GeminiService:
 
     # Поддерживаемые разрешения (согласно banana_api.md)
     RESOLUTIONS = {
-        "1K": "1K",   # 1024px (по умолчанию)
-        "2K": "2K",   # 2048px
-        "4K": "4K",   # 4096px
+        "1K": "1K",  # 1024px (по умолчанию)
+        "2K": "2K",  # 2048px
+        "4K": "4K",  # 4096px
     }
 
     # Поддерживаемые форматы (согласно banana_api.md)
     ASPECT_RATIOS = [
-        "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", 
-        "9:16", "16:9", "21:9"
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "16:9",
+        "21:9",
     ]
 
     def __init__(
@@ -54,6 +62,7 @@ class GeminiService:
         if self._client is None:
             try:
                 from google import genai
+
                 self._client = genai.Client(api_key=self.api_key)
             except ImportError:
                 logger.warning("google-genai not installed. Using HTTP API.")
@@ -75,9 +84,11 @@ class GeminiService:
         model: str = "gemini-2.5-flash-image",
         aspect_ratio: Optional[str] = None,
         image_input: Optional[bytes] = None,
+        image_input_url: Optional[str] = None,
         resolution: str = "1K",
         enable_search: bool = False,
         reference_images: List[bytes] = None,
+        reference_image_urls: List[str] = None,
     ) -> Optional[bytes]:
         """
         Основной метод генерации изображения
@@ -94,10 +105,12 @@ class GeminiService:
                 prompt=prompt,
                 model=model,
                 image_input=image_input,
+                image_input_url=image_input_url,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 enable_search=enable_search,
                 reference_images=reference_images,
+                reference_image_urls=reference_image_urls,
             )
             if result:
                 return result
@@ -114,7 +127,10 @@ class GeminiService:
                 prompt=prompt,
                 model=or_model,
                 image_input=image_input,
+                image_input_url=image_input_url,
+                aspect_ratio=aspect_ratio,
                 reference_images=reference_images,
+                reference_image_urls=reference_image_urls,
             )
             if result:
                 return result
@@ -140,10 +156,12 @@ class GeminiService:
         prompt: str,
         model: str = "gemini-2.5-flash-image",
         image_input: Optional[bytes] = None,
+        image_input_url: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         resolution: str = "1K",
         enable_search: bool = False,
         reference_images: List[bytes] = None,
+        reference_image_urls: List[str] = None,
     ) -> Optional[bytes]:
         """Генерация через Nano Banana API"""
         try:
@@ -154,22 +172,37 @@ class GeminiService:
             # Формируем контент
             contents = []
 
-            # Добавляем референсные изображения (до 14 согласно banana_api.md)
-            if reference_images:
+            # Добавляем референсные изображения по URL (приоритет)
+            if reference_image_urls:
+                for img_url in reference_image_urls[:14]:  # Ограничение до 14
+                    contents.append(
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    )
+            # Fallback на bytes
+            elif reference_images:
                 for ref_img in reference_images[:14]:  # Ограничение до 14
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
-                    contents.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                    })
+                    contents.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                        }
+                    )
 
-            # Если есть входное изображение
-            if image_input:
+            # Если есть входное изображение по URL (приоритет)
+            if image_input_url:
+                contents.append(
+                    {"type": "image_url", "image_url": {"url": image_input_url}}
+                )
+            # Fallback на bytes
+            elif image_input:
                 b64_image = base64.b64encode(image_input).decode("utf-8")
-                contents.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                })
+                contents.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                    }
+                )
 
             contents.append({"type": "text", "text": prompt})
 
@@ -222,7 +255,9 @@ class GeminiService:
                     logger.warning(f"Nano Banana response: {data}")
                 else:
                     error_text = await response.text()
-                    logger.error(f"Nano Banana API error: {response.status} - {error_text}")
+                    logger.error(
+                        f"Nano Banana API error: {response.status} - {error_text}"
+                    )
 
             return None
 
@@ -235,33 +270,53 @@ class GeminiService:
         prompt: str,
         model: str = "google/gemini-2.0-flash-exp:free",
         image_input: Optional[bytes] = None,
+        image_input_url: Optional[str] = None,
+        aspect_ratio: Optional[str] = None,
         reference_images: List[bytes] = None,
+        reference_image_urls: List[str] = None,
     ) -> Optional[bytes]:
         """Генерация через OpenRouter API"""
         try:
-            from bot.config import config
             import json
             import re
+
+            from bot.config import config
 
             session = await self._get_session()
 
             contents = []
 
-            # Референсные изображения
-            if reference_images:
+            # Референсные изображения по URL (приоритет)
+            if reference_image_urls:
+                for img_url in reference_image_urls[:5]:  # OpenRouter ограничение
+                    contents.append(
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    )
+            # Fallback на bytes
+            elif reference_images:
                 for ref_img in reference_images[:5]:  # OpenRouter ограничение
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
-                    contents.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                    })
+                    contents.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                        }
+                    )
 
-            if image_input:
+            # Входное изображение по URL (приоритет)
+            if image_input_url:
+                contents.append(
+                    {"type": "image_url", "image_url": {"url": image_input_url}}
+                )
+            # Fallback на bytes
+            elif image_input:
                 b64_image = base64.b64encode(image_input).decode("utf-8")
-                contents.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                })
+                contents.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                    }
+                )
 
             contents.append({"type": "text", "text": prompt})
 
@@ -279,7 +334,25 @@ class GeminiService:
                 "modalities": ["image", "text"],
             }
 
-            logger.info(f"OpenRouter request: model={model}")
+            # Добавляем aspect_ratio в промпт (OpenRouter/Gemini лучше понимает через текст)
+            final_prompt = prompt
+            if aspect_ratio and aspect_ratio != "1:1":
+                final_prompt = (
+                    f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
+                )
+                logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
+
+            # Обновляем payload с финальным промптом
+            payload["messages"] = [{"role": "user", "content": contents}]
+            # Обновляем текст в contents
+            for item in contents:
+                if item.get("type") == "text":
+                    item["text"] = final_prompt
+                    break
+
+            logger.info(
+                f"OpenRouter request: model={model}, aspect_ratio={aspect_ratio}"
+            )
 
             async with session.post(
                 f"{config.OPENROUTER_BASE_URL}/chat/completions",
@@ -287,7 +360,9 @@ class GeminiService:
                 json=payload,
             ) as response:
                 response_text = await response.text()
-                logger.info(f"OpenRouter raw response ({response.status}): {response_text[:2000]}")
+                logger.info(
+                    f"OpenRouter raw response ({response.status}): {response_text[:2000]}"
+                )
 
                 if response.status != 200:
                     logger.error(f"OpenRouter API error: {response.status}")
@@ -305,15 +380,17 @@ class GeminiService:
                     return None
 
                 message = data["choices"][0].get("message", {})
-                
+
                 # === ОСНОВНОЙ ПУТЬ: поле images ===
                 images = message.get("images", [])
                 logger.info(f"Found {len(images)} images in message.images")
-                
+
                 if images and len(images) > 0:
                     img_data = images[0]
-                    logger.info(f"First image type: {type(img_data)}, value: {str(img_data)[:200]}")
-                    
+                    logger.info(
+                        f"First image type: {type(img_data)}, value: {str(img_data)[:200]}"
+                    )
+
                     # Вариант 1: строка base64 напрямую
                     if isinstance(img_data, str):
                         if img_data.startswith("data:image"):
@@ -322,22 +399,28 @@ class GeminiService:
                         else:
                             # Чистый base64 без префикса
                             return base64.b64decode(img_data)
-                    
+
                     # Вариант 2: словарь с url
                     elif isinstance(img_data, dict):
-                        img_url = img_data.get("url") or img_data.get("image_url", {}).get("url", "")
+                        img_url = img_data.get("url") or img_data.get(
+                            "image_url", {}
+                        ).get("url", "")
                         if img_url:
                             if img_url.startswith("data:image"):
                                 b64_data = img_url.split(",", 1)[1]
                                 return base64.b64decode(b64_data)
                             else:
                                 # Скачиваем по URL
-                                async with session.get(img_url, timeout=30) as img_response:
+                                async with session.get(
+                                    img_url, timeout=30
+                                ) as img_response:
                                     if img_response.status == 200:
                                         return await img_response.read()
                                     else:
-                                        logger.error(f"Failed to download: {img_response.status}")
-                    
+                                        logger.error(
+                                            f"Failed to download: {img_response.status}"
+                                        )
+
                     # Вариант 3: bytes напрямую (маловероятно, но проверим)
                     elif isinstance(img_data, bytes):
                         return img_data
@@ -346,17 +429,25 @@ class GeminiService:
                 content = message.get("content", "")
                 if content:
                     logger.info(f"Checking content, length: {len(content)}")
-                    
+
                     # Ищем data URI
                     if "data:image" in content:
                         # Извлекаем все data URI
-                        data_uris = re.findall(r'data:image/[^;]+;base64,([A-Za-z0-9+/=]+)', content)
+                        data_uris = re.findall(
+                            r"data:image/[^;]+;base64,([A-Za-z0-9+/=]+)", content
+                        )
                         if data_uris:
-                            logger.info(f"Found {len(data_uris)} base64 images in content")
+                            logger.info(
+                                f"Found {len(data_uris)} base64 images in content"
+                            )
                             return base64.b64decode(data_uris[0])
-                    
+
                     # Ищем URL изображения
-                    url_match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)', content, re.IGNORECASE)
+                    url_match = re.search(
+                        r"https?://\S+\.(?:png|jpg|jpeg|webp|gif)",
+                        content,
+                        re.IGNORECASE,
+                    )
                     if url_match:
                         img_url = url_match.group(0)
                         logger.info(f"Found URL in content: {img_url[:50]}...")
@@ -368,9 +459,13 @@ class GeminiService:
                 # Иногда OpenRouter кладёт в другое место
                 for key in ["image", "attachments", "media", "files"]:
                     if key in message:
-                        logger.info(f"Found alternative field '{key}': {type(message[key])}")
-                
-                logger.error(f"No image found in any expected field. Message keys: {message.keys()}")
+                        logger.info(
+                            f"Found alternative field '{key}': {type(message[key])}"
+                        )
+
+                logger.error(
+                    f"No image found in any expected field. Message keys: {message.keys()}"
+                )
                 return None
 
         except Exception as e:
@@ -380,39 +475,41 @@ class GeminiService:
     async def _debug_openrouter_response(self, prompt: str = "A simple red circle"):
         """Метод для диагностики структуры ответа OpenRouter"""
         from bot.config import config
-        
+
         session = await self._get_session()
-        
+
         payload = {
             "model": "google/gemini-2.0-flash-exp:free",
             "messages": [{"role": "user", "content": prompt}],
             "modalities": ["image", "text"],
         }
-        
+
         headers = {
             "Authorization": f"Bearer {self.openrouter_key}",
             "Content-Type": "application/json",
         }
-        
+
         async with session.post(
             f"{config.OPENROUTER_BASE_URL}/chat/completions",
             headers=headers,
             json=payload,
         ) as response:
             data = await response.json()
-            
+
             # Рекурсивно обходим структуру
             def explore(obj, path="", max_depth=5, current_depth=0):
                 if current_depth > max_depth:
                     return
-                
+
                 if isinstance(obj, dict):
                     for k, v in obj.items():
                         new_path = f"{path}.{k}" if path else k
                         if isinstance(v, str) and len(v) > 100:
                             # Вероятно base64 или URL
                             preview = v[:100]
-                            logger.info(f"{new_path}: str(len={len(v)}, preview={preview}...)")
+                            logger.info(
+                                f"{new_path}: str(len={len(v)}, preview={preview}...)"
+                            )
                         elif isinstance(v, (dict, list)):
                             explore(v, new_path, max_depth, current_depth + 1)
                         else:
@@ -421,11 +518,11 @@ class GeminiService:
                     logger.info(f"{path}: list[{len(obj)}]")
                     for i, item in enumerate(obj[:3]):  # Первые 3 элемента
                         explore(item, f"{path}[{i}]", max_depth, current_depth + 1)
-            
+
             logger.info("=== OpenRouter Response Structure ===")
             explore(data)
             logger.info("======================================")
-            
+
             return data
 
     async def _generate_via_native_gemini(
@@ -462,8 +559,7 @@ class GeminiService:
             # Добавляем image_config для Pro модели
             if aspect_ratio or resolution != "1K":
                 config_params.image_config = types.ImageConfig(
-                    aspect_ratio=aspect_ratio,
-                    image_size=resolution
+                    aspect_ratio=aspect_ratio, image_size=resolution
                 )
 
             # Добавляем tools для search grounding
@@ -476,7 +572,9 @@ class GeminiService:
 
             for part in response.parts:
                 if part.inline_data:
-                    logger.info(f"Native Gemini image: {len(part.inline_data.data)} bytes")
+                    logger.info(
+                        f"Native Gemini image: {len(part.inline_data.data)} bytes"
+                    )
                     return part.inline_data.data
 
             return None
@@ -509,9 +607,7 @@ class GeminiService:
         try:
             from google.genai import types
 
-            config = types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"]
-            )
+            config = types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
 
             if enable_search:
                 config.tools = [{"google_search": {}}]
@@ -753,9 +849,7 @@ class GeminiService:
         try:
             from google.genai import types
 
-            config = types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"]
-            )
+            config = types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
 
             response = await self.client.models.generate_content_async(
                 model=model, contents=[prompt], config=config
@@ -768,7 +862,7 @@ class GeminiService:
             }
 
             for part in response.parts:
-                if hasattr(part, 'thought') and part.thought:
+                if hasattr(part, "thought") and part.thought:
                     # Это мыслительный процесс
                     if part.text:
                         result["thoughts"].append(part.text)

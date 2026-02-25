@@ -111,6 +111,22 @@ async def init_db():
         """
         )
 
+        # Таблица настроек пользователя
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE NOT NULL,
+                preferred_model TEXT DEFAULT 'flash',
+                preferred_video_model TEXT DEFAULT 'v3_std',
+                preferred_i2v_model TEXT DEFAULT 'v3_std',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """
+        )
+
         await db.commit()
         logger.info("Database initialized successfully")
 
@@ -139,7 +155,8 @@ async def get_or_create_user(telegram_id: int) -> User:
         # Используем INSERT OR IGNORE для защиты от race condition
         try:
             await db.execute(
-                "INSERT INTO users (telegram_id, credits) VALUES (?, 10)", (telegram_id,)
+                "INSERT INTO users (telegram_id, credits) VALUES (?, 10)",
+                (telegram_id,),
             )
             await db.commit()
             logger.info(f"Created new user: {telegram_id}")
@@ -180,15 +197,17 @@ async def add_credits(telegram_id: int, amount: int) -> bool:
         return True
 
 
-async def deduct_credits(telegram_id: int, amount: int, check_balance: bool = True) -> bool:
+async def deduct_credits(
+    telegram_id: int, amount: int, check_balance: bool = True
+) -> bool:
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
-    
+
     # Админы не платят
     if config.is_admin(telegram_id):
         logger.info(f"Admin {telegram_id} - free access (skipped {amount} credits)")
         return True
-    
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
@@ -214,11 +233,11 @@ async def deduct_credits(telegram_id: int, amount: int, check_balance: bool = Tr
 async def check_can_afford(telegram_id: int, amount: int) -> bool:
     """Проверяет, может ли пользователь позволить себе операцию"""
     from bot.config import config
-    
+
     # Админы всегда могут
     if config.is_admin(telegram_id):
         return True
-    
+
     user = await get_or_create_user(telegram_id)
     return user.credits >= amount
 
@@ -496,3 +515,162 @@ async def get_batch_jobs_by_user(telegram_id: int, limit: int = 10) -> list:
             }
             for row in rows
         ]
+
+
+async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dict]:
+    """Получает последнюю(ие) генерацию(и) пользователя"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        cursor = await db.execute(
+            """SELECT * FROM generation_tasks 
+               WHERE user_id = ? 
+               ORDER BY created_at DESC 
+               LIMIT ?""",
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+
+        if not rows:
+            return None
+
+        if limit == 1:
+            row = rows[0]
+            return {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "type": row["type"],
+                "preset_id": row["preset_id"],
+                "status": row["status"],
+                "result_url": row["result_url"],
+                "created_at": row["created_at"],
+            }
+
+        return [
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "type": row["type"],
+                "preset_id": row["preset_id"],
+                "status": row["status"],
+                "result_url": row["result_url"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+
+async def _ensure_user_settings_table(db):
+    """Создает таблицу user_settings если она не существует (миграция)"""
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER UNIQUE NOT NULL,
+            preferred_model TEXT DEFAULT 'flash',
+            preferred_video_model TEXT DEFAULT 'v3_std',
+            preferred_i2v_model TEXT DEFAULT 'v3_std',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """
+    )
+    await db.commit()
+
+
+async def get_user_settings(telegram_id: int) -> dict:
+    """Получает настройки пользователя из БД"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Создаем таблицу если не существует
+        await _ensure_user_settings_table(db)
+
+        # Получаем внутренний user_id
+        user = await get_or_create_user(telegram_id)
+
+        cursor = await db.execute(
+            """SELECT preferred_model, preferred_video_model, preferred_i2v_model 
+               FROM user_settings WHERE user_id = ?""",
+            (user.id,),
+        )
+        row = await cursor.fetchone()
+
+        if row:
+            return {
+                "preferred_model": row["preferred_model"],
+                "preferred_video_model": row["preferred_video_model"],
+                "preferred_i2v_model": row["preferred_i2v_model"],
+            }
+
+        # Если настроек нет, возвращаем значения по умолчанию
+        return {
+            "preferred_model": "flash",
+            "preferred_video_model": "v3_std",
+            "preferred_i2v_model": "v3_std",
+        }
+
+
+async def save_user_settings(
+    telegram_id: int,
+    preferred_model: str = None,
+    preferred_video_model: str = None,
+    preferred_i2v_model: str = None,
+) -> bool:
+    """Сохраняет настройки пользователя в БД"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Создаем таблицу если не существует
+        await _ensure_user_settings_table(db)
+
+        # Получаем внутренний user_id
+        user = await get_or_create_user(telegram_id)
+
+        # Получаем текущие настройки
+        cursor = await db.execute(
+            "SELECT * FROM user_settings WHERE user_id = ?",
+            (user.id,),
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            # Обновляем только переданные значения
+            updates = []
+            params = []
+            if preferred_model is not None:
+                updates.append("preferred_model = ?")
+                params.append(preferred_model)
+            if preferred_video_model is not None:
+                updates.append("preferred_video_model = ?")
+                params.append(preferred_video_model)
+            if preferred_i2v_model is not None:
+                updates.append("preferred_i2v_model = ?")
+                params.append(preferred_i2v_model)
+
+            if updates:
+                params.append(user.id)
+                await db.execute(
+                    f"""UPDATE user_settings 
+                        SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP 
+                        WHERE user_id = ?""",
+                    params,
+                )
+                await db.commit()
+                logger.info(f"Updated settings for user {telegram_id}")
+        else:
+            # Создаём новую запись с переданными значениями
+            await db.execute(
+                """INSERT INTO user_settings 
+                   (user_id, preferred_model, preferred_video_model, preferred_i2v_model) 
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    user.id,
+                    preferred_model or "flash",
+                    preferred_video_model or "v3_std",
+                    preferred_i2v_model or "v3_std",
+                ),
+            )
+            await db.commit()
+            logger.info(f"Created settings for user {telegram_id}")
+
+        return True

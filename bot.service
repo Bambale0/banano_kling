@@ -1,0 +1,15 @@
+[Unit]
+Description=Banano Kling Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bot/banano_kling
+ExecStart=/root/bot/banano_kling/start.sh
+ExecStop=/root/bot/banano_kling/stop.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

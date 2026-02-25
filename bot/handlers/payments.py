@@ -3,6 +3,7 @@ import time
 
 from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
+
 from bot.config import config
 from bot.database import (
     add_credits,
@@ -180,6 +181,12 @@ async def cancel_payment(callback: types.CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "menu_buy_credits")
+async def back_to_packages(callback: types.CallbackQuery):
+    """Возврат к выбору пакетов из подтверждения оплаты"""
+    await show_packages(callback)
+
+
 # Вебхук для Т-Банка (обрабатывается в aiohttp сервере)
 async def handle_tbank_webhook(request):
     """Обработчик уведомлений от Т-Банка"""
@@ -204,7 +211,7 @@ async def handle_tbank_webhook(request):
             if transaction and transaction.status == "pending":
                 # Получаем telegram_id по internal user_id
                 telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
-                
+
                 if telegram_id:
                     # Начисляем кредиты
                     await add_credits(telegram_id, transaction.credits)
@@ -229,7 +236,9 @@ async def handle_tbank_webhook(request):
                     except Exception as e:
                         logger.error(f"Failed to notify user: {e}")
                 else:
-                    logger.error(f"Cannot find telegram_id for user_id {transaction.user_id}")
+                    logger.error(
+                        f"Cannot find telegram_id for user_id {transaction.user_id}"
+                    )
 
         return web.Response(text="OK", status=200)
 

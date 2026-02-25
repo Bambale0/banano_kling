@@ -2,7 +2,7 @@
 Services for the Telegram bot
 """
 
-from .batch_service import BatchGenerationService, BatchJob, BatchStatus, batch_service
+from .batch_service import BatchEditingService, BatchJob, BatchStatus, batch_service
 from .gemini_service import GeminiService, gemini_service
 from .kling_service import KlingService, kling_service
 from .preset_manager import Preset, PresetManager, preset_manager

@@ -36,12 +36,10 @@ class KlingService:
         "v3_pro": "/ai/video/kling-v3-pro",
         "v3_std": "/ai/video/kling-v3-std",
         "v3_tasks": "/ai/video/kling-v3",
-        
         # Kling 3 Omni
         "v3_omni_pro": "/ai/video/kling-v3-omni-pro",
         "v3_omni_std": "/ai/video/kling-v3-omni-std",
         "v3_omni_tasks": "/ai/video/kling-v3-omni",
-        
         # Kling 3 Omni Reference-to-Video
         "v3_omni_pro_r2v": "/ai/reference-to-video/kling-v3-omni-pro",
         "v3_omni_std_r2v": "/ai/reference-to-video/kling-v3-omni-std",
@@ -57,7 +55,7 @@ class KlingService:
         self.base_url = base_url.rstrip("/")
         self.headers = {
             "x-freepik-api-key": api_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     # =========================================================================
@@ -83,9 +81,9 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-pro
-        
+
         Generate AI video using Kling 3 Pro with text-to-video or image-to-video capabilities.
-        
+
         Args:
             prompt: Text prompt describing the video (max 2500 chars)
             duration: Duration in seconds (3-15)
@@ -101,7 +99,7 @@ class KlingService:
             multi_prompt: Multi-shot prompts with durations (max 6 scenes)
             shot_type: "customize" or "intelligent"
             multi_shot: Enable multi-shot mode for multi-scene videos
-        
+
         Returns:
             Dict с task_id или None при ошибке
         """
@@ -125,7 +123,9 @@ class KlingService:
             multi_shot=multi_shot,
         )
 
-        logger.info(f"Kling 3 Pro request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}")
+        logger.info(
+            f"Kling 3 Pro request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}"
+        )
 
         return await self._post_request(url, payload)
 
@@ -148,10 +148,10 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-std
-        
+
         Generate AI video using Kling 3 Standard with text-to-video or image-to-video capabilities.
         Standard mode offers faster generation at slightly lower quality.
-        
+
         Args:
             prompt: Text prompt describing the video (max 2500 chars)
             duration: Duration in seconds (3-15)
@@ -167,7 +167,7 @@ class KlingService:
             multi_prompt: Multi-shot prompts with durations (max 6 scenes)
             shot_type: "customize" or "intelligent"
             multi_shot: Enable multi-shot mode for multi-scene videos
-        
+
         Returns:
             Dict с task_id или None при ошибке
         """
@@ -191,7 +191,9 @@ class KlingService:
             multi_shot=multi_shot,
         )
 
-        logger.info(f"Kling 3 Std request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}")
+        logger.info(
+            f"Kling 3 Std request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}"
+        )
 
         return await self._post_request(url, payload)
 
@@ -215,12 +217,17 @@ class KlingService:
         """Build payload for Kling v3 Pro/Std request"""
         # Duration должен быть строкой
         duration_str = str(min(max(duration, 3), 15))
-        
+        logger.debug(
+            f"_build_v3_payload: input_duration={duration}, output_duration_str={duration_str}"
+        )
+
         payload = {
             "prompt": prompt,
             "duration": duration_str,
-            "aspect_ratio": aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9",
-            "cfg_scale": min(max(cfg_scale, 0), 2),  # max 2 по документации
+            "aspect_ratio": aspect_ratio
+            if aspect_ratio in self.ASPECT_RATIOS
+            else "16:9",
+            "cfg_scale": min(max(cfg_scale, 0), 1),  # Kling 3: 0-1 (default 0.5)
             "generate_audio": generate_audio,
         }
 
@@ -230,14 +237,16 @@ class KlingService:
 
         if webhook_url:
             payload["webhook_url"] = webhook_url
-        
-        # ПРАВИЛЬНО по документации: start_image_url и end_image_url напрямую
-        if start_image_url:
-            payload["start_image_url"] = start_image_url
-        
-        if end_image_url:
-            payload["end_image_url"] = end_image_url
-        
+
+        # ПРАВИЛЬНО по документации Kling 3: используем image_list с type (first_frame/end_frame)
+        if start_image_url or end_image_url:
+            image_list = []
+            if start_image_url:
+                image_list.append({"image_url": start_image_url, "type": "first_frame"})
+            if end_image_url:
+                image_list.append({"image_url": end_image_url, "type": "end_frame"})
+            payload["image_list"] = image_list
+
         # ПРАВИЛЬНО: element_list, не elements
         if elements:
             element_list = []
@@ -248,30 +257,42 @@ class KlingService:
                         element_list.append(elem)
                     else:
                         # Конвертация из старого формата
-                        element_list.append({
-                            "reference_image_urls": elem.get("reference_image_urls", []),
-                            "frontal_image_url": elem.get("frontal_image_url", elem.get("image_url"))
-                        })
+                        element_list.append(
+                            {
+                                "reference_image_urls": elem.get(
+                                    "reference_image_urls", []
+                                ),
+                                "frontal_image_url": elem.get(
+                                    "frontal_image_url", elem.get("image_url")
+                                ),
+                            }
+                        )
             if element_list:
                 payload["element_list"] = element_list
-        
+
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
-        
+
         if voice_ids:
             payload["voice_ids"] = voice_ids[:2]  # Max 2
-        
-        # ПРАВИЛЬНО: multi_prompt без index, duration как строка
+
+        # ПРАВИЛЬНО: multi_prompt с index (0-5), prompt и duration
         if multi_prompt:
             formatted_multi_prompt = []
-            for item in multi_prompt:
+            for idx, item in enumerate(multi_prompt):
                 if isinstance(item, dict):
-                    formatted_multi_prompt.append({
-                        "prompt": item.get("prompt", ""),
-                        "duration": str(item.get("duration", 5))  # Строка!
-                    })
+                    formatted_multi_prompt.append(
+                        {
+                            "index": item.get("index", idx),  # index обязателен (0-5)
+                            "prompt": item.get("prompt", ""),
+                            "duration": str(item.get("duration", 5)),  # Строка!
+                        }
+                    )
                 else:
-                    formatted_multi_prompt.append(item)
+                    # Если передана строка, используем индекс по порядку
+                    formatted_multi_prompt.append(
+                        {"index": idx, "prompt": str(item), "duration": "5"}
+                    )
             payload["multi_prompt"] = formatted_multi_prompt
 
         return payload
@@ -283,19 +304,19 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         GET /v1/ai/video/kling-v3
-        
+
         Retrieve the list of all Kling 3 video generation tasks.
-        
+
         Args:
             page: Page number (1-indexed)
             page_size: Number of items per page (max 100)
-        
+
         Returns:
             Dict с списком задач
         """
         endpoint = self.ENDPOINTS["v3_tasks"]
         url = f"{self.base_url}{endpoint}"
-        
+
         params = {
             "page": max(page, 1),
             "page_size": min(max(page_size, 1), 100),
@@ -308,12 +329,12 @@ class KlingService:
     async def get_v3_task_status(self, task_id: str) -> Optional[Dict]:
         """
         GET /v1/ai/video/kling-v3/{task_id}
-        
+
         Retrieve the status and result of a specific Kling 3 video generation task.
-        
+
         Args:
             task_id: ID of the task
-        
+
         Returns:
             Dict с статусом задачи и результатом
         """
@@ -345,10 +366,10 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-omni-pro
-        
+
         Generate AI video using Kling 3 Omni Pro with advanced multi-modal capabilities.
         Supports text-to-video and image-to-video.
-        
+
         Args:
             prompt: Text prompt describing the video (max 2500 chars)
             duration: Duration in seconds (3-15)
@@ -362,7 +383,7 @@ class KlingService:
             generate_audio: Whether to generate native audio
             voice_ids: Custom voice identifiers (max 2)
             multi_prompt: List of prompts for multi-shot (max 6)
-        
+
         Returns:
             Dict с task_id или None при ошибке
         """
@@ -384,7 +405,9 @@ class KlingService:
             multi_prompt=multi_prompt,
         )
 
-        logger.info(f"Kling 3 Omni Pro request: prompt={prompt[:50]}...")
+        logger.info(
+            f"Kling 3 Omni Pro request: prompt={prompt[:50]}..., start_image_url={start_image_url[:50] if start_image_url else 'None'}..., payload_keys={list(payload.keys())}"
+        )
 
         return await self._post_request(url, payload)
 
@@ -405,7 +428,7 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/video/kling-v3-omni-std
-        
+
         Generate AI video using Kling 3 Omni Standard.
         Standard mode offers faster generation at slightly lower quality.
         """
@@ -449,45 +472,44 @@ class KlingService:
         """Build payload for Kling Omni request"""
         # Handle aspect ratio - Omni supports "auto"
         valid_aspect_ratios = ["auto", "16:9", "9:16", "1:1"]
-        
+
         payload = {
             "prompt": prompt,
             "duration": str(min(max(duration, 3), 15)),
-            "aspect_ratio": aspect_ratio if aspect_ratio in valid_aspect_ratios else "16:9",
+            "aspect_ratio": aspect_ratio
+            if aspect_ratio in valid_aspect_ratios
+            else "16:9",
             "generate_audio": generate_audio,
             "shot_type": "customize",
         }
 
         if webhook_url:
             payload["webhook_url"] = webhook_url
-        
-        # Используем image_list как в документации
-        if start_image_url or end_image_url:
-            image_list = []
-            if start_image_url:
-                image_list.append({
-                    "image_url": start_image_url,
-                    "type": "first_frame"
-                })
-            if end_image_url:
-                image_list.append({
-                    "image_url": end_image_url,
-                    "type": "end_frame"
-                })
-            payload["image_list"] = image_list
-        
+
+        # ПРАВИЛЬНО по документации Kling 3 Omni: start_image_url и end_image_url напрямую
+        if start_image_url:
+            payload["start_image_url"] = start_image_url
+            logger.info(
+                f"Omni payload: added start_image_url={start_image_url[:50]}..."
+            )
+
+        if end_image_url:
+            payload["end_image_url"] = end_image_url
+            logger.info(f"Omni payload: added end_image_url={end_image_url[:50]}...")
+
         if image_url:
             payload["image_url"] = image_url
-        
+            logger.info(f"Omni payload: added image_url={image_url[:50]}...")
+
         if image_urls:
             payload["image_urls"] = image_urls[:4]  # Max 4 images
-        
+
         if elements:
             payload["elements"] = elements
-        
+
         if voice_ids:
             payload["voice_ids"] = voice_ids[:2]  # Max 2 voices
-        
+
         if multi_prompt:
             payload["multi_prompt"] = multi_prompt[:6]  # Max 6 shots
 
@@ -500,12 +522,12 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         GET /v1/ai/video/kling-v3-omni
-        
+
         Retrieve the list of all Kling 3 Omni video generation tasks.
         """
         endpoint = self.ENDPOINTS["v3_omni_tasks"]
         url = f"{self.base_url}{endpoint}"
-        
+
         params = {
             "page": max(page, 1),
             "page_size": min(max(page_size, 1), 100),
@@ -518,7 +540,7 @@ class KlingService:
     async def get_omni_task_status(self, task_id: str) -> Optional[Dict]:
         """
         GET /v1/ai/video/kling-v3-omni/{task_id}
-        
+
         Retrieve the status and result of a specific Kling 3 Omni task.
         """
         endpoint = self.ENDPOINTS["v3_omni_tasks"]
@@ -545,10 +567,10 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/reference-to-video/kling-v3-omni-pro
-        
+
         Generate AI video using Kling 3 Omni Pro with a reference video for motion and style guidance.
         Video-to-video mode requires a video_url parameter.
-        
+
         Args:
             prompt: Text prompt describing the video (max 2500 chars), use @Video1 to reference the video
             video_url: **Required** URL of the reference video (3-10s, 720-2160px, max 200MB, mp4/mov)
@@ -558,7 +580,7 @@ class KlingService:
             image_url: Start frame image URL for combined I2V + R2V
             negative_prompt: Undesired elements to avoid
             cfg_scale: Prompt adherence (0-2, default 0.5)
-        
+
         Returns:
             Dict с task_id или None при ошибке
         """
@@ -575,10 +597,10 @@ class KlingService:
 
         if webhook_url:
             payload["webhook_url"] = webhook_url
-        
+
         if image_url:
             payload["image_url"] = image_url
-        
+
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
 
@@ -599,7 +621,7 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         POST /v1/ai/reference-to-video/kling-v3-omni-std
-        
+
         Generate AI video using Kling 3 Omni Standard with a reference video.
         Standard mode offers faster generation at slightly lower quality.
         """
@@ -616,10 +638,10 @@ class KlingService:
 
         if webhook_url:
             payload["webhook_url"] = webhook_url
-        
+
         if image_url:
             payload["image_url"] = image_url
-        
+
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
 
@@ -634,12 +656,12 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         GET /v1/ai/reference-to-video/kling-v3-omni
-        
+
         Retrieve the list of all Kling 3 Omni reference-to-video tasks.
         """
         endpoint = self.ENDPOINTS["v3_omni_r2v_tasks"]
         url = f"{self.base_url}{endpoint}"
-        
+
         params = {
             "page": max(page, 1),
             "page_size": min(max(page_size, 1), 100),
@@ -652,7 +674,7 @@ class KlingService:
     async def get_r2v_task_status(self, task_id: str) -> Optional[Dict]:
         """
         GET /v1/ai/reference-to-video/kling-v3-omni/{task_id}
-        
+
         Retrieve the status and result of a specific Kling 3 Omni R2V task.
         """
         endpoint = self.ENDPOINTS["v3_omni_r2v_tasks"]
@@ -674,14 +696,16 @@ class KlingService:
         aspect_ratio: str = "16:9",
         webhook_url: Optional[str] = None,
         image_url: Optional[str] = None,
+        video_url: Optional[str] = None,
         end_image_url: Optional[str] = None,
         elements: Optional[List[Dict]] = None,
         negative_prompt: Optional[str] = None,
         cfg_scale: float = 0.5,
+        generate_audio: bool = True,
     ) -> Optional[Dict]:
         """
         Универсальный метод для создания видео (обратная совместимость)
-        
+
         Args:
             prompt: Текстовый промпт
             model: Модель - "v3_pro", "v3_std", "v3_omni_pro", "v3_omni_std", "v3_omni_pro_r2v", "v3_omni_std_r2v"
@@ -689,11 +713,13 @@ class KlingService:
             aspect_ratio: Формат - "16:9", "9:16", "1:1"
             webhook_url: URL для вебхука
             image_url: URL изображения для I2V
+            video_url: URL видео для R2V (только для v3_omni_pro_r2v/v3_omni_std_r2v)
             end_image_url: URL конечного кадра
             elements: Список элементов
             negative_prompt: Негативный промпт
             cfg_scale: Шкала CFG (0-2)
-        
+            generate_audio: Генерация звука (только для v3_pro/v3_std/v3_omni)
+
         Returns:
             Dict с task_id или None
         """
@@ -706,24 +732,37 @@ class KlingService:
             "v3_omni_pro_r2v": self.generate_video_omni_pro_r2v,
             "v3_omni_std_r2v": self.generate_video_omni_std_r2v,
         }
-        
+
         method = model_map.get(model)
         if method is None:
             logger.error(f"Unknown model: {model}")
             return None
-        
+
         # Determine if it's R2V mode
         if model in ["v3_omni_pro_r2v", "v3_omni_std_r2v"]:
-            if not image_url:
-                logger.error("R2V mode requires image_url parameter")
+            if not video_url:
+                logger.error("R2V mode requires video_url parameter")
                 return None
             return await method(
                 prompt=prompt,
-                video_url=image_url,
+                video_url=video_url,
                 duration=duration,
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
+                image_url=image_url,
                 cfg_scale=cfg_scale,
+            )
+        elif model in ["v3_omni_pro", "v3_omni_std"]:
+            # Для Omni моделей image_url используется для Image-to-Video
+            return await method(
+                prompt=prompt,
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                webhook_url=webhook_url,
+                start_image_url=image_url,
+                end_image_url=end_image_url,
+                elements=elements,
+                generate_audio=generate_audio,
             )
         else:
             return await method(
@@ -736,6 +775,7 @@ class KlingService:
                 elements=elements,
                 negative_prompt=negative_prompt,
                 cfg_scale=cfg_scale,
+                generate_audio=generate_audio,
             )
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
@@ -747,12 +787,12 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         Опрос статуса до завершения задачи
-        
+
         Args:
             task_id: ID задачи
             max_attempts: Максимальное количество попыток
             delay: Задержка между попытками в секундах
-        
+
         Returns:
             Dict с результатом или None при ошибке/таймауте
         """
@@ -772,7 +812,9 @@ class KlingService:
                 logger.error(f"Task {task_id} failed")
                 return status
 
-            logger.debug(f"Task {task_id} status: {task_status}, attempt {attempt + 1}/{max_attempts}")
+            logger.debug(
+                f"Task {task_id} status: {task_status}, attempt {attempt + 1}/{max_attempts}"
+            )
             await asyncio.sleep(delay)
 
         logger.warning(f"Task {task_id} timeout after {max_attempts} attempts")
@@ -791,13 +833,13 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         Упрощённый метод для текст-в-видео (T2V)
-        
+
         Args:
             prompt: Текстовый промпт
             duration: Длительность (3-15 сек)
             aspect_ratio: Формат видео
             quality: "pro" или "std"
-        
+
         Returns:
             Dict с task_id
         """
@@ -824,14 +866,14 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         Упрощённый метод для изображение-в-видео (I2V)
-        
+
         Args:
             image_url: URL изображения
             prompt: Текстовый промпт
             duration: Длительность
             aspect_ratio: Формат видео
             quality: "pro" или "std"
-        
+
         Returns:
             Dict с task_id
         """
@@ -860,14 +902,14 @@ class KlingService:
     ) -> Optional[Dict]:
         """
         Упрощённый метод для видео-в-видео (R2V)
-        
+
         Args:
             video_url: URL референсного видео
             prompt: Текстовый промпт (используйте @Video1 для ссылки на видео)
             duration: Длительность
             aspect_ratio: Формат видео
             quality: "pro" или "std"
-        
+
         Returns:
             Dict с task_id
         """
@@ -904,13 +946,17 @@ class KlingService:
 
                     if response.status == 200:
                         task_id = data.get("data", {}).get("task_id")
-                        logger.info(f"Kling task created successfully: {task_id}")
+                        logger.info(
+                            f"Kling task created successfully: {task_id}, payload_duration={payload.get('duration')}"
+                        )
                         return {
                             "task_id": task_id,
                             "status": data.get("data", {}).get("status", "CREATED"),
                         }
                     else:
-                        logger.error(f"Kling API error {response.status}: {data}, URL: {url}")
+                        logger.error(
+                            f"Kling API error {response.status}: {data}, URL: {url}"
+                        )
                         return None
 
             except asyncio.TimeoutError:
@@ -923,7 +969,9 @@ class KlingService:
                 logger.exception(f"Unexpected error in Kling request: {e}")
                 return None
 
-    async def _get_request(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    async def _get_request(
+        self, url: str, params: Optional[Dict] = None
+    ) -> Optional[Dict]:
         """Execute GET request to Kling API"""
         async with aiohttp.ClientSession() as session:
             try:
@@ -936,13 +984,15 @@ class KlingService:
                     if response.status == 200:
                         # Проверяем Content-Type
                         content_type = response.headers.get("Content-Type", "")
-                        
+
                         if "application/json" in content_type:
                             return await response.json()
                         else:
                             # Получили HTML (ошибка сервера)
                             text = await response.text()
-                            logger.error(f"Kling API returned HTML instead of JSON: {text[:500]}")
+                            logger.error(
+                                f"Kling API returned HTML instead of JSON: {text[:500]}"
+                            )
                             return None
                     else:
                         # Пробуем получить JSON
@@ -952,7 +1002,9 @@ class KlingService:
                         except:
                             # HTML ошибка
                             text = await response.text()
-                            logger.error(f"Kling API error {response.status}, HTML: {text[:500]}")
+                            logger.error(
+                                f"Kling API error {response.status}, HTML: {text[:500]}"
+                            )
                         return None
 
             except asyncio.TimeoutError:

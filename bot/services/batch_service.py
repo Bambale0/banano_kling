@@ -1,16 +1,18 @@
 import asyncio
 import io
-import json
 import logging
+import os
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from bot.config import config
 from bot.services.gemini_service import gemini_service
-from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BatchStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
-    PARTIAL = "partial"  # Частично готово
+    PARTIAL = "partial"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -26,9 +28,12 @@ class BatchStatus(Enum):
 @dataclass
 class BatchItem:
     index: int
-    prompt: str
+    image: bytes  # Исходное изображение (bytes для галереи/превью)
+    prompt: str  # Промпт пользователя
+    image_url: Optional[str] = None  # Публичный URL исходного изображения
     status: BatchStatus = BatchStatus.PENDING
     result: Optional[bytes] = None
+    result_url: Optional[str] = None  # Публичный URL результата
     error: Optional[str] = None
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
@@ -44,9 +49,9 @@ class BatchItem:
 class BatchJob:
     id: str
     user_id: int
-    mode: str  # grid_2x2, batch_6, variations_3
-    base_preset_id: str
-    base_prompt: str
+    images: List[bytes]  # Список исходных изображений
+    prompt: str  # Промпт от пользователя
+    aspect_ratio: str  # Соотношение сторон (1:1, 16:9 и т.д.)
     total_cost: int
     items: List[BatchItem] = field(default_factory=list)
     status: BatchStatus = BatchStatus.PENDING
@@ -68,72 +73,82 @@ class BatchJob:
         )
 
 
-class BatchGenerationService:
-    """Сервис пакетной генерации изображений Pro-уровня"""
+class BatchEditingService:
+    """Сервис пакетного редактирования изображений"""
 
-    MAX_CONCURRENT = 3  # Ограничение параллельных запросов к API
+    MAX_CONCURRENT = 3
+    COST_PER_IMAGE = 2  # 2 банана за изображение
 
     def __init__(self):
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
         self._active_jobs: Dict[str, BatchJob] = {}
         self._executor = ThreadPoolExecutor(max_workers=4)
 
-    def _get_batch_config(self, mode: str) -> Optional[Dict]:
-        """Получает конфигурацию режима пакетной генерации"""
+    def _save_result_file(
+        self, file_bytes: bytes, file_ext: str = "png"
+    ) -> Optional[str]:
+        """
+        Сохраняет результат в папку static/uploads и возвращает публичный URL.
+        """
         try:
-            presets_path = Path("data/presets.json")
-            with open(presets_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data.get("batch_modes", {}).get(mode)
+            # Создаём поддиректорию по дате
+            date_str = datetime.now().strftime("%Y%m%d")
+            upload_dir = os.path.join("static", "uploads", date_str)
+            os.makedirs(upload_dir, exist_ok=True)
+
+            # Генерируем уникальное имя файла
+            file_id = str(uuid.uuid4())[:8]
+            filename = f"{file_id}.{file_ext}"
+            filepath = os.path.join(upload_dir, filename)
+
+            # Сохраняем файл
+            with open(filepath, "wb") as f:
+                f.write(file_bytes)
+
+            # Формируем публичный URL
+            base_url = config.static_base_url
+            public_url = f"{base_url}/uploads/{date_str}/{filename}"
+
+            logger.info(f"Saved batch result: {public_url}")
+            return public_url
+
         except Exception as e:
-            logger.error(f"Failed to load batch config: {e}")
+            logger.exception(f"Error saving batch result file: {e}")
             return None
 
     async def create_batch_job(
         self,
         user_id: int,
-        mode: str,
-        preset_id: str,
-        base_prompt: str,
-        custom_params: Optional[Dict] = None,
+        images: List[bytes],
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        image_urls: List[str] = None,
     ) -> Optional[BatchJob]:
-        """Создаёт задачу пакетной генерации"""
+        """Создаёт задачу пакетного редактирования"""
 
-        # Получаем конфигурацию режима
-        batch_config = self._get_batch_config(mode)
-        if not batch_config:
-            logger.error(f"Unknown batch mode: {mode}")
+        if not images or not prompt:
             return None
 
-        # Получаем базовый пресет
-        preset = preset_manager.get_preset(preset_id)
-        if not preset:
-            return None
-
-        # Рассчитываем стоимость со скидкой
-        total_cost = int(preset.cost * batch_config["cost_multiplier"])
+        # Рассчитываем стоимость (Pro модель = 3 банана)
+        total_cost = len(images) * 3
 
         # Генерируем ID задачи
-        job_id = f"batch_{user_id}_{int(time.time())}_{mode}"
+        job_id = f"batch_{user_id}_{int(time.time())}"
 
-        # Создаём элементы
+        # Создаём элементы - каждое изображение с одним промптом
         items = []
-        for i in range(batch_config["count"]):
-            variation_aspect = self._get_variation_aspect(batch_config, i)
-
-            # Формируем промпт для каждого элемента
-            item_prompt = self._format_item_prompt(
-                batch_config, base_prompt, i, variation_aspect, custom_params
+        for i, image in enumerate(images):
+            image_url = image_urls[i] if image_urls and i < len(image_urls) else None
+            items.append(
+                BatchItem(index=i, image=image, prompt=prompt, image_url=image_url)
             )
-
-            items.append(BatchItem(index=i, prompt=item_prompt))
 
         job = BatchJob(
             id=job_id,
             user_id=user_id,
-            mode=mode,
-            base_preset_id=preset_id,
-            base_prompt=base_prompt,
+            images=images,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
             total_cost=total_cost,
             items=items,
         )
@@ -141,170 +156,53 @@ class BatchGenerationService:
         self._active_jobs[job_id] = job
         return job
 
-    def _get_variation_aspect(self, config: Dict, index: int) -> str:
-        """Определяет аспект вариации для элемента"""
-        aspects = config.get("variation_aspects", ["style"])
-        return aspects[index % len(aspects)]
-
-    def _format_item_prompt(
-        self,
-        config: Dict,
-        base_prompt: str,
-        index: int,
-        variation_aspect: str,
-        custom_params: Optional[Dict],
-    ) -> str:
-        """Формирует промпт для конкретного элемента пакета"""
-
-        modifier = config.get("prompt_modifier", "{base_prompt}")
-
-        # Для режима с отдельными стилями
-        if config.get("styles_per_variation"):
-            styles = [
-                "realistic",
-                "artistic",
-                "abstract",
-                "minimalist",
-                "vibrant",
-                "noir",
-            ]
-            style = styles[index % len(styles)]
-            template = config.get("prompt_template", "Style {style}: {base_prompt}")
-            return template.format(style=style, base_prompt=base_prompt)
-
-        # Стандартная замена
-        try:
-            return modifier.format(
-                base_prompt=base_prompt,
-                index=index + 1,
-                variation_aspect=variation_aspect,
-                **(custom_params or {}),
-            )
-        except KeyError:
-            return base_prompt
-
     async def execute_batch(
         self,
         job: BatchJob,
         progress_callback: Optional[Callable[[BatchJob], Any]] = None,
     ) -> BatchJob:
-        """Выполняет пакетную генерацию с прогрессом"""
+        """Выполняет пакетное редактирование с прогрессом"""
 
         job.status = BatchStatus.RUNNING
         job.progress_callback = progress_callback
 
-        config = self._get_batch_config(job.mode)
-        model = config.get("gemini_model", "gemini-2.5-flash-image")
+        # Используем Pro модель с высоким качеством
+        model = "gemini-3-pro-image-preview"
 
-        # Определяем стратегию выполнения
-        if job.mode == "grid_2x2":
-            # Для сетки — один запрос с инструкцией на 4 варианта
-            await self._execute_grid_mode(job, model)
-        else:
-            # Для пакетов — параллельная генерация
-            await self._execute_parallel_batch(job, model)
+        # Пакетное редактирование — параллельная обработка
+        await self._execute_parallel_editing(job, model)
 
         # Финальная сборка
         await self._finalize_job(job)
 
         return job
 
-    async def _execute_grid_mode(self, job: BatchJob, model: str):
-        """Режим сетки 2×2 — один запрос, потом нарезка"""
+    async def _execute_parallel_editing(self, job: BatchJob, model: str):
+        """Параллельное редактирование с ограничением конкурентности"""
 
-        # Объединяем промпты с инструкцией для сетки
-        combined_prompt = (
-            f"Create a 2×2 grid image showing 4 variations of: {job.base_prompt}. "
-            f"Each quadrant shows a different take with variations in lighting, angle, mood, and composition. "
-            f"Consistent artistic style across all four. Clear separation between quadrants."
-        )
-
-        item = job.items[0]
-        item.status = BatchStatus.RUNNING
-        item.started_at = time.time()
-
-        try:
-            # Генерируем одно большое изображение
-            result = await gemini_service.generate_image(
-                prompt=combined_prompt,
-                model=model,
-                aspect_ratio="1:1",  # Квадрат для равных квадрантов
-            )
-
-            if result:
-                # Нарезаем на 4 части
-                quadrants = await self._split_image_grid(result, 2, 2)
-
-                for i, quadrant in enumerate(quadrants):
-                    if i < len(job.items):
-                        job.items[i].result = quadrant
-                        job.items[i].status = BatchStatus.COMPLETED
-                        job.items[i].completed_at = time.time()
-
-                    # Уведомляем о прогрессе
-                    if job.progress_callback:
-                        await job.progress_callback(job)
-            else:
-                for item in job.items:
-                    item.status = BatchStatus.FAILED
-                    item.error = "Generation failed"
-
-        except Exception as e:
-            logger.exception(f"Grid generation failed: {e}")
-            for item in job.items:
-                item.status = BatchStatus.FAILED
-                item.error = str(e)
-
-    async def _split_image_grid(
-        self, image_bytes: bytes, rows: int, cols: int
-    ) -> List[bytes]:
-        """Нарезает изображение на сетку"""
-
-        def _split():
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_bytes))
-            width, height = img.size
-
-            cell_width = width // cols
-            cell_height = height // rows
-
-            quadrants = []
-            for row in range(rows):
-                for col in range(cols):
-                    left = col * cell_width
-                    upper = row * cell_height
-                    right = left + cell_width
-                    lower = upper + cell_height
-
-                    quadrant = img.crop((left, upper, right, lower))
-
-                    # Сохраняем в буфер
-                    buf = io.BytesIO()
-                    quadrant.save(buf, format="PNG")
-                    quadrants.append(buf.getvalue())
-
-            return quadrants
-
-        # Выполняем в потоке (CPU-bound операция)
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._executor, _split)
-
-    async def _execute_parallel_batch(self, job: BatchJob, model: str):
-        """Параллельная генерация с ограничением конкурентности"""
-
-        async def generate_item(item: BatchItem):
+        async def edit_item(item: BatchItem):
             async with self._semaphore:
                 item.status = BatchStatus.RUNNING
                 item.started_at = time.time()
 
                 try:
+                    # Редактирование изображения через Gemini с Pro моделью, 4K качеством
+                    # Используем публичный URL если доступен, иначе bytes
                     result = await gemini_service.generate_image(
-                        prompt=item.prompt, model=model
+                        prompt=item.prompt,
+                        model=model,
+                        aspect_ratio=job.aspect_ratio,
+                        image_input=item.image if not item.image_url else None,
+                        image_input_url=item.image_url,
+                        resolution="4K",
                     )
 
                     if result:
                         item.result = result
+                        # Сохраняем результат в файл и получаем публичный URL
+                        result_url = self._save_result_file(result, "png")
+                        if result_url:
+                            item.result_url = result_url
                         item.status = BatchStatus.COMPLETED
                     else:
                         item.status = BatchStatus.FAILED
@@ -322,7 +220,7 @@ class BatchGenerationService:
                         await job.progress_callback(job)
 
         # Запускаем все задачи параллельно (семафор ограничит)
-        await asyncio.gather(*[generate_item(item) for item in job.items])
+        await asyncio.gather(*[edit_item(item) for item in job.items])
 
     async def _finalize_job(self, job: BatchJob):
         """Финализирует задачу — сборка галереи, метрики"""
@@ -349,7 +247,7 @@ class BatchGenerationService:
             await save_batch_job(
                 job_id=job.id,
                 user_id=job.user_id,
-                mode=job.mode,
+                mode="batch_edit",
                 total_cost=job.total_cost,
                 results_count=sum(
                     1 for i in job.items if i.status == BatchStatus.COMPLETED
@@ -461,16 +359,12 @@ class BatchGenerationService:
         return self._active_jobs.get(job_id)
 
     def get_batch_modes(self) -> Dict[str, Dict]:
-        """Получает все доступные режимы пакетной генерации"""
-        config = self._get_batch_config("grid_2x2")  # Загружаем файл
-        if not config:
-            return {}
-
+        """Получает все доступные режимы пакетного редактирования"""
         try:
             presets_path = Path("data/presets.json")
             with open(presets_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get("batch_modes", {})
+            return data.get("batch_edit_modes", {})
         except:
             return {}
 
@@ -491,4 +385,4 @@ class BatchGenerationService:
 
 
 # Глобальный сервис
-batch_service = BatchGenerationService()
+batch_service = BatchEditingService()

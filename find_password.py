@@ -15,11 +15,11 @@ def generate_token(data: dict, password: str) -> str:
             continue
         if isinstance(value, (str, int, float, bool)):
             token_params[key] = str(value)
-    
+
     token_params["Password"] = password
     sorted_keys = sorted(token_params.keys())
     values_str = "".join(token_params[k] for k in sorted_keys)
-    
+
     return hashlib.sha256(values_str.encode("utf-8")).hexdigest()
 
 

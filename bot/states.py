@@ -11,7 +11,12 @@ class GenerationStates(StatesGroup):
     selecting_batch_count = (
         State()
     )  # Выбор количества изображений для пакетной генерации
-    
+
+    # Состояния для пакетного редактирования
+    waiting_for_batch_image = State()  # Ожидание загрузки фото
+    waiting_for_batch_prompt = State()  # Ожидание ввода промпта
+    waiting_for_batch_aspect_ratio = State()  # Ожидание выбора aspect ratio
+
     # Состояния для видео-опций
     selecting_duration = State()  # Выбор длительности видео
     selecting_aspect_ratio = State()  # Выбор формата видео
@@ -37,10 +42,10 @@ class AdminStates(StatesGroup):
 
 class BatchGenerationStates(StatesGroup):
     """Состояния для пакетной генерации"""
-    
-    selecting_mode = State()           # Выбор режима: pro или standard
-    selecting_preset = State()         # Выбор пресета
-    entering_prompts = State()         # Ввод промптов (один или несколько)
-    uploading_references = State()     # Загрузка референсных изображений
-    confirming_batch = State()         # Подтверждение перед запуском
-    selecting_batch_count = State()    # Количество изображений (для одиночного промпта)
+
+    selecting_mode = State()  # Выбор режима: pro или standard
+    selecting_preset = State()  # Выбор пресета
+    entering_prompts = State()  # Ввод промптов (один или несколько)
+    uploading_references = State()  # Загрузка референсных изображений
+    confirming_batch = State()  # Подтверждение перед запуском
+    selecting_batch_count = State()  # Количество изображений (для одиночного промпта)

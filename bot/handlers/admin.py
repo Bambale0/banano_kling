@@ -3,6 +3,7 @@ import logging
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+
 from bot.config import config
 from bot.database import (
     add_credits,
@@ -20,7 +21,7 @@ router = Router()
 
 def is_admin(user_id: int) -> bool:
     """Проверяет, является ли пользователь администратором"""
-    return preset_manager.is_admin(user_id)
+    return config.is_admin(user_id)
 
 
 @router.message(Command("admin"))
@@ -321,6 +322,7 @@ async def admin_execute_broadcast(
 
     # Получаем всех пользователей
     import aiosqlite
+
     from bot.database import DATABASE_PATH
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
