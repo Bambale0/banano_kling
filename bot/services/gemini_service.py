@@ -69,9 +69,10 @@ class GeminiService:
         return self._client
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Получение HTTP сессии"""
+        """Получение HTTP сессии с таймаутом"""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты для генерации изображений
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
     # =========================================================================
