@@ -105,6 +105,55 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
         return None
 
 
+async def _send_original_document(send_callable, result: bytes, saved_url: Optional[str], filename: str = "original.png"):
+    """Helper to send original document with fallbacks and logging.
+
+    send_callable: coroutine function like message.answer_document
+    """
+    try:
+        logger.info("Sending original document via BufferedInputFile")
+        doc = types.BufferedInputFile(result, filename=filename)
+        await send_callable(document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+        logger.info("Original document sent (BufferedInputFile)")
+        return
+    except Exception:
+        logger.exception("Failed to send original document via BufferedInputFile, trying fallback")
+
+    try:
+        if saved_url:
+            logger.info("Sending original document via saved URL")
+            await send_callable(document=saved_url, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+            logger.info("Original document sent via URL")
+            return
+
+        bio = io.BytesIO(result)
+        bio.name = filename
+        bio.seek(0)
+        logger.info("Sending original document via BytesIO fallback")
+        await send_callable(document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+        logger.info("Original document sent via BytesIO")
+    except Exception:
+        logger.exception("Fallback to send original document failed")
+
+
+async def _send_download_link(send_callable, saved_url: str):
+    """Send a small message with an inline URL button to download the original file."""
+    try:
+        kb = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=saved_url)]
+            ]
+        )
+        await send_callable(
+            f"📥 <b>Исходник</b> — можно скачать по ссылке:",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+        logger.info("Sent download link to user")
+    except Exception:
+        logger.exception("Failed to send download link")
+
+
 # =============================================================================
 # ОСНОВНЫЕ ОБРАБОТЧИКИ БЕЗ ПРЕСЕТОВ
 # =============================================================================
@@ -142,25 +191,28 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
 
 @router.callback_query(F.data == "edit_image")
 async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
-    """Начинает редактирование изображения - запрашивает фото"""
+    """Начинает редактирование изображения с возможностью сохранения лиц через референсы"""
     await state.set_state(GenerationStates.waiting_for_image)
 
     user_credits = await get_user_credits(callback.from_user.id)
-    settings = await get_user_settings(callback.from_user.id)
-    model = settings["preferred_model"]
-    model_name = "⚡ Flash" if model == "flash" else "💎 Pro"
-    model_cost = "1" if model == "flash" else "2"
 
-    # Сохраняем модель и тип генерации в state
-    await state.update_data(generation_type="image_edit", preferred_model=model)
+    # Сохраняем модель и тип генерации в state + инициализируем референсы
+    await state.update_data(
+        generation_type="image_edit",
+        preferred_model="pro",  # Для редактирования используем Pro для лучшего качества
+        reference_images=[],  # Для сохранения лиц
+    )
 
     await callback.message.edit_text(
         f"✏️ <b>Редактирование фото</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)\n\n"
-        f"Загрузите изображение, которое хотите отредактировать,\n"
-        f"а затем опишите, что нужно изменить.\n\n"
-        f"<i>После загрузки изображения, опишите что сделать</i>",
+        f"🤖 Модель: 💎 Pro (2🍌, 4K, сохранение лиц)\n\n"
+        f"<b>Как редактировать:</b>\n"
+        f"1. Загрузите <b>главное фото</b> для редактирования\n"
+        f"2. Добавьте до <b>4 фото лица</b> для сохранения (опционально)\n"
+        f"3. Опишите что изменить\n\n"
+        f"<i>💡 Для сохранения лица: загрузите сначала главное фото,\n"
+        f"потом фото лица для сохранения, затем введите промпт</i>",
         reply_markup=get_back_keyboard("back_main"),
         parse_mode="HTML",
     )
@@ -372,30 +424,37 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
 
 
 @router.callback_query(F.data.startswith("video_edit_input_"))
-async def handle_video_edit_input_type(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Обработка выбора типа входных данных для видео-эффектов"""
-    input_type = callback.data.replace("video_edit_input_", "")  # video или image
+async def handle_video_edit_input_type(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор типа входного медиа для видео-эффектов: видео или изображение"""
+    choice = callback.data.replace("video_edit_input_", "")
 
-    await state.update_data(video_edit_input_type=input_type)
-
-    if input_type == "video":
+    if choice == "video":
         await state.set_state(GenerationStates.waiting_for_video)
-        text = (
-            f"✂️ <b>Видео-эффекты</b>\n\n"
-            f"<b>Режим: Преобразование видео</b>\n\n"
-            f"Загрузите видео (3-10 секунд), которое хотите преобразить.\n"
-            f"После загрузки опишите желаемый эффект."
+        await state.update_data(
+            generation_type="video_edit",
+            video_edit_input_type="video",
+            has_video=False,
+            has_image=False,
         )
-    else:  # image
-        await state.set_state(GenerationStates.waiting_for_image)
-        await state.update_data(generation_type="video_edit_image")
         text = (
-            f"✂️ <b>Видео-эффекты</b>\n\n"
-            f"<b>Режим: Создание видео из фото</b>\n\n"
-            f"Загрузите изображение, которое хотите превратить в видео.\n"
-            f"После загрузки опишите движение и эффект."
+            "✂️ <b>Видео-эффекты</b>\n\n"
+            "<b>Режим: Преобразование видео</b>\n\n"
+            "Загрузите видео (3-10 секунд), которое хотите преобразить.\n"
+            "После загрузки опишите желаем эффект."
+        )
+    else:
+        await state.set_state(GenerationStates.waiting_for_image)
+        await state.update_data(
+            generation_type="video_edit_image",
+            video_edit_input_type="image",
+            has_video=False,
+            has_image=False,
+        )
+        text = (
+            "✂️ <b>Видео-эффекты</b>\n\n"
+            "<b>Режим: Создание видео из фото</b>\n\n"
+            "Загрузите изображение, которое хотите превратить в видео.\n"
+            "После загрузки опишите движение и эффект."
         )
 
     await callback.message.edit_text(
@@ -407,21 +466,9 @@ async def handle_video_edit_input_type(
 
 
 @router.callback_query(F.data == "video_edit_change_type")
-async def handle_video_edit_change_type(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Возврат к выбору типа входных данных для видео-эффектов"""
-    # Очищаем загруженные файлы
-    data = await state.get_data()
-    video_edit_options = data.get(
-        "video_edit_options",
-        {
-            "quality": "std",
-            "duration": 5,
-            "aspect_ratio": "16:9",
-        },
-    )
-    await state.clear()
+async def handle_video_edit_change_type(callback: types.CallbackQuery, state: FSMContext):
+    """Сброс и выбор нового типа входного медиа для видео-эффектов"""
+    video_edit_options = {"quality": "std", "duration": 5, "aspect_ratio": "16:9"}
     await state.update_data(video_edit_options=video_edit_options)
 
     from bot.keyboards import get_video_edit_input_type_keyboard
@@ -493,12 +540,11 @@ async def handle_video_edit_ratio(callback: types.CallbackQuery, state: FSMConte
 async def show_video_edit_options(
     callback: types.CallbackQuery, state: FSMContext, quality: str, options: dict
 ):
-    """Показывает текущие опции видео-эффектов"""
     data = await state.get_data()
     input_type = data.get("video_edit_input_type", "video")
-    has_video = data.get("uploaded_video") is not None
-    has_image = data.get("uploaded_image") is not None
-    user_prompt = data.get("user_prompt", "")
+    has_video = data.get("has_video", False)
+    has_image = data.get("has_image", False)
+    user_prompt = data.get("video_edit_prompt", "")
 
     quality_emoji = "💎" if quality == "pro" else "⚡"
 
@@ -651,14 +697,7 @@ async def show_preset_details(callback: types.CallbackQuery, state: FSMContext):
         "video_generation",
         "video_editing",
     ]:
-        text += f"📐 Формат: <code>{preset.aspect_ratio}</code>\n"
-    if preset.duration and preset.category not in ["video_generation", "video_editing"]:
-        text += f"⏱ Длительность: <code>{preset.duration} сек</code>\n"
-
-    if preset.requires_upload:
-        text += "\n📎 <i>Требуется загрузить медиафайл</i>\n"
-    if preset.requires_input and preset.input_prompt:
-        text += f"\n📝 <i>{preset.input_prompt}</i>\n"
+        text += f"   📐 Формат: <code>{preset.aspect_ratio}</code>\n"
 
     # Добавляем подсказку
     hint = UserHints.get_hint_for_stage("preset")
@@ -856,12 +895,97 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data.startswith("ref_"))
 async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка работы с референсными изображениями"""
+    """
+    Обработка работы с референсными изображениями (до 14 шт)
+    Поддерживает загрузку, управление и подтверждение референсов
+    """
     parts = callback.data.split("_")
-    if len(parts) >= 2:
-        preset_id = parts[1]
+    action = parts[1] if len(parts) > 1 else ""
+    preset_id = parts[2] if len(parts) > 2 else None
 
-        # Показываем справку о референсах
+    data = await state.get_data()
+    current_refs = data.get("reference_images", [])
+    max_refs = 14
+
+    if action == "upload":
+        # Начинаем загрузку референсных изображений
+        await state.set_state(GenerationStates.uploading_reference_images)
+        await state.update_data(preset_id=preset_id, reference_images=current_refs)
+
+        await callback.message.edit_text(
+            f"📎 <b>Загрузка референсных изображений</b>\n\n"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
+            f"• До 10 объектов с высокой точностью\n"
+            f"• До 4 персонажей для консистентности\n"
+            f"• До 14 изображений суммарно\n\n"
+            f"После загрузки нажмите ▶️ Продолжить",
+            reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+            parse_mode="HTML",
+        )
+
+    elif action == "clear":
+        # Очищаем все референсы
+        await state.update_data(reference_images=[])
+        await callback.message.edit_text(
+            f"📎 <b>Референсы очищены</b>\n\n"
+            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"Отправьте фотографии для загрузки референсов:",
+            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
+            parse_mode="HTML",
+        )
+
+    elif action == "confirm":
+        # Переходим к подтверждению
+        if not current_refs:
+            await callback.answer("❌ Нет загруженных изображений", show_alert=True)
+            return
+
+        await state.set_state(GenerationStates.confirming_reference_images)
+
+        # Показываем превью загруженных изображений
+        ref_count = len(current_refs)
+        await callback.message.edit_text(
+            f"✅ <b>Референсные изображения загружены</b>\n\n"
+            f"Количество: <code>{ref_count}</code> из <code>{max_refs}</code>\n\n"
+            f"Теперь вы можете:\n"
+            f"• 🔄 Перезагрузить — загрузить другие изображения\n"
+            f"• ✅ Подтвердить — продолжить с текущими референсами",
+            reply_markup=get_reference_images_confirmation_keyboard(preset_id),
+            parse_mode="HTML",
+        )
+
+    elif action == "reload":
+        # Перезагружаем — очищаем и начинаем заново
+        await state.update_data(reference_images=[])
+        await state.set_state(GenerationStates.uploading_reference_images)
+
+        await callback.message.edit_text(
+            f"📎 <b>Перезагрузка референсов</b>\n\n"
+            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"Отправьте новые фотографии для загрузки референсов:",
+            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
+            parse_mode="HTML",
+        )
+
+    elif action == "accept":
+        # Сохраняем референсы в generation_options и возвращаемся к пресету
+        generation_options = data.get("generation_options", {})
+        generation_options["reference_images"] = current_refs
+        await state.update_data(generation_options=generation_options)
+
+        preset = preset_manager.get_preset(preset_id)
+        if preset:
+            # Возвращаемся к экрану пресета
+            await show_preset_details(callback.message, preset, callback.from_user.id)
+        else:
+            await callback.message.edit_text(
+                "✅ Референсы сохранены!",
+                reply_markup=get_back_keyboard("back_main"),
+            )
+
+    else:
+        # Показываем справку о референсах (стандартное поведение)
         help_text = get_reference_images_help()
 
         await callback.message.edit_text(
@@ -994,6 +1118,11 @@ async def process_custom_input(message: types.Message, state: FSMContext):
     preset_id = data.get("preset_id")
     generation_type = data.get("generation_type")
 
+    # Guard: ensure we have text input — avoid NoneType slicing errors
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовый промпт (только текст).")
+        return
+
     # Если это генерация изображения - показываем выбор формата
     if generation_type == "image":
         final_prompt = message.text
@@ -1056,8 +1185,36 @@ async def process_custom_input(message: types.Message, state: FSMContext):
             f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
             f"   ⏱ Длительность: <code>{video_edit_options.get('duration', 5)} сек</code>\n"
             f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
-            f"🍌 Стоимость: <code>{cost}</code>🍌",
-            reply_markup=get_video_edit_confirm_keyboard(),
+            f"Стоимость: <code>{cost}🍌</code>",
+            reply_markup=get_confirmation_keyboard(
+                f"run_video_edit_confirm_{cost}",
+                "back_main",
+                "▶️ Запустить",
+                "❌ Отмена"
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    # Стандартное поведение для пресетов
+    final_prompt = message.text
+    await state.update_data(final_prompt=final_prompt)
+
+    preset = preset_manager.get_preset(preset_id)
+    if preset:
+        await state.set_state(GenerationStates.confirming_generation)
+
+        # Показываем подтверждение с возможностью добавить референсы
+        has_refs = bool(data.get("reference_images"))
+
+        await message.answer(
+            f"▶️ <b>Подтвердите генерацию</b>\n\n"
+            f"Пресет: <b>{preset.name}</b>\n"
+            f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+            f"<b>Промпт:</b>\n"
+            f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+            f"📎 Референсы: {'✅ Загружено' if has_refs else '❌ Нет'} (до 14 изображений)",
+            reply_markup=get_preset_action_keyboard(preset_id, has_input=True),
             parse_mode="HTML",
         )
         return
@@ -1203,10 +1360,9 @@ async def start_no_preset_generation(
 
             result = await gemini_service.generate_image(
                 prompt=prompt,
-                model="gemini-2.5-flash-image",
+                model="gemini-3-pro-image-preview",
                 aspect_ratio="1:1",
                 image_input=None,
-                resolution="1K",
             )
 
             await processing.delete()
@@ -1214,6 +1370,15 @@ async def start_no_preset_generation(
             if result:
                 # Сохраняем
                 saved_url = save_uploaded_file(result, "png")
+
+                # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+                try:
+                    await state.update_data(
+                        last_generated_image_bytes=result,
+                        last_generated_image_url=saved_url,
+                    )
+                except Exception:
+                    logger.exception("Failed to update state with last_generated_image")
 
                 # Создаём задачу в БД
                 if saved_url:
@@ -1224,7 +1389,7 @@ async def start_no_preset_generation(
                     await add_generation_task(user.id, task_id, "image", "no_preset")
                     await complete_video_task(task_id, saved_url)
 
-                # Отправляем
+                # Отправляем превью (photo) и оригинал как документ
                 photo = types.BufferedInputFile(result, filename="generated.png")
                 await message.answer_photo(
                     photo=photo,
@@ -1232,6 +1397,8 @@ async def start_no_preset_generation(
                     parse_mode="HTML",
                     reply_markup=get_multiturn_keyboard("no_preset"),
                 )
+
+                await _send_original_document(message.answer_document, result, saved_url)
             else:
                 await add_credits(message.from_user.id, cost)
                 await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
@@ -1321,28 +1488,91 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
 
         # Читаем байты
         image_data = image_bytes.read()
+        
+        # Для image_edit: проверяем, есть ли уже главное фото
+        if generation_type == "image_edit":
+            uploaded_image = data.get("uploaded_image")
+            ref_images = data.get("reference_images", [])
+            
+            if uploaded_image and len(ref_images) < 4:
+                # Уже есть главное фото — добавляем как референс лица
+                ref_images.append(image_data)
+                await state.update_data(reference_images=ref_images)
+                
+                await message.answer(
+                    f"✅ <b>Референс лица добавлен!</b>\n"
+                    f"📎 Всего референсов: <code>{len(ref_images)}/4</code>\n\n"
+                    f"Можете добавить ещё или нажмите «Пропустить» для ввода промпта",
+                    reply_markup=types.InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [types.InlineKeyboardButton(text="✅ Продолжить, ввести промпт", callback_data="skip_face_ref")]
+                        ]
+                    ),
+                    parse_mode="HTML",
+                )
+                return
+            elif uploaded_image and len(ref_images) >= 4:
+                # Достигнут лимит референсов
+                await state.set_state(GenerationStates.waiting_for_input)
+                await message.answer(
+                    f"✅ <b>Достигнут лимит референсов (4)</b>\n\n"
+                    f"Теперь опишите, что нужно сделать:\n"
+                    f"• Изменить стиль\n"
+                    f"• Добавить/удалить элементы\n"
+                    f"• Сохранить лицо как на референсе\n"
+                    f"• и т.д.",
+                    reply_markup=get_back_keyboard("back_main"),
+                    parse_mode="HTML",
+                )
+                return
+        
+        # Сохраняем в папку static/uploads (только для главного фото)
+        if generation_type != "image_edit" or not data.get("uploaded_image"):
+            image_url = save_uploaded_file(image_data, "png")
 
-        # Сохраняем в папку static/uploads
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(
-                uploaded_image=image_data, uploaded_image_url=image_url
-            )
-        else:
-            await state.update_data(uploaded_image=image_data)
+            if image_url:
+                await state.update_data(
+                    uploaded_image=image_data, uploaded_image_url=image_url
+                )
+            else:
+                await state.update_data(uploaded_image=image_data)
 
         # Запрашиваем описание
         if generation_type == "image_edit":
-            edit_type = "изображения"
-            prompt_text = (
-                f"✅ Изображение получено!\n\n"
-                f"Теперь опишите, что нужно сделать с {edit_type}:\n"
-                f"• Изменить стиль\n"
-                f"• Добавить элемент\n"
-                f"• Удалить объект\n"
-                f"• и т.д."
-            )
+            # Проверяем, есть ли уже референсы
+            ref_images = data.get("reference_images", [])
+            
+            if not ref_images:
+                # Первое фото — главное, предлагаем добавить референсы лиц
+                await state.set_state(GenerationStates.waiting_for_image)
+                await message.answer(
+                    f"✅ <b>Главное фото получено!</b>\n\n"
+                    f"Теперь вы можете:\n"
+                    f"• Отправить до <b>4 фото лица</b> для сохранения\n"
+                    f"• Или сразу ввести описание изменений\n\n"
+                    f"<i>Для сохранения лица: отправьте фото лица крупным планом</i>",
+                    reply_markup=types.InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [types.InlineKeyboardButton(text="✅ Пропустить, ввести промпт", callback_data="skip_face_ref")]
+                        ]
+                    ),
+                    parse_mode="HTML",
+                )
+            else:
+                # Уже есть референсы, переходим к промпту
+                await state.set_state(GenerationStates.waiting_for_input)
+                await message.answer(
+                    f"✅ <b>Фото получено!</b>\n"
+                    f"📎 Референсов лица: <code>{len(ref_images)}</code>\n\n"
+                    f"Теперь опишите, что нужно сделать:\n"
+                    f"• Изменить стиль\n"
+                    f"• Добавить/удалить элементы\n"
+                    f"• Сохранить лицо как на референсе\n"
+                    f"• и т.д.",
+                    reply_markup=get_back_keyboard("back_main"),
+                    parse_mode="HTML",
+                )
+            return
         elif generation_type == "video_edit_image":
             prompt_text = (
                 f"✅ Изображение получено!\n\n"
@@ -1434,6 +1664,70 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
 
 
 # =============================================================================
+# ЗАГРУЗКА РЕФЕРЕНСНЫХ ИЗОБРАЖЕНИЙ (до 14 шт)
+# =============================================================================
+
+@router.message(GenerationStates.uploading_reference_images, F.photo)
+async def process_reference_images_upload(message: types.Message, state: FSMContext):
+    """
+    Обрабатывает загрузку референсных изображений (до 14)
+    Согласно документации: до 10 объектов с высокой точностью,
+    до 4 персонажей для консистентности, до 14 суммарно
+    """
+    data = await state.get_data()
+    current_refs = data.get("reference_images", [])
+    preset_id = data.get("preset_id")
+    max_refs = 14
+
+    # Проверяем лимит
+    if len(current_refs) >= max_refs:
+        await message.answer(
+            f"⚠️ <b>Достигнут лимит референсов</b>\n\n"
+            f"Загружено максимальное количество: <code>{max_refs}/{max_refs}</code>\n"
+            f"Нажмите ▶️ Продолжить для перехода к генерации.",
+            reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+            parse_mode="HTML",
+        )
+        return
+
+    # Скачиваем изображение
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+    image_data = image_bytes.read()
+
+    # Добавляем к списку референсов
+    current_refs.append(image_data)
+    await state.update_data(reference_images=current_refs)
+
+    remaining = max_refs - len(current_refs)
+
+    await message.answer(
+        f"✅ <b>Изображение добавлено!</b>\n\n"
+        f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n"
+        f"Осталось: <code>{remaining}</code>\n\n"
+        f"Отправьте еще фото или нажмите ▶️ Продолжить",
+        reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+        parse_mode="HTML",
+    )
+
+
+@router.message(GenerationStates.uploading_reference_images)
+async def invalid_reference_upload(message: types.Message, state: FSMContext):
+    """Обрабатывает невалидный ввод при загрузке референсов"""
+    data = await state.get_data()
+    current_refs = data.get("reference_images", [])
+    preset_id = data.get("preset_id")
+    max_refs = 14
+
+    await message.answer(
+        f"⚠️ Пожалуйста, отправьте изображение (фото)\n\n"
+        f"Или нажмите ▶️ Продолжить если загрузили все референсы",
+        reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+    )
+
+
+# =============================================================================
 # ЗАПУСК ГЕНЕРАЦИИ
 # =============================================================================
 
@@ -1505,7 +1799,7 @@ async def generate_image(
         f"{encouragements[0]}\n\n"
         f"🎨 <b>Генерирую изображение...</b>\n\n"
         f"⏱ Это займёт 10-30 секунд\n\n"
-        f"<i>Модель: {options.get('model', 'gemini-2.5-flash-image')}</i>",
+        f"<i>Модель: {options.get('model', 'gemini-3-pro-image-preview')}</i>",
         parse_mode="HTML",
     )
 
@@ -1513,18 +1807,27 @@ async def generate_image(
         from bot.services.gemini_service import gemini_service
 
         result = await gemini_service.generate_image(
-            prompt=prompt,
-            model=options.get("model", preset.model),
-            aspect_ratio=options.get("aspect_ratio", preset.aspect_ratio),
-            image_input=image_bytes,
-            resolution=options.get("resolution", "1K"),
-            enable_search=options.get("enable_search", False),
-            reference_images=options.get("reference_images", []),
-        )
+                prompt=prompt,
+                model=options.get("model", preset.model if preset.model else "gemini-3-pro-image-preview"),
+                aspect_ratio=options.get("aspect_ratio", preset.aspect_ratio),
+                image_input=image_bytes,
+                enable_search=options.get("enable_search", False),
+                reference_images=options.get("reference_images", []),
+                preserve_faces=True,  # Сохраняем лица при редактировании
+            )
 
         if result:
             # Сохраняем изображение на сервере для возможности скачивания
             saved_url = save_uploaded_file(result, "png")
+
+            # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+            try:
+                await state.update_data(
+                    last_generated_image_bytes=result,
+                    last_generated_image_url=saved_url,
+                )
+            except Exception:
+                logger.exception("Failed to update state with last_generated_image")
 
             # Создаём задачу в БД для возможности скачивания
             if saved_url:
@@ -1555,6 +1858,9 @@ async def generate_image(
                 reply_markup=get_multiturn_keyboard(preset.id),
                 parse_mode="HTML",
             )
+
+            # Отправляем оригинал как документ
+            await _send_original_document(callback.message.answer_document, result, saved_url)
         else:
             # Возвращаем кредиты при ошибке
             await add_credits(callback.from_user.id, preset.cost)
@@ -1728,16 +2034,24 @@ async def run_editing_inline(
 
             result = await gemini_service.generate_image(
                 prompt=user_input,
-                model="gemini-2.5-flash-image",
+                model="gemini-3-pro-image-preview",
                 aspect_ratio="1:1",
                 image_input=uploaded_image,
-                resolution="1K",
             )
 
             await processing.delete()
 
             if result:
                 saved_url = save_uploaded_file(result, "png")
+
+                # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+                try:
+                    await state.update_data(
+                        last_generated_image_bytes=result,
+                        last_generated_image_url=saved_url,
+                    )
+                except Exception:
+                    logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
                     from bot.database import add_generation_task, complete_video_task
@@ -1756,6 +2070,12 @@ async def run_editing_inline(
                     parse_mode="HTML",
                     reply_markup=get_multiturn_keyboard("no_preset_edit"),
                 )
+                # Попытка отправить оригинал как документ (иногда Telegram режет большие файлы)
+                await _send_original_document(message.answer_document, result, saved_url)
+
+                # Всегда отправляем ссылку на скачивание, чтобы пользователь точно получил исходник
+                if saved_url:
+                    await _send_download_link(message.answer, saved_url)
             else:
                 await add_credits(message.from_user.id, cost)
                 await message.answer("❌ Не удалось отредактировать. Бананы возвращены.")
@@ -1812,16 +2132,24 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
 
             result = await gemini_service.generate_image(
                 prompt=user_input,
-                model="gemini-2.5-flash-image",
+                model="gemini-3-pro-image-preview",
                 aspect_ratio="1:1",
                 image_input=uploaded_image,
-                resolution="1K",
             )
 
             await processing.delete()
 
             if result:
                 saved_url = save_uploaded_file(result, "png")
+
+                # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+                try:
+                    await state.update_data(
+                        last_generated_image_bytes=result,
+                        last_generated_image_url=saved_url,
+                    )
+                except Exception:
+                    logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
                     from bot.database import add_generation_task, complete_video_task
@@ -1840,6 +2168,12 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
                     parse_mode="HTML",
                     reply_markup=get_multiturn_keyboard("no_preset_edit"),
                 )
+
+                await _send_original_document(callback.message.answer_document, result, saved_url)
+                if saved_url:
+                    await _send_download_link(callback.message.answer, saved_url)
+                if saved_url:
+                    await _send_download_link(callback.message.answer, saved_url)
             else:
                 await add_credits(callback.from_user.id, cost)
                 await callback.message.answer(
@@ -2052,6 +2386,41 @@ async def handle_run_no_preset_image(callback: types.CallbackQuery, state: FSMCo
     )
 
 
+@router.callback_query(F.data == "skip_face_ref")
+async def skip_face_reference(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает добавление референсов лиц и переходит к вводу промпта"""
+    data = await state.get_data()
+    ref_images = data.get("reference_images", [])
+    
+    await state.set_state(GenerationStates.waiting_for_input)
+    
+    if ref_images:
+        await callback.message.edit_text(
+            f"✅ <b>Готово!</b>\n"
+            f"📎 Референсов лица: <code>{len(ref_images)}</code>\n\n"
+            f"Теперь опишите, что нужно сделать:\n"
+            f"• Изменить стиль\n"
+            f"• Добавить/удалить элементы\n"
+            f"• Сохранить лицо как на референсе\n"
+            f"• и т.д.\n\n"
+            f"<i>Введите ваш запрос:</i>",
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.edit_text(
+            f"✅ <b>Продолжаем без референсов</b>\n\n"
+            f"Теперь опишите, что нужно сделать:\n"
+            f"• Изменить стиль\n"
+            f"• Добавить/удалить элементы\n"
+            f"• и т.д.\n\n"
+            f"<i>Введите ваш запрос:</i>",
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "run_no_preset_edit_image")
 async def handle_run_no_preset_edit_image(
     callback: types.CallbackQuery, state: FSMContext
@@ -2178,7 +2547,7 @@ async def run_no_preset_image_generation(
     """Запускает генерацию изображения без пресета стом"""
     # указанным форма Получаем предпочитаемую модель из настроек
     data = await state.get_data()
-    preferred_model = data.get("preferred_model", "flash")
+    preferred_model = data.get("preferred_model", "pro")
 
     # Определяем пользователя (для callback message.from_user это бот)
     if user_id is None:
@@ -2222,13 +2591,21 @@ async def run_no_preset_image_generation(
             model=model,
             aspect_ratio=aspect_ratio,
             image_input=None,
-            resolution="1K",
         )
 
         await processing.delete()
 
         if result:
             saved_url = save_uploaded_file(result, "png")
+
+            # Сохраняем оригинальные байты и URL в состоянии
+            try:
+                await state.update_data(
+                    last_generated_image_bytes=result,
+                    last_generated_image_url=saved_url,
+                )
+            except Exception:
+                logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
                 from bot.database import add_generation_task, complete_video_task
@@ -2247,6 +2624,9 @@ async def run_no_preset_image_generation(
                 parse_mode="HTML",
                 reply_markup=get_multiturn_keyboard("no_preset"),
             )
+            await _send_original_document(message.answer_document, result, saved_url)
+            if saved_url:
+                await _send_download_link(message.answer, saved_url)
         else:
             await add_credits(message.from_user.id, cost)
             await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
@@ -2279,7 +2659,7 @@ async def run_no_preset_image_edit(
         user_id = message.from_user.id
 
     # Получаем предпочитаемую модель из настроек
-    preferred_model = data.get("preferred_model", "flash")
+    preferred_model = data.get("preferred_model", "pro")
 
     # Определяем модель и стоимость
     if preferred_model == "flash":
@@ -2315,18 +2695,31 @@ async def run_no_preset_image_edit(
     try:
         from bot.services.gemini_service import gemini_service
 
+        # Получаем референсы для сохранения лиц
+        ref_images = data.get("reference_images", [])
+        
         result = await gemini_service.generate_image(
             prompt=prompt,
             model=model,
             aspect_ratio=aspect_ratio,
             image_input=uploaded_image,
-            resolution="1K",
+            reference_images=ref_images if ref_images else None,
+            preserve_faces=True if ref_images else False,
         )
 
         await processing.delete()
 
         if result:
             saved_url = save_uploaded_file(result, "png")
+
+            # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+            try:
+                await state.update_data(
+                    last_generated_image_bytes=result,
+                    last_generated_image_url=saved_url,
+                )
+            except Exception:
+                logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
                 from bot.database import add_generation_task, complete_video_task
@@ -2843,123 +3236,7 @@ async def toggle_audio(callback: types.CallbackQuery, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("multiturn_download_"))
-async def handle_download(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка кнопки скачивания - отправляет файл для скачивания"""
-    import aiohttp
 
-    preset_id = callback.data.replace("multiturn_download_", "")
-
-    # Получаем данные из состояния - там хранится последнее сгенерированное изображение
-    data = await state.get_data()
-
-    # Пробуем получить URL изображения из разных источников
-    image_url = data.get("last_generated_image_url")
-
-    if not image_url:
-        # Если нет в состоянии, пробуем найти в БД по последней задаче пользователя
-        from bot.database import get_or_create_user, get_user_last_generation
-
-        user = await get_or_create_user(callback.from_user.id)
-        last_gen = await get_user_last_generation(user.id)
-        if last_gen:
-            image_url = last_gen.get("result_url")
-
-    if not image_url:
-        await callback.answer(
-            "Изображение не найдено. Сгенерируйте новое.", show_alert=True
-        )
-        return
-
-    await callback.answer("📥 Скачиваю...")
-
-    try:
-        # Скачиваем файл
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    await callback.message.answer("❌ Не удалось скачать файл")
-                    return
-
-                file_bytes = await resp.read()
-
-        # Определяем тип файла по URL
-        file_ext = "jpg"
-        if ".png" in image_url.lower():
-            file_ext = "png"
-        elif ".mp4" in image_url.lower():
-            file_ext = "mp4"
-        elif ".webm" in image_url.lower():
-            file_ext = "webm"
-
-        # Отправляем файл пользователю
-        filename = f"generated.{file_ext}"
-
-        if file_ext == "mp4" or file_ext == "webm":
-            # Видео
-            video = types.BufferedInputFile(file_bytes, filename=filename)
-            await callback.message.answer_video(
-                video=video,
-                caption=f"📥 <b>Скачано</b>\n\nПресет: {preset_id}",
-                parse_mode="HTML",
-            )
-        else:
-            # Изображение
-            photo = types.BufferedInputFile(file_bytes, filename=filename)
-            await callback.message.answer_photo(
-                photo=photo,
-                caption=f"📥 <b>Скачано</b>\n\nПресет: {preset_id}",
-                parse_mode="HTML",
-            )
-
-    except Exception as e:
-        logger.exception(f"Download error: {e}")
-        # Fallback - отправляем ссылку
-        await callback.message.answer(
-            f"📥 <b>Скачать можно по ссылке:</b>\n\n"
-            f'<a href="{image_url}">Скачать файл</a>\n\n'
-            f"<i>Нажмите на ссылку, чтобы сохранить файл</i>",
-            parse_mode="HTML",
-        )
-
-
-@router.callback_query(F.data.startswith("multiturn_save_"))
-async def handle_save(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка кнопки сохранения - показывает информацию о сохранении"""
-    preset_id = callback.data.replace("multiturn_save_", "")
-
-    data = await state.get_data()
-    image_url = data.get("last_generated_image_url")
-
-    if not image_url:
-        from bot.database import get_or_create_user, get_user_last_generation
-
-        user = await get_or_create_user(callback.from_user.id)
-        last_gen = await get_user_last_generation(user.id)
-        if last_gen:
-            image_url = last_gen.get("result_url")
-
-    if image_url:
-        await callback.message.answer(
-            f"💾 <b>Сохранено!</b>\n\n"
-            f"Ссылка на изображение:\n"
-            f"<code>{image_url[:100]}...</code>\n\n"
-            f"Вы можете скачать его в любое время.",
-            parse_mode="HTML",
-            reply_markup=get_main_menu_keyboard(
-                (await get_or_create_user(callback.from_user.id)).credits
-            ),
-        )
-    else:
-        await callback.message.answer(
-            "ℹ️ Изображение сохранено в истории генераций.\n"
-            "Найти его можно в разделе 'Мой баланс'.",
-            reply_markup=get_main_menu_keyboard(
-                (await get_or_create_user(callback.from_user.id)).credits
-            ),
-        )
-
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("multiturn_"))

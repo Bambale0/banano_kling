@@ -44,6 +44,7 @@ class GeminiService:
         "9:16",
         "16:9",
         "21:9",
+        "4K",
     ]
 
     def __init__(
@@ -79,6 +80,25 @@ class GeminiService:
     # ОСНОВНЫЕ МЕТОДЫ ГЕНЕРАЦИИ (согласно banana_api.md)
     # =========================================================================
 
+    # Промпты для сохранения лиц и персонажей (согласно документации Gemini)
+    FACE_PRESERVATION_PROMPT = """
+Important instructions for face/character preservation:
+1. Maintain EXACT facial features from reference images: face shape, eye shape, nose, mouth, facial structure
+2. Preserve skin tone, hair color, and hairstyle precisely
+3. Keep the same person/character identity across all variations
+4. Use high-fidelity mode for character consistency
+5. Maintain 4K resolution for detailed facial features
+"""
+
+    CHARACTER_CONSISTENCY_PROMPT = """
+Character consistency requirements:
+- Use up to 4 reference images of the same character for best consistency
+- Maintain exact facial proportions and features
+- Preserve unique identifying characteristics (moles, scars, distinctive features)
+- Keep consistent age appearance
+- Maintain same expression style unless specified otherwise
+"""
+
     async def generate_image(
         self,
         prompt: str,
@@ -86,10 +106,11 @@ class GeminiService:
         aspect_ratio: Optional[str] = None,
         image_input: Optional[bytes] = None,
         image_input_url: Optional[str] = None,
-        resolution: str = "2K",  # Flash: 2K по умолчанию, Pro: 4K
+        resolution: Optional[str] = None,  # None = автоопределение по модели
         enable_search: bool = False,
         reference_images: List[bytes] = None,
         reference_image_urls: List[str] = None,
+        preserve_faces: bool = True,  # По умолчанию сохраняем лица
     ) -> Optional[bytes]:
         """
         Основной метод генерации изображения
@@ -99,8 +120,34 @@ class GeminiService:
         - До 14 референсных изображений
         - Grounding с Google Search
         - Разрешение до 4K
+        - Face/character preservation (до 4 персонажей)
         """
-        # 1. Пробуем Nano Banana
+        # Автоматически назначаем разрешение по модели если не указано явно:
+        # - Flash модели: 2K (оптимально для скорости)
+        # - Pro модели: 4K (максимальное качество)
+        if not resolution:
+            if "flash" in model.lower():
+                resolution = "2K"
+            else:
+                resolution = "4K"
+        logger.info(f"Using resolution {resolution} for model {model}, preserve_faces={preserve_faces}")
+
+        # Добавляем инструкции по сохранению лиц если есть референсы и включен режим
+        if preserve_faces and (reference_images or reference_image_urls):
+            # Определяем количество персонажей по референсам
+            ref_count = len(reference_images or reference_image_urls or [])
+            if ref_count > 0:
+                # Добавляем специальные инструкции для сохранения лиц
+                enhanced_prompt = f"""{prompt}
+
+{self.FACE_PRESERVATION_PROMPT}
+{self.CHARACTER_CONSISTENCY_PROMPT}
+
+Use the {ref_count} reference images to maintain character consistency and preserve all facial features with high fidelity.
+"""
+                prompt = enhanced_prompt
+                logger.info(f"Enhanced prompt with face preservation instructions ({ref_count} references)")
+
         if self.nanobanana_key:
             result = await self._generate_via_nanobanana(
                 prompt=prompt,
@@ -121,7 +168,8 @@ class GeminiService:
         if self.openrouter_key:
             # Determine which OpenRouter model to use based on the requested model
             or_model = self.MODELS.get("flash")  # Default to flash
-            if "pro" in model.lower():
+            # Use Pro model for explicit 'pro' requests or when 4K is requested
+            if "pro" in model.lower() or (resolution and resolution.upper() == "4K"):
                 or_model = self.MODELS.get("pro")  # Use pro model
 
             result = await self._generate_via_openrouter(
@@ -130,6 +178,7 @@ class GeminiService:
                 image_input=image_input,
                 image_input_url=image_input_url,
                 aspect_ratio=aspect_ratio,
+                resolution=resolution,
                 reference_images=reference_images,
                 reference_image_urls=reference_image_urls,
             )
@@ -179,15 +228,29 @@ class GeminiService:
             # Формируем контент
             contents = []
 
-            # Добавляем референсные изображения по URL (приоритет)
+            # Добавляем референсные изображения по URL (приоритет) - до 14 штук
+            # Согласно документации: до 4 персонажей, до 10 объектов с высокой точностью
             if reference_image_urls:
-                for img_url in reference_image_urls[:14]:  # Ограничение до 14
+                # Первые 4 референса - персонажи (высокий приоритет для лиц)
+                character_refs = reference_image_urls[:4]
+                # Остальные - объекты/стиль
+                object_refs = reference_image_urls[4:14]
+                
+                for img_url in character_refs:
                     contents.append(
                         {"type": "image_url", "image_url": {"url": img_url}}
                     )
+                for img_url in object_refs:
+                    contents.append(
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    )
+                logger.info(f"Added {len(character_refs)} character refs + {len(object_refs)} object refs")
             # Fallback на bytes
             elif reference_images:
-                for ref_img in reference_images[:14]:  # Ограничение до 14
+                character_refs = reference_images[:4]
+                object_refs = reference_images[4:14]
+                
+                for ref_img in character_refs:
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
                     contents.append(
                         {
@@ -195,8 +258,17 @@ class GeminiService:
                             "image_url": {"url": f"data:image/png;base64,{b64_image}"},
                         }
                     )
+                for ref_img in object_refs:
+                    b64_image = base64.b64encode(ref_img).decode("utf-8")
+                    contents.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                        }
+                    )
+                logger.info(f"Added {len(character_refs)} character refs + {len(object_refs)} object refs (bytes)")
 
-            # Если есть входное изображение по URL (приоритет)
+            # Если есть входное изображение по URL (приоритет) - главное изображение
             if image_input_url:
                 contents.append(
                     {"type": "image_url", "image_url": {"url": image_input_url}}
@@ -211,6 +283,7 @@ class GeminiService:
                     }
                 )
 
+            # Добавляем текст с инструкциями по сохранению лиц
             contents.append({"type": "text", "text": prompt})
 
             headers = {
@@ -283,6 +356,7 @@ class GeminiService:
         image_input: Optional[bytes] = None,
         image_input_url: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
+        resolution: str = "2K",
         reference_images: List[bytes] = None,
         reference_image_urls: List[str] = None,
     ) -> Optional[bytes]:
@@ -335,24 +409,41 @@ class GeminiService:
                 final_prompt = f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
                 logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
 
-            # Обновляем текст в contents с финальным промптом
-            for i, item in enumerate(contents):
-                if item.get("type") == "text":
-                    contents[i]["text"] = final_prompt
-                    break
+            # Убедимся, что в contents есть текстовая часть с финальным промптом
+            # Явно добавляем текст в конец.
+            contents.append({"type": "text", "text": final_prompt})
 
             headers = {
                 "Authorization": f"Bearer {self.openrouter_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/your_bot ",
-                "X-Title": "Image Generation Bot",
+                "Referer": "https://t.me/your_bot",
             }
 
             # Формируем payload согласно banana_api.md
+            # Разные модели поддерживают разные параметры imageConfig:
+            # - gemini-2.5-flash-image: только aspect_ratio (разрешение фиксировано 1K)
+            # - gemini-3.x: aspect_ratio + image_size (1K, 2K, 4K)
+            is_gemini3 = "gemini-3" in model.lower()
+
+            image_config = {}
+            if aspect_ratio:
+                image_config["aspectRatio"] = aspect_ratio
+
+            # Только для Gemini 3.x моделей добавляем imageSize
+            if is_gemini3 and resolution:
+                image_config["imageSize"] = resolution
+
+            generation_config = {
+                "responseModalities": ["TEXT", "IMAGE"],
+            }
+            if image_config:
+                generation_config["imageConfig"] = image_config
+
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": contents}],
                 "modalities": ["image", "text"],
+                "generationConfig": generation_config,
             }
 
             logger.info(
@@ -763,7 +854,7 @@ class GeminiService:
     async def generate_with_references(
         self,
         prompt: str,
-        reference_images: List[bytes],
+        reference_images: List[bytes] = None,
         person_references: List[bytes] = None,
         model: str = "gemini-3-pro-image-preview",
         aspect_ratio: str = "1:1",

@@ -45,6 +45,46 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _remove_old_files(base_dir: str = "static/uploads", max_age_seconds: int = 6 * 3600):
+    """Удаляет файлы старше max_age_seconds в каталоге base_dir (рекурсивно)."""
+    try:
+        now = time.time()
+        if not os.path.exists(base_dir):
+            return
+
+        for root, dirs, files in os.walk(base_dir):
+            for name in files:
+                path = os.path.join(root, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                    if now - mtime > max_age_seconds:
+                        os.remove(path)
+                        logger.info(f"Removed old file: {path}")
+                except Exception:
+                    logger.exception(f"Failed to remove file: {path}")
+
+            # После обработки файлов: если папка пуста — удаляем её
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+                    logger.info(f"Removed empty dir: {root}")
+            except Exception:
+                # Игнорируем ошибки удаления каталогов
+                pass
+    except Exception:
+        logger.exception("Error during static cleanup")
+
+
+async def _static_cleanup_loop():
+    """Фоновая задача, очищающая static/uploads каждые 6 часов."""
+    while True:
+        try:
+            await _remove_old_files("static/uploads", max_age_seconds=6 * 3600)
+        except Exception:
+            logger.exception("Cleanup iteration failed")
+        await asyncio.sleep(6 * 3600)
+
+
 async def on_startup(bot: Bot):
     """Действия при старте бота"""
     logger.info("Bot starting...")
@@ -61,6 +101,12 @@ async def on_startup(bot: Bot):
     # Загружаем пресеты
     preset_manager.load_all()
     logger.info(f"Loaded {len(preset_manager._presets)} presets")
+    # Запускаем задачу очистки static/uploads каждые 6 часов
+    try:
+        bot.loop.create_task(_static_cleanup_loop())
+        logger.info("Scheduled static/uploads cleanup task (every 6 hours)")
+    except Exception:
+        logger.exception("Failed to schedule static cleanup task")
 
 
 async def on_shutdown(bot: Bot):

@@ -3,7 +3,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def get_main_menu_keyboard(user_credits: int = 0):
-    """Главное меню с опциональной кнопкой PRO"""
+    """Главное меню с опциональной кнопкой PRO и поддержкой"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🖼 Генерация фото", callback_data="generate_image")
@@ -23,10 +23,15 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="📊 Мой баланс", callback_data="menu_balance")
     builder.button(text="❓ Помощь", callback_data="menu_help")
 
+    # Кнопка техподдержки
+    builder.button(
+        text="🆘 Техподдержка", url="https://t.me/S_k7222"
+    )
+
     if user_credits >= 20:
-        builder.adjust(2, 2, 1, 2, 2, 1)
+        builder.adjust(2, 2, 1, 2, 2, 1, 1)
     else:
-        builder.adjust(2, 2, 2, 1, 2, 1)
+        builder.adjust(2, 2, 2, 1, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -584,8 +589,6 @@ def get_multiturn_keyboard(preset_id: str):
     builder.button(
         text="🔄 Продолжить редактирование", callback_data=f"multiturn_{preset_id}"
     )
-    builder.button(text="💾 Сохранить это", callback_data=f"multiturn_save_{preset_id}")
-    builder.button(text="📤 Скачать", callback_data=f"multiturn_download_{preset_id}")
 
     builder.button(text="🏠 В главное меню", callback_data="back_main")
     builder.adjust(1)
@@ -789,4 +792,59 @@ def get_video_result_keyboard(video_url: str, user_credits: int = 0):
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_reference_images_upload_keyboard(
+    current_count: int = 0, max_count: int = 14, preset_id: str = None
+):
+    """
+    Клавиатура для загрузки референсных изображений (до 14)
+    Показывает текущее количество и опции управления
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Заголовок с текущим количеством
+    builder.button(
+        text=f"📎 Загружено: {current_count}/{max_count}", callback_data="ref_count_ignore"
+    )
+
+    # Кнопка добавления еще изображения (если не достигли лимита)
+    if current_count < max_count:
+        builder.button(
+            text="➕ Добавить фото", callback_data=f"ref_upload_{preset_id or 'none'}"
+        )
+
+    # Кнопки управления
+    if current_count > 0:
+        builder.button(
+            text="🗑 Очистить все", callback_data=f"ref_clear_{preset_id or 'none'}"
+        )
+        builder.button(
+            text="▶️ Продолжить", callback_data=f"ref_confirm_{preset_id or 'none'}"
+        )
+
+    builder.button(text="🔙 Назад", callback_data=f"preset_{preset_id}" if preset_id else "back_main")
+
+    builder.adjust(1, repeat=True)
+    return builder.as_markup()
+
+
+def get_reference_images_confirmation_keyboard(preset_id: str = None):
+    """
+    Клавиатура подтверждения референсных изображений перед генерацией
+    """
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="🔄 Перезагрузить", callback_data=f"ref_reload_{preset_id or 'none'}"
+    )
+    builder.button(
+        text="✅ Подтвердить", callback_data=f"ref_accept_{preset_id or 'none'}"
+    )
+    builder.button(
+        text="🔙 Назад", callback_data=f"preset_{preset_id}" if preset_id else "back_main"
+    )
+
+    builder.adjust(2, 1)
     return builder.as_markup()

@@ -12,6 +12,10 @@ class GenerationStates(StatesGroup):
         State()
     )  # Выбор количества изображений для пакетной генерации
 
+    # Состояния для загрузки референсных изображений (до 14 шт)
+    uploading_reference_images = State()  # Загрузка референсных изображений
+    confirming_reference_images = State()  # Подтверждение референсов перед генерацией
+
     # Состояния для пакетного редактирования
     waiting_for_batch_image = State()  # Ожидание загрузки фото
     waiting_for_batch_prompt = State()  # Ожидание ввода промпта
