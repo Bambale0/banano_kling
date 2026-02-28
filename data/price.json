@@ -48,16 +48,21 @@
     }
   ],
   "costs_reference": {
-    "gemini_2_5_flash": 1,
-    "gemini_3_pro": 2,
-    "kling_v3_std": 4,
-    "kling_v3_pro": 5,
-    "kling_v3_omni": 6
+    "gemini_2_5_flash": 2,
+    "gemini_3_pro": 3,
+    "kling_v3_std": 6,
+    "kling_v3_pro": 6,
+    "kling_v3_omni": 6,
+    "video_duration_costs": {
+      "5": 6,
+      "10": 8,
+      "15": 10
+    }
   },
   "batch_pricing": {
     "base_costs": {
-      "gemini_2_5_flash": 1,
-      "gemini_3_pro": 2
+      "gemini_2_5_flash": 2,
+      "gemini_3_pro": 3
     },
     "discount_tiers": [
       {"min_items": 3, "discount": 10},

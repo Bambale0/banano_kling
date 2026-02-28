@@ -167,8 +167,8 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
     user_credits = await get_user_credits(callback.from_user.id)
     settings = await get_user_settings(callback.from_user.id)
     model = settings["preferred_model"]
-    model_name = "⚡ Flash" if model == "flash" else "💎 Pro"
-    model_cost = "1" if model == "flash" else "2"
+    model_name = "⚡ Nano Banano" if model == "flash" else "💎 Banano Pro"
+    model_cost = "2" if model == "flash" else "3"
 
     # Сохраняем модель и тип генерации в state
     await state.update_data(generation_type="image", preferred_model=model)
@@ -206,7 +206,7 @@ async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"✏️ <b>Редактирование фото</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: 💎 Pro (2🍌, 4K, сохранение лиц)\n\n"
+        f"🤖 Модель: 💎 Banano Pro (3🍌, 4K, сохранение лиц)\n\n"
         f"<b>Как редактировать:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>4 фото лица</b> для сохранения (опционально)\n"
@@ -335,13 +335,13 @@ async def start_video_editing(callback: types.CallbackQuery, state: FSMContext):
         "v3_omni_pro": "🌀 Omni Pro",
     }
     model_costs = {
-        "v3_std": "4",
-        "v3_pro": "5",
-        "v3_omni_std": "5",
+        "v3_std": "6",
+        "v3_pro": "6",
+        "v3_omni_std": "6",
         "v3_omni_pro": "6",
     }
     model_name = model_names.get(video_model, video_model)
-    model_cost = model_costs.get(video_model, "4")
+    model_cost = model_costs.get(video_model, "6")
 
     # Инициализируем опции для видео-эффектов
     video_edit_options = {
@@ -386,13 +386,13 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
         "v3_omni_pro": "🌀 Omni Pro",
     }
     model_costs = {
-        "v3_std": "4",
-        "v3_pro": "5",
-        "v3_omni_std": "5",
+        "v3_std": "6",
+        "v3_pro": "6",
+        "v3_omni_std": "6",
         "v3_omni_pro": "6",
     }
     model_name = model_names.get(video_model, video_model)
-    model_cost = model_costs.get(video_model, "4")
+    model_cost = model_costs.get(video_model, "6")
 
     # Простые опции видео
     video_options = {
@@ -1176,14 +1176,22 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality = video_edit_options.get("quality", "std")
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
-        cost = 5 if quality == "pro" else 4
+        # Стоимость видео: базовая 6 + доплата за длительность
+        duration = video_edit_options.get('duration', 5)
+        base_cost = 6
+        if duration == 10:
+            cost = 8
+        elif duration == 15:
+            cost = 10
+        else:
+            cost = base_cost
 
         await message.answer(
             f"✂️ <b>Подтвердите генерацию</b>\n\n"
             f"<b>Эффект:</b> <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n\n"
             f"<b>Опции:</b>\n"
             f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
-            f"   ⏱ Длительность: <code>{video_edit_options.get('duration', 5)} сек</code>\n"
+            f"   ⏱ Длительность: <code>{duration} сек</code>\n"
             f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
             f"Стоимость: <code>{cost}🍌</code>",
             reply_markup=get_confirmation_keyboard(
@@ -1228,14 +1236,22 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality = video_edit_options.get("quality", "std")
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
-        cost = 5 if quality == "pro" else 4
+        # Стоимость видео: базовая 6 + доплата за длительность
+        duration = video_edit_options.get('duration', 5)
+        base_cost = 6
+        if duration == 10:
+            cost = 8
+        elif duration == 15:
+            cost = 10
+        else:
+            cost = base_cost
 
         await message.answer(
             f"✂️ <b>Подтвердите генерацию</b>\n\n"
             f"<b>Эффект:</b> <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n\n"
             f"<b>Опции:</b>\n"
             f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
-            f"   ⏱ Длительность: <code>{video_edit_options.get('duration', 5)} сек</code>\n"
+            f"   ⏱ Длительность: <code>{duration} сек</code>\n"
             f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
             f"🍌 Стоимость: <code>{cost}</code>🍌",
             reply_markup=types.InlineKeyboardMarkup(
@@ -1333,8 +1349,8 @@ async def start_no_preset_generation(
     message: types.Message, state: FSMContext, gen_type: str, prompt: str
 ):
     """Запускает генерацию без пресета"""
-    # Определяем стоимость
-    cost = 1 if gen_type == "image" else 4
+    # Определяем стоимость (изображения: 2-3, видео: 6+)
+    cost = 2 if gen_type == "image" else 6
 
     # Проверяем баланс
     if not await check_can_afford(message.from_user.id, cost):
@@ -2006,7 +2022,7 @@ async def run_editing_inline(
         await message.answer("Сначала загрузите изображение")
         return
 
-    cost = 1 if generation_type == "image_edit" else 4
+    cost = 2 if generation_type == "image_edit" else 6
 
     # Проверяем баланс
     if not await check_can_afford(message.from_user.id, cost):
@@ -2107,7 +2123,7 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
         await callback.answer("Сначала загрузите изображение", show_alert=True)
         return
 
-    cost = 1 if generation_type == "image_edit" else 4
+    cost = 2 if generation_type == "image_edit" else 6
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):
@@ -2664,10 +2680,10 @@ async def run_no_preset_image_edit(
     # Определяем модель и стоимость
     if preferred_model == "flash":
         model = "gemini-2.5-flash-image"
-        cost = 1
+        cost = 2
     else:
         model = "gemini-3-pro-image-preview"
-        cost = 2
+        cost = 3
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
@@ -2685,7 +2701,7 @@ async def run_no_preset_image_edit(
     model_emoji = "⚡" if preferred_model == "flash" else "💎"
     processing = await message.answer(
         f"✏️ <b>Редактирую изображение...</b>\n\n"
-        f"{model_emoji} Модель: <code>{'Flash' if preferred_model == 'flash' else 'Pro'}</code>\n"
+        f"{model_emoji} Модель: <code>{'Nano Banano' if preferred_model == 'flash' else 'Banano Pro'}</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"<i>{prompt[:50]}...</i>\n\n"
         "<i>Это займёт 10-30 секунд</i>",
@@ -2771,9 +2787,14 @@ async def run_video_edit_handler(callback: types.CallbackQuery, state: FSMContex
         await callback.answer("Опишите эффект", show_alert=True)
         return
 
-    # Определяем стоимость
-    quality = video_edit_options.get("quality", "std")
-    cost = 5 if quality == "pro" else 4
+    # Определяем стоимость с учётом длительности
+    duration = video_edit_options.get("duration", 5)
+    if duration == 10:
+        cost = 8
+    elif duration == 15:
+        cost = 10
+    else:
+        cost = 6
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):
@@ -2809,9 +2830,14 @@ async def run_video_edit_image_handler(
         await callback.answer("Опишите эффект и движение", show_alert=True)
         return
 
-    # Определяем стоимость
-    quality = video_edit_options.get("quality", "std")
-    cost = 5 if quality == "pro" else 4
+    # Определяем стоимость с учётом длительности
+    duration = video_edit_options.get("duration", 5)
+    if duration == 10:
+        cost = 8
+    elif duration == 15:
+        cost = 10
+    else:
+        cost = 6
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):

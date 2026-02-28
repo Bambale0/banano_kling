@@ -51,10 +51,10 @@ def get_settings_keyboard(
     pro_selected = "✅" if current_model == "pro" else ""
 
     builder.button(
-        text=f"🖼 Flash {flash_selected} (1🍌)", callback_data="settings_model_flash"
+        text=f"🖼 Nano Banano {flash_selected} (2🍌)", callback_data="settings_model_flash"
     )
     builder.button(
-        text=f"🖼 Pro {pro_selected} (2🍌)", callback_data="settings_model_pro"
+        text=f"🖼 Banano Pro {pro_selected} (3🍌)", callback_data="settings_model_pro"
     )
 
     # Разделитель - Текст в видео (неинтерактивный)
@@ -69,25 +69,25 @@ def get_settings_keyboard(
     r2v_pro_selected = "✅" if current_video_model == "v3_omni_pro_r2v" else ""
 
     builder.button(
-        text=f"⚡ Std {v3_std_selected} (4🍌)", callback_data="settings_video_v3_std"
+        text=f"⚡ Std {v3_std_selected} (6🍌)", callback_data="settings_video_v3_std"
     )
     builder.button(
-        text=f"💎 Pro {v3_pro_selected} (5🍌)", callback_data="settings_video_v3_pro"
+        text=f"💎 Pro {v3_pro_selected} (6🍌)", callback_data="settings_video_v3_pro"
     )
     builder.button(
-        text=f"🔄 Omni {omni_std_selected} (4🍌)",
+        text=f"🔄 Omni {omni_std_selected} (6🍌)",
         callback_data="settings_video_v3_omni_std",
     )
     builder.button(
-        text=f"💎 Omni Pro {omni_pro_selected} (5🍌)",
+        text=f"💎 Omni Pro {omni_pro_selected} (6🍌)",
         callback_data="settings_video_v3_omni_pro",
     )
     builder.button(
-        text=f"✂️ V2V {r2v_std_selected} (4🍌)",
+        text=f"✂️ V2V {r2v_std_selected} (6🍌)",
         callback_data="settings_video_v3_omni_std_r2v",
     )
     builder.button(
-        text=f"💎 V2V Pro {r2v_pro_selected} (5🍌)",
+        text=f"💎 V2V Pro {r2v_pro_selected} (6🍌)",
         callback_data="settings_video_v3_omni_pro_r2v",
     )
 
@@ -101,17 +101,17 @@ def get_settings_keyboard(
     i2v_omni_pro_selected = "✅" if current_i2v_model == "v3_omni_pro" else ""
 
     builder.button(
-        text=f"⚡ Std {i2v_std_selected} (4🍌)", callback_data="settings_i2v_v3_std"
+        text=f"⚡ Std {i2v_std_selected} (6🍌)", callback_data="settings_i2v_v3_std"
     )
     builder.button(
-        text=f"💎 Pro {i2v_pro_selected} (5🍌)", callback_data="settings_i2v_v3_pro"
+        text=f"💎 Pro {i2v_pro_selected} (6🍌)", callback_data="settings_i2v_v3_pro"
     )
     builder.button(
-        text=f"🔄 Omni {i2v_omni_std_selected} (4🍌)",
+        text=f"🔄 Omni {i2v_omni_std_selected} (6🍌)",
         callback_data="settings_i2v_v3_omni_std",
     )
     builder.button(
-        text=f"💎 Omni Pro {i2v_omni_pro_selected} (5🍌)",
+        text=f"💎 Omni Pro {i2v_omni_pro_selected} (6🍌)",
         callback_data="settings_i2v_v3_omni_pro",
     )
 

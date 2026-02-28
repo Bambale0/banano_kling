@@ -245,7 +245,7 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Сначала загрузите главное фото для редактирования!", show_alert=True)
         return
 
-    cost = 4  # Фиксированная стоимость за сессию с референсами
+    cost = 5  # Фиксированная стоимость за сессию с референсами
 
     # Переходим к вводу промпта
     await state.set_state(GenerationStates.waiting_for_batch_prompt)
@@ -316,7 +316,7 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
         await state.clear()
         return
 
-    cost = 4  # Фиксированная стоимость
+    cost = 5  # Фиксированная стоимость
 
     # Проверяем баланс
     is_admin = config.is_admin(user_id)
@@ -358,7 +358,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
     """Запускает редактирование с референсами через Gemini Pro"""
 
     data = await state.get_data()
-    cost = data.get("batch_cost", 4)
+    cost = data.get("batch_cost", 5)
     user_id = callback.from_user.id
     main_image = data.get("main_image")
     ref_images = data.get("reference_images", [])
