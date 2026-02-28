@@ -212,24 +212,26 @@ class GeminiService:
             }
 
             # Формируем payload согласно banana_api.md
+            # Исправлено: правильная структура generationConfig с вложенным imageConfig
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": contents}],
                 "max_tokens": 4096,
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"],  # Обязательно для генерации изображений
+                }
             }
 
-            # Добавляем image_config если указан
+            # Добавляем image_config если указан (согласно banana_api.md - вложенный imageConfig)
             if aspect_ratio or resolution != "1K":
-                payload["generationConfig"] = {}
+                payload["generationConfig"]["imageConfig"] = {}
                 if aspect_ratio:
-                    payload["generationConfig"]["aspectRatio"] = aspect_ratio
+                    payload["generationConfig"]["imageConfig"]["aspectRatio"] = aspect_ratio
                 if resolution != "1K":
-                    payload["generationConfig"]["imageSize"] = resolution
+                    payload["generationConfig"]["imageConfig"]["imageSize"] = resolution
 
             # Добавляем tools для search grounding
             if enable_search:
-                if "generationConfig" not in payload:
-                    payload["generationConfig"] = {}
                 payload["generationConfig"]["tools"] = [{"google_search": {}}]
 
             async with session.post(
@@ -268,7 +270,7 @@ class GeminiService:
     async def _generate_via_openrouter(
         self,
         prompt: str,
-        model: str = "google/gemini-2.0-flash-exp:free",
+        model: str = "google/gemini-2.5-flash-image",
         image_input: Optional[bytes] = None,
         image_input_url: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
@@ -318,7 +320,17 @@ class GeminiService:
                     }
                 )
 
-            contents.append({"type": "text", "text": prompt})
+            # Добавляем aspect_ratio в промпт (согласно banana_api.md - работаем через текст)
+            final_prompt = prompt
+            if aspect_ratio and aspect_ratio != "1:1":
+                final_prompt = f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
+                logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
+
+            # Обновляем текст в contents с финальным промптом
+            for i, item in enumerate(contents):
+                if item.get("type") == "text":
+                    contents[i]["text"] = final_prompt
+                    break
 
             headers = {
                 "Authorization": f"Bearer {self.openrouter_key}",
@@ -327,28 +339,12 @@ class GeminiService:
                 "X-Title": "Image Generation Bot",
             }
 
-            # Добавляем modalities для генерации изображений согласно документации OpenRouter
+            # Формируем payload согласно banana_api.md
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": contents}],
                 "modalities": ["image", "text"],
             }
-
-            # Добавляем aspect_ratio в промпт (OpenRouter/Gemini лучше понимает через текст)
-            final_prompt = prompt
-            if aspect_ratio and aspect_ratio != "1:1":
-                final_prompt = (
-                    f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
-                )
-                logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
-
-            # Обновляем payload с финальным промптом
-            payload["messages"] = [{"role": "user", "content": contents}]
-            # Обновляем текст в contents
-            for item in contents:
-                if item.get("type") == "text":
-                    item["text"] = final_prompt
-                    break
 
             logger.info(
                 f"OpenRouter request: model={model}, aspect_ratio={aspect_ratio}"
@@ -479,7 +475,7 @@ class GeminiService:
         session = await self._get_session()
 
         payload = {
-            "model": "google/gemini-2.0-flash-exp:free",
+            "model": "google/gemini-2.5-flash-image",
             "messages": [{"role": "user", "content": prompt}],
             "modalities": ["image", "text"],
         }

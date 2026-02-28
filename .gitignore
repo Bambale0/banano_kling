@@ -63,3 +63,6 @@ bot.pid
 tmp/
 temp/
 *.tmp
+
+# Static uploads (generated content)
+static/uploads/
