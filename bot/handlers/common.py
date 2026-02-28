@@ -125,7 +125,6 @@ async def cmd_start(message: types.Message):
             welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
-            disable_web_page_preview=True,  # Отключаем превью ссылки
         )
     except TelegramBadRequest as e:
         if "chat not found" in str(e).lower():
@@ -261,7 +260,6 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
             welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
-            disable_web_page_preview=True,
         )
     except Exception as e:
         # Если сообщение нельзя отредактировать (например, нет текста или сообщение удалено)
@@ -271,7 +269,6 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
             welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
-            disable_web_page_preview=True,
         )
 
 
