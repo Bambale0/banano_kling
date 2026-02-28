@@ -86,7 +86,7 @@ class GeminiService:
         aspect_ratio: Optional[str] = None,
         image_input: Optional[bytes] = None,
         image_input_url: Optional[str] = None,
-        resolution: str = "1K",
+        resolution: str = "2K",  # Flash: 2K по умолчанию, Pro: 4K
         enable_search: bool = False,
         reference_images: List[bytes] = None,
         reference_image_urls: List[str] = None,
@@ -159,7 +159,7 @@ class GeminiService:
         image_input: Optional[bytes] = None,
         image_input_url: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
-        resolution: str = "1K",
+        resolution: str = "2K",  # Flash: 2K по умолчанию
         enable_search: bool = False,
         reference_images: List[bytes] = None,
         reference_image_urls: List[str] = None,
@@ -169,6 +169,12 @@ class GeminiService:
             from bot.config import config
 
             session = await self._get_session()
+
+            # Определяем разрешение по умолчанию в зависимости от модели
+            if "pro" in model.lower():
+                default_resolution = "4K"  # Pro: 4K по умолчанию
+            else:
+                default_resolution = "2K"  # Flash: 2K по умолчанию
 
             # Формируем контент
             contents = []
@@ -224,12 +230,14 @@ class GeminiService:
             }
 
             # Добавляем image_config если указан (согласно banana_api.md - вложенный imageConfig)
-            if aspect_ratio or resolution != "1K":
+            # Используем переданное resolution или default в зависимости от модели
+            effective_resolution = resolution if resolution != default_resolution else default_resolution
+            if aspect_ratio or effective_resolution != default_resolution:
                 payload["generationConfig"]["imageConfig"] = {}
                 if aspect_ratio:
                     payload["generationConfig"]["imageConfig"]["aspectRatio"] = aspect_ratio
-                if resolution != "1K":
-                    payload["generationConfig"]["imageConfig"]["imageSize"] = resolution
+                if effective_resolution != default_resolution:
+                    payload["generationConfig"]["imageConfig"]["imageSize"] = effective_resolution
 
             # Добавляем tools для search grounding
             if enable_search:
@@ -528,13 +536,19 @@ class GeminiService:
         model: str = "gemini-2.5-flash-image",
         image_input: Optional[bytes] = None,
         aspect_ratio: Optional[str] = None,
-        resolution: str = "1K",
+        resolution: str = "2K",  # Flash: 2K по умолчанию, Pro: 4K
         enable_search: bool = False,
         reference_images: List[bytes] = None,
     ) -> Optional[bytes]:
         """Генерация через нативный Gemini API"""
         try:
             from google.genai import types
+
+            # Определяем разрешение по умолчанию в зависимости от модели
+            if "pro" in model.lower():
+                default_resolution = "4K"  # Pro: 4K по умолчанию
+            else:
+                default_resolution = "2K"  # Flash: 2K по умолчанию
 
             contents = [prompt]
 
@@ -553,10 +567,11 @@ class GeminiService:
                 response_modalities=["TEXT", "IMAGE"]
             )
 
-            # Добавляем image_config для Pro модели
-            if aspect_ratio or resolution != "1K":
+            # Добавляем image_config если указан (не используем default)
+            effective_resolution = resolution if resolution != default_resolution else default_resolution
+            if aspect_ratio or effective_resolution != default_resolution:
                 config_params.image_config = types.ImageConfig(
-                    aspect_ratio=aspect_ratio, image_size=resolution
+                    aspect_ratio=aspect_ratio, image_size=effective_resolution
                 )
 
             # Добавляем tools для search grounding
