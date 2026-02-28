@@ -125,6 +125,7 @@ async def cmd_start(message: types.Message):
             welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
+            disable_web_page_preview=True,  # Отключаем превью ссылки
         )
     except TelegramBadRequest as e:
         if "chat not found" in str(e).lower():
@@ -242,24 +243,35 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
     user = await get_or_create_user(callback.from_user.id)
 
+    # Полный текст главного меню как в cmd_start
+    welcome_text = (
+        f"🏠 <b>Главное меню</b>\n\n"
+        f"Хватит просто смотреть — создавай с AI! 🔥\n\n"
+        f"✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.\n"
+        f"✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.\n"
+        f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
+        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.\n\n"
+        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов\n\n"
+        f"📢 <b>Наш канал:</b> <a href=\"https://t.me/ai_neir_set\">@ai_neir_set</a>\n\n"
+        f"<i>Попробуй прямо сейчас! 👇</i>"
+    )
+
     try:
         await callback.message.edit_text(
-            f"🏠 <b>Главное меню</b>\n\n"
-            f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
-            f"Выберите действие:",
+            welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
+            disable_web_page_preview=True,
         )
     except Exception as e:
         # Если сообщение нельзя отредактировать (например, нет текста или сообщение удалено)
         logger.warning(f"Cannot edit message: {e}")
         # Отправляем новое сообщение
         await callback.message.answer(
-            f"🏠 <b>Главное меню</b>\n\n"
-            f"🍌 Ваш баланс: <code>{user.credits}</code> бананов\n\n"
-            f"Выберите действие:",
+            welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
+            disable_web_page_preview=True,
         )
 
 
