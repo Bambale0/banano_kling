@@ -65,4 +65,5 @@ temp/
 *.tmp
 
 # Static uploads (generated content)
+static/
 static/uploads/
