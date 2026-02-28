@@ -115,7 +115,7 @@ async def cmd_start(message: types.Message):
 
 🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов
 
-📢 <b>Наш канал:</b> <a href="https://t.me/ai_neiro_set">@ai_neiro_set</a>
+📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>
 
 <i>Попробуй прямо сейчас! 👇</i>
 """
