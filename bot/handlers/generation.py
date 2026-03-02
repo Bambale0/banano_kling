@@ -148,12 +148,19 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
 
     user_credits = await get_user_credits(callback.from_user.id)
     settings = await get_user_settings(callback.from_user.id)
-    model = settings["preferred_model"]
-    model_name = "⚡ Nano Banano" if model == "flash" else "💎 Banano Pro"
-    model_cost = "2" if model == "flash" else "3"
+    
+    # Получаем сервис для генерации изображений
+    image_service = settings.get("image_service", "nanobanana")
+    
+    # Названия и стоимость в зависимости от сервиса
+    if image_service == "novita":
+        model_name = "✨ FLUX.2 Pro"
+    else:  # nanobanana
+        model_name = "🍌 Nano Banana"
+    model_cost = "2"
 
-    # Сохраняем модель и тип генерации в state
-    await state.update_data(generation_type="image", preferred_model=model)
+    # Сохраняем сервис и тип генерации в state
+    await state.update_data(generation_type="image", image_service=image_service)
 
     await callback.message.edit_text(
         f"🖼 <b>Генерация фото</b>\n\n"
@@ -1176,11 +1183,19 @@ async def process_custom_input(message: types.Message, state: FSMContext):
             f"   ⏱ Длительность: <code>{duration} сек</code>\n"
             f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
             f"Стоимость: <code>{cost}🍌</code>",
-            reply_markup=get_confirmation_keyboard(
-                f"run_video_edit_confirm_{cost}",
-                "back_main",
-                "▶️ Запустить",
-                "❌ Отмена"
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text="▶️ Запустить", callback_data="run_video_edit"
+                        )
+                    ],
+                    [
+                        types.InlineKeyboardButton(
+                            text="🔙 Назад", callback_data="edit_video"
+                        )
+                    ],
+                ]
             ),
             parse_mode="HTML",
         )
@@ -2545,21 +2560,27 @@ async def run_no_preset_image_generation(
     aspect_ratio: str,
     user_id: int = None,
 ):
-    """Запускает генерацию изображения без пресета стом"""
-    # указанным форма Получаем предпочитаемую модель из настроек
+    """Запускает генерацию изображения без пресета с указанным форматом"""
+    # Получаем предпочитаемую модель и сервис из настроек
     data = await state.get_data()
-    preferred_model = data.get("preferred_model", "pro")
+    image_service = data.get("image_service", "nanobanana")
 
     # Определяем пользователя (для callback message.from_user это бот)
     if user_id is None:
         user_id = message.from_user.id
 
-    # Определяем модель и стоимость
-    if preferred_model == "flash":
-        model = "gemini-2.5-flash-image"
-        cost = 1
+    # Определяем сервис и стоимость
+    if image_service == "novita":
+        # FLUX.2 Pro через Novita
+        from bot.services.novita_service import novita_service
+        service = novita_service
+        model_name = "✨ FLUX.2 Pro"
+        cost = 2
     else:
-        model = "gemini-3-pro-image-preview"
+        # Nano Banana (Gemini)
+        from bot.services.gemini_service import gemini_service
+        service = gemini_service
+        model_name = "🍌 Nano Banana"
         cost = 2
 
     # Проверяем баланс
@@ -2574,25 +2595,32 @@ async def run_no_preset_image_generation(
     # Списываем
     await deduct_credits(user_id, cost)
 
-    # Генерируем изображение
-    model_emoji = "⚡" if preferred_model == "flash" else "💎"
+    # Генерируем изображение с выбранным сервисом
     processing = await message.answer(
         f"🎨 <b>Генерирую изображение...</b>\n\n"
-        f"{model_emoji} Модель: <code>{'Flash' if preferred_model == 'flash' else 'Pro'}</code>\n"
+        f"🤖 Модель: <code>{model_name}</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"<i>Это займёт 10-30 секунд</i>",
         parse_mode="HTML",
     )
 
     try:
-        from bot.services.gemini_service import gemini_service
-
-        result = await gemini_service.generate_image(
-            prompt=prompt,
-            model=model,
-            aspect_ratio=aspect_ratio,
-            image_input=None,
-        )
+        # Different services have different parameter names
+        # gemini: aspect_ratio, novita: size
+        if image_service == "novita":
+            # Convert aspect ratio to novita size format
+            size = f"{aspect_ratio}_hq"
+            result = await service.generate_image(
+                prompt=prompt,
+                size=size,
+            )
+        else:
+            # Gemini uses aspect_ratio
+            result = await service.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                image_input=None,
+            )
 
         await processing.delete()
 

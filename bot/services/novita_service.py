@@ -1,22 +1,27 @@
 """
-Novita AI FLUX.2 Pro Service - Интеграция с Novita AI для генерации изображений
+Novita AI Service - Интеграция с Novita AI для генерации изображений
 
 Документация: https://novita.ai/
 
 Поддерживаемые модели:
-- FLUX.2 [pro] - Production-grade text-to-image generation with enhanced realism,
-  sharper text rendering, and native editing for reliable, repeatable results.
+1. FLUX.2 [pro] - Production-grade text-to-image generation with enhanced realism,
+   sharper text rendering, and native editing for reliable, repeatable results.
+   
+2. Seedream 5.0 lite - Supports text-to-image, single/multi-image-to-image 
+   (up to 14 reference images), and sequential image generation.
 
 Endpoints:
 - POST /v3/flux/flux-pro - Generate image using FLUX.2 Pro
 - POST /v3/flux/flux-pro/edit - Edit image using FLUX.2 Pro
+- POST /v3/seedream/seedream-5-lite - Generate/edit using Seedream 5.0
 - GET /v3/task/{task_id} - Get task result
 
 Особенности:
 - Асинхронный API (возвращает task_id)
 - Поддержка seed для воспроизводимых результатов
-- Image-to-image редактирование (до 3 изображений)
-- Размеры от 256 до 1536 пикселей
+- FLUX: Image-to-image редактирование (до 3 изображений)
+- Seedream: До 14 референсных изображений
+- Размеры от 256 до 2048 пикселей
 """
 
 import asyncio
@@ -29,15 +34,19 @@ logger = logging.getLogger(__name__)
 
 
 class NovitaService:
-    """Сервис для работы с Novita AI FLUX.2 Pro API"""
+    """Сервис для работы с Novita AI FLUX.2 Pro и Seedream API"""
 
     # API Endpoints
     BASE_URL = "https://api.novita.ai"
     
-    # Valid parameters
+    # Valid parameters - FLUX
     MIN_SIZE = 256
-    MAX_SIZE = 1536
-    MAX_IMAGES = 3
+    MAX_SIZE = 1536  # Backward compatibility alias for MAX_SIZE_FLUX
+    MAX_SIZE_FLUX = 1536
+    MAX_SIZE_SEEDREAM = 2048
+    MAX_IMAGES = 3  # Backward compatibility alias for MAX_IMAGES_FLUX
+    MAX_IMAGES_FLUX = 3
+    MAX_IMAGES_SEEDREAM = 14
     
     # Valid duration range (for video generation)
     MIN_DURATION = 3
@@ -138,8 +147,8 @@ class NovitaService:
         Returns:
             Dict with task_id or None on error
         """
-        if len(images) > self.MAX_IMAGES:
-            logger.error(f"Too many images: {len(images)}, max is {self.MAX_IMAGES}")
+        if len(images) > self.MAX_IMAGES_FLUX:
+            logger.error(f"Too many images: {len(images)}, max is {self.MAX_IMAGES_FLUX}")
             return None
             
         # Parse size
@@ -214,6 +223,155 @@ class NovitaService:
         
         return await self._post_request(url, payload)
 
+    # =========================================================================
+    # Seedream 5.0 Lite Methods
+    # =========================================================================
+
+    async def generate_seedream_image(
+        self,
+        prompt: str,
+        size: str = "2048x2048",
+        image: Optional[List[str]] = None,
+        watermark: bool = False,
+        seed: int = -1,
+        webhook_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """
+        Generate image using Seedream 5.0 Lite
+        
+        Args:
+            prompt: Text prompt describing the expected image (supports Chinese and English)
+            size: Size like "2048x2048", "2K", "3K", or resolution (2560x1440 to 3072x3072)
+            image: Optional list of reference image URLs (up to 14)
+            watermark: Whether to add watermark (default: False)
+            seed: Random seed for generation (-1 for random)
+            webhook_url: Optional callback URL for async notifications
+            
+        Returns:
+            Dict with task_id or None on error
+        """
+        # Parse size
+        width, height = self._parse_seedream_size(size)
+        
+        payload = {
+            "prompt": prompt,
+            "size": f"{width}x{height}",
+            "watermark": watermark,
+            "seed": seed if seed >= 0 else -1,
+        }
+        
+        if image:
+            payload["image"] = image
+            
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+            
+        url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
+        
+        logger.info(
+            f"Novita Seedream 5.0 request: prompt={prompt[:50]}..., "
+            f"size={width}x{height}, images={len(image) if image else 0}"
+        )
+        
+        return await self._post_request(url, payload)
+
+    async def edit_seedream_image(
+        self,
+        prompt: str,
+        images: List[str],
+        size: str = "2048x2048",
+        watermark: bool = False,
+        seed: int = -1,
+        webhook_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """
+        Edit image(s) using Seedream 5.0 Lite
+        
+        Args:
+            prompt: Text prompt describing the expected editing effect
+            images: List of input image URLs for editing (up to 14)
+            size: Size like "2048x2048", "2K", "3K"
+            watermark: Whether to add watermark (default: False)
+            seed: Random seed for generation (-1 for random)
+            webhook_url: Optional callback URL for async notifications
+            
+        Returns:
+            Dict with task_id or None on error
+        """
+        if len(images) > self.MAX_IMAGES_SEEDREAM:
+            logger.error(f"Too many images: {len(images)}, max is {self.MAX_IMAGES_SEEDREAM}")
+            return None
+            
+        # Parse size
+        width, height = self._parse_seedream_size(size)
+        
+        payload = {
+            "prompt": prompt,
+            "image": images,
+            "size": f"{width}x{height}",
+            "watermark": watermark,
+            "seed": seed if seed >= 0 else -1,
+        }
+        
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+            
+        url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
+        
+        logger.info(
+            f"Novita Seedream 5.0 edit request: prompt={prompt[:50]}..., "
+            f"images_count={len(images)}, size={width}x{height}"
+        )
+        
+        return await self._post_request(url, payload)
+
+    def _parse_seedream_size(self, size: str) -> tuple[int, int]:
+        """
+        Parse Seedream size string to width and height
+        
+        Args:
+            size: Size string like "2048x2048", "2K", "3K", "2560x1440"
+            
+        Returns:
+            Tuple of (width, height)
+        """
+        # Check for presets
+        if size.lower() in ["2k", "2k resolution"]:
+            return (2048, 2048)
+        elif size.lower() in ["3k", "3k resolution"]:
+            return (3072, 3072)
+        
+        # Try to parse as "WIDTHxHEIGHT" format
+        if "x" in size.lower():
+            try:
+                parts = size.lower().split("x")
+                width = int(parts[0])
+                height = int(parts[1])
+                # Validate range (2560x1440 to 3072x3072)
+                min_pixels = 2560 * 1440
+                max_pixels = 3072 * 3072
+                pixels = width * height
+                if min_pixels <= pixels <= max_pixels:
+                    return (width, height)
+                # Clamp to valid range
+                if pixels < min_pixels:
+                    # Scale up to minimum
+                    aspect = width / height
+                    height = int((min_pixels / aspect) ** 0.5)
+                    width = int(height * aspect)
+                else:
+                    # Scale down to maximum
+                    aspect = width / height
+                    height = int((max_pixels / aspect) ** 0.5)
+                    width = int(height * aspect)
+                return (width, height)
+            except (ValueError, IndexError, ZeroDivisionError):
+                pass
+        
+        # Default to 2048x2048
+        logger.warning(f"Invalid Seedream size format: {size}, using default 2048x2048")
+        return (2048, 2048)
+
     def _validate_duration(self, duration: int) -> int:
         """Validate and clamp duration to valid range (3-15 seconds)"""
         return max(self.MIN_DURATION, min(self.MAX_DURATION, duration))
@@ -286,16 +444,20 @@ class NovitaService:
         logger.warning(f"Task {task_id} timeout after {max_attempts} attempts")
         return None
 
-    def _parse_size(self, size: str) -> tuple[int, int]:
+    def _parse_size(self, size: str, max_size: int = None) -> tuple[int, int]:
         """
         Parse size string to width and height
         
         Args:
             size: Size string like "1:1", "1024x1024", "16:9", etc.
+            max_size: Optional max size override (for different models)
             
         Returns:
             Tuple of (width, height)
         """
+        if max_size is None:
+            max_size = self.MAX_SIZE_FLUX
+            
         # Check if it's a preset
         if size in self.SIZE_PRESETS:
             return self.SIZE_PRESETS[size]
@@ -307,8 +469,8 @@ class NovitaService:
                 width = int(parts[0])
                 height = int(parts[1])
                 # Clamp to valid range
-                width = max(self.MIN_SIZE, min(self.MAX_SIZE, width))
-                height = max(self.MIN_SIZE, min(self.MAX_SIZE, height))
+                width = max(self.MIN_SIZE, min(max_size, width))
+                height = max(self.MIN_SIZE, min(max_size, height))
                 return (width, height)
             except (ValueError, IndexError):
                 pass
