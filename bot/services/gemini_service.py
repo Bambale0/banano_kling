@@ -72,7 +72,9 @@ class GeminiService:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Получение HTTP сессии с таймаутом"""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты для генерации изображений
+            timeout = aiohttp.ClientTimeout(
+                total=120
+            )  # 2 минуты для генерации изображений
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -130,7 +132,9 @@ Character consistency requirements:
                 resolution = "2K"
             else:
                 resolution = "4K"
-        logger.info(f"Using resolution {resolution} for model {model}, preserve_faces={preserve_faces}")
+        logger.info(
+            f"Using resolution {resolution} for model {model}, preserve_faces={preserve_faces}"
+        )
 
         # Добавляем инструкции по сохранению лиц если есть референсы и включен режим
         if preserve_faces and (reference_images or reference_image_urls):
@@ -146,7 +150,9 @@ Character consistency requirements:
 Use the {ref_count} reference images to maintain character consistency and preserve all facial features with high fidelity.
 """
                 prompt = enhanced_prompt
-                logger.info(f"Enhanced prompt with face preservation instructions ({ref_count} references)")
+                logger.info(
+                    f"Enhanced prompt with face preservation instructions ({ref_count} references)"
+                )
 
         if self.nanobanana_key:
             result = await self._generate_via_nanobanana(
@@ -235,7 +241,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
                 character_refs = reference_image_urls[:4]
                 # Остальные - объекты/стиль
                 object_refs = reference_image_urls[4:14]
-                
+
                 for img_url in character_refs:
                     contents.append(
                         {"type": "image_url", "image_url": {"url": img_url}}
@@ -244,12 +250,14 @@ Use the {ref_count} reference images to maintain character consistency and prese
                     contents.append(
                         {"type": "image_url", "image_url": {"url": img_url}}
                     )
-                logger.info(f"Added {len(character_refs)} character refs + {len(object_refs)} object refs")
+                logger.info(
+                    f"Added {len(character_refs)} character refs + {len(object_refs)} object refs"
+                )
             # Fallback на bytes
             elif reference_images:
                 character_refs = reference_images[:4]
                 object_refs = reference_images[4:14]
-                
+
                 for ref_img in character_refs:
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
                     contents.append(
@@ -266,7 +274,9 @@ Use the {ref_count} reference images to maintain character consistency and prese
                             "image_url": {"url": f"data:image/png;base64,{b64_image}"},
                         }
                     )
-                logger.info(f"Added {len(character_refs)} character refs + {len(object_refs)} object refs (bytes)")
+                logger.info(
+                    f"Added {len(character_refs)} character refs + {len(object_refs)} object refs (bytes)"
+                )
 
             # Если есть входное изображение по URL (приоритет) - главное изображение
             if image_input_url:
@@ -298,19 +308,28 @@ Use the {ref_count} reference images to maintain character consistency and prese
                 "messages": [{"role": "user", "content": contents}],
                 "max_tokens": 4096,
                 "generationConfig": {
-                    "responseModalities": ["TEXT", "IMAGE"],  # Обязательно для генерации изображений
-                }
+                    "responseModalities": [
+                        "TEXT",
+                        "IMAGE",
+                    ],  # Обязательно для генерации изображений
+                },
             }
 
             # Добавляем image_config если указан (согласно banana_api.md - вложенный imageConfig)
             # Используем переданное resolution или default в зависимости от модели
-            effective_resolution = resolution if resolution != default_resolution else default_resolution
+            effective_resolution = (
+                resolution if resolution != default_resolution else default_resolution
+            )
             if aspect_ratio or effective_resolution != default_resolution:
                 payload["generationConfig"]["imageConfig"] = {}
                 if aspect_ratio:
-                    payload["generationConfig"]["imageConfig"]["aspectRatio"] = aspect_ratio
+                    payload["generationConfig"]["imageConfig"][
+                        "aspectRatio"
+                    ] = aspect_ratio
                 if effective_resolution != default_resolution:
-                    payload["generationConfig"]["imageConfig"]["imageSize"] = effective_resolution
+                    payload["generationConfig"]["imageConfig"][
+                        "imageSize"
+                    ] = effective_resolution
 
             # Добавляем tools для search grounding
             if enable_search:
@@ -406,7 +425,9 @@ Use the {ref_count} reference images to maintain character consistency and prese
             # Добавляем aspect_ratio в промпт (согласно banana_api.md - работаем через текст)
             final_prompt = prompt
             if aspect_ratio and aspect_ratio != "1:1":
-                final_prompt = f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
+                final_prompt = (
+                    f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
+                )
                 logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
 
             # Убедимся, что в contents есть текстовая часть с финальным промптом
@@ -659,7 +680,9 @@ Use the {ref_count} reference images to maintain character consistency and prese
             )
 
             # Добавляем image_config если указан (не используем default)
-            effective_resolution = resolution if resolution != default_resolution else default_resolution
+            effective_resolution = (
+                resolution if resolution != default_resolution else default_resolution
+            )
             if aspect_ratio or effective_resolution != default_resolution:
                 config_params.image_config = types.ImageConfig(
                     aspect_ratio=aspect_ratio, image_size=effective_resolution

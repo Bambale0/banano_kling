@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -11,40 +12,58 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (add_credits, add_generation_history,
-                          add_generation_task, check_can_afford,
-                          complete_video_task, deduct_credits,
-                          get_or_create_user, get_task_by_id, get_user_credits,
-                          get_user_settings)
-from bot.keyboards import (get_advanced_options_keyboard,
-                           get_aspect_ratio_keyboard, get_back_keyboard,
-                           get_category_keyboard, get_duration_keyboard,
-                           get_image_aspect_ratio_keyboard,
-                           get_image_aspect_ratio_no_preset_edit_keyboard,
-                           get_image_aspect_ratio_no_preset_keyboard,
-                           get_image_editing_options_keyboard,
-                           get_main_menu_keyboard,
-                           get_model_selection_keyboard,
-                           get_multiturn_keyboard, get_preset_action_keyboard,
-                           get_prompt_tips_keyboard,
-                           get_reference_images_keyboard,
-                           get_resolution_keyboard,
-                           get_search_grounding_keyboard,
-                           get_video_edit_confirm_keyboard,
-                           get_video_edit_input_type_keyboard,
-                           get_video_edit_keyboard,
-                           get_video_options_no_preset_keyboard)
+from bot.database import (
+    add_credits,
+    add_generation_history,
+    add_generation_task,
+    check_can_afford,
+    complete_video_task,
+    deduct_credits,
+    get_or_create_user,
+    get_task_by_id,
+    get_user_credits,
+    get_user_settings,
+)
+from bot.keyboards import (
+    get_advanced_options_keyboard,
+    get_aspect_ratio_keyboard,
+    get_back_keyboard,
+    get_category_keyboard,
+    get_duration_keyboard,
+    get_image_aspect_ratio_keyboard,
+    get_image_aspect_ratio_no_preset_edit_keyboard,
+    get_image_aspect_ratio_no_preset_keyboard,
+    get_image_editing_options_keyboard,
+    get_main_menu_keyboard,
+    get_model_selection_keyboard,
+    get_multiturn_keyboard,
+    get_preset_action_keyboard,
+    get_prompt_tips_keyboard,
+    get_reference_images_keyboard,
+    get_resolution_keyboard,
+    get_search_grounding_keyboard,
+    get_video_edit_confirm_keyboard,
+    get_video_edit_input_type_keyboard,
+    get_video_edit_keyboard,
+    get_video_options_no_preset_keyboard,
+)
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
-from bot.utils.help_texts import (UserHints, format_generation_options,
-                                  get_aspect_ratio_help, get_editing_help,
-                                  get_error_handling, get_model_selection_help,
-                                  get_multiturn_help, get_prompt_tips,
-                                  get_reference_images_help,
-                                  get_resolution_help,
-                                  get_search_grounding_help,
-                                  get_success_message)
+from bot.utils.help_texts import (
+    UserHints,
+    format_generation_options,
+    get_aspect_ratio_help,
+    get_editing_help,
+    get_error_handling,
+    get_model_selection_help,
+    get_multiturn_help,
+    get_prompt_tips,
+    get_reference_images_help,
+    get_resolution_help,
+    get_search_grounding_help,
+    get_success_message,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -87,7 +106,12 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
         return None
 
 
-async def _send_original_document(send_callable, result: bytes, saved_url: Optional[str], filename: str = "original.png"):
+async def _send_original_document(
+    send_callable,
+    result: bytes,
+    saved_url: Optional[str],
+    filename: str = "original.png",
+):
     """Helper to send original document with fallbacks and logging.
 
     send_callable: coroutine function like message.answer_document
@@ -95,16 +119,24 @@ async def _send_original_document(send_callable, result: bytes, saved_url: Optio
     try:
         logger.info("Sending original document via BufferedInputFile")
         doc = types.BufferedInputFile(result, filename=filename)
-        await send_callable(document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+        await send_callable(
+            document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+        )
         logger.info("Original document sent (BufferedInputFile)")
         return
     except Exception:
-        logger.exception("Failed to send original document via BufferedInputFile, trying fallback")
+        logger.exception(
+            "Failed to send original document via BufferedInputFile, trying fallback"
+        )
 
     try:
         if saved_url:
             logger.info("Sending original document via saved URL")
-            await send_callable(document=saved_url, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+            await send_callable(
+                document=saved_url,
+                caption="📥 Исходный файл (оригинал)",
+                parse_mode="HTML",
+            )
             logger.info("Original document sent via URL")
             return
 
@@ -112,7 +144,9 @@ async def _send_original_document(send_callable, result: bytes, saved_url: Optio
         bio.name = filename
         bio.seek(0)
         logger.info("Sending original document via BytesIO fallback")
-        await send_callable(document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML")
+        await send_callable(
+            document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+        )
         logger.info("Original document sent via BytesIO")
     except Exception:
         logger.exception("Fallback to send original document failed")
@@ -148,13 +182,15 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
 
     user_credits = await get_user_credits(callback.from_user.id)
     settings = await get_user_settings(callback.from_user.id)
-    
+
     # Получаем сервис для генерации изображений
     image_service = settings.get("image_service", "nanobanana")
-    
+
     # Названия и стоимость в зависимости от сервиса
     if image_service == "novita":
         model_name = "✨ FLUX.2 Pro"
+    elif image_service == "seedream":
+        model_name = "🎨 Seedream"
     else:  # nanobanana
         model_name = "🍌 Nano Banana"
     model_cost = "2"
@@ -413,7 +449,9 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
 
 
 @router.callback_query(F.data.startswith("video_edit_input_"))
-async def handle_video_edit_input_type(callback: types.CallbackQuery, state: FSMContext):
+async def handle_video_edit_input_type(
+    callback: types.CallbackQuery, state: FSMContext
+):
     """Выбор типа входного медиа для видео-эффектов: видео или изображение"""
     choice = callback.data.replace("video_edit_input_", "")
 
@@ -455,7 +493,9 @@ async def handle_video_edit_input_type(callback: types.CallbackQuery, state: FSM
 
 
 @router.callback_query(F.data == "video_edit_change_type")
-async def handle_video_edit_change_type(callback: types.CallbackQuery, state: FSMContext):
+async def handle_video_edit_change_type(
+    callback: types.CallbackQuery, state: FSMContext
+):
     """Сброс и выбор нового типа входного медиа для видео-эффектов"""
     video_edit_options = {"quality": "std", "duration": 5, "aspect_ratio": "16:9"}
     await state.update_data(video_edit_options=video_edit_options)
@@ -909,7 +949,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             f"• До 4 персонажей для консистентности\n"
             f"• До 14 изображений суммарно\n\n"
             f"После загрузки нажмите ▶️ Продолжить",
-            reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+            reply_markup=get_reference_images_upload_keyboard(
+                len(current_refs), max_refs, preset_id
+            ),
             parse_mode="HTML",
         )
 
@@ -1166,7 +1208,7 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
         # Стоимость видео: базовая 6 + доплата за длительность
-        duration = video_edit_options.get('duration', 5)
+        duration = video_edit_options.get("duration", 5)
         base_cost = 6
         if duration == 10:
             cost = 8
@@ -1234,7 +1276,7 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
         # Стоимость видео: базовая 6 + доплата за длительность
-        duration = video_edit_options.get('duration', 5)
+        duration = video_edit_options.get("duration", 5)
         base_cost = 6
         if duration == 10:
             cost = 8
@@ -1395,8 +1437,7 @@ async def start_no_preset_generation(
 
                 # Создаём задачу в БД
                 if saved_url:
-                    from bot.database import (add_generation_task,
-                                              complete_video_task)
+                    from bot.database import add_generation_task, complete_video_task
 
                     user = await get_or_create_user(message.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -1412,7 +1453,9 @@ async def start_no_preset_generation(
                     reply_markup=get_multiturn_keyboard("no_preset"),
                 )
 
-                await _send_original_document(message.answer_document, result, saved_url)
+                await _send_original_document(
+                    message.answer_document, result, saved_url
+                )
             else:
                 await add_credits(message.from_user.id, cost)
                 await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
@@ -1502,24 +1545,29 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
 
         # Читаем байты
         image_data = image_bytes.read()
-        
+
         # Для image_edit: проверяем, есть ли уже главное фото
         if generation_type == "image_edit":
             uploaded_image = data.get("uploaded_image")
             ref_images = data.get("reference_images", [])
-            
+
             if uploaded_image and len(ref_images) < 4:
                 # Уже есть главное фото — добавляем как референс лица
                 ref_images.append(image_data)
                 await state.update_data(reference_images=ref_images)
-                
+
                 await message.answer(
                     f"✅ <b>Референс лица добавлен!</b>\n"
                     f"📎 Всего референсов: <code>{len(ref_images)}/4</code>\n\n"
                     f"Можете добавить ещё или нажмите «Пропустить» для ввода промпта",
                     reply_markup=types.InlineKeyboardMarkup(
                         inline_keyboard=[
-                            [types.InlineKeyboardButton(text="✅ Продолжить, ввести промпт", callback_data="skip_face_ref")]
+                            [
+                                types.InlineKeyboardButton(
+                                    text="✅ Продолжить, ввести промпт",
+                                    callback_data="skip_face_ref",
+                                )
+                            ]
                         ]
                     ),
                     parse_mode="HTML",
@@ -1539,7 +1587,7 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
                     parse_mode="HTML",
                 )
                 return
-        
+
         # Сохраняем в папку static/uploads (только для главного фото)
         if generation_type != "image_edit" or not data.get("uploaded_image"):
             image_url = save_uploaded_file(image_data, "png")
@@ -1555,7 +1603,7 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
         if generation_type == "image_edit":
             # Проверяем, есть ли уже референсы
             ref_images = data.get("reference_images", [])
-            
+
             if not ref_images:
                 # Первое фото — главное, предлагаем добавить референсы лиц
                 await state.set_state(GenerationStates.waiting_for_image)
@@ -1567,7 +1615,12 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
                     f"<i>Для сохранения лица: отправьте фото лица крупным планом</i>",
                     reply_markup=types.InlineKeyboardMarkup(
                         inline_keyboard=[
-                            [types.InlineKeyboardButton(text="✅ Пропустить, ввести промпт", callback_data="skip_face_ref")]
+                            [
+                                types.InlineKeyboardButton(
+                                    text="✅ Пропустить, ввести промпт",
+                                    callback_data="skip_face_ref",
+                                )
+                            ]
                         ]
                     ),
                     parse_mode="HTML",
@@ -1681,6 +1734,7 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
 # ЗАГРУЗКА РЕФЕРЕНСНЫХ ИЗОБРАЖЕНИЙ (до 14 шт)
 # =============================================================================
 
+
 @router.message(GenerationStates.uploading_reference_images, F.photo)
 async def process_reference_images_upload(message: types.Message, state: FSMContext):
     """
@@ -1699,7 +1753,9 @@ async def process_reference_images_upload(message: types.Message, state: FSMCont
             f"⚠️ <b>Достигнут лимит референсов</b>\n\n"
             f"Загружено максимальное количество: <code>{max_refs}/{max_refs}</code>\n"
             f"Нажмите ▶️ Продолжить для перехода к генерации.",
-            reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+            reply_markup=get_reference_images_upload_keyboard(
+                len(current_refs), max_refs, preset_id
+            ),
             parse_mode="HTML",
         )
         return
@@ -1721,7 +1777,9 @@ async def process_reference_images_upload(message: types.Message, state: FSMCont
         f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n"
         f"Осталось: <code>{remaining}</code>\n\n"
         f"Отправьте еще фото или нажмите ▶️ Продолжить",
-        reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+        reply_markup=get_reference_images_upload_keyboard(
+            len(current_refs), max_refs, preset_id
+        ),
         parse_mode="HTML",
     )
 
@@ -1737,7 +1795,9 @@ async def invalid_reference_upload(message: types.Message, state: FSMContext):
     await message.answer(
         f"⚠️ Пожалуйста, отправьте изображение (фото)\n\n"
         f"Или нажмите ▶️ Продолжить если загрузили все референсы",
-        reply_markup=get_reference_images_upload_keyboard(len(current_refs), max_refs, preset_id),
+        reply_markup=get_reference_images_upload_keyboard(
+            len(current_refs), max_refs, preset_id
+        ),
     )
 
 
@@ -1821,14 +1881,16 @@ async def generate_image(
         from bot.services.gemini_service import gemini_service
 
         result = await gemini_service.generate_image(
-                prompt=prompt,
-                model=options.get("model", preset.model if preset.model else "gemini-3-pro-image-preview"),
-                aspect_ratio=options.get("aspect_ratio", preset.aspect_ratio),
-                image_input=image_bytes,
-                enable_search=options.get("enable_search", False),
-                reference_images=options.get("reference_images", []),
-                preserve_faces=True,  # Сохраняем лица при редактировании
-            )
+            prompt=prompt,
+            model=options.get(
+                "model", preset.model if preset.model else "gemini-3-pro-image-preview"
+            ),
+            aspect_ratio=options.get("aspect_ratio", preset.aspect_ratio),
+            image_input=image_bytes,
+            enable_search=options.get("enable_search", False),
+            reference_images=options.get("reference_images", []),
+            preserve_faces=True,  # Сохраняем лица при редактировании
+        )
 
         if result:
             # Сохраняем изображение на сервере для возможности скачивания
@@ -1874,7 +1936,9 @@ async def generate_image(
             )
 
             # Отправляем оригинал как документ
-            await _send_original_document(callback.message.answer_document, result, saved_url)
+            await _send_original_document(
+                callback.message.answer_document, result, saved_url
+            )
         else:
             # Возвращаем кредиты при ошибке
             await add_credits(callback.from_user.id, preset.cost)
@@ -2068,8 +2132,7 @@ async def run_editing_inline(
                     logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
-                    from bot.database import (add_generation_task,
-                                              complete_video_task)
+                    from bot.database import add_generation_task, complete_video_task
 
                     user = await get_or_create_user(message.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2086,7 +2149,9 @@ async def run_editing_inline(
                     reply_markup=get_multiturn_keyboard("no_preset_edit"),
                 )
                 # Попытка отправить оригинал как документ (иногда Telegram режет большие файлы)
-                await _send_original_document(message.answer_document, result, saved_url)
+                await _send_original_document(
+                    message.answer_document, result, saved_url
+                )
 
                 # Всегда отправляем ссылку на скачивание, чтобы пользователь точно получил исходник
                 if saved_url:
@@ -2167,8 +2232,7 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
                     logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
-                    from bot.database import (add_generation_task,
-                                              complete_video_task)
+                    from bot.database import add_generation_task, complete_video_task
 
                     user = await get_or_create_user(callback.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2185,7 +2249,9 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
                     reply_markup=get_multiturn_keyboard("no_preset_edit"),
                 )
 
-                await _send_original_document(callback.message.answer_document, result, saved_url)
+                await _send_original_document(
+                    callback.message.answer_document, result, saved_url
+                )
                 if saved_url:
                     await _send_download_link(callback.message.answer, saved_url)
                 if saved_url:
@@ -2407,9 +2473,9 @@ async def skip_face_reference(callback: types.CallbackQuery, state: FSMContext):
     """Пропускает добавление референсов лиц и переходит к вводу промпта"""
     data = await state.get_data()
     ref_images = data.get("reference_images", [])
-    
+
     await state.set_state(GenerationStates.waiting_for_input)
-    
+
     if ref_images:
         await callback.message.edit_text(
             f"✅ <b>Готово!</b>\n"
@@ -2573,12 +2639,21 @@ async def run_no_preset_image_generation(
     if image_service == "novita":
         # FLUX.2 Pro через Novita
         from bot.services.novita_service import novita_service
+
         service = novita_service
         model_name = "✨ FLUX.2 Pro"
+        cost = 2
+    elif image_service == "seedream":
+        # Seedream через Novita
+        from bot.services.novita_service import novita_service
+
+        service = novita_service
+        model_name = "🎨 Seedream"
         cost = 2
     else:
         # Nano Banana (Gemini)
         from bot.services.gemini_service import gemini_service
+
         service = gemini_service
         model_name = "🍌 Nano Banana"
         cost = 2
@@ -2606,16 +2681,110 @@ async def run_no_preset_image_generation(
 
     try:
         # Different services have different parameter names
-        # gemini: aspect_ratio, novita: size
+        # gemini: aspect_ratio, novita: size (async API with task_id)
         if image_service == "novita":
-            # Convert aspect ratio to novita size format
+            # FLUX.2 Pro через Novita - async API, returns task_id
             size = f"{aspect_ratio}_hq"
-            result = await service.generate_image(
+            task_response = await service.generate_image(
                 prompt=prompt,
                 size=size,
+                webhook_url=config.novita_notification_url
+                if config.WEBHOOK_HOST
+                else None,
             )
+
+            if task_response and task_response.get("task_id"):
+                task_id = task_response["task_id"]
+
+                # Сохраняем задачу в БД
+                from bot.database import add_generation_task
+
+                user = await get_or_create_user(message.from_user.id)
+                await add_generation_task(user.id, task_id, "image", "no_preset")
+
+                await processing.delete()
+                await message.answer(
+                    f"✅ <b>Задача создана!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
+                    parse_mode="HTML",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+
+                # Запускаем фоновый опрос статуса
+                asyncio.create_task(
+                    poll_novita_task_status(
+                        task_id=task_id,
+                        user_id=user_id,
+                        bot=message.bot,
+                        cost=cost,
+                        model_name=model_name,
+                    )
+                )
+            else:
+                await processing.delete()
+                await add_credits(user_id, cost)
+                await message.answer(
+                    "❌ Не удалось создать задачу. Бананы возвращены.",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+            await state.clear()
+            return
+        elif image_service == "seedream":
+            # Seedream через Novita - async API, returns task_id
+            size = "2048x2048"  # Default 2K for Seedream
+            task_response = await service.generate_seedream_image(
+                prompt=prompt,
+                size=size,
+                watermark=False,
+                webhook_url=config.seedream_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+            )
+
+            if task_response and task_response.get("task_id"):
+                task_id = task_response["task_id"]
+
+                # Сохраняем задачу в БД
+                from bot.database import add_generation_task
+
+                user = await get_or_create_user(user_id)
+                await add_generation_task(user.id, task_id, "image", "no_preset")
+
+                await processing.delete()
+                await message.answer(
+                    f"✅ <b>Задача создана!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Размер: <code>2048x2048</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
+                    parse_mode="HTML",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+
+                # Запускаем фоновый опрос статуса
+                asyncio.create_task(
+                    poll_novita_task_status(
+                        task_id=task_id,
+                        user_id=user_id,
+                        bot=message.bot,
+                        cost=cost,
+                        model_name=model_name,
+                    )
+                )
+            else:
+                await processing.delete()
+                await add_credits(message.from_user.id, cost)
+                await message.answer(
+                    "❌ Не удалось создать задачу. Бананы возвращены.",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+            await state.clear()
+            return
         else:
-            # Gemini uses aspect_ratio
+            # Gemini uses aspect_ratio and returns bytes directly
             result = await service.generate_image(
                 prompt=prompt,
                 aspect_ratio=aspect_ratio,
@@ -2637,8 +2806,7 @@ async def run_no_preset_image_generation(
                 logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
-                from bot.database import (add_generation_task,
-                                          complete_video_task)
+                from bot.database import add_generation_task, complete_video_task
 
                 user = await get_or_create_user(message.from_user.id)
                 task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2727,7 +2895,7 @@ async def run_no_preset_image_edit(
 
         # Получаем референсы для сохранения лиц
         ref_images = data.get("reference_images", [])
-        
+
         result = await gemini_service.generate_image(
             prompt=prompt,
             model=model,
@@ -2752,8 +2920,7 @@ async def run_no_preset_image_edit(
                 logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
-                from bot.database import (add_generation_task,
-                                          complete_video_task)
+                from bot.database import add_generation_task, complete_video_task
 
                 user = await get_or_create_user(message.from_user.id)
                 task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -3277,9 +3444,6 @@ async def toggle_audio(callback: types.CallbackQuery, state: FSMContext):
 # =============================================================================
 
 
-
-
-
 @router.callback_query(F.data.startswith("multiturn_"))
 async def handle_multiturn(callback: types.CallbackQuery, state: FSMContext):
     """Обработка кнопки продолжения редактирования"""
@@ -3485,6 +3649,106 @@ async def run_image_to_video(message: types.Message, state: FSMContext, prompt: 
         )
 
     await state.clear()
+
+
+# =============================================================================
+# ФОНОВЫЙ ОПРОС СТАТУСА ЗАДАЧ NOVITA (FLUX/Seedream)
+# =============================================================================
+
+
+async def poll_novita_task_status(
+    task_id: str,
+    user_id: int,
+    bot: Bot,
+    cost: int,
+    model_name: str,
+    max_attempts: int = 60,
+    delay: int = 5,
+):
+    """Фоновый опрос статуса задачи изображения от Novita"""
+    from bot.database import add_credits, complete_video_task
+    from bot.services.novita_service import novita_service
+
+    logger.info(f"Starting Novita poll for task {task_id}, user {user_id}")
+
+    result = await novita_service.wait_for_completion(
+        task_id, max_attempts=max_attempts, delay=delay
+    )
+
+    if not result:
+        logger.error(f"Task {task_id}: timeout or error during polling")
+        await add_credits(user_id, cost)
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ <b>Ошибка генерации изображения</b>\n\nТаймаут ожидания результата.\n🍌 Бананы возвращены на счёт.",
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    # Проверяем статус
+    task_info = result.get("task", {})
+    status = task_info.get("status")
+
+    if status == "TASK_STATUS_SUCCEED":
+        # Получаем изображения
+        images = result.get("images", [])
+        if images and len(images) > 0:
+            image_url = images[0].get("image_url")
+            if image_url:
+                # Обновляем в БД
+                await complete_video_task(task_id, image_url)
+
+                # Отправляем пользователю
+                try:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=image_url,
+                        caption=f"✅ <b>Готово!</b>\n\n🤖 Модель: <code>{model_name}</code>\n<code>{cost}</code>🍌 списано",
+                        parse_mode="HTML",
+                        reply_markup=get_multiturn_keyboard("no_preset"),
+                    )
+                    logger.info(f"Task {task_id}: image sent to user {user_id}")
+                except Exception as e:
+                    # Если не удалось отправить фото по URL, отправляем ссылкой
+                    logger.warning(f"Failed to send photo: {e}")
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ <b>Готово!</b>\n\n🤖 Модель: <code>{model_name}</code>\n<code>{cost}</code>🍌 списано\n\n<a href='{image_url}'>Скачать изображение</a>",
+                        parse_mode="HTML",
+                        reply_markup=get_multiturn_keyboard("no_preset"),
+                    )
+                return
+
+        logger.error(f"Task {task_id}: completed but no image URL")
+        await add_credits(user_id, cost)
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Изображение сгенерировано, но не удалось получить ссылку.\n🍌 Бананы возвращены на счёт.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+
+    elif status == "TASK_STATUS_FAILED":
+        # Задача упала
+        reason = task_info.get("reason", "Unknown error")
+        logger.error(f"Task {task_id}: failed with reason: {reason}")
+
+        # Возвращаем кредиты
+        await add_credits(user_id, cost)
+        await bot.send_message(
+            chat_id=user_id,
+            text=f"❌ <b>Ошибка генерации изображения</b>\n\n{reason}\n\n🍌 Бананы возвращены на счёт.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+    else:
+        # Таймаут или другой статус
+        logger.warning(f"Task {task_id}: unexpected status {status}")
+        await add_credits(user_id, cost)
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ <b>Ошибка генерации изображения</b>\n\n🍌 Бананы возвращены на счёт.",
+            reply_markup=get_main_menu_keyboard(),
+        )
 
 
 # =============================================================================

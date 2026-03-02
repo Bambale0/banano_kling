@@ -147,7 +147,9 @@ class TestGenerateImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "novita_task_123", "status": "CREATED"}
 
             result = await service.generate_image(prompt="A beautiful sunset")
@@ -160,10 +162,11 @@ class TestGenerateImage:
             payload = call_args[0][1]
 
             assert payload["prompt"] == "A beautiful sunset"
-            assert payload["width"] == 1536  # Default is now 1:1_hq
-            assert payload["height"] == 1536
+            assert (
+                payload["size"] == "1536*1536"
+            )  # Default is now 1:1_hq, API uses * separator
             assert payload["seed"] == -1
-            assert payload["response_format"] == "url"
+            # response_format больше не используется в новом API
 
     @pytest.mark.asyncio
     async def test_generate_image_with_size(self):
@@ -172,19 +175,19 @@ class TestGenerateImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "task_456", "status": "CREATED"}
 
-            result = await service.generate_image(
-                prompt="A cat",
-                size="16:9"
-            )
+            result = await service.generate_image(prompt="A cat", size="16:9")
 
             call_args = mock_post.call_args
             payload = call_args[0][1]
 
-            assert payload["width"] == 1280
-            assert payload["height"] == 720
+            assert (
+                payload["size"] == "1280*720"
+            )  # 16:9 preset size, API uses * separator
 
     @pytest.mark.asyncio
     async def test_generate_image_with_seed(self):
@@ -193,13 +196,12 @@ class TestGenerateImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "task_789", "status": "CREATED"}
 
-            result = await service.generate_image(
-                prompt="A dog",
-                seed=12345
-            )
+            result = await service.generate_image(prompt="A dog", seed=12345)
 
             call_args = mock_post.call_args
             payload = call_args[0][1]
@@ -213,12 +215,13 @@ class TestGenerateImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "task_webhook", "status": "CREATED"}
 
             result = await service.generate_image(
-                prompt="A landscape",
-                webhook_url="https://example.com/webhook"
+                prompt="A landscape", webhook_url="https://example.com/webhook"
             )
 
             call_args = mock_post.call_args
@@ -233,19 +236,17 @@ class TestGenerateImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "task_custom", "status": "CREATED"}
 
-            result = await service.generate_image(
-                prompt="Test",
-                size="800x600"
-            )
+            result = await service.generate_image(prompt="Test", size="800x600")
 
             call_args = mock_post.call_args
             payload = call_args[0][1]
 
-            assert payload["width"] == 800
-            assert payload["height"] == 600
+            assert payload["size"] == "800x600"
 
 
 class TestEditImage:
@@ -258,12 +259,14 @@ class TestEditImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "edit_task_123", "status": "CREATED"}
 
             result = await service.edit_image(
                 prompt="Make it more colorful",
-                images=["https://example.com/image1.jpg"]
+                images=["https://example.com/image1.jpg"],
             )
 
             assert result["task_id"] == "edit_task_123"
@@ -281,19 +284,18 @@ class TestEditImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "edit_task_456", "status": "CREATED"}
 
             images = [
                 "https://example.com/image1.jpg",
                 "https://example.com/image2.jpg",
-                "https://example.com/image3.jpg"
+                "https://example.com/image3.jpg",
             ]
 
-            result = await service.edit_image(
-                prompt="Apply style",
-                images=images
-            )
+            result = await service.edit_image(prompt="Apply style", images=images)
 
             call_args = mock_post.call_args
             payload = call_args[0][1]
@@ -314,10 +316,7 @@ class TestEditImage:
             "https://example.com/image4.jpg",  # Слишком много
         ]
 
-        result = await service.edit_image(
-            prompt="Test",
-            images=images
-        )
+        result = await service.edit_image(prompt="Test", images=images)
 
         assert result is None
 
@@ -328,20 +327,19 @@ class TestEditImage:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "_post_request", new_callable=AsyncMock) as mock_post:
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
             mock_post.return_value = {"task_id": "edit_task_size", "status": "CREATED"}
 
             result = await service.edit_image(
-                prompt="Edit",
-                images=["https://example.com/image.jpg"],
-                size="9:16"
+                prompt="Edit", images=["https://example.com/image.jpg"], size="9:16"
             )
 
             call_args = mock_post.call_args
             payload = call_args[0][1]
 
-            assert payload["width"] == 720
-            assert payload["height"] == 1280
+            assert payload["size"] == "720x1280"
 
 
 class TestGetTaskResult:
@@ -358,9 +356,7 @@ class TestGetTaskResult:
             mock_get.return_value = {
                 "task_id": "task_123",
                 "status": "COMPLETED",
-                "data": {
-                    "images": ["https://example.com/result.jpg"]
-                }
+                "data": {"images": ["https://example.com/result.jpg"]},
             }
 
             result = await service.get_task_result("task_123")
@@ -375,10 +371,7 @@ class TestGetTaskResult:
         service = NovitaService(api_key="test")
 
         with patch.object(service, "_get_request", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = {
-                "task_id": "task_456",
-                "status": "PROCESSING"
-            }
+            mock_get.return_value = {"task_id": "task_456", "status": "PROCESSING"}
 
             result = await service.get_task_result("task_456")
 
@@ -395,13 +388,14 @@ class TestWaitForCompletion:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "get_task_result", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = {
-                "task_id": "task_123",
-                "status": "COMPLETED"
-            }
+        with patch.object(
+            service, "get_task_result", new_callable=AsyncMock
+        ) as mock_get:
+            mock_get.return_value = {"task_id": "task_123", "status": "COMPLETED"}
 
-            result = await service.wait_for_completion("task_123", max_attempts=5, delay=1)
+            result = await service.wait_for_completion(
+                "task_123", max_attempts=5, delay=1
+            )
 
             assert result["status"] == "COMPLETED"
             assert mock_get.call_count == 1
@@ -423,7 +417,9 @@ class TestWaitForCompletion:
             return {"task_id": task_id, "status": "COMPLETED"}
 
         with patch.object(service, "get_task_result", side_effect=mock_get_task):
-            result = await service.wait_for_completion("task_123", max_attempts=5, delay=1)
+            result = await service.wait_for_completion(
+                "task_123", max_attempts=5, delay=1
+            )
 
             assert result["status"] == "COMPLETED"
             assert call_count == 3
@@ -435,14 +431,18 @@ class TestWaitForCompletion:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "get_task_result", new_callable=AsyncMock) as mock_get:
+        with patch.object(
+            service, "get_task_result", new_callable=AsyncMock
+        ) as mock_get:
             mock_get.return_value = {
                 "task_id": "task_123",
                 "status": "FAILED",
-                "error": "Generation failed"
+                "error": "Generation failed",
             }
 
-            result = await service.wait_for_completion("task_123", max_attempts=5, delay=1)
+            result = await service.wait_for_completion(
+                "task_123", max_attempts=5, delay=1
+            )
 
             assert result["status"] == "FAILED"
 
@@ -453,10 +453,14 @@ class TestWaitForCompletion:
 
         service = NovitaService(api_key="test")
 
-        with patch.object(service, "get_task_result", new_callable=AsyncMock) as mock_get:
+        with patch.object(
+            service, "get_task_result", new_callable=AsyncMock
+        ) as mock_get:
             mock_get.return_value = {"task_id": "task_123", "status": "PROCESSING"}
 
-            result = await service.wait_for_completion("task_123", max_attempts=3, delay=0.1)
+            result = await service.wait_for_completion(
+                "task_123", max_attempts=3, delay=0.1
+            )
 
             assert result is None
             assert mock_get.call_count == 3
@@ -509,7 +513,7 @@ class TestNovitaServiceIntegration:
 
     def test_service_in_config(self):
         """Тест: наличие в __init__"""
-        from bot.services import novita_service, NovitaService
+        from bot.services import NovitaService, novita_service
 
         assert "novita_service" in dir()
         assert NovitaService is not None

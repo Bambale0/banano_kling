@@ -21,7 +21,6 @@ class Config:
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
-    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
 
     # Legacy API Keys (optional fallbacks)
@@ -78,10 +77,6 @@ class Config:
     @property
     def kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"
-
-    @property
-    def replicate_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/replicate"
 
     @property
     def seedream_notification_url(self) -> str:

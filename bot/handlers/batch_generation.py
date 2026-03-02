@@ -8,8 +8,7 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.database import (add_credits, check_can_afford, deduct_credits,
-                          get_user_credits)
+from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.preset_manager import preset_manager
@@ -137,7 +136,9 @@ async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext
     _batch_upload_urls[callback.from_user.id] = []
 
     # Сохраняем состояние: ожидаем главное фото
-    await state.update_data(batch_mode="reference_edit", main_image=None, reference_images=[])
+    await state.update_data(
+        batch_mode="reference_edit", main_image=None, reference_images=[]
+    )
 
     text = (
         f"🎨 <b>Редактирование по референсам</b>\n\n"
@@ -243,7 +244,9 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     ref_images = data.get("reference_images", [])
 
     if not main_image:
-        await callback.answer("Сначала загрузите главное фото для редактирования!", show_alert=True)
+        await callback.answer(
+            "Сначала загрузите главное фото для редактирования!", show_alert=True
+        )
         return
 
     cost = 5  # Фиксированная стоимость за сессию с референсами
@@ -414,6 +417,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         if result:
             # Сохраняем результат
             from bot.handlers.generation import save_uploaded_file
+
             saved_url = save_uploaded_file(result, "png")
 
             # Отправляем результат

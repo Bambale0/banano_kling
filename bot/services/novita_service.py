@@ -38,7 +38,7 @@ class NovitaService:
 
     # API Endpoints
     BASE_URL = "https://api.novita.ai"
-    
+
     # Valid parameters - FLUX
     MIN_SIZE = 256
     MAX_SIZE = 1536  # Backward compatibility alias for MAX_SIZE_FLUX
@@ -47,11 +47,11 @@ class NovitaService:
     MAX_IMAGES = 3  # Backward compatibility alias for MAX_IMAGES_FLUX
     MAX_IMAGES_FLUX = 3
     MAX_IMAGES_SEEDREAM = 14
-    
+
     # Valid duration range (for video generation)
     MIN_DURATION = 3
     MAX_DURATION = 15
-    
+
     # Valid size presets - MAX quality (1536px)
     SIZE_PRESETS = {
         # Standard quality (1024px)
@@ -69,10 +69,10 @@ class NovitaService:
         "3:4_hq": (1152, 1536),
         "21:9_hq": (1536, 656),
     }
-    
+
     # Aspect ratios for video
     ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"]
-    
+
     # Duration options for video
     DURATIONS = ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
 
@@ -92,38 +92,41 @@ class NovitaService:
     ) -> Optional[Dict]:
         """
         Generate image using FLUX.2 Pro
-        
+
+        API: POST /v3/async/flux-2-pro
+
         Args:
-            prompt: Text prompt describing the expected image
+            prompt: Text prompt describing the expected image (required)
             size: Size preset like "1:1", "16:9", "9:16", "1:1_hq", "16:9_hq", etc.
                   Use "_hq" suffix for maximum quality (1536px)
             seed: Random seed for generation (-1 for random). Range: -1 to 2147483647
             webhook_url: Optional callback URL for async notifications
-            
+
         Returns:
             Dict with task_id or None on error
         """
-        # Parse size
+        # Parse size to WIDTH*HEIGHT format (API uses * as separator)
         width, height = self._parse_size(size)
-        
+        size_str = f"{width}*{height}"
+
+        # Build payload according to API spec
+        # Webhook must be in extra.webhook.url format
         payload = {
             "prompt": prompt,
-            "width": width,
-            "height": height,
+            "size": size_str,
             "seed": seed if seed >= 0 else -1,
-            "response_format": "url",  # Get URL in response
         }
-        
+
         if webhook_url:
-            payload["webhook_url"] = webhook_url
-            
-        url = f"{self.BASE_URL}/v3/flux/flux-pro"
-        
+            payload["extra"] = {"webhook": {"url": webhook_url}}
+
+        url = f"{self.BASE_URL}/v3/async/flux-2-pro"
+
         logger.info(
             f"Novita FLUX.2 Pro request: prompt={prompt[:50]}..., "
-            f"size={width}x{height}, seed={seed}"
+            f"size={size_str}, seed={seed}, webhook={webhook_url is not None}"
         )
-        
+
         return await self._post_request(url, payload)
 
     async def edit_image(
@@ -136,43 +139,48 @@ class NovitaService:
     ) -> Optional[Dict]:
         """
         Edit image(s) using FLUX.2 Pro
-        
+
+        API: POST /v3/async/flux-2-pro (same endpoint, with images param)
+
         Args:
             prompt: Text prompt describing the expected editing effect
             images: List of input image URLs for editing (up to 3)
             size: Size preset like "1:1", "16:9", "9:16", "1:1_hq", etc.
             seed: Random seed for generation (-1 for random). Range: -1 to 2147483647
             webhook_url: Optional callback URL for async notifications
-            
+
         Returns:
             Dict with task_id or None on error
         """
         if len(images) > self.MAX_IMAGES_FLUX:
-            logger.error(f"Too many images: {len(images)}, max is {self.MAX_IMAGES_FLUX}")
+            logger.error(
+                f"Too many images: {len(images)}, max is {self.MAX_IMAGES_FLUX}"
+            )
             return None
-            
-        # Parse size
+
+        # Parse size to WIDTH*HEIGHT format (API uses * as separator)
         width, height = self._parse_size(size)
-        
+        size_str = f"{width}*{height}"
+
+        # Build payload according to API spec
+        # Webhook must be in extra.webhook.url format
         payload = {
             "prompt": prompt,
             "images": images,
-            "width": width,
-            "height": height,
+            "size": size_str,
             "seed": seed if seed >= 0 else -1,
-            "response_format": "url",
         }
-        
+
         if webhook_url:
-            payload["webhook_url"] = webhook_url
-            
-        url = f"{self.BASE_URL}/v3/flux/flux-pro/edit"
-        
+            payload["extra"] = {"webhook": {"url": webhook_url}}
+
+        url = f"{self.BASE_URL}/v3/async/flux-2-pro"
+
         logger.info(
             f"Novita FLUX.2 Pro edit request: prompt={prompt[:50]}..., "
-            f"images_count={len(images)}, size={width}x{height}"
+            f"images_count={len(images)}, size={size_str}, webhook={webhook_url is not None}"
         )
-        
+
         return await self._post_request(url, payload)
 
     async def generate_video(
@@ -185,23 +193,23 @@ class NovitaService:
     ) -> Optional[Dict]:
         """
         Generate video using FLUX.2 Pro (if supported)
-        
+
         Args:
             prompt: Text prompt describing the expected video
             duration: Video duration in seconds (3-15)
             aspect_ratio: Video aspect ratio - "16:9", "9:16", "1:1", etc.
             seed: Random seed for generation (-1 for random). Range: -1 to 2147483647
             webhook_url: Optional callback URL for async notifications
-            
+
         Returns:
             Dict with task_id or None on error
         """
         # Validate duration
         duration = self._validate_duration(duration)
-        
+
         # Parse size from aspect ratio (use max quality)
         width, height = self._aspect_ratio_to_size(aspect_ratio)
-        
+
         payload = {
             "prompt": prompt,
             "duration": str(duration),
@@ -210,17 +218,17 @@ class NovitaService:
             "seed": seed if seed >= 0 else -1,
             "response_format": "url",
         }
-        
+
         if webhook_url:
             payload["webhook_url"] = webhook_url
-            
+
         url = f"{self.BASE_URL}/v3/flux/flux-pro/video"
-        
+
         logger.info(
             f"Novita FLUX.2 Pro video request: prompt={prompt[:50]}..., "
             f"duration={duration}s, size={width}x{height}, seed={seed}"
         )
-        
+
         return await self._post_request(url, payload)
 
     # =========================================================================
@@ -232,106 +240,180 @@ class NovitaService:
         prompt: str,
         size: str = "2048x2048",
         image: Optional[List[str]] = None,
-        watermark: bool = False,
-        seed: int = -1,
+        watermark: bool = True,
+        optimize_prompt_options: Optional[Dict[str, str]] = None,
+        sequential_image_generation: str = "disabled",
+        sequential_image_generation_options: Optional[Dict[str, int]] = None,
         webhook_url: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         Generate image using Seedream 5.0 Lite
-        
+
+        API: POST /v3/seedream/seedream-5-lite
+
         Args:
-            prompt: Text prompt describing the expected image (supports Chinese and English)
-            size: Size like "2048x2048", "2K", "3K", or resolution (2560x1440 to 3072x3072)
-            image: Optional list of reference image URLs (up to 14)
-            watermark: Whether to add watermark (default: False)
-            seed: Random seed for generation (-1 for random)
+            prompt: Text prompt for image generation (supports Chinese and English)
+                   Recommended: max 300 Chinese chars or 600 English words
+            size: Image size - "2K", "3K", or "WIDTHxHEIGHT" format
+                  Range: 2560x1440 (3,686,400 pixels) to 3072x3072 (9,437,184 pixels)
+            image: Optional list of reference image URLs or Base64 (up to 14 images)
+                   Supports: jpeg, png, webp, bmp, tiff, gif
+            watermark: Whether to add watermark (default: True)
+            optimize_prompt_options: Prompt optimization config
+                - mode: "standard" (only supported mode)
+            sequential_image_generation: Sequential generation mode
+                - "auto": Model decides based on prompt
+                - "disabled": Generate single image only (default)
+            sequential_image_generation_options: Config for sequential generation
+                - max_images: Maximum images to generate (1-15)
+                  Note: input images + generated images ≤ 15
             webhook_url: Optional callback URL for async notifications
-            
+
         Returns:
             Dict with task_id or None on error
         """
+        # Validate image count
+        if image and len(image) > self.MAX_IMAGES_SEEDREAM:
+            logger.error(
+                f"Too many images: {len(image)}, max is {self.MAX_IMAGES_SEEDREAM}"
+            )
+            return None
+
         # Parse size
         width, height = self._parse_seedream_size(size)
-        
+
+        # Build payload according to API spec
+        # Webhook must be in extra.webhook.url format
         payload = {
             "prompt": prompt,
             "size": f"{width}x{height}",
             "watermark": watermark,
-            "seed": seed if seed >= 0 else -1,
         }
-        
+
+        # Add optional image array
         if image:
             payload["image"] = image
-            
+
+        # Add prompt optimization options
+        if optimize_prompt_options:
+            payload["optimize_prompt_options"] = optimize_prompt_options
+
+        # Add sequential image generation settings
+        if sequential_image_generation in ["auto", "disabled"]:
+            payload["sequential_image_generation"] = sequential_image_generation
+
+        # Add sequential generation options (only when mode is "auto")
+        if (
+            sequential_image_generation == "auto"
+            and sequential_image_generation_options
+        ):
+            payload[
+                "sequential_image_generation_options"
+            ] = sequential_image_generation_options
+
         if webhook_url:
-            payload["webhook_url"] = webhook_url
-            
+            payload["extra"] = {"webhook": {"url": webhook_url}}
+
         url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
-        
+
         logger.info(
             f"Novita Seedream 5.0 request: prompt={prompt[:50]}..., "
-            f"size={width}x{height}, images={len(image) if image else 0}"
+            f"size={width}x{height}, images={len(image) if image else 0}, "
+            f"watermark={watermark}, sequential={sequential_image_generation}, webhook={webhook_url is not None}"
         )
-        
-        return await self._post_request(url, payload)
+
+        result = await self._post_request(url, payload)
+        if result:
+            logger.info(f"Seedream response: {result}")
+        return result
 
     async def edit_seedream_image(
         self,
         prompt: str,
         images: List[str],
         size: str = "2048x2048",
-        watermark: bool = False,
-        seed: int = -1,
+        watermark: bool = True,
+        optimize_prompt_options: Optional[Dict[str, str]] = None,
+        sequential_image_generation: str = "disabled",
+        sequential_image_generation_options: Optional[Dict[str, int]] = None,
         webhook_url: Optional[str] = None,
     ) -> Optional[Dict]:
         """
-        Edit image(s) using Seedream 5.0 Lite
-        
+        Edit image(s) using Seedream 5.0 Lite (Image-to-Image)
+
+        API: POST /v3/seedream/seedream-5-lite
+
         Args:
-            prompt: Text prompt describing the expected editing effect
-            images: List of input image URLs for editing (up to 14)
-            size: Size like "2048x2048", "2K", "3K"
-            watermark: Whether to add watermark (default: False)
-            seed: Random seed for generation (-1 for random)
+            prompt: Text prompt describing the editing effect
+            images: List of input image URLs or Base64 (up to 14 images)
+            size: Output image size - "2K", "3K", or "WIDTHxHEIGHT"
+            watermark: Whether to add watermark (default: True)
+            optimize_prompt_options: Prompt optimization config
+            sequential_image_generation: Sequential generation mode
+            sequential_image_generation_options: Config for sequential generation
             webhook_url: Optional callback URL for async notifications
-            
+
         Returns:
             Dict with task_id or None on error
         """
         if len(images) > self.MAX_IMAGES_SEEDREAM:
-            logger.error(f"Too many images: {len(images)}, max is {self.MAX_IMAGES_SEEDREAM}")
+            logger.error(
+                f"Too many images: {len(images)}, max is {self.MAX_IMAGES_SEEDREAM}"
+            )
             return None
-            
+
         # Parse size
         width, height = self._parse_seedream_size(size)
-        
+
+        # Build payload
+        # Webhook must be in extra.webhook.url format
         payload = {
             "prompt": prompt,
-            "image": images,
+            "image": images,  # API uses "image" not "images"
             "size": f"{width}x{height}",
             "watermark": watermark,
-            "seed": seed if seed >= 0 else -1,
         }
-        
+
+        # Add prompt optimization options
+        if optimize_prompt_options:
+            payload["optimize_prompt_options"] = optimize_prompt_options
+
+        # Add sequential image generation settings
+        if sequential_image_generation in ["auto", "disabled"]:
+            payload["sequential_image_generation"] = sequential_image_generation
+
+        # Add sequential generation options
+        if (
+            sequential_image_generation == "auto"
+            and sequential_image_generation_options
+        ):
+            payload[
+                "sequential_image_generation_options"
+            ] = sequential_image_generation_options
+
         if webhook_url:
-            payload["webhook_url"] = webhook_url
-            
+            payload["extra"] = {"webhook": {"url": webhook_url}}
+
         url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
-        
+
         logger.info(
             f"Novita Seedream 5.0 edit request: prompt={prompt[:50]}..., "
-            f"images_count={len(images)}, size={width}x{height}"
+            f"images_count={len(images)}, size={width}x{height}, "
+            f"sequential={sequential_image_generation}, webhook={webhook_url is not None}"
         )
-        
-        return await self._post_request(url, payload)
+
+        result = await self._post_request(url, payload)
+        if result:
+            logger.info(f"Seedream edit response: {result}")
+        return result
 
     def _parse_seedream_size(self, size: str) -> tuple[int, int]:
         """
         Parse Seedream size string to width and height
-        
+
         Args:
             size: Size string like "2048x2048", "2K", "3K", "2560x1440"
-            
+
         Returns:
             Tuple of (width, height)
         """
@@ -340,7 +422,7 @@ class NovitaService:
             return (2048, 2048)
         elif size.lower() in ["3k", "3k resolution"]:
             return (3072, 3072)
-        
+
         # Try to parse as "WIDTHxHEIGHT" format
         if "x" in size.lower():
             try:
@@ -367,7 +449,7 @@ class NovitaService:
                 return (width, height)
             except (ValueError, IndexError, ZeroDivisionError):
                 pass
-        
+
         # Default to 2048x2048
         logger.warning(f"Invalid Seedream size format: {size}, using default 2048x2048")
         return (2048, 2048)
@@ -391,14 +473,14 @@ class NovitaService:
     async def get_task_result(self, task_id: str) -> Optional[Dict]:
         """
         Get task result (async polling)
-        
+
         Args:
             task_id: ID of the task to check
-            
+
         Returns:
             Dict with task status and result
         """
-        url = f"{self.BASE_URL}/v3/task/{task_id}"
+        url = f"{self.BASE_URL}/v3/async/task-result?task_id={task_id}"
         logger.info(f"Novita get task result: {task_id}")
         return await self._get_request(url)
 
@@ -410,58 +492,69 @@ class NovitaService:
     ) -> Optional[Dict]:
         """
         Poll task until completion
-        
+
         Args:
             task_id: ID of the task
             max_attempts: Maximum number of polling attempts
             delay: Delay between polls in seconds
-            
+
         Returns:
-            Dict with final task status
+            Dict with final task status and images
         """
         for attempt in range(max_attempts):
             result = await self.get_task_result(task_id)
-            
+
             if not result:
                 await asyncio.sleep(delay)
                 continue
-                
-            status = result.get("status")
-            
-            if status == "COMPLETED":
+
+            # New API format: status is in result["task"]["status"]
+            task_info = result.get("task", {})
+            status = task_info.get("status")
+
+            if status == "TASK_STATUS_SUCCEED":
                 logger.info(f"Task {task_id} completed successfully")
                 return result
-            elif status in ["FAILED", "ERROR"]:
-                logger.error(f"Task {task_id} {status}: {result.get('error', 'Unknown error')}")
+            elif status == "TASK_STATUS_FAILED":
+                reason = task_info.get("reason", "Unknown error")
+                logger.error(f"Task {task_id} failed: {reason}")
                 return result
-                
-            logger.debug(
-                f"Task {task_id} status: {status}, "
-                f"attempt {attempt + 1}/{max_attempts}"
-            )
+            elif status == "TASK_STATUS_QUEUED":
+                logger.debug(
+                    f"Task {task_id} queued, attempt {attempt + 1}/{max_attempts}"
+                )
+            elif status == "TASK_STATUS_PROCESSING":
+                logger.debug(
+                    f"Task {task_id} processing, attempt {attempt + 1}/{max_attempts}"
+                )
+            else:
+                logger.debug(
+                    f"Task {task_id} status: {status}, attempt {attempt + 1}/{max_attempts}"
+                )
+
             await asyncio.sleep(delay)
-            
+
         logger.warning(f"Task {task_id} timeout after {max_attempts} attempts")
         return None
 
     def _parse_size(self, size: str, max_size: int = None) -> tuple[int, int]:
         """
         Parse size string to width and height
-        
+
         Args:
             size: Size string like "1:1", "1024x1024", "16:9", etc.
             max_size: Optional max size override (for different models)
-            
+
         Returns:
             Tuple of (width, height)
         """
         if max_size is None:
             max_size = self.MAX_SIZE_FLUX
-            
+
         # Check if it's a preset
         if size in self.SIZE_PRESETS:
             return self.SIZE_PRESETS[size]
-        
+
         # Try to parse as "WIDTHxHEIGHT" format
         if "x" in size.lower():
             try:
@@ -474,7 +567,7 @@ class NovitaService:
                 return (width, height)
             except (ValueError, IndexError):
                 pass
-        
+
         # Default to 1024x1024
         logger.warning(f"Invalid size format: {size}, using default 1024x1024")
         return (1024, 1024)
@@ -498,7 +591,7 @@ class NovitaService:
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
                     data = await response.json()
-                    
+
                     if response.status in [200, 201]:
                         task_id = data.get("task_id")
                         logger.info(
@@ -506,11 +599,9 @@ class NovitaService:
                         )
                         return data
                     else:
-                        logger.error(
-                            f"Novita API error {response.status}: {data}"
-                        )
+                        logger.error(f"Novita API error {response.status}: {data}")
                         return None
-                        
+
             except asyncio.TimeoutError:
                 logger.error(f"Novita request timeout: {url}")
                 return None
@@ -537,14 +628,12 @@ class NovitaService:
                 ) as response:
                     if response.status == 200:
                         content_type = response.headers.get("Content-Type", "")
-                        
+
                         if "application/json" in content_type:
                             return await response.json()
                         else:
                             text = await response.text()
-                            logger.error(
-                                f"Novita API returned HTML: {text[:500]}"
-                            )
+                            logger.error(f"Novita API returned HTML: {text[:500]}")
                             return None
                     else:
                         try:
@@ -552,9 +641,11 @@ class NovitaService:
                             logger.error(f"Novita API error {response.status}: {data}")
                         except:
                             text = await response.text()
-                            logger.error(f"Novita API error {response.status}: {text[:500]}")
+                            logger.error(
+                                f"Novita API error {response.status}: {text[:500]}"
+                            )
                         return None
-                        
+
             except asyncio.TimeoutError:
                 logger.error(f"Novita request timeout: {url}")
                 return None
@@ -573,6 +664,10 @@ class NovitaService:
 from bot.config import config
 
 # Initialize service with API key from config
-novita_service = NovitaService(
-    api_key=config.NOVITA_API_KEY,
-) if config.NOVITA_API_KEY else None
+novita_service = (
+    NovitaService(
+        api_key=config.NOVITA_API_KEY,
+    )
+    if config.NOVITA_API_KEY
+    else None
+)

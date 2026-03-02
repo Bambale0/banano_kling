@@ -127,10 +127,12 @@ async def init_db():
             )
         """
         )
-        
+
         # Миграция: добавляем колонку image_service если её нет
         try:
-            await db.execute("ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'")
+            await db.execute(
+                "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
+            )
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
 
@@ -586,7 +588,9 @@ async def _ensure_user_settings_table(db):
     )
     # Миграция: добавляем колонку image_service если её нет
     try:
-        await db.execute("ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'")
+        await db.execute(
+            "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
+        )
     except aiosqlite.OperationalError:
         pass  # Колонка уже существует
     await db.commit()
@@ -615,7 +619,9 @@ async def get_user_settings(telegram_id: int) -> dict:
                 "preferred_model": row["preferred_model"],
                 "preferred_video_model": row["preferred_video_model"],
                 "preferred_i2v_model": row["preferred_i2v_model"],
-                "image_service": row["image_service"] if "image_service" in row.keys() else "nanobanana",
+                "image_service": row["image_service"]
+                if "image_service" in row.keys()
+                else "nanobanana",
             }
 
         # Если настроек нет, возвращаем значения по умолчанию

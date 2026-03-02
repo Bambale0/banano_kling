@@ -6,9 +6,17 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from bot.database import (get_or_create_user, get_user_settings,
-                          get_user_stats, save_user_settings)
-from bot.keyboards import get_back_keyboard, get_main_menu_keyboard, get_ai_assistant_keyboard
+from bot.database import (
+    get_or_create_user,
+    get_user_settings,
+    get_user_stats,
+    save_user_settings,
+)
+from bot.keyboards import (
+    get_ai_assistant_keyboard,
+    get_back_keyboard,
+    get_main_menu_keyboard,
+)
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates, GenerationStates, PaymentStates
 
@@ -19,8 +27,9 @@ router = Router()
 # Состояния для ИИ-ассистента
 class AIAssistantStates(StatesGroup):
     """Состояния для ИИ-ассистента"""
-    main_menu = State()      # Пользователь в главном меню
-    settings = State()       # Пользователь в настройках
+
+    main_menu = State()  # Пользователь в главном меню
+    settings = State()  # Пользователь в настройках
     waiting_for_message = State()  # Ожидание сообщения от пользователя
 
 
@@ -58,8 +67,11 @@ async def cmd_start(message: types.Message):
         order_id = args[0].replace("success_", "")
 
         # Проверяем транзакцию в базе данных
-        from bot.database import (add_credits, get_transaction_by_order,
-                                  update_transaction_status)
+        from bot.database import (
+            add_credits,
+            get_transaction_by_order,
+            update_transaction_status,
+        )
         from bot.services.tbank_service import tbank_service
 
         transaction = await get_transaction_by_order(order_id)
@@ -150,7 +162,7 @@ async def cmd_start(message: types.Message):
             )
         else:
             raise
-    
+
     # Запоминаем, что пользователь в главном меню
     _set_user_menu(message.from_user.id, "main_menu")
 
@@ -193,9 +205,9 @@ async def cmd_help(message: types.Message):
 Видео будет готово через 1-3 минуты.
 
 <b>🍌 Стоимость операций:</b>
-• Gemini Flash: 1🍌 | Gemini Pro: 2🍌
-• Редактирование по референсам: 4🍌 (до 14 референсов, 4K)
-• Kling Standard: 4🍌 | Kling Pro: 5-6🍌
+• FLUX.2 Pro / Nano Banana / Seedream: 3🍌
+• Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
+• Kling Standard: 6🍌 | Kling Pro: 8-10🍌
 
 <b>❓ Нужна помощь?</b>
 Обратитесь в поддержку: <a href="https://t.me/S_k7222">@S_k7222</a>
@@ -222,10 +234,11 @@ async def show_help(callback: types.CallbackQuery):
 • До 4 персонажей для консистентности
 • Перенос стиля, композиции, цветов
 
-<b>💎 Nano Banana (Генерация изображений)</b>
-Бот использует передовые модели Google Gemini:
-• <b>Nano Banana Flash</b> — быстрая генерация (1🍌)
-• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3🍌)
+<b>💎 Генерация изображений</b>
+Бот использует передовые модели:
+• <b>FLUX.2 Pro</b> — высокое качество, до 1536px (3🍌)
+• <b>Nano Banana</b> — быстрая генерация, до 4K (3🍌)
+• <b>Seedream</b> — стилизованные арты через Novita (3🍌)
 
 <b>📝 Как составлять промпты:</b>
 • Опишите сцену подробно, а не просто ключевые слова
@@ -242,9 +255,9 @@ async def show_help(callback: types.CallbackQuery):
 Видео будет готово через 1-3 минуты.
 
 <b>🍌 Стоимость операций:</b>
-• Gemini Flash: 1🍌 | Gemini Pro: 2🍌
-• Редактирование по референсам: 4🍌 (до 14 референсов, 4K)
-• Kling Standard: 4🍌 | Kling Pro: 5-6🍌
+• FLUX.2 Pro / Nano Banana / Seedream: 3🍌
+• Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
+• Kling Standard: 6🍌 | Kling Pro: 8-10🍌
 
 <b>❓ Нужна помощь?</b>
 Обратитесь в поддержку: <a href="https://t.me/S_k7222">@S_k7222</a>
@@ -274,7 +287,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
         f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.\n\n"
         f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов\n\n"
-        f"📢 <b>Наш канал:</b> <a href=\"https://t.me/ai_neir_set\">@ai_neir_set</a>\n\n"
+        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>\n\n'
         f"<i>Попробуй прямо сейчас! 👇</i>"
     )
 
@@ -343,14 +356,14 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
 ⚙️ <b>Настройки</b>
 
 🖼 Изображения:
-• Nano Banana / Replicate
-• Flash (1🍌) / Pro (2🍌)
+• FLUX.2 Pro / Nano Banana / Seedream
+• Все модели: 3🍌
 
 🎬 Текст→Видео:
-• Std/Pro, Omni, V2V
+• Std (6🍌) / Pro (8🍌) / Omni / V2V
 
 🖼→🎬 Фото→Видео:
-• Std (4🍌) / Pro (5🍌) / Omni
+• Std (6🍌) / Pro (8🍌) / Omni
 """
 
     await callback.message.edit_text(
@@ -390,7 +403,10 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
     await callback.message.edit_text(
         f"✅ Изображение: {model_name}",
         reply_markup=get_settings_keyboard_with_ai(
-            model_type, current_video_model, current_i2v_model, image_service=current_image_service
+            model_type,
+            current_video_model,
+            current_i2v_model,
+            image_service=current_image_service,
         ),
         parse_mode="HTML",
     )
@@ -431,7 +447,10 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
     await callback.message.edit_text(
         f"✅ Видео: {model_name}",
         reply_markup=get_settings_keyboard_with_ai(
-            current_model, video_model, current_i2v_model, image_service=current_image_service
+            current_model,
+            video_model,
+            current_i2v_model,
+            image_service=current_image_service,
         ),
         parse_mode="HTML",
     )
@@ -470,7 +489,10 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
     await callback.message.edit_text(
         f"✅ Фото→Видео: {model_name}",
         reply_markup=get_settings_keyboard_with_ai(
-            current_model, current_video_model, i2v_model, image_service=current_image_service
+            current_model,
+            current_video_model,
+            i2v_model,
+            image_service=current_image_service,
         ),
         parse_mode="HTML",
     )
@@ -479,7 +501,7 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
 
 @router.callback_query(F.data.startswith("settings_service_"))
 async def handle_settings_service(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора сервиса для генерации изображений (nanobanana или replicate)"""
+    """Обработка выбора сервиса для генерации изображений (nanobanana, novita или seedream)"""
     service = callback.data.replace("settings_service_", "")
 
     # Сохраняем выбор сервиса в БД
@@ -491,7 +513,9 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
     # Названия сервисов
     service_names = {
         "nanobanana": "🍌 Nano Banana",
-        "replicate": "🖼 Replicate/Seedream",
+        "novita": "✨ FLUX.2 Pro (Novita)",
+        "banana_pro": "💎 Banana Pro",
+        "seedream": "🎨 Seedream (Novita)",
     }
 
     service_name = service_names.get(service, service)
@@ -562,11 +586,12 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 # Позволяет отправлять вопросы ИИ напрямую из главного меню или настроек
 # =============================================================================
 
+
 @router.message(StateFilter(None), F.text)
 async def handle_message_in_menu(message: types.Message, state: FSMContext):
     """Обработка текстовых сообщений в главном меню или настройках - перенаправление к ИИ"""
-    from bot.services.ai_assistant_service import ai_assistant_service
     from bot.keyboards import get_ai_assistant_keyboard, get_back_keyboard
+    from bot.services.ai_assistant_service import ai_assistant_service
 
     user_id = message.from_user.id
     last_menu = _get_user_menu(user_id)
@@ -589,7 +614,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
-        "menu_location": "главное меню" if last_menu == "main_menu" else "настройки"
+        "menu_location": "главное меню" if last_menu == "main_menu" else "настройки",
     }
 
     # Отправляем "печатает" статус
@@ -598,8 +623,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
     try:
         # Получаем ответ от ИИ
         response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text,
-            context=context
+            user_message=message.text, context=context
         )
 
         if response:
@@ -607,14 +631,14 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
             await message.answer(
                 f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
                 reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         else:
             # Fallback если ИИ не ответил
             await message.answer(
                 "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
                 reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
 
     except Exception as e:
@@ -622,7 +646,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         await message.answer(
             "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
             reply_markup=get_ai_assistant_keyboard(),
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
 
 
@@ -645,6 +669,7 @@ async def handle_ignore_callback(callback: types.CallbackQuery):
 # ИИ-ассистент (Дипсик)
 # =============================================================================
 
+
 @router.callback_query(F.data == "menu_ai_assistant")
 async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContext):
     """Открытие ИИ-ассистента из главного меню"""
@@ -657,7 +682,7 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
     context = {
         "user_credits": user.credits,
         "menu_location": "главное меню",
-        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni"
+        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni",
     }
 
     # Приветственное сообщение от ИИ
@@ -678,9 +703,7 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
 Или нажми "В главное меню" чтобы вернуться."""
 
     await callback.message.edit_text(
-        welcome_ai,
-        reply_markup=get_ai_assistant_keyboard(),
-        parse_mode="HTML"
+        welcome_ai, reply_markup=get_ai_assistant_keyboard(), parse_mode="HTML"
     )
     await callback.answer()
 
@@ -700,7 +723,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
-        "available_models": "Nano Banana (Flash/Pro), Replicate (Seedream), Kling 3 (Std/Pro/Omni)"
+        "available_models": "Nano Banana (Flash/Pro), FLUX.2 Pro (Novita), Seedream (Novita), Kling 3 (Std/Pro/Omni)",
     }
 
     welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
@@ -719,7 +742,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 
 🖼 Чем отличаются сервисы:
    - Nano Banana - Gemini
-   - Replicate - Seedream
+   - Novita - FLUX.2 Pro и Seedream
 
 Просто спроси меня! Например:
 • "что лучше для портрета?"
@@ -729,9 +752,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 Или нажми "Назад" чтобы вернуться к настройкам."""
 
     await callback.message.edit_text(
-        welcome_ai,
-        reply_markup=get_back_keyboard("menu_settings"),
-        parse_mode="HTML"
+        welcome_ai, reply_markup=get_back_keyboard("menu_settings"), parse_mode="HTML"
     )
     await callback.answer()
 
@@ -739,9 +760,9 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 @router.message(StateFilter(AIAssistantStates.waiting_for_message))
 async def handle_ai_assistant_message(message: types.Message, state: FSMContext):
     """Обработка сообщения пользователя ИИ-ассистентом"""
-    from bot.services.ai_assistant_service import ai_assistant_service
     from bot.database import get_user_credits, get_user_settings
     from bot.keyboards import get_ai_assistant_keyboard
+    from bot.services.ai_assistant_service import ai_assistant_service
 
     # Получаем текущий режим
     data = await state.get_data()
@@ -756,7 +777,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
-        "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки"
+        "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки",
     }
 
     # Отправляем "печатает" статус
@@ -765,8 +786,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
     try:
         # Получаем ответ от ИИ
         response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text,
-            context=context
+            user_message=message.text, context=context
         )
 
         if response:
@@ -774,14 +794,14 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
             await message.answer(
                 f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
                 reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         else:
             # Fallback если ИИ не ответил
             await message.answer(
                 "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
                 reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
 
     except Exception as e:
@@ -789,5 +809,5 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         await message.answer(
             "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
             reply_markup=get_ai_assistant_keyboard(),
-            parse_mode="HTML"
+            parse_mode="HTML",
         )

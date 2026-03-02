@@ -44,132 +44,157 @@ def get_settings_keyboard(
     # ═══════════════════════════════════════════════════════════════
     # 🖼 ИЗОБРАЖЕНИЯ
     # ═══════════════════════════════════════════════════════════════
-    
+
     # Заголовок секции
     builder.button(text="📸 ━━━ ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ━━━", callback_data="ignore")
-    
+
     # Текущий выбор
-    service_name = "✨ FLUX.2 Pro" if image_service == "novita" else \
-                   "🍌 Nano Banana" if image_service == "nanobanana" else "🎨 Seedream"
+    service_name = (
+        "✨ FLUX.2 Pro"
+        if image_service == "novita"
+        else "🍌 Nano Banana"
+        if image_service == "nanobanana"
+        else "💎 Banana Pro"
+        if image_service == "banana_pro"
+        else "🎨 Seedream (Novita)"
+        if image_service == "seedream"
+        else "🎨 Seedream"
+    )
     builder.button(text=f"✅ Текущий: {service_name}", callback_data="ignore")
-    
+
     # Выбор сервиса - большие кнопки с описанием
     novita_active = "🟢 " if image_service == "novita" else "⚪ "
     nano_active = "🟢 " if image_service == "nanobanana" else "⚪ "
-    seedream_active = "🟢 " if image_service == "replicate" else "⚪ "
-    
+    banana_pro_active = "🟢 " if image_service == "banana_pro" else "⚪ "
+    seedream_active = "🟢 " if image_service == "seedream" else "⚪ "
+
     builder.button(
-        text=f"{novita_active}✨ FLUX.2 Pro (Novita)\n  До 1536px • Лучшее качество • 2🍌",
-        callback_data="settings_service_novita"
+        text=f"{novita_active}✨ FLUX.2 Pro (Novita)\n  До 1536px • Лучшее качество • 3🍌",
+        callback_data="settings_service_novita",
     )
     builder.button(
-        text=f"{nano_active}🍌 Nano Banana\n  До 4K • Быстрая • 1-2🍌",
-        callback_data="settings_service_nanobanana"
+        text=f"{nano_active}🍌 Nano Banana\n  До 4K • Быстрая • 3🍌",
+        callback_data="settings_service_nanobanana",
     )
     builder.button(
-        text=f"{seedream_active}🎨 Seedream\n  Стили • Арты • 2🍌",
-        callback_data="settings_service_replicate"
+        text=f"{banana_pro_active}💎 Banana Pro\n  Профи качество • 4K • 5🍌",
+        callback_data="settings_service_banana_pro",
     )
-    
+    builder.button(
+        text=f"{seedream_active}🎨 Seedream\n  Стили • Арты • 3🍌",
+        callback_data="settings_service_seedream",
+    )
+
     # Подсказка для FLUX
     if image_service == "novita":
         builder.button(
             text="ℹ️ FLUX.2 Pro: формат 1:1, 16:9, 9:16, до 1536px",
-            callback_data="ignore"
+            callback_data="ignore",
         )
 
     # ═══════════════════════════════════════════════════════════════
     # 🎬 ВИДЕО: ТЕКСТ → ВИДЕО
     # ═══════════════════════════════════════════════════════════════
-    
+
     builder.button(text="", callback_data="ignore")  # Отступ
     builder.button(text="🎬 ━━━ ТЕКСТ → ВИДЕО ━━━", callback_data="ignore")
-    
+
     # Текущий выбор видео
-    video_name = "⚡ Std" if current_video_model == "v3_std" else \
-                 "💎 Pro" if current_video_model == "v3_pro" else \
-                 "🔄 Omni" if "omni" in current_video_model else "⚡ Std"
+    video_name = (
+        "⚡ Std"
+        if current_video_model == "v3_std"
+        else "💎 Pro"
+        if current_video_model == "v3_pro"
+        else "🔄 Omni"
+        if "omni" in current_video_model
+        else "⚡ Std"
+    )
     builder.button(text=f"✅ Текущий: {video_name}", callback_data="ignore")
-    
+
     # Kling 3 Std/Pro
     v3_std = "🟢 " if current_video_model == "v3_std" else "⚪ "
     v3_pro = "🟢 " if current_video_model == "v3_pro" else "⚪ "
-    
+
     builder.button(
-        text=f"{v3_std}⚡ Kling 3 Standard\n  Быстро • 4🍌 за 5 сек",
-        callback_data="settings_video_v3_std"
+        text=f"{v3_std}⚡ Kling 3 Standard\n  Быстро • 6🍌 за 5 сек",
+        callback_data="settings_video_v3_std",
     )
     builder.button(
-        text=f"{v3_pro}💎 Kling 3 Pro\n  Лучшее качество • 5🍌 за 5 сек",
-        callback_data="settings_video_v3_pro"
+        text=f"{v3_pro}💎 Kling 3 Pro\n  Лучшее качество • 8🍌 за 5 сек",
+        callback_data="settings_video_v3_pro",
     )
-    
+
     # Kling 3 Omni
     omni_std = "🟢 " if current_video_model == "v3_omni_std" else "⚪ "
     omni_pro = "🟢 " if current_video_model == "v3_omni_pro" else "⚪ "
-    
+
     builder.button(
-        text=f"{omni_std}🔄 Kling 3 Omni Std\n  Баланс • 4🍌",
-        callback_data="settings_video_v3_omni_std"
+        text=f"{omni_std}🔄 Kling 3 Omni Std\n  Баланс • 6🍌",
+        callback_data="settings_video_v3_omni_std",
     )
     builder.button(
-        text=f"{omni_pro}💎 Kling 3 Omni Pro\n  Продвинутый • 5🍌",
-        callback_data="settings_video_v3_omni_pro"
+        text=f"{omni_pro}💎 Kling 3 Omni Pro\n  Продвинутый • 8🍌",
+        callback_data="settings_video_v3_omni_pro",
     )
-    
+
     # V2V (Video-to-Video)
     r2v_std = "🟢 " if current_video_model == "v3_omni_std_r2v" else "⚪ "
     r2v_pro = "🟢 " if current_video_model == "v3_omni_pro_r2v" else "⚪ "
-    
+
     builder.button(
-        text=f"{r2v_std}✂️ V2V Std (стилизация видео)\n  4🍌",
-        callback_data="settings_video_v3_omni_std_r2v"
+        text=f"{r2v_std}✂️ V2V Std (стилизация видео)\n  6🍌",
+        callback_data="settings_video_v3_omni_std_r2v",
     )
     builder.button(
-        text=f"{r2v_pro}💎 V2V Pro\n  5🍌",
-        callback_data="settings_video_v3_omni_pro_r2v"
+        text=f"{r2v_pro}💎 V2V Pro\n  8🍌", callback_data="settings_video_v3_omni_pro_r2v"
     )
 
     # ═══════════════════════════════════════════════════════════════
     # 📺 ФОТО → ВИДЕО
     # ═══════════════════════════════════════════════════════════════
-    
+
     builder.button(text="", callback_data="ignore")  # Отступ
     builder.button(text="📺 ━━━ ФОТО → ВИДЕО ━━━", callback_data="ignore")
-    
+
     # Текущий выбор
-    i2v_name = "⚡ Std" if current_i2v_model == "v3_std" else \
-                "💎 Pro" if current_i2v_model == "v3_pro" else \
-                "🔄 Omni" if "omni" in current_i2v_model else "⚡ Std"
+    i2v_name = (
+        "⚡ Std"
+        if current_i2v_model == "v3_std"
+        else "💎 Pro"
+        if current_i2v_model == "v3_pro"
+        else "🔄 Omni"
+        if "omni" in current_i2v_model
+        else "⚡ Std"
+    )
     builder.button(text=f"✅ Текущий: {i2v_name}", callback_data="ignore")
-    
+
     # Image-to-Video модели
     i2v_std = "🟢 " if current_i2v_model == "v3_std" else "⚪ "
     i2v_pro = "🟢 " if current_i2v_model == "v3_pro" else "⚪ "
     i2v_omni_std = "🟢 " if current_i2v_model == "v3_omni_std" else "⚪ "
     i2v_omni_pro = "🟢 " if current_i2v_model == "v3_omni_pro" else "⚪ "
-    
+
     builder.button(
-        text=f"{i2v_std}⚡ Image-to-Video Std\n  Анимация фото • 4🍌",
-        callback_data="settings_i2v_v3_std"
+        text=f"{i2v_std}⚡ Image-to-Video Std\n  Анимация фото • 6🍌",
+        callback_data="settings_i2v_v3_std",
     )
     builder.button(
-        text=f"{i2v_pro}💎 Image-to-Video Pro\n  Лучше качество • 5🍌",
-        callback_data="settings_i2v_v3_pro"
+        text=f"{i2v_pro}💎 Image-to-Video Pro\n  Лучше качество • 8🍌",
+        callback_data="settings_i2v_v3_pro",
     )
     builder.button(
-        text=f"{i2v_omni_std}🔄 Omni Std\n  Продвинутая • 4🍌",
-        callback_data="settings_i2v_v3_omni_std"
+        text=f"{i2v_omni_std}🔄 Omni Std\n  Продвинутая • 6🍌",
+        callback_data="settings_i2v_v3_omni_std",
     )
     builder.button(
-        text=f"{i2v_omni_pro}💎 Omni Pro\n  Макс качество • 5🍌",
-        callback_data="settings_i2v_v3_omni_pro"
+        text=f"{i2v_omni_pro}💎 Omni Pro\n  Макс качество • 8🍌",
+        callback_data="settings_i2v_v3_omni_pro",
     )
 
     # ═══════════════════════════════════════════════════════════════
     # НАВИГАЦИЯ
     # ═══════════════════════════════════════════════════════════════
-    
+
     builder.button(text="", callback_data="ignore")  # Отступ
     builder.button(text="🔙 Назад в главное меню", callback_data="back_main")
     builder.button(text="❓ Помощь по настройкам", callback_data="menu_help")
@@ -178,18 +203,27 @@ def get_settings_keyboard(
     builder.adjust(
         1,  # Заголовок изображений
         1,  # Текущий выбор
-        1, 1, 1,  # Сервисы
+        1,
+        1,
+        1,
+        1,  # 4 сервиса (FLUX, Nano, Banana Pro, Seedream)
         1,  # Подсказка FLUX
         1,  # Отступ
         1,  # Заголовок видео
         1,  # Текущий выбор видео
-        1, 1,  # Kling 3
-        1, 1,  # Omni
-        1, 1,  # V2V
+        1,
+        1,  # Kling 3
+        1,
+        1,  # Omni
+        1,
+        1,  # V2V
         1,  # Отступ
         1,  # Заголовок i2v
         1,  # Текущий выбор i2v
-        1, 1, 1, 1,  # i2v модели
+        1,
+        1,
+        1,
+        1,  # i2v модели
         1,  # Отступ
         2,  # Навигация
     )
@@ -661,8 +695,12 @@ def get_video_edit_keyboard(
     dur15_check = "✅ " if duration == 15 else ""
 
     builder.button(text=f"{dur5_check}⏱ 5 сек", callback_data=f"video_edit_duration_5")
-    builder.button(text=f"{dur10_check}⏱ 10 сек", callback_data=f"video_edit_duration_10")
-    builder.button(text=f"{dur15_check}⏱ 15 сек", callback_data=f"video_edit_duration_15")
+    builder.button(
+        text=f"{dur10_check}⏱ 10 сек", callback_data=f"video_edit_duration_10"
+    )
+    builder.button(
+        text=f"{dur15_check}⏱ 15 сек", callback_data=f"video_edit_duration_15"
+    )
 
     ratio_9_16_check = "✅ " if aspect_ratio == "9:16" else ""
     ratio_16_9_check = "✅ " if aspect_ratio == "16:9" else ""
@@ -809,6 +847,7 @@ def get_ai_assistant_keyboard():
 # =============================================================================
 # УЛУЧШЕННЫЕ ФУНКЦИИ (для обратной совместимости)
 # =============================================================================
+
 
 def get_settings_main_keyboard(
     current_image_service: str = "novita",

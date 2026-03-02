@@ -5,8 +5,12 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (add_credits, get_admin_stats, get_or_create_user,
-                          get_user_stats)
+from bot.database import (
+    add_credits,
+    get_admin_stats,
+    get_or_create_user,
+    get_user_stats,
+)
 from bot.keyboards import get_admin_keyboard, get_back_keyboard
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates

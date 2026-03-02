@@ -66,7 +66,7 @@ class AIAssistantService:
             result = await self._call_openrouter(
                 system_prompt=system_prompt,
                 user_message=full_message,
-                model=self.MODELS["primary"]
+                model=self.MODELS["primary"],
             )
             if result:
                 return result
@@ -77,7 +77,7 @@ class AIAssistantService:
             result = await self._call_openrouter(
                 system_prompt=system_prompt,
                 user_message=full_message,
-                model=self.MODELS["fallback"]
+                model=self.MODELS["fallback"],
             )
             if result:
                 return result
@@ -105,7 +105,7 @@ class AIAssistantService:
                 "model": model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
+                    {"role": "user", "content": user_message},
                 ],
                 "max_tokens": 1024,
                 "temperature": 0.7,
@@ -134,7 +134,9 @@ class AIAssistantService:
     def _get_system_prompt(self) -> str:
         """Загрузка системной инструкции из файла"""
         try:
-            with open("bot/utils/ai_assistant_instructions.json", "r", encoding="utf-8") as f:
+            with open(
+                "bot/utils/ai_assistant_instructions.json", "r", encoding="utf-8"
+            ) as f:
                 data = json.load(f)
                 return data.get("system_prompt", "")
         except Exception as e:
@@ -170,9 +172,13 @@ class AIAssistantService:
         if "image_service" in context:
             service_names = {
                 "nanobanana": "Nano Banana",
-                "replicate": "Replicate/Seedream"
+                "novita": "FLUX.2 Pro (Novita)",
+                "banana_pro": "Banana Pro",
+                "seedream": "Seedream (Novita)",
             }
-            service = service_names.get(context["image_service"], context["image_service"])
+            service = service_names.get(
+                context["image_service"], context["image_service"]
+            )
             lines.append(f"- Сервис изображений: {service}")
 
         if "menu_location" in context:
