@@ -23,13 +23,8 @@ from aiohttp import web
 
 from bot.config import config
 from bot.database import init_db
-from bot.handlers import (
-    admin_router,
-    batch_generation_router,
-    common_router,
-    generation_router,
-    payments_router,
-)
+from bot.handlers import (admin_router, batch_generation_router, common_router,
+                          generation_router, payments_router)
 from bot.handlers.payments import handle_tbank_webhook
 from bot.services.preset_manager import preset_manager
 
@@ -249,11 +244,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             logger.info(f"Extracted video URL: {video_url[:50]}...")
 
             # Находим задачу в БД
-            from bot.database import (
-                complete_video_task,
-                get_task_by_id,
-                get_telegram_id_by_user_id,
-            )
+            from bot.database import (complete_video_task, get_task_by_id,
+                                      get_telegram_id_by_user_id)
 
             task = await get_task_by_id(task_id)
 
@@ -313,6 +305,335 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         return web.Response(status=500)
 
 
+
+async def handle_replicate_webhook(request: web.Request) -> web.Response:
+    """Обработчик уведомлений от Replicate API"""
+    try:
+        logger.info(f"Replicate webhook headers: {dict(request.headers)}")
+
+        body = await request.text()
+        logger.info(f"Replicate webhook raw body: {repr(body)[:500]}")
+
+        if not body:
+            logger.warning("Replicate webhook received empty body")
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Replicate webhook received invalid JSON: {e}")
+            return web.Response(status=200)
+
+        logger.info(f"Replicate webhook parsed data: {data}")
+
+        # Replicate webhook returns prediction object
+        # Status can be: "starting", "processing", "succeeded", "failed", "canceled"
+        prediction_id = data.get("id")
+        status = data.get("status")
+
+        if not prediction_id:
+            logger.warning(f"No prediction_id in Replicate webhook: {data}")
+            return web.Response(status=200)
+
+        logger.info(f"Replicate prediction {prediction_id} status: {status}")
+
+        if status == "succeeded":
+            # Получаем output (массив URL изображений)
+            output = data.get("output", [])
+
+            if not output:
+                logger.error(f"No output in succeeded prediction: {data}")
+                return web.Response(status=200)
+
+            # Берем первое изображение
+            image_url = output[0] if isinstance(output[0], str) else None
+
+            if not image_url:
+                logger.error(f"Invalid output format: {output}")
+                return web.Response(status=200)
+
+            logger.info(f"Extracted image URL: {image_url[:50]}...")
+
+            # Находим задачу в БД по prediction_id
+            from bot.database import get_task_by_id
+
+            task = await get_task_by_id(prediction_id)
+
+            if not task:
+                logger.warning(f"Task {prediction_id} not found in database")
+                return web.Response(status=200)
+
+            # Получаем Telegram ID пользователя
+            from bot.database import get_telegram_id_by_user_id
+
+            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+
+            if not telegram_id:
+                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
+                return web.Response(status=200)
+
+            logger.info(
+                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
+            )
+
+            # Отправляем изображение пользователю
+            bot_instance = Bot(token=config.BOT_TOKEN)
+
+            try:
+                await bot_instance.send_photo(
+                    chat_id=telegram_id,
+                    photo=image_url,
+                    caption=f"✅ <b>Ваше изображение готово!</b>\n\n"
+                    f"🎯 Пресет: {task.preset_id}",
+                    parse_mode="HTML",
+                )
+
+                logger.info(f"Image sent to user {telegram_id}")
+            except Exception as e:
+                logger.error(f"Failed to send image: {e}")
+                # Fallback — отправляем как ссылку
+                try:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"🖼️ Ваше изображение готово!\n\n{image_url}",
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Failed to send fallback message: {fallback_error}")
+            finally:
+                await bot_instance.session.close()
+
+        elif status == "failed":
+            logger.error(f"Replicate prediction {prediction_id} failed: {data}")
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"Replicate webhook error: {e}")
+        return web.Response(status=500)
+
+
+async def handle_seedream_webhook(request: web.Request) -> web.Response:
+    """Обработчик уведомлений от Novita AI (Seedream) API"""
+    try:
+        logger.info(f"Seedream webhook headers: {dict(request.headers)}")
+
+        body = await request.text()
+        logger.info(f"Seedream webhook raw body: {repr(body)[:500]}")
+
+        if not body:
+            logger.warning("Seedream webhook received empty body")
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Seedream webhook received invalid JSON: {e}")
+            return web.Response(status=200)
+
+        logger.info(f"Seedream webhook parsed data: {data}")
+
+        # Novita AI webhook returns task object
+        # Status can be: "pending", "processing", "completed", "failed"
+        task_id = data.get("task_id")
+        status = data.get("status")
+
+        if not task_id:
+            logger.warning(f"No task_id in Seedream webhook: {data}")
+            return web.Response(status=200)
+
+        logger.info(f"Seedream task {task_id} status: {status}")
+
+        if status == "completed":
+            # Получаем images (массив URL изображений)
+            result_data = data.get("data", {})
+            images = result_data.get("images", [])
+
+            if not images:
+                logger.error(f"No images in completed task: {data}")
+                return web.Response(status=200)
+
+            # Берем первое изображение
+            image_url = images[0] if isinstance(images[0], str) else None
+
+            if not image_url:
+                logger.error(f"Invalid images format: {images}")
+                return web.Response(status=200)
+
+            logger.info(f"Extracted image URL: {image_url[:50]}...")
+
+            # Находим задачу в БД по task_id
+            from bot.database import get_task_by_id, complete_video_task
+
+            task = await get_task_by_id(task_id)
+
+            if not task:
+                logger.warning(f"Task {task_id} not found in database")
+                return web.Response(status=200)
+
+            # Получаем Telegram ID пользователя
+            from bot.database import get_telegram_id_by_user_id
+
+            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+
+            if not telegram_id:
+                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
+                return web.Response(status=200)
+
+            logger.info(
+                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
+            )
+
+            # Обновляем задачу в БД
+            await complete_video_task(task_id, image_url)
+
+            # Отправляем изображение пользователю
+            bot_instance = Bot(token=config.BOT_TOKEN)
+
+            try:
+                await bot_instance.send_photo(
+                    chat_id=telegram_id,
+                    photo=image_url,
+                    caption=f"✅ <b>Ваше изображение готово!</b>\n\n"
+                    f"🎯 Пресет: {task.preset_id}",
+                    parse_mode="HTML",
+                )
+
+                logger.info(f"Image sent to user {telegram_id}")
+            except Exception as e:
+                logger.error(f"Failed to send image: {e}")
+                # Fallback — отправляем как ссылку
+                try:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"🖼️ Ваше изображение готово!\n\n{image_url}",
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Failed to send fallback message: {fallback_error}")
+            finally:
+                await bot_instance.session.close()
+
+        elif status == "failed":
+            error_msg = data.get("error", "Unknown error")
+            logger.error(f"Seedream task {task_id} failed: {error_msg}")
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"Seedream webhook error: {e}")
+        return web.Response(status=500)
+
+
+async def handle_novita_webhook(request: web.Request) -> web.Response:
+    """Обработчик уведомлений от Novita AI (FLUX.2 Pro) API"""
+    try:
+        logger.info(f"Novita FLUX webhook headers: {dict(request.headers)}")
+
+        body = await request.text()
+        logger.info(f"Novita FLUX webhook raw body: {repr(body)[:500]}")
+
+        if not body:
+            logger.warning("Novita FLUX webhook received empty body")
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Novita FLUX webhook received invalid JSON: {e}")
+            return web.Response(status=200)
+
+        logger.info(f"Novita FLUX webhook parsed data: {data}")
+
+        # Novita AI FLUX.2 Pro webhook returns task object
+        # Status can be: "pending", "processing", "completed", "failed"
+        task_id = data.get("task_id")
+        status = data.get("status")
+
+        if not task_id:
+            logger.warning(f"No task_id in Novita FLUX webhook: {data}")
+            return web.Response(status=200)
+
+        logger.info(f"Novita FLUX task {task_id} status: {status}")
+
+        if status == "completed":
+            # Получаем images (массив URL изображений)
+            result_data = data.get("data", {})
+            images = result_data.get("images", [])
+
+            if not images:
+                logger.error(f"No images in completed task: {data}")
+                return web.Response(status=200)
+
+            # Берем первое изображение
+            image_url = images[0] if isinstance(images[0], str) else None
+
+            if not image_url:
+                logger.error(f"Invalid images format: {images}")
+                return web.Response(status=200)
+
+            logger.info(f"Extracted image URL: {image_url[:50]}...")
+
+            # Находим задачу в БД по task_id
+            from bot.database import get_task_by_id, complete_video_task
+
+            task = await get_task_by_id(task_id)
+
+            if not task:
+                logger.warning(f"Task {task_id} not found in database")
+                return web.Response(status=200)
+
+            # Получаем Telegram ID пользователя
+            from bot.database import get_telegram_id_by_user_id
+
+            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+
+            if not telegram_id:
+                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
+                return web.Response(status=200)
+
+            logger.info(
+                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
+            )
+
+            # Обновляем задачу в БД
+            await complete_video_task(task_id, image_url)
+
+            # Отправляем изображение пользователю
+            bot_instance = Bot(token=config.BOT_TOKEN)
+
+            try:
+                await bot_instance.send_photo(
+                    chat_id=telegram_id,
+                    photo=image_url,
+                    caption=f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n"
+                    f"🎯 Пресет: {task.preset_id}",
+                    parse_mode="HTML",
+                )
+
+                logger.info(f"Image sent to user {telegram_id}")
+            except Exception as e:
+                logger.error(f"Failed to send image: {e}")
+                # Fallback — отправляем как ссылку
+                try:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!\n\n{image_url}",
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Failed to send fallback message: {fallback_error}")
+            finally:
+                await bot_instance.session.close()
+
+        elif status == "failed":
+            error_msg = data.get("error", "Unknown error")
+            logger.error(f"Novita FLUX task {task_id} failed: {error_msg}")
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"Novita FLUX webhook error: {e}")
+        return web.Response(status=500)
+
+
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
@@ -328,6 +649,15 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
+
+    # Вебхук Replicate
+    app.router.add_post("/webhook/replicate", handle_replicate_webhook)
+
+    # Вебхук Seedream (Novita AI)
+    app.router.add_post("/webhook/seedream", handle_seedream_webhook)
+
+    # Вебхук Novita FLUX.2 Pro
+    app.router.add_post("/webhook/novita", handle_novita_webhook)
 
     # Health check endpoint
     async def health_check(request: web.Request) -> web.Response:

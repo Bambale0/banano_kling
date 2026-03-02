@@ -8,7 +8,8 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
+from bot.database import (add_credits, check_can_afford, deduct_credits,
+                          get_user_credits)
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.preset_manager import preset_manager
@@ -277,10 +278,12 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
         await message.answer("❌ Пожалуйста, введите описание того, что хотите сделать.")
         return
 
-    user_id = message.from_user.id
-    images = _batch_uploads.get(user_id, [])
+    # Получаем изображения из состояния (FSM state), а не из глобального словаря
+    data = await state.get_data()
+    main_image = data.get("main_image")
+    ref_images = data.get("reference_images", [])
 
-    if not images:
+    if not main_image:
         await message.answer("❌ Ошибка: фото не найдены. Начните заново.")
         await state.clear()
         return

@@ -3,7 +3,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def get_main_menu_keyboard(user_credits: int = 0):
-    """Главное меню с опциональной кнопкой PRO и поддержкой"""
+    """Главное меню с опциональной кнопкой PRO"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🖼 Генерация фото", callback_data="generate_image")
@@ -23,15 +23,10 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="📊 Мой баланс", callback_data="menu_balance")
     builder.button(text="❓ Помощь", callback_data="menu_help")
 
-    # Кнопка техподдержки
-    builder.button(
-        text="🆘 Техподдержка", url="https://t.me/S_k7222"
-    )
-
     if user_credits >= 20:
-        builder.adjust(2, 2, 1, 2, 2, 1, 1)
+        builder.adjust(2, 2, 1, 2, 2, 1)
     else:
-        builder.adjust(2, 2, 2, 1, 2, 1, 1)
+        builder.adjust(2, 2, 2, 1, 2, 1)
     return builder.as_markup()
 
 
@@ -39,84 +34,165 @@ def get_settings_keyboard(
     current_model: str = "flash",
     current_video_model: str = "v3_std",
     current_i2v_model: str = "v3_std",
+    image_service: str = "novita",
 ):
-    """Клавиатура настроек с выбором модели для изображений, видео и фото-в-видео"""
+    """
+    Улучшенная клавиатура настроек - более понятная и информативная
+    """
     builder = InlineKeyboardBuilder()
 
-    # Заголовок (неинтерактивный)
-    builder.button(text="⚙️ Настройки", callback_data="ignore_header")
+    # ═══════════════════════════════════════════════════════════════
+    # 🖼 ИЗОБРАЖЕНИЯ
+    # ═══════════════════════════════════════════════════════════════
+    
+    # Заголовок секции
+    builder.button(text="📸 ━━━ ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ━━━", callback_data="ignore")
+    
+    # Текущий выбор
+    service_name = "✨ FLUX.2 Pro" if image_service == "novita" else \
+                   "🍌 Nano Banana" if image_service == "nanobanana" else "🎨 Seedream"
+    builder.button(text=f"✅ Текущий: {service_name}", callback_data="ignore")
+    
+    # Выбор сервиса - большие кнопки с описанием
+    novita_active = "🟢 " if image_service == "novita" else "⚪ "
+    nano_active = "🟢 " if image_service == "nanobanana" else "⚪ "
+    seedream_active = "🟢 " if image_service == "replicate" else "⚪ "
+    
+    builder.button(
+        text=f"{novita_active}✨ FLUX.2 Pro (Novita)\n  До 1536px • Лучшее качество • 2🍌",
+        callback_data="settings_service_novita"
+    )
+    builder.button(
+        text=f"{nano_active}🍌 Nano Banana\n  До 4K • Быстрая • 1-2🍌",
+        callback_data="settings_service_nanobanana"
+    )
+    builder.button(
+        text=f"{seedream_active}🎨 Seedream\n  Стили • Арты • 2🍌",
+        callback_data="settings_service_replicate"
+    )
+    
+    # Подсказка для FLUX
+    if image_service == "novita":
+        builder.button(
+            text="ℹ️ FLUX.2 Pro: формат 1:1, 16:9, 9:16, до 1536px",
+            callback_data="ignore"
+        )
 
-    # Выбор модели для изображений (Nano Banana) - компактно
-    flash_selected = "✅" if current_model == "flash" else ""
-    pro_selected = "✅" if current_model == "pro" else ""
-
+    # ═══════════════════════════════════════════════════════════════
+    # 🎬 ВИДЕО: ТЕКСТ → ВИДЕО
+    # ═══════════════════════════════════════════════════════════════
+    
+    builder.button(text="", callback_data="ignore")  # Отступ
+    builder.button(text="🎬 ━━━ ТЕКСТ → ВИДЕО ━━━", callback_data="ignore")
+    
+    # Текущий выбор видео
+    video_name = "⚡ Std" if current_video_model == "v3_std" else \
+                 "💎 Pro" if current_video_model == "v3_pro" else \
+                 "🔄 Omni" if "omni" in current_video_model else "⚡ Std"
+    builder.button(text=f"✅ Текущий: {video_name}", callback_data="ignore")
+    
+    # Kling 3 Std/Pro
+    v3_std = "🟢 " if current_video_model == "v3_std" else "⚪ "
+    v3_pro = "🟢 " if current_video_model == "v3_pro" else "⚪ "
+    
     builder.button(
-        text=f"🖼 Nano Banano {flash_selected} (2🍌)", callback_data="settings_model_flash"
+        text=f"{v3_std}⚡ Kling 3 Standard\n  Быстро • 4🍌 за 5 сек",
+        callback_data="settings_video_v3_std"
     )
     builder.button(
-        text=f"🖼 Banano Pro {pro_selected} (3🍌)", callback_data="settings_model_pro"
+        text=f"{v3_pro}💎 Kling 3 Pro\n  Лучшее качество • 5🍌 за 5 сек",
+        callback_data="settings_video_v3_pro"
     )
-
-    # Разделитель - Текст в видео (неинтерактивный)
-    builder.button(text="──── Текст→Видео ────", callback_data="ignore_divider")
-
-    # Выбор модели для видео (Kling 3) - компактно
-    v3_std_selected = "✅" if current_video_model == "v3_std" else ""
-    v3_pro_selected = "✅" if current_video_model == "v3_pro" else ""
-    omni_std_selected = "✅" if current_video_model == "v3_omni_std" else ""
-    omni_pro_selected = "✅" if current_video_model == "v3_omni_pro" else ""
-    r2v_std_selected = "✅" if current_video_model == "v3_omni_std_r2v" else ""
-    r2v_pro_selected = "✅" if current_video_model == "v3_omni_pro_r2v" else ""
-
+    
+    # Kling 3 Omni
+    omni_std = "🟢 " if current_video_model == "v3_omni_std" else "⚪ "
+    omni_pro = "🟢 " if current_video_model == "v3_omni_pro" else "⚪ "
+    
     builder.button(
-        text=f"⚡ Std {v3_std_selected} (6🍌)", callback_data="settings_video_v3_std"
+        text=f"{omni_std}🔄 Kling 3 Omni Std\n  Баланс • 4🍌",
+        callback_data="settings_video_v3_omni_std"
     )
     builder.button(
-        text=f"💎 Pro {v3_pro_selected} (6🍌)", callback_data="settings_video_v3_pro"
+        text=f"{omni_pro}💎 Kling 3 Omni Pro\n  Продвинутый • 5🍌",
+        callback_data="settings_video_v3_omni_pro"
+    )
+    
+    # V2V (Video-to-Video)
+    r2v_std = "🟢 " if current_video_model == "v3_omni_std_r2v" else "⚪ "
+    r2v_pro = "🟢 " if current_video_model == "v3_omni_pro_r2v" else "⚪ "
+    
+    builder.button(
+        text=f"{r2v_std}✂️ V2V Std (стилизация видео)\n  4🍌",
+        callback_data="settings_video_v3_omni_std_r2v"
     )
     builder.button(
-        text=f"🔄 Omni {omni_std_selected} (6🍌)",
-        callback_data="settings_video_v3_omni_std",
-    )
-    builder.button(
-        text=f"💎 Omni Pro {omni_pro_selected} (6🍌)",
-        callback_data="settings_video_v3_omni_pro",
-    )
-    builder.button(
-        text=f"✂️ V2V {r2v_std_selected} (6🍌)",
-        callback_data="settings_video_v3_omni_std_r2v",
-    )
-    builder.button(
-        text=f"💎 V2V Pro {r2v_pro_selected} (6🍌)",
-        callback_data="settings_video_v3_omni_pro_r2v",
-    )
-
-    # Разделитель - Фото в видео (неинтерактивный)
-    builder.button(text="──── Фото→Видео ────", callback_data="ignore_divider2")
-
-    # Выбор модели для фото в видео (Image-to-Video)
-    i2v_std_selected = "✅" if current_i2v_model == "v3_std" else ""
-    i2v_pro_selected = "✅" if current_i2v_model == "v3_pro" else ""
-    i2v_omni_std_selected = "✅" if current_i2v_model == "v3_omni_std" else ""
-    i2v_omni_pro_selected = "✅" if current_i2v_model == "v3_omni_pro" else ""
-
-    builder.button(
-        text=f"⚡ Std {i2v_std_selected} (6🍌)", callback_data="settings_i2v_v3_std"
-    )
-    builder.button(
-        text=f"💎 Pro {i2v_pro_selected} (6🍌)", callback_data="settings_i2v_v3_pro"
-    )
-    builder.button(
-        text=f"🔄 Omni {i2v_omni_std_selected} (6🍌)",
-        callback_data="settings_i2v_v3_omni_std",
-    )
-    builder.button(
-        text=f"💎 Omni Pro {i2v_omni_pro_selected} (6🍌)",
-        callback_data="settings_i2v_v3_omni_pro",
+        text=f"{r2v_pro}💎 V2V Pro\n  5🍌",
+        callback_data="settings_video_v3_omni_pro_r2v"
     )
 
-    builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1, 2, 1, 2, 2, 2, 1, 2, 2, 1)
+    # ═══════════════════════════════════════════════════════════════
+    # 📺 ФОТО → ВИДЕО
+    # ═══════════════════════════════════════════════════════════════
+    
+    builder.button(text="", callback_data="ignore")  # Отступ
+    builder.button(text="📺 ━━━ ФОТО → ВИДЕО ━━━", callback_data="ignore")
+    
+    # Текущий выбор
+    i2v_name = "⚡ Std" if current_i2v_model == "v3_std" else \
+                "💎 Pro" if current_i2v_model == "v3_pro" else \
+                "🔄 Omni" if "omni" in current_i2v_model else "⚡ Std"
+    builder.button(text=f"✅ Текущий: {i2v_name}", callback_data="ignore")
+    
+    # Image-to-Video модели
+    i2v_std = "🟢 " if current_i2v_model == "v3_std" else "⚪ "
+    i2v_pro = "🟢 " if current_i2v_model == "v3_pro" else "⚪ "
+    i2v_omni_std = "🟢 " if current_i2v_model == "v3_omni_std" else "⚪ "
+    i2v_omni_pro = "🟢 " if current_i2v_model == "v3_omni_pro" else "⚪ "
+    
+    builder.button(
+        text=f"{i2v_std}⚡ Image-to-Video Std\n  Анимация фото • 4🍌",
+        callback_data="settings_i2v_v3_std"
+    )
+    builder.button(
+        text=f"{i2v_pro}💎 Image-to-Video Pro\n  Лучше качество • 5🍌",
+        callback_data="settings_i2v_v3_pro"
+    )
+    builder.button(
+        text=f"{i2v_omni_std}🔄 Omni Std\n  Продвинутая • 4🍌",
+        callback_data="settings_i2v_v3_omni_std"
+    )
+    builder.button(
+        text=f"{i2v_omni_pro}💎 Omni Pro\n  Макс качество • 5🍌",
+        callback_data="settings_i2v_v3_omni_pro"
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # НАВИГАЦИЯ
+    # ═══════════════════════════════════════════════════════════════
+    
+    builder.button(text="", callback_data="ignore")  # Отступ
+    builder.button(text="🔙 Назад в главное меню", callback_data="back_main")
+    builder.button(text="❓ Помощь по настройкам", callback_data="menu_help")
+
+    # Компоновка - адаптивная
+    builder.adjust(
+        1,  # Заголовок изображений
+        1,  # Текущий выбор
+        1, 1, 1,  # Сервисы
+        1,  # Подсказка FLUX
+        1,  # Отступ
+        1,  # Заголовок видео
+        1,  # Текущий выбор видео
+        1, 1,  # Kling 3
+        1, 1,  # Omni
+        1, 1,  # V2V
+        1,  # Отступ
+        1,  # Заголовок i2v
+        1,  # Текущий выбор i2v
+        1, 1, 1, 1,  # i2v модели
+        1,  # Отступ
+        2,  # Навигация
+    )
     return builder.as_markup()
 
 
@@ -266,7 +342,6 @@ def get_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "16:9"):
 def get_image_aspect_ratio_no_preset_keyboard(current_ratio: str = "1:1"):
     """
     Клавиатура выбора формата изображения для генерации без пресета.
-    Использует формат callback_data: img_ratio_no_preset_16_9
     """
     builder = InlineKeyboardBuilder()
 
@@ -280,14 +355,12 @@ def get_image_aspect_ratio_no_preset_keyboard(current_ratio: str = "1:1"):
 
     for ratio, emoji, label in ratios:
         check = "✅" if ratio == current_ratio else ""
-        # Конвертируем 16:9 в 16_9 для callback_data
         ratio_callback = ratio.replace(":", "_")
         builder.button(
             text=f"{emoji} {label} {check}",
             callback_data=f"img_ratio_no_preset_{ratio_callback}",
         )
 
-    # Кнопка запуска
     builder.button(text="▶️ Запустить", callback_data="run_no_preset_image")
     builder.button(text="🔙 Назад", callback_data="back_main")
 
@@ -298,7 +371,6 @@ def get_image_aspect_ratio_no_preset_keyboard(current_ratio: str = "1:1"):
 def get_image_aspect_ratio_no_preset_edit_keyboard(current_ratio: str = "1:1"):
     """
     Клавиатура выбора формата изображения для редактирования без пресета.
-    Использует формат callback_data: img_ratio_no_preset_edit_16_9
     """
     builder = InlineKeyboardBuilder()
 
@@ -312,14 +384,12 @@ def get_image_aspect_ratio_no_preset_edit_keyboard(current_ratio: str = "1:1"):
 
     for ratio, emoji, label in ratios:
         check = "✅" if ratio == current_ratio else ""
-        # Конвертируем 16:9 в 16_9 для callback_data
         ratio_callback = ratio.replace(":", "_")
         builder.button(
             text=f"{emoji} {label} {check}",
             callback_data=f"img_ratio_no_preset_edit_{ratio_callback}",
         )
 
-    # Кнопка запуска
     builder.button(text="▶️ Запустить", callback_data="run_no_preset_edit_image")
     builder.button(text="🔙 Назад", callback_data="back_main")
 
@@ -345,21 +415,18 @@ def get_video_options_keyboard(preset_id: str):
 def get_video_options_no_preset_keyboard(
     current_duration: int = 5, current_ratio: str = "16:9", current_audio: bool = True
 ):
-    """Клавиатура опций видео без пресета - все настройки в одном меню"""
+    """Клавиатура опций видео без пресета"""
     builder = InlineKeyboardBuilder()
 
-    # Заголовок
     builder.button(text="⚙️ Настройки видео:", callback_data="video_settings_header")
 
-    # Длительность
-    durations = [3, 5, 10]
+    durations = [3, 5, 10, 15]
     for dur in durations:
         emoji = "✅" if dur == current_duration else ""
         builder.button(
             text=f"⏱ {dur}с {emoji}", callback_data=f"no_preset_duration_{dur}"
         )
 
-    # Формат (Aspect Ratio)
     ratios = [
         ("16:9", "📺 16:9"),
         ("9:16", "📱 9:16"),
@@ -367,19 +434,16 @@ def get_video_options_no_preset_keyboard(
     ]
     for ratio, label in ratios:
         emoji = "✅" if ratio == current_ratio else ""
-        # Конвертируем 16:9 в 16_9 для callback_data
         ratio_callback = ratio.replace(":", "_")
         builder.button(
             text=f"{label} {emoji}", callback_data=f"no_preset_ratio_{ratio_callback}"
         )
 
-    # Звук
     audio_on = "✅" if current_audio else ""
     audio_off = "✅" if not current_audio else ""
     builder.button(text=f"🔊 Со звуком {audio_on}", callback_data="no_preset_audio_on")
     builder.button(text=f"🔇 Без звука {audio_off}", callback_data="no_preset_audio_off")
 
-    # Запуск
     builder.button(text="▶️ Запустить", callback_data="run_no_preset_video")
     builder.button(text="🔙 Назад", callback_data="back_main")
 
@@ -404,27 +468,20 @@ def get_quality_keyboard(preset_id: str):
 
 
 # =============================================================================
-# НОВЫЕ КЛАВИАТУРЫ ДЛЯ NANOBANANA API (banana_api.md)
+# НОВЫЕ КЛАВИАТУРЫ ДЛЯ NANOBANANA API
 # =============================================================================
 
 
 def get_model_selection_keyboard(preset_id: str, current_model: str = None):
-    """
-    Клавиатура выбора модели генерации
-    Согласно banana_api.md:
-    - gemini-2.5-flash-image: быстрая, до 1024px
-    - gemini-3-pro-image-preview: профессиональная, до 4K, с thinking
-    """
+    """Клавиатура выбора модели генерации"""
     builder = InlineKeyboardBuilder()
 
-    # Flash - быстрая генерация
     flash_selected = "✅" if current_model and "flash" in current_model else ""
     builder.button(
         text=f"⚡ Nano Banana Flash {flash_selected}\n   Быстрая, до 1024px",
         callback_data=f"model_{preset_id}_flash",
     )
 
-    # Pro - высокое качество
     pro_selected = "✅" if current_model and "pro" in current_model else ""
     builder.button(
         text=f"💎 Nano Banana Pro {pro_selected}\n   До 4K, с reasoning",
@@ -437,13 +494,7 @@ def get_model_selection_keyboard(preset_id: str, current_model: str = None):
 
 
 def get_resolution_keyboard(preset_id: str, current_resolution: str = "1K"):
-    """
-    Клавиатура выбора разрешения изображения
-    Согласно banana_api.md:
-    - 1K: 1024x1024 (по умолчанию)
-    - 2K: 2048x2048
-    - 4K: 4096x4096
-    """
+    """Клавиатура выбора разрешения изображения"""
     builder = InlineKeyboardBuilder()
 
     resolutions = [
@@ -464,11 +515,7 @@ def get_resolution_keyboard(preset_id: str, current_resolution: str = "1K"):
 
 
 def get_image_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "1:1"):
-    """
-    Клавиатура выбора формата изображения
-    Согласно banana_api.md поддерживаются:
-    1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9
-    """
+    """Клавиатура выбора формата изображения"""
     builder = InlineKeyboardBuilder()
 
     ratios = [
@@ -492,10 +539,7 @@ def get_image_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "1:1"):
 
 
 def get_reference_images_keyboard(preset_id: str):
-    """
-    Клавиатура для работы с референсными изображениями
-    Согласно banana_api.md: до 14 референсов (до 6 объектов, до 5 людей)
-    """
+    """Клавиатура для работы с референсными изображениями"""
     builder = InlineKeyboardBuilder()
 
     builder.button(
@@ -513,10 +557,7 @@ def get_reference_images_keyboard(preset_id: str):
 
 
 def get_search_grounding_keyboard(preset_id: str, enabled: bool = False):
-    """
-    Клавиатура для поискового заземления (Grounding)
-    Согласно banana_api.md: использует Google Search для актуальной информации
-    """
+    """Клавиатура для поискового заземления (Grounding)"""
     builder = InlineKeyboardBuilder()
 
     status = "🔴 ВЫКЛ" if enabled else "🟢 ВКЛ"
@@ -534,9 +575,7 @@ def get_search_grounding_keyboard(preset_id: str, enabled: bool = False):
 
 
 def get_advanced_options_keyboard(preset_id: str):
-    """
-    Клавиатура расширенных опций генерации
-    """
+    """Клавиатура расширенных опций генерации"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🤖 Выбор модели", callback_data=f"model_{preset_id}")
@@ -553,15 +592,7 @@ def get_advanced_options_keyboard(preset_id: str):
 
 
 def get_image_editing_options_keyboard(preset_id: str):
-    """
-    Клавиатура опций редактирования изображений
-    Согласно banana_api.md:
-    - Добавление/удаление элементов
-    - Inpainting (семантическая маска)
-    - Style transfer
-    - Объединение нескольких изображений
-    - Сохранение деталей (high-fidelity)
-    """
+    """Клавиатура опций редактирования изображений"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🎭 Сменить стиль", callback_data=f"edit_style_{preset_id}")
@@ -580,15 +611,14 @@ def get_image_editing_options_keyboard(preset_id: str):
 
 
 def get_multiturn_keyboard(preset_id: str):
-    """
-    Клавиатура для многоходового редактирования
-    Позволяет итеративно улучшать изображение
-    """
+    """Клавиатура для многоходового редактирования"""
     builder = InlineKeyboardBuilder()
 
     builder.button(
         text="🔄 Продолжить редактирование", callback_data=f"multiturn_{preset_id}"
     )
+    builder.button(text="💾 Сохранить это", callback_data=f"multiturn_save_{preset_id}")
+    builder.button(text="📤 Скачать", callback_data=f"multiturn_download_{preset_id}")
 
     builder.button(text="🏠 В главное меню", callback_data="back_main")
     builder.adjust(1)
@@ -596,10 +626,7 @@ def get_multiturn_keyboard(preset_id: str):
 
 
 def get_video_edit_input_type_keyboard():
-    """
-    Клавиатура выбора типа входных данных для видео-эффектов
-    Позволяет выбрать между загрузкой видео или изображения
-    """
+    """Клавиатура выбора типа входных данных для видео-эффектов"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🎬 Загрузить видео", callback_data="video_edit_input_video")
@@ -618,20 +645,9 @@ def get_video_edit_keyboard(
     duration: int = 5,
     aspect_ratio: str = "16:9",
 ):
-    """
-    Клавиатура для видео-эффектов (видео-в-видео или фото-в-видео)
-    Использует Kling 3 Omni Reference-to-Video или Image-to-Video
-
-    Args:
-        preset_id: ID пресета (если используется)
-        input_type: Тип входных данных - "video" или "image"
-        quality: Текущее качество - "std" или "pro"
-        duration: Текущая длительность - 5 или 10
-        aspect_ratio: Текущий формат - "16:9", "9:16" или "1:1"
-    """
+    """Клавиатура для видео-эффектов"""
     builder = InlineKeyboardBuilder()
 
-    # Выбор качества с галочками
     std_check = "✅ " if quality == "std" else ""
     pro_check = "✅ " if quality == "pro" else ""
 
@@ -640,16 +656,14 @@ def get_video_edit_keyboard(
     )
     builder.button(text=f"{pro_check}💎 Pro", callback_data=f"video_edit_quality_pro")
 
-    # Выбор длительности с галочками
     dur5_check = "✅ " if duration == 5 else ""
     dur10_check = "✅ " if duration == 10 else ""
+    dur15_check = "✅ " if duration == 15 else ""
 
     builder.button(text=f"{dur5_check}⏱ 5 сек", callback_data=f"video_edit_duration_5")
-    builder.button(
-        text=f"{dur10_check}⏱ 10 сек", callback_data=f"video_edit_duration_10"
-    )
+    builder.button(text=f"{dur10_check}⏱ 10 сек", callback_data=f"video_edit_duration_10")
+    builder.button(text=f"{dur15_check}⏱ 15 сек", callback_data=f"video_edit_duration_15")
 
-    # Выбор формата с галочками
     ratio_9_16_check = "✅ " if aspect_ratio == "9:16" else ""
     ratio_16_9_check = "✅ " if aspect_ratio == "16:9" else ""
     ratio_1_1_check = "✅ " if aspect_ratio == "1:1" else ""
@@ -666,7 +680,6 @@ def get_video_edit_keyboard(
         text=f"{ratio_1_1_check}⬜ 1:1 (Square)", callback_data=f"video_edit_ratio_1_1"
     )
 
-    # Кнопка запуска в зависимости от типа входных данных
     if input_type == "image":
         builder.button(text="▶️ Запустить", callback_data="run_video_edit_image")
     else:
@@ -680,9 +693,7 @@ def get_video_edit_keyboard(
 
 
 def get_video_edit_confirm_keyboard():
-    """
-    Клавиатура подтверждения для видео-эффектов
-    """
+    """Клавиатура подтверждения для видео-эффектов"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="▶️ Запустить", callback_data="run_video_edit")
@@ -693,9 +704,7 @@ def get_video_edit_confirm_keyboard():
 
 
 def get_prompt_tips_keyboard(preset_id: str):
-    """
-    Клавиатура с советами по промптам
-    """
+    """Клавиатура с советами по промптам"""
     builder = InlineKeyboardBuilder()
 
     tips = [
@@ -734,10 +743,9 @@ def get_preset_selection_keyboard(presets: list, mode: str):
     """Клавиатура выбора пресета для пакетной генерации"""
     builder = InlineKeyboardBuilder()
 
-    # Цена за изображение в зависимости от режима
     base_cost = 3 if mode == "standard" else 15
 
-    for preset in presets[:8]:  # Максимум 8 пресетов
+    for preset in presets[:8]:
         builder.button(
             text=f"{preset.name} ({base_cost}🍌)",
             callback_data=f"batch_preset_{preset.id}",
@@ -767,7 +775,7 @@ def get_batch_count_keyboard(preset_id: str, max_count: int):
     """Клавиатура выбора количества изображений для пакетной генерации"""
     builder = InlineKeyboardBuilder()
 
-    counts = list(range(1, min(max_count + 1, 11)))  # 1-10 или меньше
+    counts = list(range(1, min(max_count + 1, 11)))
 
     for count in counts:
         builder.button(
@@ -776,75 +784,107 @@ def get_batch_count_keyboard(preset_id: str, max_count: int):
 
     builder.button(text="🔙 Назад", callback_data=f"batch_preset_{preset_id}")
 
-    # По 5 в ряд
     builder.adjust(5, repeat=True)
     return builder.as_markup()
 
 
 def get_video_result_keyboard(video_url: str, user_credits: int = 0):
-    """Клавиатура для готового видео с кнопками скачивания и главного меню"""
+    """Клавиатура для готового видео"""
     builder = InlineKeyboardBuilder()
 
-    # Кнопка скачивания видео
     builder.button(text="📥 Скачать видео", url=video_url)
-
-    # Кнопка главного меню
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     builder.adjust(1)
     return builder.as_markup()
 
 
-def get_reference_images_upload_keyboard(
-    current_count: int = 0, max_count: int = 14, preset_id: str = None
+def get_ai_assistant_keyboard():
+    """Клавиатура для ИИ-ассистента"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 В главное меню", callback_data="back_main")
+    return builder.as_markup()
+
+
+# =============================================================================
+# УЛУЧШЕННЫЕ ФУНКЦИИ (для обратной совместимости)
+# =============================================================================
+
+def get_settings_main_keyboard(
+    current_image_service: str = "novita",
+    current_video_model: str = "v3_std",
 ):
-    """
-    Клавиатура для загрузки референсных изображений (до 14)
-    Показывает текущее количество и опции управления
-    """
-    builder = InlineKeyboardBuilder()
-
-    # Заголовок с текущим количеством
-    builder.button(
-        text=f"📎 Загружено: {current_count}/{max_count}", callback_data="ref_count_ignore"
+    """Главное меню настроек - упрощённый UX"""
+    return get_settings_keyboard(
+        current_model="flash",
+        current_video_model=current_video_model,
+        current_i2v_model="v3_std",
+        image_service=current_image_service,
     )
 
-    # Кнопка добавления еще изображения (если не достигли лимита)
-    if current_count < max_count:
-        builder.button(
-            text="➕ Добавить фото", callback_data=f"ref_upload_{preset_id or 'none'}"
-        )
 
-    # Кнопки управления
-    if current_count > 0:
-        builder.button(
-            text="🗑 Очистить все", callback_data=f"ref_clear_{preset_id or 'none'}"
-        )
-        builder.button(
-            text="▶️ Продолжить", callback_data=f"ref_confirm_{preset_id or 'none'}"
-        )
-
-    builder.button(text="🔙 Назад", callback_data=f"preset_{preset_id}" if preset_id else "back_main")
-
-    builder.adjust(1, repeat=True)
-    return builder.as_markup()
-
-
-def get_reference_images_confirmation_keyboard(preset_id: str = None):
-    """
-    Клавиатура подтверждения референсных изображений перед генерацией
-    """
-    builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text="🔄 Перезагрузить", callback_data=f"ref_reload_{preset_id or 'none'}"
-    )
-    builder.button(
-        text="✅ Подтвердить", callback_data=f"ref_accept_{preset_id or 'none'}"
-    )
-    builder.button(
-        text="🔙 Назад", callback_data=f"preset_{preset_id}" if preset_id else "back_main"
+def get_settings_images_keyboard(
+    current_service: str = "novita",
+    current_model: str = "flux_pro",
+):
+    """Настройки генерации изображений"""
+    return get_settings_keyboard(
+        current_model=current_model,
+        current_video_model="v3_std",
+        current_i2v_model="v3_std",
+        image_service=current_service,
     )
 
-    builder.adjust(2, 1)
-    return builder.as_markup()
+
+def get_settings_video_keyboard(
+    current_model: str = "v3_std",
+):
+    """Настройки генерации видео"""
+    return get_settings_keyboard(
+        current_model="flash",
+        current_video_model=current_model,
+        current_i2v_model="v3_std",
+        image_service="novita",
+    )
+
+
+def get_settings_i2v_keyboard(
+    current_model: str = "v3_std",
+):
+    """Настройки фото в видео"""
+    return get_settings_keyboard(
+        current_model="flash",
+        current_video_model="v3_std",
+        current_i2v_model=current_model,
+        image_service="novita",
+    )
+
+
+def get_settings_keyboard_with_ali(
+    current_model: str = "flash",
+    current_video_model: str = "v3_std",
+    current_i2v_model: str = "v3_std",
+    image_service: str = "novita",
+):
+    """Клавиатура настроек (алиас для совместимости)"""
+    return get_settings_keyboard(
+        current_model=current_model,
+        current_video_model=current_video_model,
+        current_i2v_model=current_i2v_model,
+        image_service=image_service,
+    )
+
+
+def get_settings_keyboard_with_ai(
+    current_model: str = "flash",
+    current_video_model: str = "v3_std",
+    current_i2v_model: str = "v3_std",
+    image_service: str = "novita",
+):
+    """Клавиатура настроек (для совместимости)"""
+    return get_settings_keyboard(
+        current_model=current_model,
+        current_video_model=current_video_model,
+        current_i2v_model=current_i2v_model,
+        image_service=image_service,
+    )

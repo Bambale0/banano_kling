@@ -10,7 +10,6 @@ import asyncio
 import os
 
 from bot.config import config
-
 # Способ 1: Использовать готовый инстанс (рекомендуется)
 # kling_service уже инициализирован в kling_service.py
 # Импорт сервиса

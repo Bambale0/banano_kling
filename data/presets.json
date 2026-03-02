@@ -244,6 +244,107 @@
           "placeholders": []
         }
       ]
+    },
+    "seedream_generation": {
+      "name": "🎨 Seedream AI",
+      "description": "Генерация изображений через ByteDance Seedream 5.0 Lite",
+      "model": "seedream-5-lite",
+      "presets": [
+        {
+          "id": "seedream_text_to_image",
+          "name": "📝 Текст → Изображение",
+          "description": "Создание изображения из текстового описания",
+          "prompt": "{description}",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "1:1",
+          "cost": 5,
+          "requires_input": true,
+          "input_prompt": "Опишите изображение:",
+          "placeholders": ["description"]
+        },
+        {
+          "id": "seedream_image_to_image",
+          "name": "🖼 Изображение → Изображение",
+          "description": "Преобразование изображения по описанию",
+          "prompt": "{description}",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "1:1",
+          "cost": 7,
+          "requires_upload": true,
+          "requires_input": true,
+          "input_prompt": "Опишите преобразование:",
+          "placeholders": ["description"]
+        },
+        {
+          "id": "seedream_portrait",
+          "name": "👤 Портрет",
+          "description": "Создание фотореалистичного портрета",
+          "prompt": "A photorealistic portrait of {subject}, professional photography, natural lighting, high detail, studio setting",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "3:4",
+          "cost": 6,
+          "requires_input": true,
+          "input_prompt": "Опишите человека (возраст, внешность, стиль):",
+          "placeholders": ["subject"]
+        },
+        {
+          "id": "seedream_landscape",
+          "name": "🏞 Пейзаж",
+          "description": "Создание красивого пейзажа",
+          "prompt": "A breathtaking {landscape_type} landscape at {time_of_day}, dramatic lighting, volumetric clouds, highly detailed, cinematic composition, 8k quality",
+          "model": "seedream-5-lite",
+          "size": "2560x1440",
+          "aspect_ratio": "16:9",
+          "cost": 6,
+          "requires_input": true,
+          "input_prompt": "Опишите пейзаж (горы, лес, море и т.д.):",
+          "placeholders": ["landscape_type", "time_of_day"]
+        },
+        {
+          "id": "seedream_product",
+          "name": "📦 Продукт",
+          "description": "Профессиональная съёмка продукта",
+          "prompt": "Professional product photography of {product}, clean white background, studio lighting, commercial quality, e-commerce ready",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "1:1",
+          "cost": 7,
+          "requires_input": true,
+          "input_prompt": "Опишите продукт:",
+          "placeholders": ["product"]
+        },
+        {
+          "id": "seedream_art",
+          "name": "🎨 Арт",
+          "description": "Художественное изображение",
+          "prompt": "{art_description}, artistic style, creative composition, digital art, high quality",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "1:1",
+          "cost": 5,
+          "requires_input": true,
+          "input_prompt": "Опишите художественное изображение:",
+          "placeholders": ["art_description"]
+        },
+        {
+          "id": "seedream_sequential",
+          "name": "🎬 Серия изображений",
+          "description": "Генерация серии связанных изображений",
+          "prompt": "{scene_description}, cinematic scene, professional photography",
+          "model": "seedream-5-lite",
+          "size": "2048x2048",
+          "aspect_ratio": "16:9",
+          "cost": 12,
+          "max_images": 4,
+          "sequential": true,
+          "requires_input": true,
+          "input_prompt": "Опишите сцену:",
+          "placeholders": ["scene_description"]
+        }
+      ]
     }
   },
   "default_values": {

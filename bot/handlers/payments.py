@@ -5,21 +5,12 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (
-    add_credits,
-    create_transaction,
-    get_or_create_user,
-    get_telegram_id_by_user_id,
-    get_transaction_by_order,
-    get_user_credits,
-    update_transaction_status,
-)
-from bot.keyboards import (
-    get_back_keyboard,
-    get_main_menu_keyboard,
-    get_payment_confirmation_keyboard,
-    get_payment_packages_keyboard,
-)
+from bot.database import (add_credits, create_transaction, get_or_create_user,
+                          get_telegram_id_by_user_id, get_transaction_by_order,
+                          get_user_credits, update_transaction_status)
+from bot.keyboards import (get_back_keyboard, get_main_menu_keyboard,
+                           get_payment_confirmation_keyboard,
+                           get_payment_packages_keyboard)
 from bot.services.preset_manager import preset_manager
 from bot.services.tbank_service import tbank_service
 

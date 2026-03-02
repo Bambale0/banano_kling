@@ -4,14 +4,11 @@ from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
-from bot.database import (
-    get_or_create_user,
-    get_user_settings,
-    get_user_stats,
-    save_user_settings,
-)
-from bot.keyboards import get_back_keyboard, get_main_menu_keyboard
+from bot.database import (get_or_create_user, get_user_settings,
+                          get_user_stats, save_user_settings)
+from bot.keyboards import get_back_keyboard, get_main_menu_keyboard, get_ai_assistant_keyboard
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates, GenerationStates, PaymentStates
 
@@ -19,9 +16,32 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# Состояния для ИИ-ассистента
+class AIAssistantStates(StatesGroup):
+    """Состояния для ИИ-ассистента"""
+    main_menu = State()      # Пользователь в главном меню
+    settings = State()       # Пользователь в настройках
+    waiting_for_message = State()  # Ожидание сообщения от пользователя
+
+
 # ⭐ ВАЖНО: Все обработчики сообщений в common.py должны иметь StateFilter(None)
 # чтобы работать только когда пользователь НЕ в FSM-состоянии
 # Иначе они перехватят сообщения ДО FSM-хэндлеров в generation_router
+
+
+# Хранилище для быстрого доступа к последнему меню пользователя
+# user_id -> "main_menu" | "settings" | None
+_user_last_menu = {}
+
+
+def _set_user_menu(user_id: int, menu: str):
+    """Устанавливает последнее посещённое меню пользователя"""
+    _user_last_menu[user_id] = menu
+
+
+def _get_user_menu(user_id: int) -> str:
+    """Получает последнее посещённое меню пользователя"""
+    return _user_last_menu.get(user_id)
 
 
 @router.message(CommandStart(), StateFilter(None))
@@ -38,11 +58,8 @@ async def cmd_start(message: types.Message):
         order_id = args[0].replace("success_", "")
 
         # Проверяем транзакцию в базе данных
-        from bot.database import (
-            add_credits,
-            get_transaction_by_order,
-            update_transaction_status,
-        )
+        from bot.database import (add_credits, get_transaction_by_order,
+                                  update_transaction_status)
         from bot.services.tbank_service import tbank_service
 
         transaction = await get_transaction_by_order(order_id)
@@ -133,6 +150,9 @@ async def cmd_start(message: types.Message):
             )
         else:
             raise
+    
+    # Запоминаем, что пользователь в главном меню
+    _set_user_menu(message.from_user.id, "main_menu")
 
 
 @router.message(Command("help"), StateFilter(None))
@@ -242,6 +262,9 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
     user = await get_or_create_user(callback.from_user.id)
 
+    # Запоминаем, что пользователь в главном меню
+    _set_user_menu(callback.from_user.id, "main_menu")
+
     # Полный текст главного меню как в cmd_start
     welcome_text = (
         f"🏠 <b>Главное меню</b>\n\n"
@@ -299,8 +322,11 @@ async def show_balance(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "menu_settings")
 async def show_settings(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает настройки с выбором модели"""
-    from bot.keyboards import get_settings_keyboard
+    """Показывает настройки с выбором модели и кнопкой ИИ"""
+    from bot.keyboards import get_settings_keyboard_with_ai
+
+    # Запоминаем, что пользователь в настройках
+    _set_user_menu(callback.from_user.id, "settings")
 
     # Загружаем настройки из БД
     db_settings = await get_user_settings(callback.from_user.id)
@@ -310,12 +336,14 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
         preferred_model=db_settings["preferred_model"],
         preferred_video_model=db_settings["preferred_video_model"],
         preferred_i2v_model=db_settings["preferred_i2v_model"],
+        image_service=db_settings.get("image_service", "nanobanana"),
     )
 
     settings_text = """
 ⚙️ <b>Настройки</b>
 
 🖼 Изображения:
+• Nano Banana / Replicate
 • Flash (1🍌) / Pro (2🍌)
 
 🎬 Текст→Видео:
@@ -327,10 +355,11 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         settings_text,
-        reply_markup=get_settings_keyboard(
+        reply_markup=get_settings_keyboard_with_ai(
             db_settings["preferred_model"],
             db_settings["preferred_video_model"],
             db_settings["preferred_i2v_model"],
+            db_settings.get("image_service", "nanobanana"),
         ),
         parse_mode="HTML",
     )
@@ -350,17 +379,18 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
     # Показываем подтверждение (короткое)
     model_name = "Flash" if model_type == "flash" else "Pro"
 
-    from bot.keyboards import get_settings_keyboard
+    from bot.keyboards import get_settings_keyboard_with_ai
 
     # Также получаем текущую модель видео
     data = await state.get_data()
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
+    current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
         f"✅ Изображение: {model_name}",
-        reply_markup=get_settings_keyboard(
-            model_type, current_video_model, current_i2v_model
+        reply_markup=get_settings_keyboard_with_ai(
+            model_type, current_video_model, current_i2v_model, image_service=current_image_service
         ),
         parse_mode="HTML",
     )
@@ -390,17 +420,18 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
 
     model_name = video_names.get(video_model, video_model)
 
-    from bot.keyboards import get_settings_keyboard
+    from bot.keyboards import get_settings_keyboard_with_ai
 
     # Также получаем текущую модель изображений
     data = await state.get_data()
     current_model = data.get("preferred_model", "flash")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
+    current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
         f"✅ Видео: {model_name}",
-        reply_markup=get_settings_keyboard(
-            current_model, video_model, current_i2v_model
+        reply_markup=get_settings_keyboard_with_ai(
+            current_model, video_model, current_i2v_model, image_service=current_image_service
         ),
         parse_mode="HTML",
     )
@@ -428,17 +459,55 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
 
     model_name = i2v_names.get(i2v_model, i2v_model)
 
-    from bot.keyboards import get_settings_keyboard
+    from bot.keyboards import get_settings_keyboard_with_ai
 
     # Получаем текущие модели
     data = await state.get_data()
     current_model = data.get("preferred_model", "flash")
     current_video_model = data.get("preferred_video_model", "v3_std")
+    current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
         f"✅ Фото→Видео: {model_name}",
-        reply_markup=get_settings_keyboard(
-            current_model, current_video_model, i2v_model
+        reply_markup=get_settings_keyboard_with_ai(
+            current_model, current_video_model, i2v_model, image_service=current_image_service
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("settings_service_"))
+async def handle_settings_service(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора сервиса для генерации изображений (nanobanana или replicate)"""
+    service = callback.data.replace("settings_service_", "")
+
+    # Сохраняем выбор сервиса в БД
+    await save_user_settings(callback.from_user.id, image_service=service)
+
+    # Сохраняем в состояние
+    await state.update_data(image_service=service)
+
+    # Названия сервисов
+    service_names = {
+        "nanobanana": "🍌 Nano Banana",
+        "replicate": "🖼 Replicate/Seedream",
+    }
+
+    service_name = service_names.get(service, service)
+
+    from bot.keyboards import get_settings_keyboard_with_ai
+
+    # Получаем текущие модели
+    data = await state.get_data()
+    current_model = data.get("preferred_model", "flash")
+    current_video_model = data.get("preferred_video_model", "v3_std")
+    current_i2v_model = data.get("preferred_i2v_model", "v3_std")
+
+    await callback.message.edit_text(
+        f"✅ Сервис: {service_name}",
+        reply_markup=get_settings_keyboard_with_ai(
+            current_model, current_video_model, current_i2v_model, image_service=service
         ),
         parse_mode="HTML",
     )
@@ -489,6 +558,75 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 
 
 # =============================================================================
+# ИИ-ассистент: обработка сообщений без FSM
+# Позволяет отправлять вопросы ИИ напрямую из главного меню или настроек
+# =============================================================================
+
+@router.message(StateFilter(None), F.text)
+async def handle_message_in_menu(message: types.Message, state: FSMContext):
+    """Обработка текстовых сообщений в главном меню или настройках - перенаправление к ИИ"""
+    from bot.services.ai_assistant_service import ai_assistant_service
+    from bot.keyboards import get_ai_assistant_keyboard, get_back_keyboard
+
+    user_id = message.from_user.id
+    last_menu = _get_user_menu(user_id)
+
+    # Проверяем, находится ли пользователь в главном меню или настройках
+    if last_menu not in ("main_menu", "settings"):
+        # Если пользователь не в главном меню или настройках, не обрабатываем
+        return
+
+    # Устанавливаем состояние ожидания сообщения
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode=last_menu)
+
+    # Загружаем контекст пользователя
+    user = await get_or_create_user(message.from_user.id)
+    db_settings = await get_user_settings(message.from_user.id)
+
+    context = {
+        "user_credits": user.credits,
+        "preferred_model": db_settings["preferred_model"],
+        "preferred_video_model": db_settings["preferred_video_model"],
+        "image_service": db_settings.get("image_service", "nanobanana"),
+        "menu_location": "главное меню" if last_menu == "main_menu" else "настройки"
+    }
+
+    # Отправляем "печатает" статус
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        # Получаем ответ от ИИ
+        response = await ai_assistant_service.get_assistant_response(
+            user_message=message.text,
+            context=context
+        )
+
+        if response:
+            # Отправляем ответ пользователю с клавиатурой ИИ
+            await message.answer(
+                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            # Fallback если ИИ не ответил
+            await message.answer(
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logger.exception(f"AI Assistant error: {e}")
+        await message.answer(
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            reply_markup=get_ai_assistant_keyboard(),
+            parse_mode="HTML"
+        )
+
+
+# =============================================================================
 # ВАЖНО: НЕ ДОБАВЛЯЙТЕ СЮДА ОБРАБОТЧИКИ СООБЩЕНИЙ БЕЗ FSM STATE FILTER!
 # Это перехватит сообщения до FSM-хэндлеров в generation_router
 # =============================================================================
@@ -501,3 +639,155 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 async def handle_ignore_callback(callback: types.CallbackQuery):
     """Обработчик для неинтерактивных кнопок-заголовков и разделителей"""
     await callback.answer()  # Просто закрываем уведомление о нажатии
+
+
+# =============================================================================
+# ИИ-ассистент (Дипсик)
+# =============================================================================
+
+@router.callback_query(F.data == "menu_ai_assistant")
+async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContext):
+    """Открытие ИИ-ассистента из главного меню"""
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="main_menu")
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    # Формируем контекст для ИИ
+    context = {
+        "user_credits": user.credits,
+        "menu_location": "главное меню",
+        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni"
+    }
+
+    # Приветственное сообщение от ИИ
+    welcome_ai = """🍌 Привет! Я Banana Boom AI - твой ИИ-ассистент!
+
+Я могу помочь тебе с:
+🖼 Выбором модели для генерации изображений
+✏️ Понять как редактировать фото
+🎬 Подобрать настройки для видео
+📝 Написать хороший промпт
+⚙️ Разобраться в настройках
+
+Просто напиши мне свой вопрос! Например:
+• "как сделать аниме арт?"
+• "какая модель лучше для фотореализма?"
+• "как отредактировать фото в стиле киберпанк?"
+
+Или нажми "В главное меню" чтобы вернуться."""
+
+    await callback.message.edit_text(
+        welcome_ai,
+        reply_markup=get_ai_assistant_keyboard(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_ai_settings")
+async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMContext):
+    """Открытие ИИ-ассистента из меню настроек"""
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="settings")
+
+    # Загружаем настройки пользователя
+    db_settings = await get_user_settings(callback.from_user.id)
+
+    # Формируем контекст для ИИ
+    context = {
+        "menu_location": "меню настроек",
+        "preferred_model": db_settings["preferred_model"],
+        "preferred_video_model": db_settings["preferred_video_model"],
+        "image_service": db_settings.get("image_service", "nanobanana"),
+        "available_models": "Nano Banana (Flash/Pro), Replicate (Seedream), Kling 3 (Std/Pro/Omni)"
+    }
+
+    welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
+
+Ты находишься в меню настройки моделей.
+Я могу объяснить:
+
+🍌 Какая модель изображений лучше:
+   - Flash (1🍌) - быстро и дёшево
+   - Pro (2🍌) - высокое качество, 4K
+
+🎬 Какая модель видео подойдёт:
+   - Std (4🍌) - стандарт
+   - Pro (5🍌) - лучше качество
+   - Omni - продвинутая
+
+🖼 Чем отличаются сервисы:
+   - Nano Banana - Gemini
+   - Replicate - Seedream
+
+Просто спроси меня! Например:
+• "что лучше для портрета?"
+• "какой формат выбрать для тиктока?"
+• "зачем нужен Omni?"
+
+Или нажми "Назад" чтобы вернуться к настройкам."""
+
+    await callback.message.edit_text(
+        welcome_ai,
+        reply_markup=get_back_keyboard("menu_settings"),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(AIAssistantStates.waiting_for_message))
+async def handle_ai_assistant_message(message: types.Message, state: FSMContext):
+    """Обработка сообщения пользователя ИИ-ассистентом"""
+    from bot.services.ai_assistant_service import ai_assistant_service
+    from bot.database import get_user_credits, get_user_settings
+    from bot.keyboards import get_ai_assistant_keyboard
+
+    # Получаем текущий режим
+    data = await state.get_data()
+    ai_mode = data.get("ai_mode", "main_menu")
+
+    # Загружаем контекст пользователя
+    user = await get_or_create_user(message.from_user.id)
+    db_settings = await get_user_settings(message.from_user.id)
+
+    context = {
+        "user_credits": user.credits,
+        "preferred_model": db_settings["preferred_model"],
+        "preferred_video_model": db_settings["preferred_video_model"],
+        "image_service": db_settings.get("image_service", "nanobanana"),
+        "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки"
+    }
+
+    # Отправляем "печатает" статус
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        # Получаем ответ от ИИ
+        response = await ai_assistant_service.get_assistant_response(
+            user_message=message.text,
+            context=context
+        )
+
+        if response:
+            # Отправляем ответ пользователю
+            await message.answer(
+                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            # Fallback если ИИ не ответил
+            await message.answer(
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logger.exception(f"AI Assistant error: {e}")
+        await message.answer(
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            reply_markup=get_ai_assistant_keyboard(),
+            parse_mode="HTML"
+        )

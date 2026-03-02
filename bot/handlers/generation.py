@@ -11,58 +11,40 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (
-    add_credits,
-    add_generation_history,
-    add_generation_task,
-    check_can_afford,
-    complete_video_task,
-    deduct_credits,
-    get_or_create_user,
-    get_task_by_id,
-    get_user_credits,
-    get_user_settings,
-)
-from bot.keyboards import (
-    get_advanced_options_keyboard,
-    get_aspect_ratio_keyboard,
-    get_back_keyboard,
-    get_category_keyboard,
-    get_duration_keyboard,
-    get_image_aspect_ratio_keyboard,
-    get_image_aspect_ratio_no_preset_edit_keyboard,
-    get_image_aspect_ratio_no_preset_keyboard,
-    get_image_editing_options_keyboard,
-    get_main_menu_keyboard,
-    get_model_selection_keyboard,
-    get_multiturn_keyboard,
-    get_preset_action_keyboard,
-    get_prompt_tips_keyboard,
-    get_reference_images_keyboard,
-    get_resolution_keyboard,
-    get_search_grounding_keyboard,
-    get_video_edit_confirm_keyboard,
-    get_video_edit_input_type_keyboard,
-    get_video_edit_keyboard,
-    get_video_options_no_preset_keyboard,
-)
+from bot.database import (add_credits, add_generation_history,
+                          add_generation_task, check_can_afford,
+                          complete_video_task, deduct_credits,
+                          get_or_create_user, get_task_by_id, get_user_credits,
+                          get_user_settings)
+from bot.keyboards import (get_advanced_options_keyboard,
+                           get_aspect_ratio_keyboard, get_back_keyboard,
+                           get_category_keyboard, get_duration_keyboard,
+                           get_image_aspect_ratio_keyboard,
+                           get_image_aspect_ratio_no_preset_edit_keyboard,
+                           get_image_aspect_ratio_no_preset_keyboard,
+                           get_image_editing_options_keyboard,
+                           get_main_menu_keyboard,
+                           get_model_selection_keyboard,
+                           get_multiturn_keyboard, get_preset_action_keyboard,
+                           get_prompt_tips_keyboard,
+                           get_reference_images_keyboard,
+                           get_resolution_keyboard,
+                           get_search_grounding_keyboard,
+                           get_video_edit_confirm_keyboard,
+                           get_video_edit_input_type_keyboard,
+                           get_video_edit_keyboard,
+                           get_video_options_no_preset_keyboard)
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
-from bot.utils.help_texts import (
-    UserHints,
-    format_generation_options,
-    get_aspect_ratio_help,
-    get_editing_help,
-    get_error_handling,
-    get_model_selection_help,
-    get_multiturn_help,
-    get_prompt_tips,
-    get_reference_images_help,
-    get_resolution_help,
-    get_search_grounding_help,
-    get_success_message,
-)
+from bot.utils.help_texts import (UserHints, format_generation_options,
+                                  get_aspect_ratio_help, get_editing_help,
+                                  get_error_handling, get_model_selection_help,
+                                  get_multiturn_help, get_prompt_tips,
+                                  get_reference_images_help,
+                                  get_resolution_help,
+                                  get_search_grounding_help,
+                                  get_success_message)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1398,7 +1380,8 @@ async def start_no_preset_generation(
 
                 # Создаём задачу в БД
                 if saved_url:
-                    from bot.database import add_generation_task, complete_video_task
+                    from bot.database import (add_generation_task,
+                                              complete_video_task)
 
                     user = await get_or_create_user(message.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2070,7 +2053,8 @@ async def run_editing_inline(
                     logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
-                    from bot.database import add_generation_task, complete_video_task
+                    from bot.database import (add_generation_task,
+                                              complete_video_task)
 
                     user = await get_or_create_user(message.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2168,7 +2152,8 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
                     logger.exception("Failed to update state with last_generated_image")
 
                 if saved_url:
-                    from bot.database import add_generation_task, complete_video_task
+                    from bot.database import (add_generation_task,
+                                              complete_video_task)
 
                     user = await get_or_create_user(callback.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2624,7 +2609,8 @@ async def run_no_preset_image_generation(
                 logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
-                from bot.database import add_generation_task, complete_video_task
+                from bot.database import (add_generation_task,
+                                          complete_video_task)
 
                 user = await get_or_create_user(message.from_user.id)
                 task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -2738,7 +2724,8 @@ async def run_no_preset_image_edit(
                 logger.exception("Failed to update state with last_generated_image")
 
             if saved_url:
-                from bot.database import add_generation_task, complete_video_task
+                from bot.database import (add_generation_task,
+                                          complete_video_task)
 
                 user = await get_or_create_user(message.from_user.id)
                 task_id = f"img_{uuid.uuid4().hex[:12]}"
