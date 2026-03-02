@@ -2733,7 +2733,7 @@ async def run_no_preset_image_generation(
             await state.clear()
             return
         elif image_service == "seedream":
-            # Seedream через Novita - async API, returns task_id
+            # Seedream через Novita - может возвращать как task_id, так и сразу изображение
             size = "2048x2048"  # Default 2K for Seedream
             task_response = await service.generate_seedream_image(
                 prompt=prompt,
@@ -2744,43 +2744,87 @@ async def run_no_preset_image_generation(
                 else None,
             )
 
-            if task_response and task_response.get("task_id"):
-                task_id = task_response["task_id"]
+            if task_response:
+                # Seedream может вернуть изображение сразу в ответе
+                if "images" in task_response and task_response["images"]:
+                    # Изображение уже готово
+                    image_url = task_response["images"][0]
+                    
+                    # Сохраняем задачу в БД
+                    from bot.database import add_generation_task, complete_video_task
 
-                # Сохраняем задачу в БД
-                from bot.database import add_generation_task
+                    user = await get_or_create_user(user_id)
+                    task_id = f"seedream_{uuid.uuid4().hex[:12]}"
+                    await add_generation_task(user.id, task_id, "image", "no_preset")
+                    await complete_video_task(task_id, image_url)
 
-                user = await get_or_create_user(user_id)
-                await add_generation_task(user.id, task_id, "image", "no_preset")
+                    await processing.delete()
+                    
+                    # Отправляем изображение пользователю
+                    try:
+                        await message.answer_photo(
+                            photo=image_url,
+                            caption=f"✅ <b>Готово!</b>\n\n"
+                                    f"🤖 Модель: <code>{model_name}</code>\n"
+                                    f"📐 Размер: <code>2048x2048</code>\n"
+                                    f"<code>{cost}</code>🍌 списано",
+                            parse_mode="HTML",
+                            reply_markup=get_multiturn_keyboard("no_preset"),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send photo: {e}")
+                        await message.answer(
+                            f"✅ <b>Готово!</b>\n\n"
+                            f"🤖 Модель: <code>{model_name}</code>\n"
+                            f"📐 Размер: <code>2048x2048</code>\n"
+                            f"<code>{cost}</code>🍌 списано\n\n"
+                            f"<a href='{image_url}'>Скачать изображение</a>",
+                            parse_mode="HTML",
+                            reply_markup=get_multiturn_keyboard("no_preset"),
+                        )
+                    await state.clear()
+                    return
+                elif task_response.get("task_id"):
+                    # Асинхронная задача
+                    task_id = task_response["task_id"]
 
-                await processing.delete()
-                await message.answer(
-                    f"✅ <b>Задача создана!</b>\n\n"
-                    f"🤖 Модель: <code>{model_name}</code>\n"
-                    f"📐 Размер: <code>2048x2048</code>\n"
-                    f"<code>{cost}</code>🍌 списано\n\n"
-                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
-                    parse_mode="HTML",
-                    reply_markup=get_main_menu_keyboard(),
-                )
+                    # Сохраняем задачу в БД
+                    from bot.database import add_generation_task
 
-                # Запускаем фоновый опрос статуса
-                asyncio.create_task(
-                    poll_novita_task_status(
-                        task_id=task_id,
-                        user_id=user_id,
-                        bot=message.bot,
-                        cost=cost,
-                        model_name=model_name,
+                    user = await get_or_create_user(user_id)
+                    await add_generation_task(user.id, task_id, "image", "no_preset")
+
+                    await processing.delete()
+                    await message.answer(
+                        f"✅ <b>Задача создана!</b>\n\n"
+                        f"🤖 Модель: <code>{model_name}</code>\n"
+                        f"📐 Размер: <code>2048x2048</code>\n"
+                        f"<code>{cost}</code>🍌 списано\n\n"
+                        f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
+                        parse_mode="HTML",
+                        reply_markup=get_main_menu_keyboard(),
                     )
-                )
-            else:
-                await processing.delete()
-                await add_credits(message.from_user.id, cost)
-                await message.answer(
-                    "❌ Не удалось создать задачу. Бананы возвращены.",
-                    reply_markup=get_main_menu_keyboard(),
-                )
+
+                    # Запускаем фоновый опрос статуса
+                    asyncio.create_task(
+                        poll_novita_task_status(
+                            task_id=task_id,
+                            user_id=user_id,
+                            bot=message.bot,
+                            cost=cost,
+                            model_name=model_name,
+                        )
+                    )
+                    await state.clear()
+                    return
+
+            # Ошибка
+            await processing.delete()
+            await add_credits(message.from_user.id, cost)
+            await message.answer(
+                "❌ Не удалось создать задачу. Бананы возвращены.",
+                reply_markup=get_main_menu_keyboard(),
+            )
             await state.clear()
             return
         else:
