@@ -314,8 +314,11 @@ class NovitaService:
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
 
-        url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
+        url = f"{self.BASE_URL}/v3/seedream-5.0-lite"
 
+        logger.info(f"POST {url}")  # Debug logging for URL
+        logger.info(f"Payload: {payload}")  # Debug logging for payload
+        
         logger.info(
             f"Novita Seedream 5.0 request: prompt={prompt[:50]}..., "
             f"size={width}x{height}, images={len(image) if image else 0}, "
@@ -394,8 +397,11 @@ class NovitaService:
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
 
-        url = f"{self.BASE_URL}/v3/seedream/seedream-5-lite"
+        url = f"{self.BASE_URL}/v3/seedream-5.0-lite"
 
+        logger.info(f"POST {url}")  # Debug logging for URL
+        logger.info(f"Payload: {payload}")  # Debug logging for payload
+        
         logger.info(
             f"Novita Seedream 5.0 edit request: prompt={prompt[:50]}..., "
             f"images_count={len(images)}, size={width}x{height}, "
