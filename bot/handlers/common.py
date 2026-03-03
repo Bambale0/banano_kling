@@ -321,9 +321,6 @@ async def show_balance(callback: types.CallbackQuery):
 📊 Всего генераций: <code>{stats['generations']}</code>
 💸 Потрачено бананов: <code>{stats['total_spent']}</code>
 📅 Дата регистрации: <code>{stats['member_since']}</code>
-
-<i>1 банан = 1 генерация стандартного качества</i>
-<i>Премиум генерации стоят больше бананов</i>
 """
 
     await callback.message.edit_text(
