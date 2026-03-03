@@ -230,6 +230,14 @@ class AIAssistantService:
             v2v_pro_5 = preset_manager.get_video_cost("v3_omni_pro_r2v", 5)
             v2v_pro_10 = preset_manager.get_video_cost("v3_omni_pro_r2v", 10)
             
+            # Kling 2.6 цены
+            v26_5 = preset_manager.get_video_cost("v26_pro", 5)
+            v26_10 = preset_manager.get_video_cost("v26_pro", 10)
+            motion_pro_5 = preset_manager.get_video_cost("v26_motion_pro", 5)
+            motion_pro_10 = preset_manager.get_video_cost("v26_motion_pro", 10)
+            motion_std_5 = preset_manager.get_video_cost("v26_motion_std", 5)
+            motion_std_10 = preset_manager.get_video_cost("v26_motion_std", 10)
+            
             return f"""## АКТУАЛЬНЫЕ ЦЕНЫ
 
 🖼 Генерация изображений:
@@ -242,11 +250,20 @@ class AIAssistantService:
 ┌─────────────────┬────────┬────────┬────────┐
 │ Модель          │ 5 сек  │ 10 сек │ 15 сек │
 ├─────────────────┼────────┼────────┼────────┤
+│ Kling 2.6       │ {v26_5}🍌   │ {v26_10}🍌   │   -   │
 │ Kling 3 Std     │ {video_std_5}🍌   │ {video_std_10}🍌   │ {video_std_15}🍌   │
 │ Kling 3 Pro     │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
 │ Kling 3 Omni Std│ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
 │ Kling 3 Omni Pro│ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
 └─────────────────┴────────┴────────┴────────┘
+
+🎬 Kling 2.6 Motion Control (движение с видео):
+┌─────────────────┬────────┬────────┐
+│ Модель          │ 5 сек  │ 10 сек │
+├─────────────────┼────────┼────────┤
+│ Pro             │ {motion_pro_5}🍌   │ {motion_pro_10}🍌   │
+│ Std             │ {motion_std_5}🍌   │ {motion_std_10}🍌   │
+└─────────────────┴────────┴────────┘
 
 ✂️ Видео-эффекты (видео → видео):
 ┌─────────────────┬────────┬────────┐
@@ -257,6 +274,7 @@ class AIAssistantService:
 └─────────────────┴────────┴────────┘
 
 ✏️ Редактирование: {pro_cost}🍌"""
+
         except Exception as e:
             logger.warning(f"Failed to get dynamic pricing: {e}")
             return """## ЦЕНЫ (уточняйте в боте)

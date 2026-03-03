@@ -56,6 +56,27 @@
       "flux_pro": 3
     },
     "video_models": {
+      "v26_pro": {
+        "base": 8,
+        "duration_costs": {
+          "5": 8,
+          "10": 14
+        }
+      },
+      "v26_motion_pro": {
+        "base": 10,
+        "duration_costs": {
+          "5": 10,
+          "10": 18
+        }
+      },
+      "v26_motion_std": {
+        "base": 8,
+        "duration_costs": {
+          "5": 8,
+          "10": 14
+        }
+      },
       "v3_std": {
         "base": 6,
         "duration_costs": {

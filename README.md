@@ -1,59 +1,101 @@
-# AI Image & Video Generation Telegram Bot
+# 🍌 Banano Kling — AI Image & Video Generation Telegram Bot
 
-Telegram-бот для генерации изображений и видео с помощью AI (Gemini, Kling) и системой оплаты через Т-Банк.
+Telegram-бот для генерации изображений и видео с помощью AI. Поддерживает генерацию изображений (Gemini, Seedream, FLUX) и видео (Kling AI), пакетную обработку, систему кредитов и оплату через Т-Банк.
 
-## Возможности
+## 🚀 Возможности
 
-- 🖼 **Генерация изображений** — фотореалистичные портреты, логотипы, стикеры, пейзажи
-- ✏️ **Редактирование фото** — стилизация, добавление объектов, реставрация, замена фона
-- 🎬 **Генерация видео** — из текста или изображений
-- ✂️ **Видео-эффекты** — стилизация и улучшение качества
-- 💳 **Система кредитов** с оплатой через Т-Банк
+### Генерация изображений
+- 📸 **Фотореалистичные портреты** — профессиональные портреты людей
+- 🎨 **Логотипы и дизайн** — создание логотипов с текстом
+- 😊 **Стикеры** — милые персонажи в мультяшном стиле
+- 🏞 **Пейзажи** — красивые природные и городские сцены
+- 🌀 **Абстрактное искусство** — генерация абстрактных изображений
+- 🎨 **Seedream AI** — ByteDance Seedream 5.0 Lite для быстрой генерации
+
+### Редактирование изображений
+- ➕ **Добавить объект** — добавление элементов на фото
+- 🎭 **Сменить стиль** — преобразование в различные художественные стили
+- 🔧 **Реставрация** — восстановление старых фотографий
+- 🌄 **Сменить фон** — замена фона на изображении
+- 🔄 **Seedream** — преобразование изображений
+
+### Генерация видео
+- 📝 **Текст → Видео** — создание видео из текстового описания (Kling V3 Pro/Std)
+- 🖼 **Изображение → Видео** — анимация статичных изображений
+- 📦 **Продуктовое видео** — демонстрация товаров для соцсетей
+- 🎬 **Природные сцены** — красивые пейзажи с анимацией
+
+### Видео-эффекты
+- 🎨 **Стилизация видео** — применение художественных стилей
+- ✨ **Улучшение качества** — повышение разрешения и качества
+
+### Пакетная обработка
+- 🎭 **4 стиля** — применение 4 разных стилей к одному фото
+- ✨ **6 эффектов** — 6 различных визуальных эффектов
+- 🎨 **3 сезона** — сезонные вариации изображения
+
+### Система
+- 💳 **Кредитная система** — оплата через Т-Банк
 - 🔧 **Админ-панель** — статистика, управление пользователями, рассылки
+- ⚙️ **Настройки** — выбор модели, сервиса, качества
 
-## Установка
+## 📋 Требования
 
-### 1. Клонирование
+- Python 3.10+
+- Telegram Bot Token
+- API ключи (см. ниже)
+
+## 🛠 Установка
+
+### 1. Клонирование и создание виртуального окружения
 
 ```bash
 cd /path/to/project
-```
-
-### 2. Создание виртуального окружения
-
-```bash
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # или
 venv\Scripts\activate  # Windows
 ```
 
-### 3. Установка зависимостей
+### 2. Установка зависимостей
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Настройка переменных окружения
+### 3. Настройка переменных окружения
 
-Скопируйте `.env.example` в `.env` и заполните данные:
+Создайте файл `.env` в корне проекта:
 
-```bash
-cp .env.example .env
+```env
+# Telegram Bot
+BOT_TOKEN=your_telegram_bot_token
+
+# AI API Keys
+GEMINI_API_KEY=your_gemini_api_key
+KLING_API_KEY=your_kling_api_key
+NOVITA_API_KEY=your_novita_api_key
+SEEDREAM_API_KEY=your_seedream_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
+
+# AI Assistant (опционально)
+AI_ASSISTANT_API_KEY=your_openrouter_api_key
+
+# Т-Банк (опционально, для платежей)
+TBANK_TERMINAL_KEY=your_terminal_key
+TBANK_SECRET_KEY=your_secret_key
+TBANK_API_URL=https://rest-api.tbankapi.com
+
+# Webhook настройки (для production)
+WEBHOOK_HOST=https://your-domain.com
+WEBHOOK_PORT=8080
+WEBHOOK_PATH=/webhook
 ```
 
-Необходимые переменные:
-- `BOT_TOKEN` — токен Telegram бота от @BotFather
-- `GEMINI_API_KEY` — ключ Google Gemini API
-- `KLING_API_KEY` — ключ Freepik/Kling API
-- `TBANK_TERMINAL_KEY` — терминал Т-Банка
-- `TBANK_SECRET_KEY` — секретный ключ Т-Банка
-
-### 5. Запуск
+### 4. Запуск
 
 **Режим разработки (polling):**
 ```bash
-cd bot_project
 python -m bot.main
 ```
 
@@ -64,108 +106,139 @@ export WEBHOOK_PORT=8080
 python -m bot.main
 ```
 
-## Структура проекта
+## 📁 Структура проекта
 
 ```
-bot_project/
-├── bot/
-│   ├── __init__.py
-│   ├── main.py                 # Точка входа
-│   ├── config.py               # Конфигурация
-│   ├── database.py             # Работа с БД
-│   ├── keyboards.py            # Инлайн-клавиатуры
-│   ├── states.py               # FSM состояния
-│   ├── handlers/
-│   │   ├── __init__.py
-│   │   ├── common.py           # /start, помощь
-│   │   ├── generation.py       # Генерация контента
-│   │   ├── payments.py         # Оплата и баланс
-│   │   └── admin.py            # Админ-команды
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── tbank_service.py    # Интеграция Т-Банк
-│   │   ├── gemini_service.py   # Gemini Image API
-│   │   ├── kling_service.py    # Kling Video API
-│   │   └── preset_manager.py   # Управление пресетами
-│   └── utils/
-│       ├── __init__.py
-│       └── validators.py       # Валидация данных
-├── data/
-│   ├── presets.json            # Пресеты генерации
-│   └── price.json              # Прайс-лист
-├── logs/
-│   └── bot.log                 # Логи
-├── requirements.txt
-├── .env.example
-└── README.md
+banano_kling/
+├── bot/                          # Основной код бота
+│   ├── main.py                   # Точка входа, веб-сервер
+│   ├── config.py                 # Конфигурация
+│   ├── database.py               # SQLite база данных
+│   ├── keyboards.py              # Inline клавиатуры
+│   ├── states.py                 # FSM состояния
+│   ├── handlers/                 # Обработчики команд
+│   │   ├── admin.py              # Админ-команды
+│   │   ├── common.py             # /start, /help, настройки
+│   │   ├── generation.py         # Генерация изображений и видео
+│   │   ├── payments.py            # Оплата и баланс
+│   │   └── batch_generation.py   # Пакетная обработка
+│   ├── services/                 # Интеграции с API
+│   │   ├── gemini_service.py     # Google Gemini
+│   │   ├── kling_service.py      # Kling AI
+│   │   ├── novita_service.py     # Novita AI (FLUX)
+│   │   ├── seedream_service.py   # ByteDance Seedream
+│   │   ├── tbank_service.py      # Т-Банк платежи
+│   │   ├── batch_service.py      # Пакетная обработка
+│   │   └── preset_manager.py     # Управление пресетами
+│   └── utils/                    # Утилиты
+│       ├── validators.py         # Валидация
+│       └── help_texts.py         # Справки
+├── data/                         # Данные
+│   ├── presets.json              # Пресеты генерации
+│   └── price.json                # Прайс-лист и цены
+├── static/                      # Статические файлы
+│   └── uploads/                  # Загруженные файлы
+├── logs/                        # Логи
+│   └── bot.log
+├── tests/                       # Тесты
+├── .env                         # Переменные окружения
+├── requirements.txt             # Python зависимости
+├── start.sh                     # Скрипт запуска
+└── stop.sh                      # Скрипт остановки
 ```
 
-## Конфигурация
+## 🎯 AI Сервисы
 
-### Пресеты (data/presets.json)
+### Изображение
+| Сервис | Модель | Особенности |
+|--------|--------|-------------|
+| Google Gemini | gemini-2.5-flash-image, gemini-3-pro-image-preview | Фотореалистичные изображения, редактирование |
+| Novita AI | FLUX.2 Pro | Высококачественная генерация |
+| Seedream | Seedream 5.0 Lite | ByteDance технология, быстрая генерация |
 
-Пресеты определяют шаблоны генерации с плейсхолдерами:
+### Видео
+| Сервис | Модель | Особенности |
+|--------|--------|-------------|
+| Kling AI | V3 Pro/Std | Текст→Видео, Изображение→Видео |
+| Kling AI | V3 Omni Pro/Std | Расширенные возможности |
+| Kling AI | V3 Omni R2V | Референсное видео |
 
-```json
-{
-  "id": "img_sticker",
-  "name": "😊 Стикер персонаж",
-  "prompt": "A kawaii-style sticker of a cute {character}...",
-  "model": "gemini-2.5-flash-image",
-  "cost": 5,
-  "requires_input": true,
-  "placeholders": ["character", "expression"]
-}
-```
+## 💳 Система кредитов
 
-### Прайс-лист (data/price.json)
+### Пакеты
 
-Пакеты кредитов и настройки:
+| Пакет | Кредиты | Цена (₽) |
+|-------|---------|----------|
+| 🍌 Мини | 15 | 150 |
+| 🍌🍌 Стандарт | 30 | 250 |
+| 🍌🍌🍌 Оптимальный | 50 | 400 |
+| 🍌🍌🍌🍌 Про | 100 | 700 |
+| 🍌🍌🍌🍌🍌 Студия | 200 | 1400 |
 
-```json
-{
-  "packages": [
-    {
-      "id": "pro",
-      "name": "⚡ Про",
-      "credits": 200,
-      "price_rub": 999,
-      "bonus_credits": 30
-    }
-  ],
-  "admin_ids": [123456789]
-}
-```
+### Стоимость генерации
 
-## Администрирование
+**Изображения:**
+- Gemini 2.5 Flash: 3 кредита
+- Gemini 3 Pro: 5 кредитов
+- Seedream: 3 кредита
 
-Доступны команды:
-- `/admin` — открыть админ-панель
-- Перезагрузка пресетов без перезапуска
-- Просмотр статистики
-- Управление кредитами пользователей
-- Рассылка сообщений
+**Видео:**
+- Kling V3 Std: 6-20 кредитов (зависит от длительности)
+- Kling V3 Pro: 8-24 кредитов
 
-## Webhook URLs
+## 🔧 Пресеты
+
+Пресеты находятся в `data/presets.json`. Каждый пресет содержит:
+- `id` — уникальный идентификатор
+- `name` — отображаемое имя
+- `prompt` — шаблон промпта с плейсхолдерами `{placeholder}`
+- `model` — используемая модель
+- `cost` — стоимость в кредитах
+- `requires_input` — требуется ли ввод от пользователя
+- `requires_upload` — требуется ли загрузка изображения
+
+## 🖥 Администрирование
+
+### Доступ к админ-панели
+Используйте команду `/admin` или кнопку в меню.
+
+### Возможности
+- 📊 **Статистика** — количество пользователей, генераций, доход
+- 👥 **Управление пользователями** — просмотр, изменение баланса
+- 💰 **Начисление/списание кредитов**
+- 📢 **Рассылка сообщений**
+- 🔄 **Перезагрузка пресетов** без перезапуска бота
+
+## 🌐 Webhook URLs
 
 Для работы в production режиме настройте вебхуки:
 
-- Telegram: `https://your-domain.com/webhook`
-- Т-Банк: `https://your-domain.com/webhook/tbank`
-- Kling: `https://your-domain.com/webhook/kling`
+```
+Telegram:  https://your-domain.com/webhook
+Т-Банк:    https://your-domain.com/tbank/webhook
+Kling:     https://your-domain.com/webhook/kling
+Seedream:  https://your-domain.com/webhook/seedream
+Novita:    https://your-domain.com/webhook/novita
+```
 
-## Разработка
+## 🚦 Системные команды
 
-### Добавление нового пресета
+```bash
+./start.sh      # Запуск бота
+./stop.sh       # Остановка бота
+python -m bot.main --help  # Справка
+```
 
-1. Отредактируйте `data/presets.json`
-2. Используйте кнопку "Перезагрузить пресеты" в админ-панели
+## 🧪 Тесты
 
-### Добавление нового обработчика
+```bash
+pytest tests/
+```
 
-1. Создайте функцию в соответствующем файле `handlers/`
-2. Зарегистрируйте роутер в `handlers/__init__.py`
+## 📝 Лицензия
 
-## Лицензия
+MIT License
 
-MIT
+## 👤 Поддержка
+
+По вопросам: @S_k7222

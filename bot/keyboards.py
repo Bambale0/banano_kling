@@ -12,6 +12,7 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="✏️ Редактировать фото", callback_data="edit_image")
     builder.button(text="🎬 Генерация видео", callback_data="generate_video")
     builder.button(text="🖼 Фото в видео", callback_data="image_to_video")
+    builder.button(text="🎬 Motion Control", callback_data="menu_motion_control")
     builder.button(text="✂️ Видео-эффекты", callback_data="edit_video")
 
     # PRO-функция — пакетное редактирование (доступно при 20+ кредитах)
@@ -59,6 +60,11 @@ def get_settings_keyboard(
         # V2V цены за 5 сек
         r2v_std_5 = preset_manager.get_video_cost("v3_omni_std_r2v", 5)
         r2v_pro_5 = preset_manager.get_video_cost("v3_omni_pro_r2v", 5)
+        
+        # Kling 2.6 цены
+        v26_5 = preset_manager.get_video_cost("v26_pro", 5)
+        motion_pro_5 = preset_manager.get_video_cost("v26_motion_pro", 5)
+        motion_std_5 = preset_manager.get_video_cost("v26_motion_std", 5)
     except Exception:
         # Значения по умолчанию если preset_manager не работает
         flash_cost = 3
@@ -71,6 +77,9 @@ def get_settings_keyboard(
         omni_pro_5 = 8
         r2v_std_5 = 8
         r2v_pro_5 = 8
+        v26_5 = 8
+        motion_pro_5 = 10
+        motion_std_5 = 8
 
     # ═══════════════════════════════════════════════════════════════
     # 🖼 ИЗОБРАЖЕНИЯ
@@ -185,6 +194,14 @@ def get_settings_keyboard(
     )
     builder.button(
         text=f"{r2v_pro}💎 V2V Pro\n  {r2v_pro_5}🍌", callback_data="settings_video_v3_omni_pro_r2v"
+    )
+
+    # Kling 2.6 (нови!)
+    v26_std = "🟢 " if current_video_model == "v26_pro" else "⚪ "
+    
+    builder.button(
+        text=f"{v26_std}⚡ Kling 2.6 (Text → Video)\n  Самая быстрая • {v26_5}🍌 за 5 сек",
+        callback_data="settings_video_v26_pro",
     )
 
     # ═══════════════════════════════════════════════════════════════
@@ -879,6 +896,24 @@ def get_ai_assistant_keyboard():
     """Клавиатура для ИИ-ассистента"""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 В главное меню", callback_data="back_main")
+    return builder.as_markup()
+
+
+def get_motion_control_keyboard():
+    """Клавиатура выбора качества Motion Control"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(
+        text="⚡ Motion Control Standard\n  8🍌 за 5 сек • Быстрее",
+        callback_data="motion_control_std",
+    )
+    builder.button(
+        text="💎 Motion Control Pro\n  10🍌 за 5 сек • Лучше качество",
+        callback_data="motion_control_pro",
+    )
+    
+    builder.button(text="🔙 Назад", callback_data="back_main")
+    builder.adjust(1)
     return builder.as_markup()
 
 

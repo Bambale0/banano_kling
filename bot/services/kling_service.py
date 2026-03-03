@@ -1,9 +1,17 @@
 """
-Kling 3 API Service - Реализация всех методов Freepik API для Kling 3
+Kling API Service - Реализация всех методов Freepik API для Kling 2.6 и Kling 3
 
-Документация: https://docs.freepik.com/apis/freepik/ai/kling-v3
+Документация Kling 2.6: https://docs.freepik.com/apis/freepik/ai/kling-v2-6
+Документация Kling 3: https://docs.freepik.com/apis/freepik/ai/kling-v3
 
-Endpoints:
+Kling 2.6 Endpoints:
+- POST /v1/ai/image-to-video/kling-v2-6-pro - Kling 2.6 Pro (text/image to video)
+- GET /v1/ai/image-to-video/kling-v2-6 - List Kling 2.6 tasks
+- GET /v1/ai/image-to-video/kling-v2-6/{task_id} - Get Kling 2.6 task status
+- POST /v1/ai/video/kling-v2-6-motion-control-pro - Motion control Pro
+- POST /v1/ai/video/kling-v2-6-motion-control-std - Motion control Standard
+
+Kling 3 Endpoints:
 - POST /v1/ai/video/kling-v3-pro - Generate video Kling 3 Pro
 - POST /v1/ai/video/kling-v3-std - Generate video Kling 3 Standard
 - GET /v1/ai/video/kling-v3 - List all Kling 3 tasks
@@ -28,10 +36,16 @@ logger = logging.getLogger(__name__)
 
 
 class KlingService:
-    """Сервис для работы с Kling 3 API через Freepik"""
+    """Сервис для работы с Kling API через Freepik (поддерживает Kling 2.6 и Kling 3)"""
 
     # API Endpoints (without /v1 prefix - it's already in base_url)
     ENDPOINTS = {
+        # Kling 2.6 Pro (image-to-video)
+        "v26_pro": "/ai/image-to-video/kling-v2-6-pro",
+        "v26_tasks": "/ai/image-to-video/kling-v2-6",
+        # Kling 2.6 Motion Control
+        "v26_motion_pro": "/ai/video/kling-v2-6-motion-control-pro",
+        "v26_motion_std": "/ai/video/kling-v2-6-motion-control-std",
         # Kling 3 Pro/Standard
         "v3_pro": "/ai/video/kling-v3-pro",
         "v3_std": "/ai/video/kling-v3-std",
@@ -48,6 +62,11 @@ class KlingService:
 
     # Valid parameters
     ASPECT_RATIOS = ["16:9", "9:16", "1:1"]
+    # Kling 2.6 supports different aspect ratios
+    ASPECT_RATIOS_V26 = ["widescreen_16_9", "social_story_9_16", "square_1_1"]
+    # Kling 2.6 only supports 5 and 10 second durations
+    DURATIONS_V26 = ["5", "10"]
+    # Kling 3 supports 3-15 seconds
     DURATIONS = ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
 
     def __init__(self, api_key: str, base_url: str):
@@ -59,8 +78,227 @@ class KlingService:
         }
 
     # =========================================================================
+    # Kling 2.6 Pro Methods (Text-to-Video and Image-to-Video)
+    # =========================================================================
+
+    async def generate_video_v26_pro(
+        self,
+        prompt: str,
+        duration: int = 5,
+        aspect_ratio: str = "16:9",
+        webhook_url: Optional[str] = None,
+        image: Optional[str] = None,  # Base64 or URL for image-to-video
+        negative_prompt: Optional[str] = None,
+        cfg_scale: float = 0.5,
+        generate_audio: bool = True,
+    ) -> Optional[Dict]:
+        """
+        POST /v1/ai/image-to-video/kling-v2-6-pro
+
+        Generate AI video using Kling 2.6 Pro with text-to-video or image-to-video capabilities.
+
+        Args:
+            prompt: Text prompt describing the video (max 2500 chars)
+            duration: Duration in seconds (5 or 10)
+            aspect_ratio: Video ratio - "widescreen_16_9", "social_story_9_16", "square_1_1"
+            webhook_url: Optional callback URL for async notifications
+            image: Reference image (Base64 or URL) for image-to-video. Must be >300x300px, <10MB
+            negative_prompt: Undesired elements to avoid (max 2500 chars)
+            cfg_scale: Prompt adherence (0-1, default 0.5)
+            generate_audio: Whether to generate audio for the video
+
+        Returns:
+            Dict с task_id или None при ошибке
+        """
+        endpoint = self.ENDPOINTS["v26_pro"]
+        url = f"{self.base_url}{endpoint}"
+
+        # Validate duration - Kling 2.6 only supports 5 and 10 seconds
+        duration = 10 if duration > 5 else 5
+
+        # Convert aspect ratio to Kling 2.6 format
+        aspect_ratio_map = {
+            "16:9": "widescreen_16_9",
+            "9:16": "social_story_9_16",
+            "1:1": "square_1_1",
+        }
+        v26_aspect = aspect_ratio_map.get(aspect_ratio, "widescreen_16_9")
+
+        payload = {
+            "prompt": prompt[:2500],  # Max 2500 chars
+            "duration": str(duration),
+            "aspect_ratio": v26_aspect,
+            "cfg_scale": min(max(cfg_scale, 0), 1),
+            "generate_audio": generate_audio,
+        }
+
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        if image:
+            payload["image"] = image
+
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt[:2500]
+
+        logger.info(
+            f"Kling 2.6 Pro request: prompt={prompt[:50]}..., duration={duration}, aspect={v26_aspect}, has_image={bool(image)}"
+        )
+
+        return await self._post_request(url, payload)
+
+    async def list_v26_tasks(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Optional[Dict]:
+        """
+        GET /v1/ai/image-to-video/kling-v2-6
+
+        Retrieve the list of all Kling 2.6 video generation tasks.
+
+        Args:
+            page: Page number (1-indexed)
+            page_size: Number of items per page (max 100)
+
+        Returns:
+            Dict с списком задач
+        """
+        endpoint = self.ENDPOINTS["v26_tasks"]
+        url = f"{self.base_url}{endpoint}"
+
+        params = {
+            "page": max(page, 1),
+            "page_size": min(max(page_size, 1), 100),
+        }
+
+        logger.info(f"Kling 2.6 list tasks: page={page}, page_size={page_size}")
+
+        return await self._get_request(url, params)
+
+    async def get_v26_task_status(self, task_id: str) -> Optional[Dict]:
+        """
+        GET /v1/ai/image-to-video/kling-v2-6/{task_id}
+
+        Retrieve the status and result of a specific Kling 2.6 video generation task.
+
+        Args:
+            task_id: ID of the task
+
+        Returns:
+            Dict с статусом задачи и результатом
+        """
+        endpoint = self.ENDPOINTS["v26_tasks"]
+        url = f"{self.base_url}{endpoint}/{task_id}"
+
+        logger.info(f"Kling 2.6 get task status: {task_id}")
+
+        return await self._get_request(url)
+
+    # =========================================================================
+    # Kling 2.6 Motion Control Methods
+    # =========================================================================
+
+    async def generate_motion_control_pro(
+        self,
+        image_url: str,
+        video_url: str,
+        prompt: Optional[str] = None,
+        webhook_url: Optional[str] = None,
+        character_orientation: str = "video",
+        cfg_scale: float = 0.5,
+    ) -> Optional[Dict]:
+        """
+        POST /v1/ai/video/kling-v2-6-motion-control-pro
+
+        Transfer motion from a reference video to a character image using Kling 2.6 Pro.
+        The model preserves the character's appearance while applying motion patterns from the reference video.
+
+        Args:
+            image_url: URL of the character/reference image (min 300x300px, max 10MB, JPG/PNG/WEBP)
+            video_url: URL of the reference video (3-30s, MP4/MOV/WEBM/M4V)
+            prompt: Optional text prompt to guide motion transfer (max 2500 chars)
+            webhook_url: Optional callback URL for async notifications
+            character_orientation: "video" (matches video orientation, max 30s) or "image" (matches image orientation, max 10s)
+            cfg_scale: Prompt adherence (0-1, default 0.5)
+
+        Returns:
+            Dict с task_id или None при ошибке
+        """
+        endpoint = self.ENDPOINTS["v26_motion_pro"]
+        url = f"{self.base_url}{endpoint}"
+
+        payload = {
+            "image_url": image_url,
+            "video_url": video_url,
+            "character_orientation": character_orientation if character_orientation in ["video", "image"] else "video",
+            "cfg_scale": min(max(cfg_scale, 0), 1),
+        }
+
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        if prompt:
+            payload["prompt"] = prompt[:2500]
+
+        logger.info(
+            f"Kling 2.6 Motion Control Pro: image_url={image_url[:50]}..., video_url={video_url[:50]}..."
+        )
+
+        return await self._post_request(url, payload)
+
+    async def generate_motion_control_std(
+        self,
+        image_url: str,
+        video_url: str,
+        prompt: Optional[str] = None,
+        webhook_url: Optional[str] = None,
+        character_orientation: str = "video",
+        cfg_scale: float = 0.5,
+    ) -> Optional[Dict]:
+        """
+        POST /v1/ai/video/kling-v2-6-motion-control-std
+
+        Transfer motion from a reference video to a character image using Kling 2.6 Standard.
+        Standard mode offers faster generation at slightly lower quality.
+
+        Args:
+            image_url: URL of the character/reference image (min 300x300px, max 10MB, JPG/PNG/WEBP)
+            video_url: URL of the reference video (3-30s, MP4/MOV/WEBM/M4V)
+            prompt: Optional text prompt to guide motion transfer (max 2500 chars)
+            webhook_url: Optional callback URL for async notifications
+            character_orientation: "video" or "image"
+            cfg_scale: Prompt adherence (0-1, default 0.5)
+
+        Returns:
+            Dict с task_id или None при ошибке
+        """
+        endpoint = self.ENDPOINTS["v26_motion_std"]
+        url = f"{self.base_url}{endpoint}"
+
+        payload = {
+            "image_url": image_url,
+            "video_url": video_url,
+            "character_orientation": character_orientation if character_orientation in ["video", "image"] else "video",
+            "cfg_scale": min(max(cfg_scale, 0), 1),
+        }
+
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        if prompt:
+            payload["prompt"] = prompt[:2500]
+
+        logger.info(
+            f"Kling 2.6 Motion Control Std: image_url={image_url[:50]}..., video_url={video_url[:50]}..."
+        )
+
+        return await self._post_request(url, payload)
+
+    # =========================================================================
     # Kling 3 Pro/Standard Methods
     # =========================================================================
+
 
     async def generate_video_pro(
         self,
@@ -708,23 +946,37 @@ class KlingService:
 
         Args:
             prompt: Текстовый промпт
-            model: Модель - "v3_pro", "v3_std", "v3_omni_pro", "v3_omni_std", "v3_omni_pro_r2v", "v3_omni_std_r2v"
-            duration: Длительность (3-15 сек)
+            model: Модель:
+                - "v26_pro" - Kling 2.6 Pro (T2V/I2V)
+                - "v26_motion_pro" - Kling 2.6 Motion Control Pro
+                - "v26_motion_std" - Kling 2.6 Motion Control Std
+                - "v3_pro" - Kling 3 Pro
+                - "v3_std" - Kling 3 Standard
+                - "v3_omni_pro" - Kling 3 Omni Pro (I2V/T2V)
+                - "v3_omni_std" - Kling 3 Omni Standard
+                - "v3_omni_pro_r2v" - Kling 3 Omni Pro (R2V)
+                - "v3_omni_std_r2v" - Kling 3 Omni Standard (R2V)
+            duration: Длительность (5 или 10 для v26, 3-15 для v3)
             aspect_ratio: Формат - "16:9", "9:16", "1:1"
             webhook_url: URL для вебхука
             image_url: URL изображения для I2V
-            video_url: URL видео для R2V (только для v3_omni_pro_r2v/v3_omni_std_r2v)
+            video_url: URL видео для R2V (v3_omni_r2v) или Motion Control (v26_motion)
             end_image_url: URL конечного кадра
             elements: Список элементов
             negative_prompt: Негативный промпт
-            cfg_scale: Шкала CFG (0-2)
-            generate_audio: Генерация звука (только для v3_pro/v3_std/v3_omni)
+            cfg_scale: Шкала CFG (0-1)
+            generate_audio: Генерация звука
 
         Returns:
             Dict с task_id или None
         """
-        # Map old model names to new methods
+        # Map model names to new methods
         model_map = {
+            # Kling 2.6
+            "v26_pro": self.generate_video_v26_pro,
+            "v26_motion_pro": self.generate_motion_control_pro,
+            "v26_motion_std": self.generate_motion_control_std,
+            # Kling 3
             "v3_pro": self.generate_video_pro,
             "v3_std": self.generate_video_std,
             "v3_omni_pro": self.generate_video_omni_pro,
@@ -738,7 +990,33 @@ class KlingService:
             logger.error(f"Unknown model: {model}")
             return None
 
-        # Determine if it's R2V mode
+        # Kling 2.6 Motion Control (requires image_url + video_url)
+        if model in ["v26_motion_pro", "v26_motion_std"]:
+            if not image_url or not video_url:
+                logger.error("Motion control requires image_url and video_url parameters")
+                return None
+            return await method(
+                image_url=image_url,
+                video_url=video_url,
+                prompt=prompt,
+                webhook_url=webhook_url,
+                cfg_scale=cfg_scale,
+            )
+
+        # Kling 2.6 Pro (T2V or I2V with image parameter)
+        if model == "v26_pro":
+            return await method(
+                prompt=prompt,
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                webhook_url=webhook_url,
+                image=image_url,  # Kling 2.6 uses 'image' not 'image_url'
+                negative_prompt=negative_prompt,
+                cfg_scale=cfg_scale,
+                generate_audio=generate_audio,
+            )
+
+        # Kling 3 Omni R2V (requires video_url)
         if model in ["v3_omni_pro_r2v", "v3_omni_std_r2v"]:
             if not video_url:
                 logger.error("R2V mode requires video_url parameter")
@@ -752,8 +1030,9 @@ class KlingService:
                 image_url=image_url,
                 cfg_scale=cfg_scale,
             )
-        elif model in ["v3_omni_pro", "v3_omni_std"]:
-            # Для Omni моделей image_url используется для Image-to-Video
+
+        # Kling 3 Omni (uses start_image_url/end_image_url)
+        if model in ["v3_omni_pro", "v3_omni_std"]:
             return await method(
                 prompt=prompt,
                 duration=duration,
@@ -764,19 +1043,20 @@ class KlingService:
                 elements=elements,
                 generate_audio=generate_audio,
             )
-        else:
-            return await method(
-                prompt=prompt,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                webhook_url=webhook_url,
-                start_image_url=image_url,
-                end_image_url=end_image_url,
-                elements=elements,
-                negative_prompt=negative_prompt,
-                cfg_scale=cfg_scale,
-                generate_audio=generate_audio,
-            )
+
+        # Kling 3 Pro/Std
+        return await method(
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            webhook_url=webhook_url,
+            start_image_url=image_url,
+            end_image_url=end_image_url,
+            elements=elements,
+            negative_prompt=negative_prompt,
+            cfg_scale=cfg_scale,
+            generate_audio=generate_audio,
+        )
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Проверка статуса задачи (обратная совместимость)"""

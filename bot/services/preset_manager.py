@@ -214,6 +214,17 @@ class PresetManager:
         
         # Map модельных имён к ключам video_models
         model_map = {
+            # Kling 2.6
+            "v26_pro": "v26_pro",
+            "v26_motion_pro": "v26_motion_pro",
+            "v26_motion_std": "v26_motion_std",
+            "kling-v2-6-pro": "v26_pro",
+            "kling-v2-6-motion-control-pro": "v26_motion_pro",
+            "kling-v2-6-motion-control-std": "v26_motion_std",
+            "kling_2_6_pro": "v26_pro",
+            "kling_2_6_motion_pro": "v26_motion_pro",
+            "kling_2_6_motion_std": "v26_motion_std",
+            # Kling 3
             "v3_std": "v3_std",
             "v3_pro": "v3_pro",
             "v3_omni_std": "v3_omni_std",

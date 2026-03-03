@@ -357,7 +357,7 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
 • Все модели: 3🍌
 
 🎬 Текст→Видео:
-• Std (6🍌) / Pro (8🍌) / Omni / V2V
+• Kling 2.6 (8🍌) / Std (6🍌) / Pro (8🍌) / Omni / V2V
 
 🖼→🎬 Фото→Видео:
 • Std (6🍌) / Pro (8🍌) / Omni
@@ -373,6 +373,109 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
         ),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "menu_motion_control")
+async def show_motion_control_menu(callback: types.CallbackQuery):
+    """Показывает меню Motion Control"""
+    from bot.keyboards import get_motion_control_keyboard
+    from bot.database import get_user_credits
+
+    user_credits = await get_user_credits(callback.from_user.id)
+
+    motion_text = f"""
+🎬 <b>Motion Control</b>
+
+Перенос движения с референсного видео на твоё фото!
+
+📝 <b>Как это работает:</b>
+1. Загрузи фото персонажа
+2. Загрузи видео с движением
+3. Получи анимированное фото!
+
+💰 Баланс: {user_credits}🍌
+
+Выбери качество:
+"""
+
+    await callback.message.edit_text(
+        motion_text,
+        reply_markup=get_motion_control_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "motion_control_std")
+async def start_motion_control_std(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает Motion Control Standard"""
+    from bot.states import GenerationStates
+    from bot.database import get_user_credits
+    from bot.services.preset_manager import preset_manager
+    
+    user_credits = await get_user_credits(callback.from_user.id)
+    cost = preset_manager.get_video_cost("v26_motion_std", 5)
+    
+    if user_credits < cost:
+        await callback.answer("❌ Недостаточно бананов! Пополни баланс.", show_alert=True)
+        return
+    
+    # Сохраняем тип генерации
+    await state.set_state(GenerationStates.waiting_for_image)
+    await state.update_data(
+        generation_type="motion_control",
+        video_model="v26_motion_std",
+        cost=cost
+    )
+    
+    await callback.message.edit_text(
+        f"🎬 <b>Motion Control Standard</b>\n\n"
+        f"Стоимость: {cost}🍌\n\n"
+        f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
+        f"которое нужно анимировать\n\n"
+        f"Это может быть:\n"
+        f"• Фото человека\n"
+        f"• Фото персонажа\n"
+        f"• Любое изображение для анимации",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "motion_control_pro")
+async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает Motion Control Pro"""
+    from bot.states import GenerationStates
+    from bot.database import get_user_credits
+    from bot.services.preset_manager import preset_manager
+    
+    user_credits = await get_user_credits(callback.from_user.id)
+    cost = preset_manager.get_video_cost("v26_motion_pro", 5)
+    
+    if user_credits < cost:
+        await callback.answer("❌ Недостаточно бананов! Пополни баланс.", show_alert=True)
+        return
+    
+    # Сохраняем тип генерации
+    await state.set_state(GenerationStates.waiting_for_image)
+    await state.update_data(
+        generation_type="motion_control",
+        video_model="v26_motion_pro",
+        cost=cost
+    )
+    
+    await callback.message.edit_text(
+        f"💎 <b>Motion Control Pro</b>\n\n"
+        f"Стоимость: {cost}🍌\n\n"
+        f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
+        f"которое нужно анимировать\n\n"
+        f"Это может быть:\n"
+        f"• Фото человека\n"
+        f"• Фото персонажа\n"
+        f"• Любое изображение для анимации",
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("settings_model_"))
@@ -429,6 +532,9 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
         "v3_omni_pro": "Omni Pro",
         "v3_omni_std_r2v": "V2V",
         "v3_omni_pro_r2v": "V2V Pro",
+        "v26_pro": "Kling 2.6",
+        "v26_motion_pro": "Motion Pro",
+        "v26_motion_std": "Motion",
     }
 
     model_name = video_names.get(video_model, video_model)
