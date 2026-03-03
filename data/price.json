@@ -3,7 +3,7 @@
   "credit_name": "банан",
   "credit_name_plural": "бананов",
   "credit_emoji": "🍌",
-  "credit_value": "1 банан = 1 генерация стандартного качества",
+  "credit_value": "11 генерация стандартного качества банан = ",
   "packages": [
     {
       "id": "mini",
@@ -48,15 +48,82 @@
     }
   ],
   "costs_reference": {
-    "gemini_2_5_flash": 3,
-    "gemini_3_pro": 5,
-    "kling_v3_std": 6,
-    "kling_v3_pro": 8,
-    "kling_v3_omni": 8,
+    "image_models": {
+      "gemini_2_5_flash": 3,
+      "gemini_3_pro": 5,
+      "z_image_turbo": 3,
+      "seedream": 3,
+      "flux_pro": 3
+    },
+    "video_models": {
+      "v3_std": {
+        "base": 6,
+        "duration_costs": {
+          "3": 4,
+          "5": 6,
+          "10": 8,
+          "15": 10
+        }
+      },
+      "v3_pro": {
+        "base": 8,
+        "duration_costs": {
+          "3": 6,
+          "5": 8,
+          "10": 14,
+          "15": 16
+        }
+      },
+      "v3_omni_std": {
+        "base": 8,
+        "duration_costs": {
+          "3": 6,
+          "5": 8,
+          "10": 14,
+          "15": 16
+        }
+      },
+      "v3_omni_pro": {
+        "base": 8,
+        "duration_costs": {
+          "3": 6,
+          "5": 8,
+          "10": 14,
+          "15": 16
+        }
+      },
+      "v3_omni_std_r2v": {
+        "base": 8,
+        "duration_costs": {
+          "3": 6,
+          "5": 8,
+          "10": 14,
+          "15": 16
+        }
+      },
+      "v3_omni_pro_r2v": {
+        "base": 8,
+        "duration_costs": {
+          "3": 6,
+          "5": 8,
+          "10": 14,
+          "15": 16
+        }
+      }
+    },
     "video_duration_costs": {
+      "3": 4,
       "5": 6,
       "10": 8,
       "15": 10
+    },
+    "legacy_keys": {
+      "gemini_2_5_flash": 3,
+      "gemini_3_pro": 5,
+      "kling_v3_std": 6,
+      "kling_v3_pro": 8,
+      "kling_v3_omni": 8,
+      "z_image_turbo_lora": 3
     }
   },
   "batch_pricing": {

@@ -501,6 +501,235 @@ class TestGetRequest:
         assert callable(service._get_request)
 
 
+class TestZImageTurboLoRA:
+    """Тесты Z-Image Turbo LoRA"""
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_basic(self):
+        """Тест: базовая генерация Z-Image Turbo LoRA"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_123", "status": "CREATED"}
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="A beautiful sunset"
+            )
+
+            assert result["task_id"] == "turbo_task_123"
+            mock_post.assert_called_once()
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            assert payload["prompt"] == "A beautiful sunset"
+            assert payload["size"] == "1024*1024"  # Default size
+            assert payload["seed"] == -1
+            assert payload["loras"] == []  # No LoRAs by default
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_with_lora(self):
+        """Тест: генерация с LoRA"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_456", "status": "CREATED"}
+
+            loras = [
+                {"path": "https://example.com/lora.safetensors", "scale": 1.0}
+            ]
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="A cat", loras=loras
+            )
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            assert len(payload["loras"]) == 1
+            assert payload["loras"][0]["path"] == "https://example.com/lora.safetensors"
+            assert payload["loras"][0]["scale"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_with_multiple_loras(self):
+        """Тест: генерация с несколькими LoRA (до 3)"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_789", "status": "CREATED"}
+
+            loras = [
+                {"path": "https://example.com/lora1.safetensors", "scale": 1.0},
+                {"path": "https://example.com/lora2.safetensors", "scale": 0.5},
+                {"path": "https://example.com/lora3.safetensors", "scale": 0.8},
+            ]
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="A landscape", loras=loras
+            )
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            assert len(payload["loras"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_too_many_loras(self):
+        """Тест: ошибка при слишком many LoRA"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        loras = [
+            {"path": "https://example.com/lora1.safetensors", "scale": 1.0},
+            {"path": "https://example.com/lora2.safetensors", "scale": 0.5},
+            {"path": "https://example.com/lora3.safetensors", "scale": 0.8},
+            {"path": "https://example.com/lora4.safetensors", "scale": 0.5},  # Too many
+        ]
+
+        result = await service.generate_z_image_turbo_lora(
+            prompt="Test", loras=loras
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_scale_clamping(self):
+        """Тест: ограничение scale LoRA в допустимый диапазон"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_scale", "status": "CREATED"}
+
+            # Scale должен быть ограничен между 0 и 4
+            loras = [
+                {"path": "https://example.com/lora.safetensors", "scale": 10}  # Too high
+            ]
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="Test", loras=loras
+            )
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            # Scale должен быть ограничен до 4
+            assert payload["loras"][0]["scale"] == 4
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_with_size(self):
+        """Тест: генерация с указанием размера"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_size", "status": "CREATED"}
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="A dog", size="512*512"
+            )
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            assert payload["size"] == "512*512"
+
+    @pytest.mark.asyncio
+    async def test_generate_z_image_turbo_lora_with_seed(self):
+        """Тест: генерация с указанием seed"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        with patch.object(
+            service, "_post_request", new_callable=AsyncMock
+        ) as mock_post:
+            mock_post.return_value = {"task_id": "turbo_task_seed", "status": "CREATED"}
+
+            result = await service.generate_z_image_turbo_lora(
+                prompt="A dog", seed=12345
+            )
+
+            call_args = mock_post.call_args
+            payload = call_args[0][1]
+
+            assert payload["seed"] == 12345
+
+
+class TestParseTurboSize:
+    """Тесты парсинга размера для Z-Image Turbo"""
+
+    def test_parse_turbo_size_asterisk(self):
+        """Тест: парсинг размера с разделителем *"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        width, height = service._parse_turbo_size("1024*1024")
+
+        assert width == 1024
+        assert height == 1024
+
+    def test_parse_turbo_size_x(self):
+        """Тест: парсинг размера с разделителем x"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        width, height = service._parse_turbo_size("512x512")
+
+        assert width == 512
+        assert height == 512
+
+    def test_parse_turbo_size_clamping(self):
+        """Тест: ограничение размера для Z-Image Turbo"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        # Слишком маленький размер
+        width, height = service._parse_turbo_size("100*100")
+
+        assert width == 256  # MIN
+        assert height == 256
+
+        # Слишком большой размер
+        width, height = service._parse_turbo_size("4000*4000")
+
+        assert width == 2048  # MAX
+        assert height == 2048
+
+    def test_parse_turbo_size_default(self):
+        """Тест: дефолтный размер при невалидном формате"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        width, height = service._parse_turbo_size("invalid")
+
+        assert width == 1024
+        assert height == 1024
+
+
 class TestNovitaServiceIntegration:
     """Интеграционные тесты сервиса"""
 
@@ -513,10 +742,27 @@ class TestNovitaServiceIntegration:
 
     def test_service_in_config(self):
         """Тест: наличие в __init__"""
-        from bot.services import NovitaService, novita_service
+        from bot.services import novita_service
 
-        assert "novita_service" in dir()
-        assert NovitaService is not None
+        assert novita_service is None  # Без API ключа
+
+    def test_z_image_turbo_method_exists(self):
+        """Тест: метод Z-Image Turbo существует"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        assert hasattr(service, "generate_z_image_turbo_lora")
+        assert callable(service.generate_z_image_turbo_lora)
+
+    def test_turbo_size_parser_exists(self):
+        """Тест: метод парсинга размера Turbo существует"""
+        from bot.services.novita_service import NovitaService
+
+        service = NovitaService(api_key="test")
+
+        assert hasattr(service, "_parse_turbo_size")
+        assert callable(service._parse_turbo_size)
 
 
 if __name__ == "__main__":

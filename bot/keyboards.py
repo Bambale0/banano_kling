@@ -1,6 +1,8 @@
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.services.preset_manager import preset_manager
+
 
 def get_main_menu_keyboard(user_credits: int = 0):
     """Главное меню с опциональной кнопкой PRO"""
@@ -41,6 +43,35 @@ def get_settings_keyboard(
     """
     builder = InlineKeyboardBuilder()
 
+    # Получаем динамические цены
+    try:
+        flash_cost = preset_manager.get_generation_cost("gemini-2.5-flash")
+        pro_cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
+        novita_cost = preset_manager.get_generation_cost("z_image_turbo")
+        seedream_cost = preset_manager.get_generation_cost("seedream")
+        
+        # Цены видео за 5 сек
+        v3_std_5 = preset_manager.get_video_cost("v3_std", 5)
+        v3_pro_5 = preset_manager.get_video_cost("v3_pro", 5)
+        omni_std_5 = preset_manager.get_video_cost("v3_omni_std", 5)
+        omni_pro_5 = preset_manager.get_video_cost("v3_omni_pro", 5)
+        
+        # V2V цены за 5 сек
+        r2v_std_5 = preset_manager.get_video_cost("v3_omni_std_r2v", 5)
+        r2v_pro_5 = preset_manager.get_video_cost("v3_omni_pro_r2v", 5)
+    except Exception:
+        # Значения по умолчанию если preset_manager не работает
+        flash_cost = 3
+        pro_cost = 5
+        novita_cost = 3
+        seedream_cost = 3
+        v3_std_5 = 6
+        v3_pro_5 = 8
+        omni_std_5 = 8
+        omni_pro_5 = 8
+        r2v_std_5 = 8
+        r2v_pro_5 = 8
+
     # ═══════════════════════════════════════════════════════════════
     # 🖼 ИЗОБРАЖЕНИЯ
     # ═══════════════════════════════════════════════════════════════
@@ -58,6 +89,8 @@ def get_settings_keyboard(
         if image_service == "banana_pro"
         else "🎨 Seedream (Novita)"
         if image_service == "seedream"
+        else "🚀 Z-Image Turbo LoRA"
+        if image_service == "z_image_turbo"
         else "🎨 Seedream"
     )
     builder.button(text=f"✅ Текущий: {service_name}", callback_data="ignore")
@@ -67,22 +100,27 @@ def get_settings_keyboard(
     nano_active = "🟢 " if image_service == "nanobanana" else "⚪ "
     banana_pro_active = "🟢 " if image_service == "banana_pro" else "⚪ "
     seedream_active = "🟢 " if image_service == "seedream" else "⚪ "
+    turbo_lora_active = "🟢 " if image_service == "z_image_turbo" else "⚪ "
 
     builder.button(
-        text=f"{novita_active}✨ FLUX.2 Pro (Novita)\n  До 1536px • Лучшее качество • 3🍌",
+        text=f"{novita_active}✨ FLUX.2 Pro (Novita)\n  До 1536px • Лучшее качество • {novita_cost}🍌",
         callback_data="settings_service_novita",
     )
     builder.button(
-        text=f"{nano_active}🍌 Nano Banana\n  До 4K • Быстрая • 3🍌",
+        text=f"{nano_active}🍌 Nano Banana\n  До 4K • Быстрая • {flash_cost}🍌",
         callback_data="settings_service_nanobanana",
     )
     builder.button(
-        text=f"{banana_pro_active}💎 Banana Pro\n  Профи качество • 4K • 5🍌",
+        text=f"{banana_pro_active}💎 Banana Pro\n  Профи качество • 4K • {pro_cost}🍌",
         callback_data="settings_service_banana_pro",
     )
     builder.button(
-        text=f"{seedream_active}🎨 Seedream\n  Стили • Арты • 3🍌",
+        text=f"{seedream_active}🎨 Seedream\n  Стили • Арты • {seedream_cost}🍌",
         callback_data="settings_service_seedream",
+    )
+    builder.button(
+        text=f"{turbo_lora_active}🚀 Z-Image Turbo LoRA\n  Быстрая • Свои LoRA • {novita_cost}🍌",
+        callback_data="settings_service_z_image_turbo",
     )
 
     # Подсказка для FLUX
@@ -116,11 +154,11 @@ def get_settings_keyboard(
     v3_pro = "🟢 " if current_video_model == "v3_pro" else "⚪ "
 
     builder.button(
-        text=f"{v3_std}⚡ Kling 3 Standard\n  Быстро • 6🍌 за 5 сек",
+        text=f"{v3_std}⚡ Kling 3 Standard\n  Быстро • {v3_std_5}🍌 за 5 сек",
         callback_data="settings_video_v3_std",
     )
     builder.button(
-        text=f"{v3_pro}💎 Kling 3 Pro\n  Лучшее качество • 8🍌 за 5 сек",
+        text=f"{v3_pro}💎 Kling 3 Pro\n  Лучшее качество • {v3_pro_5}🍌 за 5 сек",
         callback_data="settings_video_v3_pro",
     )
 
@@ -129,11 +167,11 @@ def get_settings_keyboard(
     omni_pro = "🟢 " if current_video_model == "v3_omni_pro" else "⚪ "
 
     builder.button(
-        text=f"{omni_std}🔄 Kling 3 Omni Std\n  Баланс • 6🍌",
+        text=f"{omni_std}🔄 Kling 3 Omni Std\n  Баланс • {omni_std_5}🍌",
         callback_data="settings_video_v3_omni_std",
     )
     builder.button(
-        text=f"{omni_pro}💎 Kling 3 Omni Pro\n  Продвинутый • 8🍌",
+        text=f"{omni_pro}💎 Kling 3 Omni Pro\n  Продвинутый • {omni_pro_5}🍌",
         callback_data="settings_video_v3_omni_pro",
     )
 
@@ -142,11 +180,11 @@ def get_settings_keyboard(
     r2v_pro = "🟢 " if current_video_model == "v3_omni_pro_r2v" else "⚪ "
 
     builder.button(
-        text=f"{r2v_std}✂️ V2V Std (стилизация видео)\n  6🍌",
+        text=f"{r2v_std}✂️ V2V Std (стилизация видео)\n  {r2v_std_5}🍌",
         callback_data="settings_video_v3_omni_std_r2v",
     )
     builder.button(
-        text=f"{r2v_pro}💎 V2V Pro\n  8🍌", callback_data="settings_video_v3_omni_pro_r2v"
+        text=f"{r2v_pro}💎 V2V Pro\n  {r2v_pro_5}🍌", callback_data="settings_video_v3_omni_pro_r2v"
     )
 
     # ═══════════════════════════════════════════════════════════════
@@ -175,19 +213,19 @@ def get_settings_keyboard(
     i2v_omni_pro = "🟢 " if current_i2v_model == "v3_omni_pro" else "⚪ "
 
     builder.button(
-        text=f"{i2v_std}⚡ Image-to-Video Std\n  Анимация фото • 6🍌",
+        text=f"{i2v_std}⚡ Image-to-Video Std\n  Анимация фото • {v3_std_5}🍌",
         callback_data="settings_i2v_v3_std",
     )
     builder.button(
-        text=f"{i2v_pro}💎 Image-to-Video Pro\n  Лучше качество • 8🍌",
+        text=f"{i2v_pro}💎 Image-to-Video Pro\n  Лучше качество • {v3_pro_5}🍌",
         callback_data="settings_i2v_v3_pro",
     )
     builder.button(
-        text=f"{i2v_omni_std}🔄 Omni Std\n  Продвинутая • 6🍌",
+        text=f"{i2v_omni_std}🔄 Omni Std\n  Продвинутая • {omni_std_5}🍌",
         callback_data="settings_i2v_v3_omni_std",
     )
     builder.button(
-        text=f"{i2v_omni_pro}💎 Omni Pro\n  Макс качество • 8🍌",
+        text=f"{i2v_omni_pro}💎 Omni Pro\n  Макс качество • {omni_pro_5}🍌",
         callback_data="settings_i2v_v3_omni_pro",
     )
 

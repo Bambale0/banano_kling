@@ -86,6 +86,10 @@ class Config:
     def novita_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/novita"
 
+    @property
+    def z_image_turbo_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/webhook/z-image-turbo"
+
     def _old_kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"
 

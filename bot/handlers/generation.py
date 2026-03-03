@@ -189,11 +189,16 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
     # Названия и стоимость в зависимости от сервиса
     if image_service == "novita":
         model_name = "✨ FLUX.2 Pro"
+        model_cost = str(preset_manager.get_generation_cost("z_image_turbo"))
     elif image_service == "seedream":
         model_name = "🎨 Seedream"
+        model_cost = str(preset_manager.get_generation_cost("seedream"))
+    elif image_service == "z_image_turbo":
+        model_name = "🚀 Z-Image Turbo LoRA"
+        model_cost = str(preset_manager.get_generation_cost("z_image_turbo"))
     else:  # nanobanana
         model_name = "🍌 Nano Banana"
-    model_cost = "2"
+        model_cost = str(preset_manager.get_generation_cost("gemini-2.5-flash"))
 
     # Сохраняем сервис и тип генерации в state
     await state.update_data(generation_type="image", image_service=image_service)
@@ -228,10 +233,13 @@ async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
         reference_images=[],  # Для сохранения лиц
     )
 
+    # Получаем стоимость редактирования через preset_manager
+    edit_cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
+
     await callback.message.edit_text(
         f"✏️ <b>Редактирование фото</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: 💎 Banano Pro (3🍌, 4K, сохранение лиц)\n\n"
+        f"🤖 Модель: 💎 Banano Pro ({edit_cost}🍌, 4K, сохранение лиц)\n\n"
         f"<b>Как редактировать:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>4 фото лица</b> для сохранения (опционально)\n"
@@ -261,14 +269,9 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
         "v3_omni_std": "🌀 Omni Std",
         "v3_omni_pro": "🌀 Omni Pro",
     }
-    model_costs = {
-        "v3_std": "4",
-        "v3_pro": "5",
-        "v3_omni_std": "5",
-        "v3_omni_pro": "6",
-    }
+    # Используем preset_manager для получения стоимости
+    model_cost = str(preset_manager.get_video_cost(video_model, 5))
     model_name = model_names.get(video_model, video_model)
-    model_cost = model_costs.get(video_model, "4")
 
     # Простые опции видео
     video_options = {
@@ -359,14 +362,9 @@ async def start_video_editing(callback: types.CallbackQuery, state: FSMContext):
         "v3_omni_std": "🌀 Omni Std",
         "v3_omni_pro": "🌀 Omni Pro",
     }
-    model_costs = {
-        "v3_std": "6",
-        "v3_pro": "6",
-        "v3_omni_std": "6",
-        "v3_omni_pro": "6",
-    }
+    # Используем preset_manager для получения стоимости
+    model_cost = str(preset_manager.get_video_cost(video_model, 5))
     model_name = model_names.get(video_model, video_model)
-    model_cost = model_costs.get(video_model, "6")
 
     # Инициализируем опции для видео-эффектов
     video_edit_options = {
@@ -410,14 +408,9 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
         "v3_omni_std": "🌀 Omni Std",
         "v3_omni_pro": "🌀 Omni Pro",
     }
-    model_costs = {
-        "v3_std": "6",
-        "v3_pro": "6",
-        "v3_omni_std": "6",
-        "v3_omni_pro": "6",
-    }
+    # Используем preset_manager для получения стоимости
+    model_cost = str(preset_manager.get_video_cost(video_model, 5))
     model_name = model_names.get(video_model, video_model)
-    model_cost = model_costs.get(video_model, "6")
 
     # Простые опции видео
     video_options = {
@@ -1207,15 +1200,10 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality = video_edit_options.get("quality", "std")
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
-        # Стоимость видео: базовая 6 + доплата за длительность
+        # Используем preset_manager для получения стоимости
+        video_model = "v3_omni_pro_r2v" if quality == "pro" else "v3_omni_std_r2v"
         duration = video_edit_options.get("duration", 5)
-        base_cost = 6
-        if duration == 10:
-            cost = 8
-        elif duration == 15:
-            cost = 10
-        else:
-            cost = base_cost
+        cost = preset_manager.get_video_cost(video_model, duration)
 
         await message.answer(
             f"✂️ <b>Подтвердите генерацию</b>\n\n"
@@ -1275,15 +1263,10 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         quality = video_edit_options.get("quality", "std")
         quality_emoji = "💎" if quality == "pro" else "⚡"
 
-        # Стоимость видео: базовая 6 + доплата за длительность
+        # Используем preset_manager для получения стоимости
+        video_model = "v3_omni_pro" if quality == "pro" else "v3_omni_std"
         duration = video_edit_options.get("duration", 5)
-        base_cost = 6
-        if duration == 10:
-            cost = 8
-        elif duration == 15:
-            cost = 10
-        else:
-            cost = base_cost
+        cost = preset_manager.get_video_cost(video_model, duration)
 
         await message.answer(
             f"✂️ <b>Подтвердите генерацию</b>\n\n"
@@ -1388,8 +1371,11 @@ async def start_no_preset_generation(
     message: types.Message, state: FSMContext, gen_type: str, prompt: str
 ):
     """Запускает генерацию без пресета"""
-    # Определяем стоимость (изображения: 2-3, видео: 6+)
-    cost = 2 if gen_type == "image" else 6
+    # Используем preset_manager для получения стоимости
+    if gen_type == "image":
+        cost = preset_manager.get_generation_cost("gemini-2.5-flash")
+    else:
+        cost = preset_manager.get_video_cost("v3_std", 5)
 
     # Проверяем баланс
     if not await check_can_afford(message.from_user.id, cost):
@@ -2084,7 +2070,8 @@ async def run_editing_inline(
         await message.answer("Сначала загрузите изображение")
         return
 
-    cost = 2 if generation_type == "image_edit" else 6
+    # Используем preset_manager для получения стоимости
+    cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
 
     # Проверяем баланс
     if not await check_can_afford(message.from_user.id, cost):
@@ -2187,7 +2174,8 @@ async def run_no_preset_editing(callback: types.CallbackQuery, state: FSMContext
         await callback.answer("Сначала загрузите изображение", show_alert=True)
         return
 
-    cost = 2 if generation_type == "image_edit" else 6
+    # Используем preset_manager для получения стоимости
+    cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):
@@ -2635,28 +2623,35 @@ async def run_no_preset_image_generation(
     if user_id is None:
         user_id = message.from_user.id
 
-    # Определяем сервис и стоимость
+    # Определяем сервис и стоимость через preset_manager
     if image_service == "novita":
         # FLUX.2 Pro через Novita
         from bot.services.novita_service import novita_service
 
         service = novita_service
         model_name = "✨ FLUX.2 Pro"
-        cost = 2
+        cost = preset_manager.get_generation_cost("z_image_turbo")
     elif image_service == "seedream":
         # Seedream через Novita
         from bot.services.novita_service import novita_service
 
         service = novita_service
         model_name = "🎨 Seedream"
-        cost = 2
+        cost = preset_manager.get_generation_cost("seedream")
+    elif image_service == "z_image_turbo":
+        # Z-Image Turbo LoRA через Novita
+        from bot.services.novita_service import novita_service
+
+        service = novita_service
+        model_name = "🚀 Z-Image Turbo LoRA"
+        cost = preset_manager.get_generation_cost("z_image_turbo")
     else:
         # Nano Banana (Gemini)
         from bot.services.gemini_service import gemini_service
 
         service = gemini_service
         model_name = "🍌 Nano Banana"
-        cost = 2
+        cost = preset_manager.get_generation_cost("gemini-2.5-flash")
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
@@ -2827,6 +2822,56 @@ async def run_no_preset_image_generation(
             )
             await state.clear()
             return
+        elif image_service == "z_image_turbo":
+            # Z-Image Turbo LoRA через Novita
+            size = f"{aspect_ratio}_hq"
+            task_response = await service.generate_image_turbo_lora(
+                prompt=prompt,
+                size=size,
+                webhook_url=config.novita_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+            )
+
+            if task_response and task_response.get("task_id"):
+                task_id = task_response["task_id"]
+
+                # Сохраняем задачу в БД
+                from bot.database import add_generation_task
+
+                user = await get_or_create_user(message.from_user.id)
+                await add_generation_task(user.id, task_id, "image", "no_preset")
+
+                await processing.delete()
+                await message.answer(
+                    f"✅ <b>Задача создана!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
+                    parse_mode="HTML",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+
+                # Запускаем фоновый опрос статуса
+                asyncio.create_task(
+                    poll_novita_task_status(
+                        task_id=task_id,
+                        user_id=user_id,
+                        bot=message.bot,
+                        cost=cost,
+                        model_name=model_name,
+                    )
+                )
+            else:
+                await processing.delete()
+                await add_credits(user_id, cost)
+                await message.answer(
+                    "❌ Не удалось создать задачу. Бананы возвращены.",
+                    reply_markup=get_main_menu_keyboard(),
+                )
+            await state.clear()
+            return
         else:
             # Gemini uses aspect_ratio and returns bytes directly
             result = await service.generate_image(
@@ -2903,13 +2948,13 @@ async def run_no_preset_image_edit(
     # Получаем предпочитаемую модель из настроек
     preferred_model = data.get("preferred_model", "pro")
 
-    # Определяем модель и стоимость
+    # Определяем модель и стоимость через preset_manager
     if preferred_model == "flash":
         model = "gemini-2.5-flash-image"
-        cost = 2
+        cost = preset_manager.get_generation_cost("gemini-2.5-flash")
     else:
         model = "gemini-3-pro-image-preview"
-        cost = 3
+        cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
@@ -3013,14 +3058,12 @@ async def run_video_edit_handler(callback: types.CallbackQuery, state: FSMContex
         await callback.answer("Опишите эффект", show_alert=True)
         return
 
-    # Определяем стоимость с учётом длительности
+    # Используем preset_manager для получения стоимости с учётом длительности
+    # Модель определяется по качеству: std = v3_omni_std_r2v, pro = v3_omni_pro_r2v
+    quality = video_edit_options.get("quality", "std")
+    video_model = "v3_omni_pro_r2v" if quality == "pro" else "v3_omni_std_r2v"
     duration = video_edit_options.get("duration", 5)
-    if duration == 10:
-        cost = 8
-    elif duration == 15:
-        cost = 10
-    else:
-        cost = 6
+    cost = preset_manager.get_video_cost(video_model, duration)
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):
@@ -3056,14 +3099,12 @@ async def run_video_edit_image_handler(
         await callback.answer("Опишите эффект и движение", show_alert=True)
         return
 
-    # Определяем стоимость с учётом длительности
+    # Используем preset_manager для получения стоимости с учётом длительности
+    # Модель определяется по качеству: std = v3_omni_std, pro = v3_omni_pro
+    quality = video_edit_options.get("quality", "std")
+    video_model = "v3_omni_pro" if quality == "pro" else "v3_omni_std"
     duration = video_edit_options.get("duration", 5)
-    if duration == 10:
-        cost = 8
-    elif duration == 15:
-        cost = 10
-    else:
-        cost = 6
+    cost = preset_manager.get_video_cost(video_model, duration)
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):
@@ -3567,14 +3608,9 @@ async def run_image_to_video(message: types.Message, state: FSMContext, prompt: 
         )
         preferred_i2v_model = "v3_omni_std"
 
-    # Определяем стоимость на основе модели
-    model_costs = {
-        "v3_std": 4,
-        "v3_pro": 5,
-        "v3_omni_std": 4,
-        "v3_omni_pro": 5,
-    }
-    cost = model_costs.get(preferred_i2v_model, 4)
+    # Используем preset_manager для получения стоимости с учётом длительности
+    duration = video_options.get("duration", 5)
+    cost = preset_manager.get_video_cost(preferred_i2v_model, duration)
 
     # Проверяем баланс
     if not await check_can_afford(message.from_user.id, cost):
@@ -4023,7 +4059,12 @@ async def start_no_preset_video_generation(
     callback: types.CallbackQuery, state: FSMContext, prompt: str
 ):
     """Запускает генерацию видео без пресета (выделено для совместимости с callback)"""
-    cost = 4
+    data = await state.get_data()
+    video_options = data.get("video_options", {})
+    duration = video_options.get("duration", 5)
+    
+    # Используем preset_manager для получения стоимости
+    cost = preset_manager.get_video_cost("v3_std", duration)
 
     # Проверяем баланс
     if not await check_can_afford(callback.from_user.id, cost):

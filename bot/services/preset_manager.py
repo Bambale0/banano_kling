@@ -139,6 +139,143 @@ class PresetManager:
         """Возвращает все пресеты"""
         return self._presets.copy()
 
+    def get_generation_cost(self, model: str, options: dict = None) -> int:
+        """
+        Возвращает стоимость генерации на основе модели и опций.
+        Использует costs_reference из price.json.
+        
+        Args:
+            model: Идентификатор модели (gemini_2_5_flash, v3_pro, и т.д.)
+            options: Дополнительные опции (duration для видео, и т.д.)
+            
+        Returns:
+            Стоимость в бананах
+        """
+        costs = self._price_config.get("costs_reference", {})
+        image_models = costs.get("image_models", {})
+        legacy_keys = costs.get("legacy_keys", {})
+        
+        # Normalize model name
+        model_lower = model.lower()
+        
+        # Map модельных имён к ключам image_models
+        model_map = {
+            "gemini-2.5-flash-image": "gemini_2_5_flash",
+            "gemini-2.5-flash": "gemini_2_5_flash",
+            "gemini-3-pro-image-preview": "gemini_3_pro",
+            "gemini-3-pro": "gemini_3_pro",
+            "flash": "gemini_2_5_flash",
+            "pro": "gemini_3_pro",
+            "z_image_turbo": "z_image_turbo",
+            "z-image-turbo": "z_image_turbo",
+            "seedream": "seedream",
+            "flux_pro": "flux_pro",
+        }
+        
+        mapped_key = model_map.get(model_lower)
+        
+        # Check image_models first
+        if mapped_key and mapped_key in image_models:
+            return image_models[mapped_key]
+        
+        # Fallback to legacy_keys
+        if mapped_key and mapped_key in legacy_keys:
+            return legacy_keys[mapped_key]
+        
+        # Direct lookup
+        if model_lower in image_models:
+            return image_models[model_lower]
+        if model_lower in legacy_keys:
+            return legacy_keys[model_lower]
+        
+        # Default cost
+        return 3
+
+    def get_video_cost(self, model: str, duration: int = 5) -> int:
+        """
+        Возвращает стоимость генерации видео.
+        
+        Args:
+            model: Модель (v3_pro, v3_std, v3_omni_pro, v3_omni_std, и т.д.)
+            duration: Длительность в секундах (3-15)
+            
+        Returns:
+            Стоимость в бананах
+        """
+        costs = self._price_config.get("costs_reference", {})
+        video_models = costs.get("video_models", {})
+        video_duration_costs = costs.get("video_duration_costs", {})
+        
+        # Normalize duration
+        duration = max(3, min(15, duration))
+        
+        # Normalize model name
+        model_lower = model.lower()
+        
+        # Map модельных имён к ключам video_models
+        model_map = {
+            "v3_std": "v3_std",
+            "v3_pro": "v3_pro",
+            "v3_omni_std": "v3_omni_std",
+            "v3_omni_pro": "v3_omni_pro",
+            "v3_omni_std_r2v": "v3_omni_std_r2v",
+            "v3_omni_pro_r2v": "v3_omni_pro_r2v",
+            "kling-v3-std": "v3_std",
+            "kling-v3-pro": "v3_pro",
+            "kling-v3-omni-std": "v3_omni_std",
+            "kling-v3-omni-pro": "v3_omni_pro",
+            "kling-v3-std-r2v": "v3_omni_std_r2v",
+            "kling-v3-pro-r2v": "v3_omni_pro_r2v",
+            "kling_v3_std": "v3_std",
+            "kling_v3_pro": "v3_pro",
+            "kling_v3_omni": "v3_omni_pro",
+            "kling_v3_omni_std": "v3_omni_std",
+            "kling_v3_omni_pro": "v3_omni_pro",
+        }
+        
+        mapped_model = model_map.get(model_lower, model_lower)
+        
+        # Check if model exists in video_models
+        if mapped_model in video_models:
+            model_config = video_models[mapped_model]
+            duration_costs = model_config.get("duration_costs", {})
+            if str(duration) in duration_costs:
+                return duration_costs[str(duration)]
+            # If duration not found, return base cost
+            return model_config.get("base", 8)
+        
+        # Fallback to legacy video_duration_costs
+        if str(duration) in video_duration_costs:
+            return video_duration_costs[str(duration)]
+        
+        # Default fallback based on model type
+        if "pro" in model_lower or "omni" in model_lower:
+            if duration <= 5:
+                return 8
+            elif duration <= 10:
+                return 14
+            else:
+                return 16
+        else:  # std
+            if duration <= 5:
+                return 6
+            elif duration <= 10:
+                return 8
+            else:
+                return 10
+
+    def get_image_cost(self, model: str) -> int:
+        """
+        Возвращает стоимость генерации изображения.
+        
+        Args:
+            model: Модель (gemini_2_5_flash, gemini_3_pro, и т.д.)
+            
+        Returns:
+            Стоимость в бананах
+        """
+        return self.get_generation_cost(model)
+
 
 # Глобальный менеджер пресетов
 preset_manager = PresetManager()

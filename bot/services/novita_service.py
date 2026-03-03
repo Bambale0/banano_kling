@@ -10,17 +10,22 @@ Novita AI Service - Интеграция с Novita AI для генерации 
 2. Seedream 5.0 lite - Supports text-to-image, single/multi-image-to-image 
    (up to 14 reference images), and sequential image generation.
 
+3. Z-Image Turbo LoRA - High-speed image generation with custom LoRA weights support.
+   Supports up to 3 LoRAs with configurable scale (0-4).
+
 Endpoints:
-- POST /v3/flux/flux-pro - Generate image using FLUX.2 Pro
-- POST /v3/flux/flux-pro/edit - Edit image using FLUX.2 Pro
+- POST /v3/async/flux-2-pro - Generate image using FLUX.2 Pro
+- POST /v3/async/flux-2-pro - Edit image using FLUX.2 Pro
 - POST /v3/seedream/seedream-5-lite - Generate/edit using Seedream 5.0
-- GET /v3/task/{task_id} - Get task result
+- POST /v3/async/z-image-turbo-lora - Generate image with Z-Image Turbo LoRA
+- GET /v3/async/task-result - Get task result
 
 Особенности:
 - Асинхронный API (возвращает task_id)
 - Поддержка seed для воспроизводимых результатов
 - FLUX: Image-to-image редактирование (до 3 изображений)
 - Seedream: До 14 референсных изображений
+- Z-Image Turbo: До 3 LoRA с настраиваемой силой (scale 0-4)
 - Размеры от 256 до 2048 пикселей
 """
 
@@ -475,6 +480,127 @@ class NovitaService:
             "21:9": (1536, 656),
         }
         return ratio_map.get(aspect_ratio, (1536, 864))  # Default to 16:9
+
+    async def generate_image_turbo_lora(
+        self,
+        prompt: str,
+        size: str = "1024*1024",
+        seed: int = -1,
+        loras: Optional[List[Dict[str, Any]]] = None,
+        webhook_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """
+        Generate image using Z-Image Turbo LoRA (alias for generate_z_image_turbo_lora)
+
+        API: POST /v3/async/z-image-turbo-lora
+
+        Z-Image Turbo LoRA is a high-speed image generation model that supports
+        rapid generation of high-quality images based on text prompts,
+        with support for applying custom LoRA weights.
+
+        Args:
+            prompt: Positive prompt for generation (required)
+            size: Pixel dimensions of the generated image (width*height)
+                  Default: "1024*1024"
+            seed: Random seed for generation (-1 for random)
+                  Range: -1 to 2147483647
+            loras: List of LoRAs to apply (maximum 3)
+                  Each LoRA should have:
+                  - path: URL or path to the LoRA weights (required)
+                  - scale: Scale factor for the LoRA weights (default: 1, range: 0-4)
+            webhook_url: Optional callback URL for async notifications
+
+        Returns:
+            Dict with task_id or None on error
+        """
+        # Validate LoRA count
+        if loras and len(loras) > 3:
+            logger.error(f"Too many loras: {len(loras)}, max is 3")
+            return None
+
+        # Validate each LoRA
+        validated_loras = []
+        if loras:
+            for i, lora in enumerate(loras):
+                if not isinstance(lora, dict):
+                    logger.error(f"LoRA {i}: must be a dictionary")
+                    continue
+                
+                lora_path = lora.get("path")
+                if not lora_path:
+                    logger.error(f"LoRA {i}: 'path' is required")
+                    continue
+                
+                # Validate scale
+                scale = lora.get("scale", 1)
+                if not isinstance(scale, (int, float)):
+                    try:
+                        scale = float(scale)
+                    except (ValueError, TypeError):
+                        scale = 1
+                scale = max(0, min(4, scale))  # Clamp to 0-4 range
+                
+                validated_loras.append({
+                    "path": lora_path,
+                    "scale": scale,
+                })
+
+        # Parse size (format: WIDTH*HEIGHT)
+        width, height = self._parse_turbo_size(size)
+        size_str = f"{width}*{height}"
+
+        # Build payload according to API spec
+        payload = {
+            "prompt": prompt,
+            "size": size_str,
+            "seed": seed if seed >= 0 else -1,
+            "loras": validated_loras,
+        }
+
+        if webhook_url:
+            payload["extra"] = {"webhook": {"url": webhook_url}}
+
+        url = f"{self.BASE_URL}/v3/async/z-image-turbo-lora"
+
+        lora_info = ""
+        if validated_loras:
+            lora_names = [l["path"].split("/")[-1] if "/" in l["path"] else l["path"][:20] for l in validated_loras]
+            lora_info = f", loras={lora_names}"
+
+        logger.info(
+            f"Novita Z-Image Turbo LoRA request: prompt={prompt[:50]}..., "
+            f"size={size_str}, seed={seed}{lora_info}, webhook={webhook_url is not None}"
+        )
+
+        return await self._post_request(url, payload)
+
+    def _parse_turbo_size(self, size: str) -> tuple[int, int]:
+        """
+        Parse Z-Image Turbo size string to width and height
+
+        Args:
+            size: Size string like "1024*1024", "512*512", "1024x1024", etc.
+
+        Returns:
+            Tuple of (width, height)
+        """
+        # Try to parse as "WIDTH*HEIGHT" or "WIDTHxHEIGHT" format
+        for separator in ["*", "x"]:
+            if separator in size.lower():
+                try:
+                    parts = size.lower().split(separator)
+                    width = int(parts[0])
+                    height = int(parts[1])
+                    # Z-Image Turbo supports various sizes, default to reasonable range
+                    width = max(256, min(2048, width))
+                    height = max(256, min(2048, height))
+                    return (width, height)
+                except (ValueError, IndexError, ZeroDivisionError):
+                    pass
+
+        # Default to 1024x1024
+        logger.warning(f"Invalid Z-Image Turbo size format: {size}, using default 1024*1024")
+        return (1024, 1024)
 
     async def get_task_result(self, task_id: str) -> Optional[Dict]:
         """

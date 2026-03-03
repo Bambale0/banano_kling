@@ -9,6 +9,7 @@ from typing import Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,14 @@ class AIAssistantService:
         if context:
             context_info = self._format_context(context)
 
+        # Получаем актуальные цены
+        pricing_info = self.get_pricing_info()
+
         # Полное сообщение для модели
         full_message = f"""Контекст пользователя:
 {context_info}
+
+{pricing_info}
 
 Вопрос пользователя: {user_message}"""
 
@@ -188,6 +194,76 @@ class AIAssistantService:
             lines.append(f"- Доступные модели: {context['available_models']}")
 
         return "\n".join(lines) if lines else "Нет дополнительного контекста"
+
+    def get_pricing_info(self) -> str:
+        """
+        Получение актуальной информации о ценах для AI ассистента.
+        Использует preset_manager для получения динамических цен.
+        """
+        try:
+            # Получаем цены из preset_manager
+            flash_cost = preset_manager.get_generation_cost("gemini-2.5-flash")
+            pro_cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
+            novita_cost = preset_manager.get_generation_cost("z_image_turbo")
+            seedream_cost = preset_manager.get_generation_cost("seedream")
+            
+            # Цены видео для разных длительностей
+            video_std_5 = preset_manager.get_video_cost("v3_std", 5)
+            video_std_10 = preset_manager.get_video_cost("v3_std", 10)
+            video_std_15 = preset_manager.get_video_cost("v3_std", 15)
+            
+            video_pro_5 = preset_manager.get_video_cost("v3_pro", 5)
+            video_pro_10 = preset_manager.get_video_cost("v3_pro", 10)
+            video_pro_15 = preset_manager.get_video_cost("v3_pro", 15)
+            
+            omni_std_5 = preset_manager.get_video_cost("v3_omni_std", 5)
+            omni_std_10 = preset_manager.get_video_cost("v3_omni_std", 10)
+            omni_std_15 = preset_manager.get_video_cost("v3_omni_std", 15)
+            
+            omni_pro_5 = preset_manager.get_video_cost("v3_omni_pro", 5)
+            omni_pro_10 = preset_manager.get_video_cost("v3_omni_pro", 10)
+            omni_pro_15 = preset_manager.get_video_cost("v3_omni_pro", 15)
+            
+            # V2V (Video-to-Video) цены
+            v2v_std_5 = preset_manager.get_video_cost("v3_omni_std_r2v", 5)
+            v2v_std_10 = preset_manager.get_video_cost("v3_omni_std_r2v", 10)
+            v2v_pro_5 = preset_manager.get_video_cost("v3_omni_pro_r2v", 5)
+            v2v_pro_10 = preset_manager.get_video_cost("v3_omni_pro_r2v", 10)
+            
+            return f"""## АКТУАЛЬНЫЕ ЦЕНЫ
+
+🖼 Генерация изображений:
+- FLUX.2 Pro (Novita): {novita_cost}🍌
+- Nano Banana Flash: {flash_cost}🍌
+- Nano Banana Pro: {pro_cost}🍌
+- Seedream: {seedream_cost}🍌
+
+🎬 Генерация видео (текст → видео):
+┌─────────────────┬────────┬────────┬────────┐
+│ Модель          │ 5 сек  │ 10 сек │ 15 сек │
+├─────────────────┼────────┼────────┼────────┤
+│ Kling 3 Std     │ {video_std_5}🍌   │ {video_std_10}🍌   │ {video_std_15}🍌   │
+│ Kling 3 Pro     │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
+│ Kling 3 Omni Std│ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
+│ Kling 3 Omni Pro│ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
+└─────────────────┴────────┴────────┴────────┘
+
+✂️ Видео-эффекты (видео → видео):
+┌─────────────────┬────────┬────────┐
+│ Модель          │ 5 сек  │ 10 сек │
+├─────────────────┼────────┼────────┤
+│ V2V Std         │ {v2v_std_5}🍌   │ {v2v_std_10}🍌   │
+│ V2V Pro         │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌   │
+└─────────────────┴────────┴────────┘
+
+✏️ Редактирование: {pro_cost}🍌"""
+        except Exception as e:
+            logger.warning(f"Failed to get dynamic pricing: {e}")
+            return """## ЦЕНЫ (уточняйте в боте)
+- Генерация изображений: 3-5🍌
+- Генерация видео: 6-16🍌
+- Видео-эффекты: 8-14🍌
+- Редактирование: 5🍌"""
 
     async def close(self):
         """Закрытие сессии"""

@@ -513,6 +513,7 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
         "novita": "✨ FLUX.2 Pro (Novita)",
         "banana_pro": "💎 Banana Pro",
         "seedream": "🎨 Seedream (Novita)",
+        "z_image_turbo": "🚀 Z-Image Turbo LoRA",
     }
 
     service_name = service_names.get(service, service)
