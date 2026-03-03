@@ -14,6 +14,7 @@
 │ ✏️ Редактировать фото               │ → edit_image
 │ 🎬 Генерация видео                   │ → generate_video
 │ 🖼 Фото в видео                     │ → image_to_video
+│ 🎬 Motion Control                   │ → menu_motion_control
 │ ✂️ Видео-эффекты                    │ → edit_video
 ├─────────────────────────────────────┤
 │ ⚡ ПАКЕТНОЕ РЕДАКТИРОВАНИЕ (20+ 🍌) │ → menu_batch_edit
@@ -33,6 +34,7 @@
 | Редактировать фото | `edit_image` | `generation.py` |
 | Генерация видео | `generate_video` | `generation.py` |
 | Фото в видео | `image_to_video` | `generation.py` |
+| Motion Control | `menu_motion_control` | `common.py` |
 | Видео-эффекты | `edit_video` | `generation.py` |
 | Пакетное редактирование | `menu_batch_edit` | `batch_generation.py` |
 | Настройки | `menu_settings` | `common.py` |
@@ -108,9 +110,10 @@
 ┌─────────────────────────────────────────────────┐
 │           🎬 ТЕКСТ → ВИДЕО                     │
 ├─────────────────────────────────────────────────┤
-│ ✅ Текущий: ⚡ Std                              │
+│ ✅ Текущий: ⚡ Kling 2.6                       │
 ├─────────────────────────────────────────────────┤
-│ 🟢 ⚡ Kling 3 Standard (6🍌/5сек)              │ → settings_video_v3_std
+│ 🟢 ⚡ Kling 2.6 (8🍌/5сек) ✨ НОВИНКА        │ → settings_video_v26_pro
+│ ⚪ ⚡ Kling 3 Standard (6🍌/5сек)              │ → settings_video_v3_std
 │ ⚪ 💎 Kling 3 Pro (8🍌/5сек)                   │ → settings_video_v3_pro
 │ ⚪ 🔄 Kling 3 Omni Std (8🍌/5сек)              │ → settings_video_v3_omni_std
 │ ⚪ 💎 Kling 3 Omni Pro (8🍌/5сек)              │ → settings_video_v3_omni_pro
@@ -139,6 +142,7 @@
 | Изображение | `settings_service_banana_pro` | Сохраняет `image_service = "banana_pro"` |
 | Изображение | `settings_service_seedream` | Сохраняет `image_service = "seedream"` |
 | Изображение | `settings_service_z_image_turbo` | Сохраняет `image_service = "z_image_turbo"` |
+| Видео | `settings_video_v26_pro` | Сохраняет `preferred_video_model = "v26_pro"` |
 | Видео | `settings_video_v3_std` | Сохраняет `preferred_video_model = "v3_std"` |
 | Видео | `settings_video_v3_pro` | Сохраняет `preferred_video_model = "v3_pro"` |
 | Видео | `settings_video_v3_omni_std` | Сохраняет `preferred_video_model = "v3_omni_std"` |
@@ -206,6 +210,61 @@
 ├─────────────────────────────────────────────────┤
 │ 🔙 Назад                                        │ → back_main
 └─────────────────────────────────────────────────┘
+```
+
+---
+
+## 🎬 Motion Control
+
+**callback:** `menu_motion_control` → Показывает `get_motion_control_keyboard()`
+
+```
+┌─────────────────────────────────────────────────┐
+│           🎬 MOTION CONTROL                      │
+├─────────────────────────────────────────────────┤
+│ Перенос движения с референсного видео           │
+│ на твоё фото!                                  │
+│                                                 │
+│ 📝 Как это работает:                            │
+│ 1. Загрузи фото персонажа                       │
+│ 2. Загрузи видео с движением                   │
+│ 3. Получи анимированное фото!                  │
+│                                                 │
+├─────────────────────────────────────────────────┤
+│ ⚡ Motion Control Standard                      │ → motion_control_std
+│     8🍌 за 5 сек • Быстрее                    │
+│                                                 │
+│ 💎 Motion Control Pro                          │ → motion_control_pro
+│     10🍌 за 5 сек • Лучше качество            │
+│                                                 │
+├─────────────────────────────────────────────────┤
+│ 🔙 Назад                                        │ → back_main
+└─────────────────────────────────────────────────┘
+```
+
+### Callback Data для Motion Control
+
+| Кнопка | callback_data | Обработчик |
+|--------|---------------|------------|
+| Motion Control Std | `motion_control_std` | `common.py` → `start_motion_control_std()` |
+| Motion Control Pro | `motion_control_pro` | `common.py` → `start_motion_control_pro()` |
+
+### Процесс Motion Control
+
+```
+menu_motion_control
+    ↓ [выбор Std/Pro]
+callback: motion_control_std / motion_control_pro
+    ↓
+Проверка баланса (8/10 🍌)
+    ↓ [достаточно]
+FSM: waiting_for_image
+    ↓ [загрузка фото]
+Запрос видео с движением
+    ↓ [загрузка видео]
+Запуск генерации (Kling 2.6 Motion)
+    ↓
+Отправка результата
 ```
 
 ---
