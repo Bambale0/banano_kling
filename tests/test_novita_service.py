@@ -1,4 +1,5 @@
 """Тесты для novita_service.py"""
+
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -543,9 +544,7 @@ class TestZImageTurboLoRA:
         ) as mock_post:
             mock_post.return_value = {"task_id": "turbo_task_456", "status": "CREATED"}
 
-            loras = [
-                {"path": "https://example.com/lora.safetensors", "scale": 1.0}
-            ]
+            loras = [{"path": "https://example.com/lora.safetensors", "scale": 1.0}]
 
             result = await service.generate_z_image_turbo_lora(
                 prompt="A cat", loras=loras
@@ -599,9 +598,7 @@ class TestZImageTurboLoRA:
             {"path": "https://example.com/lora4.safetensors", "scale": 0.5},  # Too many
         ]
 
-        result = await service.generate_z_image_turbo_lora(
-            prompt="Test", loras=loras
-        )
+        result = await service.generate_z_image_turbo_lora(prompt="Test", loras=loras)
 
         assert result is None
 
@@ -615,11 +612,17 @@ class TestZImageTurboLoRA:
         with patch.object(
             service, "_post_request", new_callable=AsyncMock
         ) as mock_post:
-            mock_post.return_value = {"task_id": "turbo_task_scale", "status": "CREATED"}
+            mock_post.return_value = {
+                "task_id": "turbo_task_scale",
+                "status": "CREATED",
+            }
 
             # Scale должен быть ограничен между 0 и 4
             loras = [
-                {"path": "https://example.com/lora.safetensors", "scale": 10}  # Too high
+                {
+                    "path": "https://example.com/lora.safetensors",
+                    "scale": 10,
+                }  # Too high
             ]
 
             result = await service.generate_z_image_turbo_lora(

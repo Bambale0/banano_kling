@@ -2,6 +2,7 @@
 AI Assistant Service - ИИ-ассистент для помощи пользователям
 Использует OpenRouter (DeepSeek) как основной и Gemini/Kling как fallback
 """
+
 import json
 import logging
 from typing import Optional
@@ -9,9 +10,29 @@ from typing import Optional
 import aiohttp
 
 from bot.config import config
-from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
+
+# Фиксированные цены
+IMAGE_COSTS = {
+    "novita": 3,
+    "nanobanana": 3,
+    "banana_pro": 5,
+    "seedream": 3,
+    "z_image_turbo": 3,
+}
+
+VIDEO_COSTS = {
+    "v3_std": 6,
+    "v3_pro": 8,
+    "v3_omni_std": 8,
+    "v3_omni_pro": 8,
+    "v3_omni_std_r2v": 8,
+    "v3_omni_pro_r2v": 8,
+    "v26_pro": 8,
+    "v26_motion_pro": 10,
+    "v26_motion_std": 8,
+}
 
 
 class AIAssistantService:
@@ -198,47 +219,46 @@ class AIAssistantService:
     def get_pricing_info(self) -> str:
         """
         Получение актуальной информации о ценах для AI ассистента.
-        Использует preset_manager для получения динамических цен.
+        Использует фиксированные цены.
         """
-        try:
-            # Получаем цены из preset_manager
-            flash_cost = preset_manager.get_generation_cost("gemini-2.5-flash")
-            pro_cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
-            novita_cost = preset_manager.get_generation_cost("z_image_turbo")
-            seedream_cost = preset_manager.get_generation_cost("seedream")
-            
-            # Цены видео для разных длительностей
-            video_std_5 = preset_manager.get_video_cost("v3_std", 5)
-            video_std_10 = preset_manager.get_video_cost("v3_std", 10)
-            video_std_15 = preset_manager.get_video_cost("v3_std", 15)
-            
-            video_pro_5 = preset_manager.get_video_cost("v3_pro", 5)
-            video_pro_10 = preset_manager.get_video_cost("v3_pro", 10)
-            video_pro_15 = preset_manager.get_video_cost("v3_pro", 15)
-            
-            omni_std_5 = preset_manager.get_video_cost("v3_omni_std", 5)
-            omni_std_10 = preset_manager.get_video_cost("v3_omni_std", 10)
-            omni_std_15 = preset_manager.get_video_cost("v3_omni_std", 15)
-            
-            omni_pro_5 = preset_manager.get_video_cost("v3_omni_pro", 5)
-            omni_pro_10 = preset_manager.get_video_cost("v3_omni_pro", 10)
-            omni_pro_15 = preset_manager.get_video_cost("v3_omni_pro", 15)
-            
-            # V2V (Video-to-Video) цены
-            v2v_std_5 = preset_manager.get_video_cost("v3_omni_std_r2v", 5)
-            v2v_std_10 = preset_manager.get_video_cost("v3_omni_std_r2v", 10)
-            v2v_pro_5 = preset_manager.get_video_cost("v3_omni_pro_r2v", 5)
-            v2v_pro_10 = preset_manager.get_video_cost("v3_omni_pro_r2v", 10)
-            
-            # Kling 2.6 цены
-            v26_5 = preset_manager.get_video_cost("v26_pro", 5)
-            v26_10 = preset_manager.get_video_cost("v26_pro", 10)
-            motion_pro_5 = preset_manager.get_video_cost("v26_motion_pro", 5)
-            motion_pro_10 = preset_manager.get_video_cost("v26_motion_pro", 10)
-            motion_std_5 = preset_manager.get_video_cost("v26_motion_std", 5)
-            motion_std_10 = preset_manager.get_video_cost("v26_motion_std", 10)
-            
-            return f"""## АКТУАЛЬНЫЕ ЦЕНЫ
+        # Используем фиксированные цены из словарей
+        flash_cost = IMAGE_COSTS.get("nanobanana", 3)
+        pro_cost = IMAGE_COSTS.get("banana_pro", 5)
+        novita_cost = IMAGE_COSTS.get("novita", 3)
+        seedream_cost = IMAGE_COSTS.get("seedream", 3)
+
+        # Цены видео для разных длительностей
+        video_std_5 = VIDEO_COSTS.get("v3_std", 6)
+        video_std_10 = VIDEO_COSTS.get("v3_std", 6) * 2
+        video_std_15 = VIDEO_COSTS.get("v3_std", 6) * 3
+
+        video_pro_5 = VIDEO_COSTS.get("v3_pro", 8)
+        video_pro_10 = VIDEO_COSTS.get("v3_pro", 8) * 2
+        video_pro_15 = VIDEO_COSTS.get("v3_pro", 8) * 3
+
+        omni_std_5 = VIDEO_COSTS.get("v3_omni_std", 8)
+        omni_std_10 = VIDEO_COSTS.get("v3_omni_std", 8) * 2
+        omni_std_15 = VIDEO_COSTS.get("v3_omni_std", 8) * 3
+
+        omni_pro_5 = VIDEO_COSTS.get("v3_omni_pro", 8)
+        omni_pro_10 = VIDEO_COSTS.get("v3_omni_pro", 8) * 2
+        omni_pro_15 = VIDEO_COSTS.get("v3_omni_pro", 8) * 3
+
+        # V2V (Video-to-Video) цены
+        v2v_std_5 = VIDEO_COSTS.get("v3_omni_std_r2v", 8)
+        v2v_std_10 = VIDEO_COSTS.get("v3_omni_std_r2v", 8) * 2
+        v2v_pro_5 = VIDEO_COSTS.get("v3_omni_pro_r2v", 8)
+        v2v_pro_10 = VIDEO_COSTS.get("v3_omni_pro_r2v", 8) * 2
+
+        # Kling 2.6 цены
+        v26_5 = VIDEO_COSTS.get("v26_pro", 8)
+        v26_10 = VIDEO_COSTS.get("v26_pro", 8) * 2
+        motion_pro_5 = VIDEO_COSTS.get("v26_motion_pro", 10)
+        motion_pro_10 = VIDEO_COSTS.get("v26_motion_pro", 10) * 2
+        motion_std_5 = VIDEO_COSTS.get("v26_motion_std", 8)
+        motion_std_10 = VIDEO_COSTS.get("v26_motion_std", 8) * 2
+
+        return f"""## АКТУАЛЬНЫЕ ЦЕНЫ
 
 🖼 Генерация изображений:
 - FLUX.2 Pro (Novita): {novita_cost}🍌
@@ -274,14 +294,6 @@ class AIAssistantService:
 └─────────────────┴────────┴────────┘
 
 ✏️ Редактирование: {pro_cost}🍌"""
-
-        except Exception as e:
-            logger.warning(f"Failed to get dynamic pricing: {e}")
-            return """## ЦЕНЫ (уточняйте в боте)
-- Генерация изображений: 3-5🍌
-- Генерация видео: 6-16🍌
-- Видео-эффекты: 8-14🍌
-- Редактирование: 5🍌"""
 
     async def close(self):
         """Закрытие сессии"""

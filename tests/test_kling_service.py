@@ -1,4 +1,5 @@
 """Тесты для kling_service.py"""
+
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 

@@ -42,6 +42,25 @@ class PresetManager:
         self._price_config: Dict = {}
         self._admin_ids: List[int] = []
         self._default_values: Dict[str, List[str]] = {}
+        # Фиксированные цены для fallback
+        self._fixed_image_costs = {
+            "novita": 3,
+            "nanobanana": 3,
+            "banana_pro": 5,
+            "seedream": 3,
+            "z_image_turbo": 3,
+        }
+        self._fixed_video_costs = {
+            "v3_std": 6,
+            "v3_pro": 8,
+            "v3_omni_std": 8,
+            "v3_omni_pro": 8,
+            "v3_omni_std_r2v": 8,
+            "v3_omni_pro_r2v": 8,
+            "v26_pro": 8,
+            "v26_motion_pro": 10,
+            "v26_motion_std": 8,
+        }
         self.load_all()
 
     def load_all(self):
@@ -50,36 +69,46 @@ class PresetManager:
         self._load_price()
 
     def _load_presets(self):
-        """Загружает пресеты из JSON"""
+        """Загружает пресеты из JSON (необязательно)"""
         if not self.presets_path.exists():
-            raise FileNotFoundError(f"Presets file not found: {self.presets_path}")
+            # Пресеты больше не используются
+            self._categories = {}
+            self._presets = {}
+            self._default_values = {}
+            return
 
-        with open(self.presets_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(self.presets_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-        self._categories = data.get("categories", {})
-        self._presets = {}
+            self._categories = data.get("categories", {})
+            self._presets = {}
 
-        for cat_key, cat_data in self._categories.items():
-            for preset_data in cat_data.get("presets", []):
-                preset = Preset(
-                    id=preset_data["id"],
-                    name=preset_data["name"],
-                    prompt=preset_data["prompt"],
-                    cost=preset_data["cost"],
-                    model=preset_data.get("model", "gemini-2.5-flash-image"),
-                    requires_input=preset_data.get("requires_input", False),
-                    requires_upload=preset_data.get("requires_upload", False),
-                    input_prompt=preset_data.get("input_prompt"),
-                    placeholders=preset_data.get("placeholders", []),
-                    aspect_ratio=preset_data.get("aspect_ratio"),
-                    duration=preset_data.get("duration"),
-                    category=cat_key,
-                )
-                self._presets[preset.id] = preset
+            for cat_key, cat_data in self._categories.items():
+                for preset_data in cat_data.get("presets", []):
+                    preset = Preset(
+                        id=preset_data["id"],
+                        name=preset_data["name"],
+                        prompt=preset_data["prompt"],
+                        cost=preset_data["cost"],
+                        model=preset_data.get("model", "gemini-2.5-flash-image"),
+                        requires_input=preset_data.get("requires_input", False),
+                        requires_upload=preset_data.get("requires_upload", False),
+                        input_prompt=preset_data.get("input_prompt"),
+                        placeholders=preset_data.get("placeholders", []),
+                        aspect_ratio=preset_data.get("aspect_ratio"),
+                        duration=preset_data.get("duration"),
+                        category=cat_key,
+                    )
+                    self._presets[preset.id] = preset
 
-        # Загружаем значения по умолчанию
-        self._default_values = data.get("default_values", {})
+            # Загружаем значения по умолчанию
+            self._default_values = data.get("default_values", {})
+        except Exception as e:
+            print(f"Error loading presets: {e}")
+            self._categories = {}
+            self._presets = {}
+            self._default_values = {}
 
     def _load_price(self):
         """Загружает прайс-лист"""
@@ -143,21 +172,21 @@ class PresetManager:
         """
         Возвращает стоимость генерации на основе модели и опций.
         Использует costs_reference из price.json.
-        
+
         Args:
             model: Идентификатор модели (gemini_2_5_flash, v3_pro, и т.д.)
             options: Дополнительные опции (duration для видео, и т.д.)
-            
+
         Returns:
             Стоимость в бананах
         """
         costs = self._price_config.get("costs_reference", {})
         image_models = costs.get("image_models", {})
         legacy_keys = costs.get("legacy_keys", {})
-        
+
         # Normalize model name
         model_lower = model.lower()
-        
+
         # Map модельных имён к ключам image_models
         model_map = {
             "gemini-2.5-flash-image": "gemini_2_5_flash",
@@ -171,47 +200,47 @@ class PresetManager:
             "seedream": "seedream",
             "flux_pro": "flux_pro",
         }
-        
+
         mapped_key = model_map.get(model_lower)
-        
+
         # Check image_models first
         if mapped_key and mapped_key in image_models:
             return image_models[mapped_key]
-        
+
         # Fallback to legacy_keys
         if mapped_key and mapped_key in legacy_keys:
             return legacy_keys[mapped_key]
-        
+
         # Direct lookup
         if model_lower in image_models:
             return image_models[model_lower]
         if model_lower in legacy_keys:
             return legacy_keys[model_lower]
-        
+
         # Default cost
         return 3
 
     def get_video_cost(self, model: str, duration: int = 5) -> int:
         """
         Возвращает стоимость генерации видео.
-        
+
         Args:
             model: Модель (v3_pro, v3_std, v3_omni_pro, v3_omni_std, и т.д.)
             duration: Длительность в секундах (3-15)
-            
+
         Returns:
             Стоимость в бананах
         """
         costs = self._price_config.get("costs_reference", {})
         video_models = costs.get("video_models", {})
         video_duration_costs = costs.get("video_duration_costs", {})
-        
+
         # Normalize duration
         duration = max(3, min(15, duration))
-        
+
         # Normalize model name
         model_lower = model.lower()
-        
+
         # Map модельных имён к ключам video_models
         model_map = {
             # Kling 2.6
@@ -243,9 +272,9 @@ class PresetManager:
             "kling_v3_omni_std": "v3_omni_std",
             "kling_v3_omni_pro": "v3_omni_pro",
         }
-        
+
         mapped_model = model_map.get(model_lower, model_lower)
-        
+
         # Check if model exists in video_models
         if mapped_model in video_models:
             model_config = video_models[mapped_model]
@@ -254,11 +283,11 @@ class PresetManager:
                 return duration_costs[str(duration)]
             # If duration not found, return base cost
             return model_config.get("base", 8)
-        
+
         # Fallback to legacy video_duration_costs
         if str(duration) in video_duration_costs:
             return video_duration_costs[str(duration)]
-        
+
         # Default fallback based on model type
         if "pro" in model_lower or "omni" in model_lower:
             if duration <= 5:
@@ -278,10 +307,10 @@ class PresetManager:
     def get_image_cost(self, model: str) -> int:
         """
         Возвращает стоимость генерации изображения.
-        
+
         Args:
             model: Модель (gemini_2_5_flash, gemini_3_pro, и т.д.)
-            
+
         Returns:
             Стоимость в бананах
         """

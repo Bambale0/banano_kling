@@ -6,8 +6,8 @@ Novita AI Service - Интеграция с Novita AI для генерации 
 Поддерживаемые модели:
 1. FLUX.2 [pro] - Production-grade text-to-image generation with enhanced realism,
    sharper text rendering, and native editing for reliable, repeatable results.
-   
-2. Seedream 5.0 lite - Supports text-to-image, single/multi-image-to-image 
+
+2. Seedream 5.0 lite - Supports text-to-image, single/multi-image-to-image
    (up to 14 reference images), and sequential image generation.
 
 3. Z-Image Turbo LoRA - High-speed image generation with custom LoRA weights support.
@@ -19,6 +19,11 @@ Endpoints:
 - POST /v3/seedream/seedream-5-lite - Generate/edit using Seedream 5.0
 - POST /v3/async/z-image-turbo-lora - Generate image with Z-Image Turbo LoRA
 - GET /v3/async/task-result - Get task result
+
+Также поддерживается Python SDK (novita-client):
+- Txt2Img V3 - Современный API для генерации изображений с поддержкой LoRA, ControlNet и других функций
+- Img2Img V3 - Редактирование изображений
+- Video generation - Генерация видео из текста или изображения
 
 Особенности:
 - Асинхронный API (возвращает task_id)
@@ -34,6 +39,15 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+
+# Novita AI Python SDK
+try:
+    from novita_client import NovitaClient
+    from novita_client.utils import base64_to_image
+
+    SDK_AVAILABLE = True
+except ImportError:
+    SDK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +108,7 @@ class NovitaService:
         size: str = "1:1_hq",
         seed: int = -1,
         webhook_url: Optional[str] = None,
+        reference_images: Optional[List[str]] = None,
     ) -> Optional[Dict]:
         """
         Generate image using FLUX.2 Pro
@@ -106,6 +121,8 @@ class NovitaService:
                   Use "_hq" suffix for maximum quality (1536px)
             seed: Random seed for generation (-1 for random). Range: -1 to 2147483647
             webhook_url: Optional callback URL for async notifications
+            reference_images: Optional list of reference image URLs (up to 3 for FLUX)
+                             Used for image-to-image generation or style transfer
 
         Returns:
             Dict with task_id or None on error
@@ -121,6 +138,19 @@ class NovitaService:
             "size": size_str,
             "seed": seed if seed >= 0 else -1,
         }
+
+        # Add reference images if provided (for image-to-image or style transfer)
+        if reference_images:
+            # Validate reference image count (FLUX supports up to 3)
+            if len(reference_images) > self.MAX_IMAGES_FLUX:
+                logger.warning(
+                    f"Too many reference images: {len(reference_images)}, max for FLUX is {self.MAX_IMAGES_FLUX}"
+                )
+                reference_images = reference_images[:self.MAX_IMAGES_FLUX]
+            payload["images"] = reference_images
+            logger.info(
+                f"FLUX.2 Pro: using {len(reference_images)} reference images"
+            )
 
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
@@ -312,9 +342,9 @@ class NovitaService:
             sequential_image_generation == "auto"
             and sequential_image_generation_options
         ):
-            payload[
-                "sequential_image_generation_options"
-            ] = sequential_image_generation_options
+            payload["sequential_image_generation_options"] = (
+                sequential_image_generation_options
+            )
 
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
@@ -323,7 +353,7 @@ class NovitaService:
 
         logger.info(f"POST {url}")  # Debug logging for URL
         logger.info(f"Payload: {payload}")  # Debug logging for payload
-        
+
         logger.info(
             f"Novita Seedream 5.0 request: prompt={prompt[:50]}..., "
             f"size={width}x{height}, images={len(image) if image else 0}, "
@@ -395,9 +425,9 @@ class NovitaService:
             sequential_image_generation == "auto"
             and sequential_image_generation_options
         ):
-            payload[
-                "sequential_image_generation_options"
-            ] = sequential_image_generation_options
+            payload["sequential_image_generation_options"] = (
+                sequential_image_generation_options
+            )
 
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
@@ -406,7 +436,7 @@ class NovitaService:
 
         logger.info(f"POST {url}")  # Debug logging for URL
         logger.info(f"Payload: {payload}")  # Debug logging for payload
-        
+
         logger.info(
             f"Novita Seedream 5.0 edit request: prompt={prompt[:50]}..., "
             f"images_count={len(images)}, size={width}x{height}, "
@@ -488,6 +518,7 @@ class NovitaService:
         seed: int = -1,
         loras: Optional[List[Dict[str, Any]]] = None,
         webhook_url: Optional[str] = None,
+        reference_images: Optional[List[str]] = None,
     ) -> Optional[Dict]:
         """
         Generate image using Z-Image Turbo LoRA (alias for generate_z_image_turbo_lora)
@@ -509,6 +540,8 @@ class NovitaService:
                   - path: URL or path to the LoRA weights (required)
                   - scale: Scale factor for the LoRA weights (default: 1, range: 0-4)
             webhook_url: Optional callback URL for async notifications
+            reference_images: Optional list of reference image URLs (up to 14)
+                              Used for image-to-image generation or style transfer
 
         Returns:
             Dict with task_id or None on error
@@ -525,12 +558,12 @@ class NovitaService:
                 if not isinstance(lora, dict):
                     logger.error(f"LoRA {i}: must be a dictionary")
                     continue
-                
+
                 lora_path = lora.get("path")
                 if not lora_path:
                     logger.error(f"LoRA {i}: 'path' is required")
                     continue
-                
+
                 # Validate scale
                 scale = lora.get("scale", 1)
                 if not isinstance(scale, (int, float)):
@@ -539,11 +572,13 @@ class NovitaService:
                     except (ValueError, TypeError):
                         scale = 1
                 scale = max(0, min(4, scale))  # Clamp to 0-4 range
-                
-                validated_loras.append({
-                    "path": lora_path,
-                    "scale": scale,
-                })
+
+                validated_loras.append(
+                    {
+                        "path": lora_path,
+                        "scale": scale,
+                    }
+                )
 
         # Parse size (format: WIDTH*HEIGHT)
         width, height = self._parse_turbo_size(size)
@@ -557,6 +592,20 @@ class NovitaService:
             "loras": validated_loras,
         }
 
+        # Add reference images if provided (for image-to-image or style transfer)
+        if reference_images:
+            # Validate reference image count
+            if len(reference_images) > self.MAX_IMAGES_SEEDREAM:
+                logger.error(
+                    f"Too many reference images: {len(reference_images)}, max is {self.MAX_IMAGES_SEEDREAM}"
+                )
+                # Continue with truncated list
+                reference_images = reference_images[:self.MAX_IMAGES_SEEDREAM]
+            payload["reference_images"] = reference_images
+            logger.info(
+                f"Z-Image Turbo LoRA: using {len(reference_images)} reference images"
+            )
+
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
 
@@ -564,7 +613,10 @@ class NovitaService:
 
         lora_info = ""
         if validated_loras:
-            lora_names = [l["path"].split("/")[-1] if "/" in l["path"] else l["path"][:20] for l in validated_loras]
+            lora_names = [
+                l["path"].split("/")[-1] if "/" in l["path"] else l["path"][:20]
+                for l in validated_loras
+            ]
             lora_info = f", loras={lora_names}"
 
         logger.info(
@@ -599,7 +651,9 @@ class NovitaService:
                     pass
 
         # Default to 1024x1024
-        logger.warning(f"Invalid Z-Image Turbo size format: {size}, using default 1024*1024")
+        logger.warning(
+            f"Invalid Z-Image Turbo size format: {size}, using default 1024*1024"
+        )
         return (1024, 1024)
 
     async def get_task_result(self, task_id: str) -> Optional[Dict]:
@@ -787,6 +841,213 @@ class NovitaService:
             except Exception as e:
                 logger.exception(f"Unexpected error in Novita request: {e}")
                 return None
+
+    # =============================================================================
+    # Novita Client SDK Integration
+    # =============================================================================
+
+    def get_sdk_client(self) -> Optional["NovitaClient"]:
+        """
+        Get or create Novita SDK client instance
+
+        Returns:
+            NovitaClient instance or None if SDK not available
+        """
+        if not SDK_AVAILABLE:
+            logger.warning("Novita SDK (novita-client) not available")
+            return None
+
+        if not hasattr(self, "_sdk_client") or self._sdk_client is None:
+            # NovitaClient uses NOVITA_API_KEY environment variable
+            import os
+
+            os.environ["NOVITA_API_KEY"] = self.api_key
+
+            self._sdk_client = NovitaClient(
+                api_key=self.api_key, base_url=self.BASE_URL
+            )
+        return self._sdk_client
+
+    def generate_image_v3(
+        self,
+        prompt: str,
+        model_name: str = "flux_1.1_pro",
+        width: int = 1024,
+        height: int = 1024,
+        image_num: int = 1,
+        steps: int = 20,
+        guidance_scale: float = 7.5,
+        sampler_name: str = "Euler a",
+        seed: Optional[int] = None,
+        negative_prompt: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """
+        Generate image using Novita SDK (Txt2Img V3)
+
+        Args:
+            prompt: Text prompt describing the expected image
+            model_name: Model name to use
+            width: Image width (256-2048)
+            height: Image height (256-2048)
+            image_num: Number of images to generate
+            steps: Number of inference steps
+            guidance_scale: Guidance scale
+            sampler_name: Sampler name
+            seed: Random seed (-1 for random)
+            negative_prompt: Negative prompt
+
+        Returns:
+            Dict with task_id and images
+        """
+        if not SDK_AVAILABLE:
+            logger.error("Novita SDK not available")
+            return None
+
+        try:
+            client = self.get_sdk_client()
+            if not client:
+                return None
+
+            # Use synchronous version - returns result directly
+            result = client.txt2img_v3(
+                model_name=model_name,
+                prompt=prompt,
+                width=width,
+                height=height,
+                image_num=image_num,
+                steps=steps,
+                guidance_scale=guidance_scale,
+                sampler_name=sampler_name,
+                seed=seed if seed and seed > 0 else -1,
+                negative_prompt=negative_prompt,
+            )
+
+            logger.info(
+                f"Novita SDK txt2img request: prompt={prompt[:50]}..., model={model_name}"
+            )
+            return result
+
+        except Exception as e:
+            logger.exception(f"Novita SDK txt2img error: {e}")
+            return None
+
+    def generate_video_v3(
+        self,
+        prompt: str,
+        model_name: str = "svd_xt",
+        duration: int = 5,
+        aspect_ratio: str = "16:9",
+        seed: Optional[int] = None,
+    ) -> Optional[Dict]:
+        """
+        Generate video using Novita SDK
+
+        Args:
+            prompt: Text prompt describing the expected video
+            model_name: Model name (e.g., "svd_xt", "svd")
+            duration: Video duration in seconds
+            aspect_ratio: Video aspect ratio
+            seed: Random seed
+
+        Returns:
+            Dict with task_id
+        """
+        if not SDK_AVAILABLE:
+            logger.error("Novita SDK not available")
+            return None
+
+        try:
+            client = self.get_sdk_client()
+            if not client:
+                return None
+
+            # Parse aspect ratio to dimensions
+            width, height = self._aspect_ratio_to_size(aspect_ratio)
+
+            # Calculate frames based on duration (approximately 24fps)
+            frames = duration * 24
+
+            # Use async version - returns task_id for polling
+            result = client.async_txt2video(
+                model_name=model_name,
+                prompt=prompt,
+                width=width,
+                height=height,
+                frames=frames,
+                seed=seed if seed and seed > 0 else -1,
+            )
+
+            logger.info(
+                f"Novita SDK txt2video request: prompt={prompt[:50]}..., model={model_name}"
+            )
+            return result
+
+        except Exception as e:
+            logger.exception(f"Novita SDK txt2video error: {e}")
+            return None
+
+    def img2img_v3(
+        self,
+        prompt: str,
+        input_image: str,
+        model_name: str = "flux_1.1_pro",
+        strength: float = 0.5,
+        width: int = 1024,
+        height: int = 1024,
+        image_num: int = 1,
+        steps: int = 20,
+        guidance_scale: float = 7.5,
+        seed: Optional[int] = None,
+    ) -> Optional[Dict]:
+        """
+        Generate image from image using Novita SDK (Img2Img V3)
+
+        Args:
+            prompt: Text prompt
+            input_image: Input image URL or base64
+            model_name: Model name
+            strength: Transformation strength (0-1)
+            width: Output width
+            height: Output height
+            image_num: Number of images
+            steps: Inference steps
+            guidance_scale: Guidance scale
+            seed: Random seed
+
+        Returns:
+            Dict with task_id and images
+        """
+        if not SDK_AVAILABLE:
+            logger.error("Novita SDK not available")
+            return None
+
+        try:
+            client = self.get_sdk_client()
+            if not client:
+                return None
+
+            # Use sync version - returns result directly
+            result = client.img2img_v3(
+                model_name=model_name,
+                prompt=prompt,
+                input_image=input_image,
+                strength=strength,
+                width=width,
+                height=height,
+                image_num=image_num,
+                steps=steps,
+                guidance_scale=guidance_scale,
+                seed=seed if seed and seed > 0 else -1,
+            )
+
+            logger.info(
+                f"Novita SDK img2img request: prompt={prompt[:50]}..., model={model_name}"
+            )
+            return result
+
+        except Exception as e:
+            logger.exception(f"Novita SDK img2img error: {e}")
+            return None
 
 
 # =============================================================================

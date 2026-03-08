@@ -764,6 +764,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("ignore_"))
+@router.callback_query(F.data == "ignore")
 async def handle_ignore_callback(callback: types.CallbackQuery):
     """Обработчик для неинтерактивных кнопок-заголовков и разделителей"""
     await callback.answer()  # Просто закрываем уведомление о нажатии

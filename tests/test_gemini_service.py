@@ -1,4 +1,5 @@
 """Тесты для gemini_service.py"""
+
 import asyncio
 import base64
 from io import BytesIO

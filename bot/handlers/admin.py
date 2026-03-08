@@ -12,7 +12,6 @@ from bot.database import (
     get_user_stats,
 )
 from bot.keyboards import get_admin_keyboard, get_back_keyboard
-from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates
 
 logger = logging.getLogger(__name__)
@@ -55,15 +54,11 @@ async def admin_reload_presets(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа")
         return
 
-    success = preset_manager.reload()
-
-    if success:
-        await callback.answer(
-            f"✅ Пресеты перезагружены! Загружено: {len(preset_manager._presets)}",
-            show_alert=True,
-        )
-    else:
-        await callback.answer("❌ Ошибка перезагрузки", show_alert=True)
+    # Пресеты теперь не используются
+    await callback.answer(
+        "✅ Пресеты отключены в этой версии",
+        show_alert=True,
+    )
 
 
 @router.callback_query(F.data == "admin_stats")
@@ -87,10 +82,6 @@ async def admin_show_stats(callback: types.CallbackQuery):
 💳 <b>Платежи:</b>
 • Транзакций: <code>{stats['total_transactions']}</code>
 • Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
-
-📂 <b>Пресеты:</b>
-• Категорий: <code>{len(preset_manager._categories)}</code>
-• Шаблонов: <code>{len(preset_manager._presets)}</code>
 """
 
     await callback.message.edit_text(
@@ -318,7 +309,9 @@ async def admin_execute_broadcast(
     data = await state.get_data()
     broadcast_text = data.get("broadcast_text")
 
-    await callback.message.edit_text("📢 <b>Рассылка запущена...</b>", parse_mode="HTML")
+    await callback.message.edit_text(
+        "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+    )
 
     # Получаем всех пользователей
     import aiosqlite

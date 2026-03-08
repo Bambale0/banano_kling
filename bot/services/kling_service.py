@@ -231,7 +231,11 @@ class KlingService:
         payload = {
             "image_url": image_url,
             "video_url": video_url,
-            "character_orientation": character_orientation if character_orientation in ["video", "image"] else "video",
+            "character_orientation": (
+                character_orientation
+                if character_orientation in ["video", "image"]
+                else "video"
+            ),
             "cfg_scale": min(max(cfg_scale, 0), 1),
         }
 
@@ -279,7 +283,11 @@ class KlingService:
         payload = {
             "image_url": image_url,
             "video_url": video_url,
-            "character_orientation": character_orientation if character_orientation in ["video", "image"] else "video",
+            "character_orientation": (
+                character_orientation
+                if character_orientation in ["video", "image"]
+                else "video"
+            ),
             "cfg_scale": min(max(cfg_scale, 0), 1),
         }
 
@@ -298,7 +306,6 @@ class KlingService:
     # =========================================================================
     # Kling 3 Pro/Standard Methods
     # =========================================================================
-
 
     async def generate_video_pro(
         self,
@@ -462,9 +469,9 @@ class KlingService:
         payload = {
             "prompt": prompt,
             "duration": duration_str,
-            "aspect_ratio": aspect_ratio
-            if aspect_ratio in self.ASPECT_RATIOS
-            else "16:9",
+            "aspect_ratio": (
+                aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9"
+            ),
             "cfg_scale": min(max(cfg_scale, 0), 1),  # Kling 3: 0-1 (default 0.5)
             "generate_audio": generate_audio,
         }
@@ -714,9 +721,9 @@ class KlingService:
         payload = {
             "prompt": prompt,
             "duration": str(min(max(duration, 3), 15)),
-            "aspect_ratio": aspect_ratio
-            if aspect_ratio in valid_aspect_ratios
-            else "16:9",
+            "aspect_ratio": (
+                aspect_ratio if aspect_ratio in valid_aspect_ratios else "16:9"
+            ),
             "generate_audio": generate_audio,
             "shot_type": "customize",
         }
@@ -993,7 +1000,9 @@ class KlingService:
         # Kling 2.6 Motion Control (requires image_url + video_url)
         if model in ["v26_motion_pro", "v26_motion_std"]:
             if not image_url or not video_url:
-                logger.error("Motion control requires image_url and video_url parameters")
+                logger.error(
+                    "Motion control requires image_url and video_url parameters"
+                )
                 return None
             return await method(
                 image_url=image_url,

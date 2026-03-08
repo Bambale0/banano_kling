@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Проверка статуса задачи Kling"""
+
 import asyncio
 import os
 import sys

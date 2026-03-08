@@ -1,4 +1,5 @@
 """Модуль для работы с API Т-Банк (эквайринг)."""
+
 import hashlib
 import json
 import logging

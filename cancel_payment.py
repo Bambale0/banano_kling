@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Скрипт для отмены платежа и возврата денег"""
+
 import asyncio
 import os
 import sqlite3
@@ -19,13 +20,11 @@ async def cancel_last_payment():
     # Получаем последнюю транзакцию
     conn = sqlite3.connect("bot.db")
     cursor = conn.cursor()
-    cursor.execute(
-        """
+    cursor.execute("""
         SELECT id, order_id, payment_id, credits, amount_rub, status, created_at 
         FROM transactions 
         ORDER BY id DESC LIMIT 1
-    """
-    )
+    """)
     row = cursor.fetchone()
 
     if not row:

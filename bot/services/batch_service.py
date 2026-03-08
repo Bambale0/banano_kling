@@ -252,9 +252,9 @@ class BatchEditingService:
                 results_count=sum(
                     1 for i in job.items if i.status == BatchStatus.COMPLETED
                 ),
-                duration=job.completed_at - job.created_at
-                if job.completed_at
-                else None,
+                duration=(
+                    job.completed_at - job.created_at if job.completed_at else None
+                ),
             )
         except Exception as e:
             logger.error(f"Failed to save batch job: {e}")
