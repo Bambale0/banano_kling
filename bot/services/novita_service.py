@@ -146,11 +146,9 @@ class NovitaService:
                 logger.warning(
                     f"Too many reference images: {len(reference_images)}, max for FLUX is {self.MAX_IMAGES_FLUX}"
                 )
-                reference_images = reference_images[:self.MAX_IMAGES_FLUX]
+                reference_images = reference_images[: self.MAX_IMAGES_FLUX]
             payload["images"] = reference_images
-            logger.info(
-                f"FLUX.2 Pro: using {len(reference_images)} reference images"
-            )
+            logger.info(f"FLUX.2 Pro: using {len(reference_images)} reference images")
 
         if webhook_url:
             payload["extra"] = {"webhook": {"url": webhook_url}}
@@ -600,7 +598,7 @@ class NovitaService:
                     f"Too many reference images: {len(reference_images)}, max is {self.MAX_IMAGES_SEEDREAM}"
                 )
                 # Continue with truncated list
-                reference_images = reference_images[:self.MAX_IMAGES_SEEDREAM]
+                reference_images = reference_images[: self.MAX_IMAGES_SEEDREAM]
             payload["reference_images"] = reference_images
             logger.info(
                 f"Z-Image Turbo LoRA: using {len(reference_images)} reference images"

@@ -378,8 +378,8 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "menu_motion_control")
 async def show_motion_control_menu(callback: types.CallbackQuery):
     """Показывает меню Motion Control"""
-    from bot.keyboards import get_motion_control_keyboard
     from bot.database import get_user_credits
+    from bot.keyboards import get_motion_control_keyboard
 
     user_credits = await get_user_credits(callback.from_user.id)
 
@@ -409,25 +409,25 @@ async def show_motion_control_menu(callback: types.CallbackQuery):
 @router.callback_query(F.data == "motion_control_std")
 async def start_motion_control_std(callback: types.CallbackQuery, state: FSMContext):
     """Запускает Motion Control Standard"""
-    from bot.states import GenerationStates
     from bot.database import get_user_credits
     from bot.services.preset_manager import preset_manager
-    
+    from bot.states import GenerationStates
+
     user_credits = await get_user_credits(callback.from_user.id)
     cost = preset_manager.get_video_cost("v26_motion_std", 5)
-    
+
     if user_credits < cost:
-        await callback.answer("❌ Недостаточно бананов! Пополни баланс.", show_alert=True)
+        await callback.answer(
+            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
+        )
         return
-    
+
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_image)
     await state.update_data(
-        generation_type="motion_control",
-        video_model="v26_motion_std",
-        cost=cost
+        generation_type="motion_control", video_model="v26_motion_std", cost=cost
     )
-    
+
     await callback.message.edit_text(
         f"🎬 <b>Motion Control Standard</b>\n\n"
         f"Стоимость: {cost}🍌\n\n"
@@ -445,25 +445,25 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(F.data == "motion_control_pro")
 async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMContext):
     """Запускает Motion Control Pro"""
-    from bot.states import GenerationStates
     from bot.database import get_user_credits
     from bot.services.preset_manager import preset_manager
-    
+    from bot.states import GenerationStates
+
     user_credits = await get_user_credits(callback.from_user.id)
     cost = preset_manager.get_video_cost("v26_motion_pro", 5)
-    
+
     if user_credits < cost:
-        await callback.answer("❌ Недостаточно бананов! Пополни баланс.", show_alert=True)
+        await callback.answer(
+            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
+        )
         return
-    
+
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_image)
     await state.update_data(
-        generation_type="motion_control",
-        video_model="v26_motion_pro",
-        cost=cost
+        generation_type="motion_control", video_model="v26_motion_pro", cost=cost
     )
-    
+
     await callback.message.edit_text(
         f"💎 <b>Motion Control Pro</b>\n\n"
         f"Стоимость: {cost}🍌\n\n"

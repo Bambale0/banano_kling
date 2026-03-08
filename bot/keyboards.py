@@ -125,12 +125,6 @@ def get_create_video_keyboard(
 
     builder = InlineKeyboardBuilder()
 
-    # Тип генерации
-    text_check = "✅ " if current_v_type == "text" else ""
-    imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
-    builder.button(text=f"{text_check}📝 По тексту", callback_data="v_type_text")
-    builder.button(text=f"{imgtxt_check}🖼 Фото+текст", callback_data="v_type_imgtxt")
-
     # Модели - из price.json
     v26_data = VIDEO_COSTS.get("v26_pro", {"base": 8, "duration_costs": {"5": 8}})
     v3_std_data = VIDEO_COSTS.get("v3_std", {"base": 6, "duration_costs": {"5": 6}})
@@ -190,7 +184,7 @@ def get_create_video_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="ignore")
+    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="ratio_9_16")
@@ -213,11 +207,11 @@ def get_create_video_keyboard(
     )
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"💰 {total_cost}🍌", callback_data="ignore")
-    builder.button(text="✏️ Введите промпт ниже", callback_data="ignore")
+    builder.button(text=f"💰 {total_cost}🍌", callback_data="back_main")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     # adjust: 2 типа генерации + 5 моделей + "Размер:" + 5 форматов + 3 длительности + цена + ввод промпта
-    builder.adjust(2, 1, 1, 1, 1, 1, 1, 5, 3, 2)
+    builder.adjust(1, 1, 1, 1, 1, 1, 5, 3, 1, 1)
     return builder.as_markup()
 
 
@@ -273,7 +267,7 @@ def get_create_image_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="ignore")
+    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="img_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="img_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="img_ratio_9_16")
@@ -284,13 +278,11 @@ def get_create_image_keyboard(
     cost = IMAGE_COSTS.get(current_service, 3)
 
     # Кнопка запуска - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"✏️ Введите промпт ниже", callback_data="ignore")
+    builder.button(text=f"🏠 Главное меню", callback_data="back_main")
 
-    # Кнопка назад
-    builder.button(text="🔙 Назад", callback_data="back_main")
 
     builder.adjust(
-        1, 1, 1, 1, 1, 1, 5, 1, 2, 1
+        1, 1, 1, 1, 1, 1, 5, 1
     )  # 5 моделей + "Размер:" (отдельно) + 5 аспект ратио + ввод промпта + назад
     return builder.as_markup()
 
@@ -324,7 +316,7 @@ def get_balance_keyboard(user_credits: int = 0):
     """Меню баланса"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text=f"У тебя: {user_credits} 🍌", callback_data="ignore")
+    builder.button(text=f"У тебя: {user_credits} 🍌", callback_data="back_main")
 
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="📋 История", callback_data="menu_history")
@@ -711,11 +703,11 @@ def get_video_params_inline_keyboard(
 ):
     """Параметры видео"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⏱ Длительность:", callback_data="ignore")
+    builder.button(text="⏱ Длительность:", callback_data="back_main")
     for dur in [5, 10, 15]:
         check = "✅" if dur == current_duration else ""
         builder.button(text=f"{dur} сек {check}", callback_data=f"video_dur_{dur}")
-    builder.button(text="📐 Формат:", callback_data="ignore")
+    builder.button(text="📐 Формат:", callback_data="back_main")
     for ratio, emoji in [("16:9", "📺"), ("9:16", "📱"), ("1:1", "⬜")]:
         check = "✅" if ratio == current_ratio else ""
         builder.button(
@@ -753,16 +745,16 @@ def get_video_edit_keyboard(
 
     quality_emoji = "💎" if quality == "pro" else "⚡"
     builder.button(
-        text=f"Качество: {quality_emoji} {quality.upper()}", callback_data="ignore"
+        text=f"Качество: {quality_emoji} {quality.upper()}", callback_data="back_main"
     )
     builder.button(text="⚡ Standard", callback_data="video_edit_quality_std")
     builder.button(text="💎 Pro", callback_data="video_edit_quality_pro")
 
-    builder.button(text="⏱ Длительность:", callback_data="ignore")
+    builder.button(text="⏱ Длительность:", callback_data="back_main")
     builder.button(text="5 сек", callback_data="video_edit_duration_5")
     builder.button(text="10 сек", callback_data="video_edit_duration_10")
 
-    builder.button(text="📐 Формат:", callback_data="ignore")
+    builder.button(text="📐 Формат:", callback_data="back_main")
     builder.button(text="16:9", callback_data="video_edit_ratio_16_9")
     builder.button(text="9:16", callback_data="video_edit_ratio_9_16")
     builder.button(text="1:1", callback_data="video_edit_ratio_1_1")
@@ -823,7 +815,7 @@ def get_reference_images_upload_keyboard(
     """Клавиатура загрузки референсных изображений"""
     builder = InlineKeyboardBuilder()
     builder.button(
-        text=f"Загружено: {current_count}/{max_count}", callback_data="ignore"
+        text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
     )
 
     # Проверяем, video это или image
@@ -845,7 +837,9 @@ def get_reference_images_upload_keyboard(
             builder.button(text="✅ Продолжить", callback_data="img_ref_continue_new")
         else:
             builder.button(text="⏭ Пропустить", callback_data="img_ref_skip")
-            builder.button(text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}")
+            builder.button(
+                text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}"
+            )
         builder.button(
             text="🔙 Назад",
             callback_data=(
@@ -861,7 +855,7 @@ def get_reference_images_upload_keyboard(
 def get_reference_images_confirmation_keyboard(preset_id: str = None):
     """Клавиатура подтверждения референсов"""
     builder = InlineKeyboardBuilder()
-    
+
     # Для нового UX (preset_id == "new") используем правильные callback_data
     if preset_id == "new":
         builder.button(text="🔄 Перезагрузить", callback_data="ref_reload_new")
@@ -869,7 +863,7 @@ def get_reference_images_confirmation_keyboard(preset_id: str = None):
     else:
         builder.button(text="🔄 Перезагрузить", callback_data=f"ref_reload_{preset_id}")
         builder.button(text="✅ Подтвердить", callback_data=f"ref_accept_{preset_id}")
-    
+
     # Используем back_main для нового UX (preset_id == "new")
     builder.button(
         text="🔙 Назад",
@@ -1078,7 +1072,7 @@ def get_image_options_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="ignore")
+    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="img_opt_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="img_opt_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="img_opt_ratio_9_16")
@@ -1159,7 +1153,7 @@ def get_video_options_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="ignore")
+    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="opt_v_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="opt_v_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="opt_v_ratio_9_16")

@@ -82,9 +82,9 @@ router = Router()
 async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContext):
     """Показывает меню создания видео - всё на одном экране"""
     from bot.database import get_user_credits
-    
+
     user_credits = await get_user_credits(callback.from_user.id)
-    
+
     # Инициализируем опции по умолчанию
     await state.update_data(
         generation_type="video",
@@ -93,7 +93,7 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
         v_duration=5,
         v_ratio="16:9",
     )
-    
+
     await callback.message.edit_text(
         f"🎬 <b>Создание видео</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
@@ -109,9 +109,9 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
 async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContext):
     """Показывает меню создания фото - начинаем с загрузки референсов"""
     from bot.database import get_user_credits
-    
+
     user_credits = await get_user_credits(callback.from_user.id)
-    
+
     # Инициализируем опции по умолчанию
     await state.update_data(
         generation_type="image",
@@ -120,7 +120,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         reference_images=[],  # Инициализируем пустой список референсов
         preset_id="new",  # Для нового UX - указываем, что это "new" режим
     )
-    
+
     # Показываем экран загрузки референсов (ШАГ 1)
     await callback.message.edit_text(
         f"🖼 <b>Создание фото</b>\n\n"
@@ -144,7 +144,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
         f"📎 <b>Загрузка референсов</b>\n\n"
@@ -163,10 +163,10 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     # Очищаем референсы
     await state.update_data(reference_images=[])
-    
+
     await callback.message.edit_text(
         f"🖼 <b>Создание фото</b>\n\n"
         f"✨ Модель: <code>{current_service}</code>\n"
@@ -186,10 +186,12 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
     current_refs = data.get("reference_images", [])
     current_service = data.get("img_service", "flux_pro")
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     # Сразу показываем экран выбора модели и формата (без экрана подтверждения референсов)
-    ref_text = f"📎 Референсов: <code>{len(current_refs)}</code>\n\n" if current_refs else ""
-    
+    ref_text = (
+        f"📎 Референсов: <code>{len(current_refs)}</code>\n\n" if current_refs else ""
+    )
+
     await callback.message.edit_text(
         f"🖼 <b>Создание фото</b>\n\n"
         f"{ref_text}"
@@ -209,7 +211,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
     """Перезагружает референсы (очищает и начинает заново) для нового UX"""
     # Очищаем референсы
     await state.update_data(reference_images=[])
-    
+
     await callback.message.edit_text(
         f"📎 <b>Перезагрузка референсов</b>\n\n"
         f"Загружено: <code>0/14</code>\n\n"
@@ -228,14 +230,14 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
     current_refs = data.get("reference_images", [])
     current_service = data.get("img_service", "flux_pro")
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     if not current_refs:
         await callback.answer("Нет загруженных изображений", show_alert=True)
         return
-    
+
     # Сразу показываем экран выбора модели и формата (пропускаем экран подтверждения референсов)
     ref_text = f"📎 Референсов: <code>{len(current_refs)}</code>\n\n"
-    
+
     await callback.message.edit_text(
         f"🖼 <b>Создание фото</b>\n\n"
         f"{ref_text}"
@@ -249,6 +251,7 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
+
 # Обработчики для меню создания видео
 @router.callback_query(F.data == "v_type_text")
 async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
@@ -257,9 +260,9 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_type="text")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type="text",
@@ -279,9 +282,9 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_type="imgtxt")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type="imgtxt",
@@ -301,9 +304,9 @@ async def handle_v_model_v26_pro(callback: types.CallbackQuery, state: FSMContex
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_model="v26_pro")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -323,9 +326,9 @@ async def handle_v_model_v3_std(callback: types.CallbackQuery, state: FSMContext
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_model="v3_std")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -345,9 +348,9 @@ async def handle_v_model_v3_pro(callback: types.CallbackQuery, state: FSMContext
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_model="v3_pro")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -367,9 +370,9 @@ async def handle_v_model_omni(callback: types.CallbackQuery, state: FSMContext):
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_model="v3_omni_std")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -383,15 +386,17 @@ async def handle_v_model_omni(callback: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "v_model_v26_motion_pro")
-async def handle_v_model_v26_motion_pro(callback: types.CallbackQuery, state: FSMContext):
+async def handle_v_model_v26_motion_pro(
+    callback: types.CallbackQuery, state: FSMContext
+):
     """Выбор модели v26_motion_pro"""
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_model="v26_motion_pro")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -412,9 +417,9 @@ async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContex
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
-    
+
     await state.update_data(v_ratio="1:1")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -434,9 +439,9 @@ async def handle_video_ratio_16_9(callback: types.CallbackQuery, state: FSMConte
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
-    
+
     await state.update_data(v_ratio="16:9")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -456,9 +461,9 @@ async def handle_video_ratio_9_16(callback: types.CallbackQuery, state: FSMConte
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
-    
+
     await state.update_data(v_ratio="9:16")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -478,9 +483,9 @@ async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContex
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
-    
+
     await state.update_data(v_ratio="4:3")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -500,9 +505,9 @@ async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContex
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
-    
+
     await state.update_data(v_ratio="3:2")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -523,9 +528,9 @@ async def handle_video_dur_5(callback: types.CallbackQuery, state: FSMContext):
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_duration=5)
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -545,9 +550,9 @@ async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_duration=10)
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -567,9 +572,9 @@ async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
-    
+
     await state.update_data(v_duration=15)
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
@@ -592,9 +597,9 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
     """Выбор модели FLUX.2 Pro"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     await state.update_data(img_service="flux_pro")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="flux_pro",
@@ -610,9 +615,9 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
     """Выбор модели Nano Banana"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     await state.update_data(img_service="nanobanana")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="nanobanana",
@@ -628,9 +633,9 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
     """Выбор модели Banana Pro"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     await state.update_data(img_service="banana_pro")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="banana_pro",
@@ -646,9 +651,9 @@ async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext
     """Выбор модели Seedream"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     await state.update_data(img_service="seedream")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="seedream",
@@ -660,13 +665,15 @@ async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext
 
 
 @router.callback_query(F.data == "model_z_image_turbo_lora")
-async def handle_model_z_image_turbo_lora(callback: types.CallbackQuery, state: FSMContext):
+async def handle_model_z_image_turbo_lora(
+    callback: types.CallbackQuery, state: FSMContext
+):
     """Выбор модели Z-Image Turbo LoRA"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
-    
+
     await state.update_data(img_service="z_image_turbo_lora")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="z_image_turbo_lora",
@@ -683,9 +690,9 @@ async def handle_img_ratio_1_1(callback: types.CallbackQuery, state: FSMContext)
     """Выбор формата изображения 1:1"""
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
-    
+
     await state.update_data(img_ratio="1:1")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
@@ -701,9 +708,9 @@ async def handle_img_ratio_16_9(callback: types.CallbackQuery, state: FSMContext
     """Выбор формата изображения 16:9"""
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
-    
+
     await state.update_data(img_ratio="16:9")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
@@ -719,9 +726,9 @@ async def handle_img_ratio_9_16(callback: types.CallbackQuery, state: FSMContext
     """Выбор формата изображения 9:16"""
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
-    
+
     await state.update_data(img_ratio="9:16")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
@@ -737,9 +744,9 @@ async def handle_img_ratio_4_3(callback: types.CallbackQuery, state: FSMContext)
     """Выбор формата изображения 4:3"""
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
-    
+
     await state.update_data(img_ratio="4:3")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
@@ -755,9 +762,9 @@ async def handle_img_ratio_3_2(callback: types.CallbackQuery, state: FSMContext)
     """Выбор формата изображения 3:2"""
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
-    
+
     await state.update_data(img_ratio="3:2")
-    
+
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
@@ -1759,7 +1766,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             # Для пресетов - возвращаемся к экрану пресета
             preset = preset_manager.get_preset(preset_id)
             if preset:
-                await show_preset_details(callback.message, preset, callback.from_user.id)
+                await show_preset_details(
+                    callback.message, preset, callback.from_user.id
+                )
             else:
                 # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
                 await callback.message.edit_text(
@@ -2543,7 +2552,11 @@ async def invalid_reference_upload(message: types.Message, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("run_") & ~F.data.startswith("run_no_preset") & ~F.data.in_(["run_generate", "run_image_generate"]))
+@router.callback_query(
+    F.data.startswith("run_")
+    & ~F.data.startswith("run_no_preset")
+    & ~F.data.in_(["run_generate", "run_image_generate"])
+)
 async def execute_generation(
     callback: types.CallbackQuery, state: FSMContext, bot: Bot
 ):
@@ -3443,7 +3456,7 @@ async def run_no_preset_image_generation(
     image_service = data.get("img_service", "nanobanana")
     # Получаем загруженные референсные изображения
     raw_reference_images = data.get("reference_images", [])
-    
+
     # Конвертируем байты референсных изображений в URL для Novita API
     reference_images = []
     for img_data in raw_reference_images:
@@ -3455,7 +3468,7 @@ async def run_no_preset_image_generation(
         elif isinstance(img_data, str):
             # Уже URL
             reference_images.append(img_data)
-    
+
     # Определяем пользователя (для callback message.from_user это бот)
     if user_id is None:
         user_id = message.from_user.id
@@ -5133,9 +5146,7 @@ async def handle_run_generate(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("🚀 Запускаю генерацию видео...")
 
     # Запускаем генерацию видео
-    await run_no_preset_video_from_message(
-        callback.message, state, user_prompt
-    )
+    await run_no_preset_video_from_message(callback.message, state, user_prompt)
 
 
 @router.callback_query(F.data == "run_image_generate")
