@@ -406,6 +406,65 @@ async def show_motion_control_menu(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "menu_support")
+async def show_support(callback: types.CallbackQuery):
+    """Показывает меню тех. поддержки"""
+    from bot.keyboards import get_support_keyboard
+
+    support_text = """
+🆘 <b>Техническая поддержка</b>
+
+По всем вопросам обращайтесь:
+📱 @S_k7222
+
+Мы ответим вам в ближайшее время!
+"""
+
+    await callback.message.edit_text(
+        support_text,
+        reply_markup=get_support_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_history")
+async def show_history(callback: types.CallbackQuery):
+    """Показывает историю генераций пользователя"""
+    from bot.database import get_user_stats
+    from bot.keyboards import get_main_menu_keyboard
+
+    user = await get_or_create_user(callback.from_user.id)
+    stats = await get_user_stats(callback.from_user.id)
+
+    history_text = f"""
+📋 <b>История</b>
+
+📊 Всего генераций: <code>{stats['generations']}</code>
+💸 Потрачено бананов: <code>{stats['total_spent']}</code>
+💎 Текущий баланс: <code>{user.credits}</code>🍌
+📅 Дата регистрации: <code>{stats['member_since']}</code>
+
+<i>Детальная история скоро будет доступна!</i>
+"""
+
+    try:
+        await callback.message.edit_text(
+            history_text,
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        # Если сообщение нельзя отредактировать
+        logger.warning(f"Cannot edit message: {e}")
+        await callback.message.answer(
+            history_text,
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "motion_control_std")
 async def start_motion_control_std(callback: types.CallbackQuery, state: FSMContext):
     """Запускает Motion Control Standard"""

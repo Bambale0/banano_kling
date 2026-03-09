@@ -7,6 +7,10 @@ class GenerationStates(StatesGroup):
     waiting_for_input = State()  # Ожидание пользовательского ввода
     waiting_for_image = State()  # Ожидание загрузки фото
     waiting_for_video = State()  # Ожидание загрузки видео
+    waiting_for_video_prompt = State()  # Ожидание ввода промпта для видео
+    waiting_for_video_start_image = (
+        State()
+    )  # Ожидание загрузки стартового изображения для imgtxt
     confirming_generation = State()  # Подтверждение перед запуском
     selecting_batch_count = (
         State()

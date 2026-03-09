@@ -125,6 +125,15 @@ def get_create_video_keyboard(
 
     builder = InlineKeyboardBuilder()
 
+    # Тип генерации - текст или фото+текст
+    text_check = "✅ " if current_v_type == "text" else ""
+    imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
+
+    builder.button(text=f"{text_check}📝 Текст → Видео", callback_data="v_type_text")
+    builder.button(
+        text=f"{imgtxt_check}🖼 Фото + Текст → Видео", callback_data="v_type_imgtxt"
+    )
+
     # Модели - из price.json
     v26_data = VIDEO_COSTS.get("v26_pro", {"base": 8, "duration_costs": {"5": 8}})
     v3_std_data = VIDEO_COSTS.get("v3_std", {"base": 6, "duration_costs": {"5": 6}})
@@ -184,7 +193,6 @@ def get_create_video_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="ratio_9_16")
@@ -211,7 +219,7 @@ def get_create_video_keyboard(
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     # adjust: 2 типа генерации + 5 моделей + "Размер:" + 5 форматов + 3 длительности + цена + ввод промпта
-    builder.adjust(1, 1, 1, 1, 1, 1, 5, 3, 1, 1)
+    builder.adjust(2, 1, 1, 1, 1, 1, 5, 3, 1, 1)
     return builder.as_markup()
 
 
@@ -267,7 +275,6 @@ def get_create_image_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="img_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="img_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="img_ratio_9_16")
@@ -279,7 +286,6 @@ def get_create_image_keyboard(
 
     # Кнопка запуска - после выбора опций пользователь отправляет промпт
     builder.button(text=f"🏠 Главное меню", callback_data="back_main")
-
 
     builder.adjust(
         1, 1, 1, 1, 1, 1, 5, 1
@@ -819,14 +825,21 @@ def get_reference_images_upload_keyboard(
     )
 
     # Проверяем, video это или image
-    is_video = preset_id and preset_id.startswith("video")
+    is_video = preset_id and (preset_id.startswith("video") or preset_id == "video_new")
 
-    if is_video:
-        # Для видео - добавляем кнопку пропуска
-        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
-        builder.button(
-            text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
-        )
+    # Для video_new используем те же callbacks что для image_new
+    is_video_new = preset_id == "video_new"
+
+    if is_video or is_video_new:
+        # Для video_new используем те же callbacks что для image_new
+        if is_video_new:
+            builder.button(text="⏭ Пропустить", callback_data="img_ref_skip_new")
+            builder.button(text="✅ Продолжить", callback_data="img_ref_continue_new")
+        else:
+            builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
+            builder.button(
+                text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
+            )
         builder.button(text="🔙 Назад", callback_data="back_main")
         builder.adjust(1, 2, 1)
     else:
@@ -1072,7 +1085,6 @@ def get_image_options_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="img_opt_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="img_opt_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="img_opt_ratio_9_16")
@@ -1153,7 +1165,6 @@ def get_video_options_keyboard(
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text="Размер:", callback_data="back_main")
     builder.button(text=f"{r1_1}1:1", callback_data="opt_v_ratio_1_1")
     builder.button(text=f"{r16_9}16:9", callback_data="opt_v_ratio_16_9")
     builder.button(text=f"{r9_16}9:16", callback_data="opt_v_ratio_9_16")
@@ -1195,10 +1206,18 @@ def get_motion_control_keyboard(preset_id: str = None):
     """Клавиатура управления движением"""
     builder = InlineKeyboardBuilder()
     builder.button(
+        text="⚡ Motion Control Standard • 8🍌",
+        callback_data="motion_control_std",
+    )
+    builder.button(
+        text="💎 Motion Control Pro • 10🍌",
+        callback_data="motion_control_pro",
+    )
+    builder.button(
         text="🔙 Назад",
         callback_data=f"preset_{preset_id}" if preset_id else "back_main",
     )
-    builder.adjust(1)
+    builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 

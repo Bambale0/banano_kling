@@ -437,7 +437,7 @@ class KlingService:
         )
 
         logger.info(
-            f"Kling 3 Std request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}"
+            f"Kling 3 Std request: prompt={prompt[:50]}..., duration={duration}, aspect={aspect_ratio}, start_image={start_image_url is not None}, elements={elements is not None}"
         )
 
         return await self._post_request(url, payload)
@@ -483,16 +483,17 @@ class KlingService:
         if webhook_url:
             payload["webhook_url"] = webhook_url
 
-        # ПРАВИЛЬНО по документации Kling 3: используем image_list с type (first_frame/end_frame)
-        if start_image_url or end_image_url:
-            image_list = []
-            if start_image_url:
-                image_list.append({"image_url": start_image_url, "type": "first_frame"})
-            if end_image_url:
-                image_list.append({"image_url": end_image_url, "type": "end_frame"})
-            payload["image_list"] = image_list
+        # ПРАВИЛЬНО по документации Kling 3 Pro/Std:
+        # Используем start_image_url и end_image_url напрямую (НЕ image_list!)
+        if start_image_url:
+            payload["start_image_url"] = start_image_url
+            logger.info(f"Using start_image_url: {start_image_url[:50]}...")
 
-        # ПРАВИЛЬНО: element_list, не elements
+        if end_image_url:
+            payload["end_image_url"] = end_image_url
+            logger.info(f"Using end_image_url: {end_image_url[:50]}...")
+
+        # element_list для сохранения персонажей/стиля
         if elements:
             element_list = []
             for elem in elements:
@@ -514,6 +515,7 @@ class KlingService:
                         )
             if element_list:
                 payload["element_list"] = element_list
+                logger.info(f"Using element_list with {len(element_list)} elements")
 
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
@@ -540,6 +542,7 @@ class KlingService:
                     )
             payload["multi_prompt"] = formatted_multi_prompt
 
+        logger.info(f"DEBUG payload: {payload}")
         return payload
 
     async def list_v3_tasks(
@@ -758,6 +761,7 @@ class KlingService:
         if multi_prompt:
             payload["multi_prompt"] = multi_prompt[:6]  # Max 6 shots
 
+        logger.info(f"DEBUG payload: {payload}")
         return payload
 
     async def list_omni_tasks(

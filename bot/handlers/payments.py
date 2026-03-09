@@ -27,9 +27,31 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+@router.callback_query(F.data == "menu_topup")
+async def show_topup_menu(callback: types.CallbackQuery):
+    """Показывает меню пополнения баланса"""
+    packages = preset_manager.get_packages()
+
+    text = """
+🍌 <b>Пополнение баланса</b>
+
+Выберите пакет бананов:
+<i>Чем больше пакет — тем выгоднее цена за банан</i>
+
+🍌 <b>Бананы расходуются на генерации:</b>
+• 1 банан = 1 стандартная генерация
+• Премиум генерации стоят 2-6 бананов
+"""
+
+    await callback.message.edit_text(
+        text, reply_markup=get_payment_packages_keyboard(packages), parse_mode="HTML"
+    )
+
+
+# Алиас для обратной совместимости
 @router.callback_query(F.data == "menu_buy_credits")
 async def show_packages(callback: types.CallbackQuery):
-    """Показывает пакеты для покупки"""
+    """Показывает пакеты для покупки (алиас для menu_topup)"""
     packages = preset_manager.get_packages()
 
     text = """

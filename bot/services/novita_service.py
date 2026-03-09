@@ -702,6 +702,7 @@ class NovitaService:
             elif status == "TASK_STATUS_FAILED":
                 reason = task_info.get("reason", "Unknown error")
                 logger.error(f"Task {task_id} failed: {reason}")
+                logger.error(f"Full task response: {result}")
                 return result
             elif status == "TASK_STATUS_QUEUED":
                 logger.debug(
