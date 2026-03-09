@@ -83,22 +83,47 @@ class GeminiService:
     # =========================================================================
 
     # Промпты для сохранения лиц и персонажей (согласно документации Gemini)
+    # Обновлено для максимальной точности сохранения лиц с референсов
     FACE_PRESERVATION_PROMPT = """
-Important instructions for face/character preservation:
-1. Maintain EXACT facial features from reference images: face shape, eye shape, nose, mouth, facial structure
-2. Preserve skin tone, hair color, and hairstyle precisely
-3. Keep the same person/character identity across all variations
-4. Use high-fidelity mode for character consistency
-5. Maintain 4K resolution for detailed facial features
+CRITICAL FACE PRESERVATION INSTRUCTIONS - HIGHEST PRIORITY:
+This is a face/character reference task. You MUST preserve the identity EXACTLY.
+
+1. FACIAL FEATURES - Maintain EXACT match:
+   - Face shape and proportions (oval, round, square, heart, etc.)
+   - Eye shape, size, color, and position
+   - Nose shape, size, bridge, nostrils
+   - Lips shape, fullness, color
+   - Eyebrows shape, thickness, color
+   - Ear shape and size
+   - Chin and jawline shape
+   
+2. SKIN & COMPLEXION - Preserve EXACTLY:
+   - Exact skin tone and undertones
+   - Any blemishes, freckles, moles, scars
+   - Skin texture and quality
+   
+3. HAIR - Preserve EXACTLY:
+   - Hair color, highlights, gradients
+   - Hairstyle, length, texture
+   - Hairline shape
+   
+4. UNIQUE IDENTIFYING FEATURES - Must be EXACT:
+   - Any distinctive marks, tattoos
+   - Facial asymmetries
+   - Expression style
+
+DO NOT change any facial features. Generate the SAME person from reference images.
 """
 
     CHARACTER_CONSISTENCY_PROMPT = """
-Character consistency requirements:
-- Use up to 4 reference images of the same character for best consistency
-- Maintain exact facial proportions and features
-- Preserve unique identifying characteristics (moles, scars, distinctive features)
-- Keep consistent age appearance
-- Maintain same expression style unless specified otherwise
+MAXIMUM FIDELITY CHARACTER CONSISTENCY:
+- Use ALL provided reference images for best consistency
+- Reference images should show the SAME character from different angles
+- Maintain exact facial proportions (distance between eyes, eye-to-nose ratio, etc.)
+- Preserve the same age and aging pattern
+- Keep consistent expression style unless explicitly requested
+- The generated person MUST be instantly recognizable as the same person from references
+- NO changes to facial structure, features, or identity allowed
 """
 
     async def generate_image(
