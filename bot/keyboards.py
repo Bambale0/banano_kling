@@ -339,8 +339,9 @@ def get_balance_keyboard(user_credits: int = 0):
 def get_support_keyboard():
     """Клавиатура тех. поддержки"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="💬 ИИ-ассистент", callback_data="menu_ai_assistant")
     builder.button(text="🔙 Главное меню", callback_data="back_main")
-    builder.adjust(1)
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 

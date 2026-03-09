@@ -101,6 +101,7 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
     await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
+
 @router.callback_query(F.data == "create_image_refs_new")
 async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContext):
     """Показывает меню создания фото - начинаем с загрузки референсов"""
@@ -1867,7 +1868,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                     f"✨ Модель: <code>{current_service}</code>\n"
                     f"📐 Формат: <code>{current_ratio}</code>\n\n"
                     f"Введите промпт для генерации:",
-                    reply_markup=get_create_image_keyboard(current_service, current_ratio),
+                    reply_markup=get_create_image_keyboard(
+                        current_service, current_ratio
+                    ),
                     parse_mode="HTML",
                 )
                 await state.set_state(GenerationStates.waiting_for_input)
@@ -2124,7 +2127,9 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
 
 
 @router.message(GenerationStates.waiting_for_video_prompt, F.photo)
-async def process_photo_for_video_prompt_state(message: types.Message, state: FSMContext):
+async def process_photo_for_video_prompt_state(
+    message: types.Message, state: FSMContext
+):
     """
     Обрабатывает загруженное фото когда пользователь в состоянии waiting_for_video_prompt.
     Это нужно для режима imgtxt (фото+текст → видео), когда пользователь загружает фото
@@ -2147,7 +2152,9 @@ async def process_photo_for_video_prompt_state(message: types.Message, state: FS
 
         if image_url:
             await state.update_data(v_image_url=image_url)
-            logger.info(f"Saved start image for video (waiting_for_video_prompt state): {image_url}")
+            logger.info(
+                f"Saved start image for video (waiting_for_video_prompt state): {image_url}"
+            )
         else:
             await message.answer(
                 "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
@@ -4980,18 +4987,22 @@ async def run_motion_control(message: types.Message, state: FSMContext, prompt: 
     video_options = data.get("video_options", {})
 
     if not uploaded_image:
-        await message.answer("❌ Ошибка: изображение персонажа не найдено. Начните заново.")
+        await message.answer(
+            "❌ Ошибка: изображение персонажа не найдено. Начните заново."
+        )
         await state.clear()
         return
 
     if not motion_video_url and not motion_video_url_data:
-        await message.answer("❌ Ошибка: видео-референс движения не найден. Начните заново.")
+        await message.answer(
+            "❌ Ошибка: видео-референс движения не найден. Начните заново."
+        )
         await state.clear()
         return
 
     # Для Motion Control используем модель v26_motion_pro
     motion_model = "v26_motion_pro"
-    
+
     # Используем preset_manager для получения стоимости с учётом длительности
     duration = video_options.get("duration", 5)
     cost = preset_manager.get_video_cost(motion_model, duration)
@@ -5568,7 +5579,9 @@ async def start_no_preset_video_from_message(
             ]
 
         # DEBUG: Add logging for image_url and elements
-        logger.info(f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}")
+        logger.info(
+            f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}"
+        )
 
         # Генерируем с webhook для асинхронной обработки
         # ВАЖНО: Для Kling 3 нужно передавать и image_url (основное изображение), и elements (референсы для консистентности)
@@ -5579,7 +5592,7 @@ async def start_no_preset_video_from_message(
             aspect_ratio=v_ratio,
             webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
             image_url=image_url,  # Всегда передаем основное изображение
-            elements=elements,    # Всегда передаем elements (могут быть None)
+            elements=elements,  # Всегда передаем elements (могут быть None)
         )
 
         if result and result.get("task_id"):
@@ -5672,7 +5685,9 @@ async def start_no_preset_video_generation(
         from bot.services.kling_service import kling_service
 
         # DEBUG: Add logging for image_url and elements
-        logger.info(f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}")
+        logger.info(
+            f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}"
+        )
 
         # Генерируем с webhook для асинхронной обработки
         result = await kling_service.generate_video(
