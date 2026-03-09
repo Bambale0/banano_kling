@@ -654,6 +654,19 @@ class NovitaService:
         )
         return (1024, 1024)
 
+    async def get_models(self) -> Optional[Dict]:
+        """
+        Get list of available models and LORAs
+
+        API: GET /v3/model
+
+        Returns:
+            Dict with models list and pagination info
+        """
+        url = f"{self.BASE_URL}/v3/model"
+        logger.info("Fetching available models from Novita API")
+        return await self._get_request(url)
+
     async def get_task_result(self, task_id: str) -> Optional[Dict]:
         """
         Get task result (async polling)
