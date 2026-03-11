@@ -37,7 +37,7 @@ class Config:
     # Вебхуки
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")
     WEBHOOK_PATH: str = "/webhook"
-    WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8080"))
+    WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")

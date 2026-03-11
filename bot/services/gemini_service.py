@@ -161,10 +161,17 @@ MAXIMUM FIDELITY CHARACTER CONSISTENCY:
             f"Using resolution {resolution} for model {model}, preserve_faces={preserve_faces}"
         )
 
+        # Limit refs per model docs
+        max_refs = 5 if "flash" in model.lower() else 14
+        reference_images = reference_images[:max_refs] if reference_images else []
+        reference_image_urls = (
+            reference_image_urls[:max_refs] if reference_image_urls else []
+        )
+
         # Добавляем инструкции по сохранению лиц если есть референсы и включен режим
         if preserve_faces and (reference_images or reference_image_urls):
             # Определяем количество персонажей по референсам
-            ref_count = len(reference_images or reference_image_urls or [])
+            ref_count = len(reference_images) + len(reference_image_urls)
             if ref_count > 0:
                 # Добавляем специальные инструкции для сохранения лиц
                 enhanced_prompt = f"""{prompt}
@@ -256,34 +263,19 @@ Use the {ref_count} reference images to maintain character consistency and prese
             else:
                 default_resolution = "2K"  # Flash: 2K по умолчанию
 
-            # Формируем контент
-            contents = []
+            # Формируем контент - PROMPT FIRST per docs!
+            contents = [{"type": "text", "text": prompt}]
 
-            # Добавляем референсные изображения по URL (приоритет) - до 14 штук
-            # Согласно документации: до 4 персонажей, до 10 объектов с высокой точностью
+            # Добавляем референсные изображения по URL (приоритет)
             if reference_image_urls:
-                # Первые 4 референса - персонажи (высокий приоритет для лиц)
-                character_refs = reference_image_urls[:4]
-                # Остальные - объекты/стиль
-                object_refs = reference_image_urls[4:14]
-
-                for img_url in character_refs:
+                for img_url in reference_image_urls:
                     contents.append(
                         {"type": "image_url", "image_url": {"url": img_url}}
                     )
-                for img_url in object_refs:
-                    contents.append(
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    )
-                logger.info(
-                    f"Added {len(character_refs)} character refs + {len(object_refs)} object refs"
-                )
+                logger.info(f"Added {len(reference_image_urls)} ref URLs")
             # Fallback на bytes
             elif reference_images:
-                character_refs = reference_images[:4]
-                object_refs = reference_images[4:14]
-
-                for ref_img in character_refs:
+                for ref_img in reference_images:
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
                     contents.append(
                         {
@@ -291,19 +283,9 @@ Use the {ref_count} reference images to maintain character consistency and prese
                             "image_url": {"url": f"data:image/png;base64,{b64_image}"},
                         }
                     )
-                for ref_img in object_refs:
-                    b64_image = base64.b64encode(ref_img).decode("utf-8")
-                    contents.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64_image}"},
-                        }
-                    )
-                logger.info(
-                    f"Added {len(character_refs)} character refs + {len(object_refs)} object refs (bytes)"
-                )
+                logger.info(f"Added {len(reference_images)} ref bytes")
 
-            # Если есть входное изображение по URL (приоритет) - главное изображение
+            # Если есть входное изображение по URL (приоритет) - главное изображение LAST
             if image_input_url:
                 contents.append(
                     {"type": "image_url", "image_url": {"url": image_input_url}}
@@ -317,9 +299,6 @@ Use the {ref_count} reference images to maintain character consistency and prese
                         "image_url": {"url": f"data:image/png;base64,{b64_image}"},
                     }
                 )
-
-            # Добавляем текст с инструкциями по сохранению лиц
-            contents.append({"type": "text", "text": prompt})
 
             headers = {
                 "Authorization": f"Bearer {self.nanobanana_key}",
@@ -341,20 +320,15 @@ Use the {ref_count} reference images to maintain character consistency and prese
             }
 
             # Добавляем image_config если указан (согласно banana_api.md - вложенный imageConfig)
-            # Используем переданное resolution или default в зависимости от модели
-            effective_resolution = (
-                resolution if resolution != default_resolution else default_resolution
-            )
-            if aspect_ratio or effective_resolution != default_resolution:
+            # Flash: NO imageSize (fixed res), Pro: yes
+            if aspect_ratio or ("pro" in model.lower() and resolution):
                 payload["generationConfig"]["imageConfig"] = {}
                 if aspect_ratio:
                     payload["generationConfig"]["imageConfig"][
                         "aspectRatio"
                     ] = aspect_ratio
-                if effective_resolution != default_resolution:
-                    payload["generationConfig"]["imageConfig"][
-                        "imageSize"
-                    ] = effective_resolution
+                if "pro" in model.lower() and resolution:
+                    payload["generationConfig"]["imageConfig"]["imageSize"] = resolution
 
             # Добавляем tools для search grounding
             if enable_search:
@@ -413,17 +387,26 @@ Use the {ref_count} reference images to maintain character consistency and prese
 
             session = await self._get_session()
 
-            contents = []
+            # Добавляем aspect_ratio в промпт (согласно banana_api.md - работаем через текст)
+            final_prompt = prompt
+            if aspect_ratio and aspect_ratio != "1:1":
+                final_prompt = (
+                    f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
+                )
+                logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
 
-            # Референсные изображения по URL (приоритет)
+            # Формируем контент - PROMPT FIRST per docs!
+            contents = [{"type": "text", "text": final_prompt}]
+
+            # Референсные изображения по URL (приоритет) - OpenRouter limit 5
             if reference_image_urls:
-                for img_url in reference_image_urls[:5]:  # OpenRouter ограничение
+                for img_url in reference_image_urls[:5]:
                     contents.append(
                         {"type": "image_url", "image_url": {"url": img_url}}
                     )
             # Fallback на bytes
             elif reference_images:
-                for ref_img in reference_images[:5]:  # OpenRouter ограничение
+                for ref_img in reference_images[:5]:
                     b64_image = base64.b64encode(ref_img).decode("utf-8")
                     contents.append(
                         {
@@ -447,18 +430,6 @@ Use the {ref_count} reference images to maintain character consistency and prese
                     }
                 )
 
-            # Добавляем aspect_ratio в промпт (согласно banana_api.md - работаем через текст)
-            final_prompt = prompt
-            if aspect_ratio and aspect_ratio != "1:1":
-                final_prompt = (
-                    f"Generate image in {aspect_ratio} aspect ratio. {prompt}"
-                )
-                logger.info(f"Added aspect_ratio to prompt: {aspect_ratio}")
-
-            # Убедимся, что в contents есть текстовая часть с финальным промптом
-            # Явно добавляем текст в конец.
-            contents.append({"type": "text", "text": final_prompt})
-
             headers = {
                 "Authorization": f"Bearer {self.openrouter_key}",
                 "Content-Type": "application/json",
@@ -475,7 +446,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
             if aspect_ratio:
                 image_config["aspectRatio"] = aspect_ratio
 
-            # Только для Gemini 3.x моделей добавляем imageSize
+            # Только для Gemini 3.x моделей добавляем imageSize (flash fixed)
             if is_gemini3 and resolution:
                 image_config["imageSize"] = resolution
 
@@ -687,6 +658,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
             else:
                 default_resolution = "2K"  # Flash: 2K по умолчанию
 
+            # PROMPT FIRST per docs
             contents = [prompt]
 
             # Добавляем референсные изображения

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -91,9 +92,8 @@ async def on_startup(bot: Bot):
     """Действия при старте бота"""
     logger.info("Bot starting...")
 
-    # Инициализируем базу данных
-    await init_db()
-    logger.info("Database initialized")
+    # База данных уже инициализирована в main() функции
+    logger.info("Database already initialized")
 
     # Устанавливаем вебхук для Telegram (если используем webhook mode)
     if config.WEBHOOK_HOST:
@@ -597,6 +597,11 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
 
+    # Serve static uploads directory to fix 404 errors for Novita image downloads
+    app.router.add_static(
+        "/uploads/", path="static/uploads", show_index=False, name="uploads"
+    )
+
     # Вебхук Telegram
     async def telegram_webhook_handler(request: web.Request) -> web.Response:
         return await handle_telegram_webhook(request, bot, dp)
@@ -635,6 +640,11 @@ async def main():
             "BOT_TOKEN is not set! Please set the BOT_TOKEN environment variable."
         )
         sys.exit(1)
+
+    # Инициализируем базу данных ДО создания бота
+    logger.info("Initializing database before bot startup...")
+    await init_db()
+    logger.info("Database initialized successfully")
 
     # Создаём бота
     bot = Bot(

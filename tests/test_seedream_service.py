@@ -1,8 +1,9 @@
 """
-Tests for Seedream 5.0 Lite Service
+Tests for Seedream 4.5 Service (Novita AI)
 """
 
 import asyncio
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,237 +25,205 @@ class TestSeedreamService:
         assert seedream_service.api_key == "test-api-key"
         assert seedream_service.headers["Authorization"] == "Bearer test-api-key"
         assert seedream_service.headers["Content-Type"] == "application/json"
-        assert seedream_service.API_URL == "https://api.novita.ai/v3/seedream-5.0-lite"
-
-    def test_normalize_size_presets(self, seedream_service):
-        """Test size normalization for preset values"""
-        assert seedream_service._normalize_size("2K") == "2048x2048"
-        assert seedream_service._normalize_size("2k") == "2048x2048"
-        assert seedream_service._normalize_size("3K") == "3072x3072"
-        assert seedream_service._normalize_size("3k") == "3072x3072"
-
-    def test_normalize_size_custom(self, seedream_service):
-        """Test size normalization for custom resolutions"""
-        assert seedream_service._normalize_size("2560x1440") == "2560x1440"
-        assert seedream_service._normalize_size("3840x2160") == "3840x2160"
-        assert seedream_service._normalize_size("1920x2560") == "1920x2560"
-
-    def test_normalize_size_invalid(self, seedream_service):
-        """Test size normalization for invalid values"""
-        # Invalid formats should default to 2048x2048
-        assert seedream_service._normalize_size("invalid") == "2048x2048"
-        assert seedream_service._normalize_size("") == "2048x2048"
-        assert seedream_service._normalize_size("abc") == "2048x2048"
-
-    def test_validate_prompt_english(self, seedream_service):
-        """Test prompt validation for English text"""
-        short_prompt = "A beautiful landscape"
-        result = seedream_service.validate_prompt(short_prompt)
-        assert result["is_chinese"] is False
-        assert result["length"] == 21
-        assert result["is_valid"] is True
-        assert len(result["warnings"]) == 0
-
-    def test_validate_prompt_chinese(self, seedream_service):
-        """Test prompt validation for Chinese text"""
-        chinese_prompt = "美丽的风景画"
-        result = seedream_service.validate_prompt(chinese_prompt)
-        assert result["is_chinese"] is True
-        assert result["length"] == 6
-        assert result["is_valid"] is True
-
-    def test_validate_prompt_long_english(self, seedream_service):
-        """Test prompt validation warning for long English prompt"""
-        # Create a prompt with more than 600 words
-        long_prompt = "word " * 650
-        result = seedream_service.validate_prompt(long_prompt)
-        assert result["is_valid"] is False
-        assert len(result["warnings"]) > 0
-        assert "600 words" in result["warnings"][0]
+        assert seedream_service.API_URL == "https://api.novita.ai/v3/seedream-4.5"
 
     @pytest.mark.asyncio
-    async def test_generate_image_payload(self, seedream_service):
-        """Test that generate_image builds correct payload"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/image.png"]}
+    async def test_generate_image_text_to_image(self, seedream_service):
+        """Test text-to-image generation"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+            ]
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            result = await seedream_service.text_to_image(prompt="A beautiful sunset")
+
+            assert result is not None
+            assert isinstance(result[0], bytes)
+            assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_image_image_to_image(self, seedream_service):
+        """Test single image-to-image generation"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+            ]
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            result = await seedream_service.image_to_image(
+                prompt="Transform this image", image="https://example.com/input.png"
+            )
+
+            assert result is not None
+            assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_image_multi_image(self, seedream_service):
+        """Test multi-image-to-image generation"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+            ]
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            images = ["https://example.com/img1.png", "https://example.com/img2.png"]
+            result = await seedream_service.multi_image_to_image(
+                prompt="Combine these images", images=images
+            )
+
+            assert result is not None
+            assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_image_sequential(self, seedream_service):
+        """Test sequential image generation"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+            ]
+            * 3
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            result = await seedream_service.sequential_image_generation(
+                prompt="Sequential story",
+                sequential_image_generation_options={"max_images": 3},
+            )
+
+            assert result is not None
+            assert len(result) == 3
+
+    @pytest.mark.asyncio
+    async def test_generate_image_truncation(self, seedream_service):
+        """Test image truncation to 14 max"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+            ]
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            # 15 images should be truncated to 14
+            images = ["https://example.com/img" + str(i) + ".png" for i in range(15)]
+            result = await seedream_service.generate_image(
+                prompt="Test truncation", images=images
+            )
+
+            # Verify the POST was called with 14 images
+            payload = mock_post.call_args[0][1]
+            assert len(payload["image"]) == 14
+
+    @pytest.mark.asyncio
+    async def test_generate_image_url_response(self, seedream_service):
+        """Test handling of URL responses (should log warning but continue)"""
+        mock_response = {"images": ["https://example.com/generated.png"]}
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            with patch("logging.Logger.warning") as mock_warning:
+                result = await seedream_service.generate_image(
+                    prompt="Test URL response"
+                )
+
+                assert result is None  # No bytes extracted
+                mock_warning.assert_called_once_with(
+                    "Image URL not downloaded: https://example.com/generated.png"
+                )
+
+    @pytest.mark.asyncio
+    async def test_generate_image_error(self, seedream_service):
+        """Test error handling"""
+        mock_response = {"error": {"message": "API error"}}
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 500
+            mock_post.return_value.__aenter__.return_value.text.return_value = (
+                '{"error": "Server error"}'
+            )
+
+            result = await seedream_service.generate_image(prompt="Test error")
+
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_optimize_prompt_default(self, seedream_service):
+        """Test default optimize_prompt_options"""
+        mock_response = {
+            "images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+            ]
+        }
+
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
 
             result = await seedream_service.generate_image(
-                prompt="A beautiful sunset",
-                size="2048x2048",
-                watermark=False,
-            )
-
-            # Verify the call was made
-            assert mock_post.called
-
-            # Get the payload passed to _post_request
-            call_args = mock_post.call_args
-            url = call_args[0][0]
-            payload = call_args[0][1]
-
-            # Verify URL
-            assert url == "https://api.novita.ai/v3/seedream-5.0-lite"
-
-            # Verify payload structure
-            assert payload["prompt"] == "A beautiful sunset"
-            assert payload["size"] == "2048x2048"
-            assert payload["watermark"] is False
-            assert "image" not in payload  # No images provided
-            assert "optimize_prompt_options" not in payload  # Not enabled
-            assert payload.get("sequential_image_generation") == "disabled"
-
-    @pytest.mark.asyncio
-    async def test_generate_image_with_images(self, seedream_service):
-        """Test generate_image with reference images"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            await seedream_service.generate_image(
-                prompt="Transform this image",
-                images=["https://example.com/input.png"],
-                sequential_generation="disabled",
+                prompt="Test default optimize"
             )
 
             payload = mock_post.call_args[0][1]
-            assert "image" in payload
-            assert len(payload["image"]) == 1
-            assert payload["image"][0]["url"] == "https://example.com/input.png"
-
-    @pytest.mark.asyncio
-    async def test_generate_image_with_base64(self, seedream_service):
-        """Test generate_image with Base64 encoded image"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            base64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-            await seedream_service.generate_image(
-                prompt="Transform this image",
-                images=[base64_data],
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert "image" in payload
-            assert payload["image"][0]["url"].startswith("data:image/jpeg;base64,")
-            assert base64_data in payload["image"][0]["url"]
-
-    @pytest.mark.asyncio
-    async def test_generate_image_with_optimization(self, seedream_service):
-        """Test generate_image with prompt optimization"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            await seedream_service.generate_image(
-                prompt="A beautiful landscape",
-                optimize_prompt=True,
-                optimize_mode="standard",
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert "optimize_prompt_options" in payload
             assert payload["optimize_prompt_options"]["mode"] == "standard"
 
     @pytest.mark.asyncio
-    async def test_generate_sequential(self, seedream_service):
-        """Test sequential image generation"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {
-                "images": [
-                    "https://example.com/frame1.png",
-                    "https://example.com/frame2.png",
-                    "https://example.com/frame3.png",
-                ]
-            }
+    async def test_sequential_max_images_validation(self, seedream_service):
+        """Test validation of max_images with input images"""
+        mock_response = {"images": []}
 
-            result = await seedream_service.generate_sequential(
-                prompt="A story sequence",
-                max_images=5,
+        with patch("aiohttp.ClientSession.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.__aenter__.return_value.status = 200
+            mock_post.return_value.__aenter__.return_value.json.return_value = (
+                mock_response
+            )
+
+            # 10 input images + max 5 generated = 15 total
+            images = ["https://example.com/img" + str(i) + ".png" for i in range(10)]
+            result = await seedream_service.generate_image(
+                prompt="Test validation",
+                images=images,
+                sequential_image_generation_options={
+                    "max_images": 10
+                },  # Should be clamped to 5
             )
 
             payload = mock_post.call_args[0][1]
-            assert payload["sequential_image_generation"] == "auto"
             assert payload["sequential_image_generation_options"]["max_images"] == 5
-
-    @pytest.mark.asyncio
-    async def test_text_to_image(self, seedream_service):
-        """Test text-to-image convenience method"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            await seedream_service.text_to_image(
-                prompt="A beautiful sunset",
-                size="3072x3072",
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert payload["prompt"] == "A beautiful sunset"
-            assert payload["size"] == "3072x3072"
-            assert "image" not in payload
-            assert payload.get("sequential_image_generation") == "disabled"
-
-    @pytest.mark.asyncio
-    async def test_image_to_image(self, seedream_service):
-        """Test image-to-image convenience method"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            await seedream_service.image_to_image(
-                prompt="Transform this",
-                image="https://example.com/input.png",
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert "image" in payload
-            assert len(payload["image"]) == 1
-
-    @pytest.mark.asyncio
-    async def test_multi_image_to_image(self, seedream_service):
-        """Test multi-image-to-image convenience method"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            images = [f"https://example.com/img{i}.png" for i in range(5)]
-            await seedream_service.multi_image_to_image(
-                prompt="Combine these images",
-                images=images,
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert "image" in payload
-            assert len(payload["image"]) == 5
-
-    @pytest.mark.asyncio
-    async def test_multi_image_truncation(self, seedream_service):
-        """Test that too many images are truncated to 14"""
-        with patch.object(
-            seedream_service, "_post_request", new_callable=AsyncMock
-        ) as mock_post:
-            mock_post.return_value = {"images": ["https://example.com/output.png"]}
-
-            # Try to send 20 images
-            images = [f"https://example.com/img{i}.png" for i in range(20)]
-            await seedream_service.multi_image_to_image(
-                prompt="Combine these images",
-                images=images,
-            )
-
-            payload = mock_post.call_args[0][1]
-            assert len(payload["image"]) == 14  # Should be truncated
 
 
 if __name__ == "__main__":

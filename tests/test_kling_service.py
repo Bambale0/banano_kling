@@ -244,7 +244,7 @@ class TestBuildV3Payload:
         assert payload["aspect_ratio"] == "9:16"
 
     def test_image_list_first_frame(self):
-        """Тест: image_list с first_frame"""
+        """Тест: start_image_url в Kling 3 Pro/Std"""
         from bot.services.kling_service import KlingService
 
         service = KlingService(api_key="test", base_url="https://test.com")
@@ -266,10 +266,8 @@ class TestBuildV3Payload:
             multi_shot=False,
         )
 
-        assert "image_list" in payload
-        assert len(payload["image_list"]) == 1
-        assert payload["image_list"][0]["image_url"] == "https://example.com/start.jpg"
-        assert payload["image_list"][0]["type"] == "first_frame"
+        assert "start_image_url" in payload
+        assert payload["start_image_url"] == "https://example.com/start.jpg"
 
     def test_image_list_end_frame(self):
         """Тест: image_list с end_frame"""

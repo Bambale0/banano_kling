@@ -245,6 +245,7 @@ def get_create_image_keyboard(
     nano_check = "✅ " if current_service == "nanobanana" else ""
     pro_check = "✅ " if current_service == "banana_pro" else ""
     seedream_check = "✅ " if current_service == "seedream" else ""
+    seedream45_check = "✅ " if current_service == "seedream_45" else ""
     z5_check = "✅ " if current_service == "z_image_turbo_lora" else ""
 
     builder.button(
@@ -260,8 +261,12 @@ def get_create_image_keyboard(
         callback_data="model_banana_pro",
     )
     builder.button(
-        text=f"{seedream_check}🎨 Seedream • {seedream_cost}🍌",
+        text=f"{seedream_check}🎨 Seedream 5.0 • {seedream_cost}🍌",
         callback_data="model_seedream",
+    )
+    builder.button(
+        text=f"{seedream45_check}🌟 Seedream 4.5 • {seedream_cost}🍌",
+        callback_data="model_seedream_45",
     )
     builder.button(
         text=f"{z5_check}🚀 Z5 Lora • {z5_cost}🍌",
@@ -528,9 +533,7 @@ def get_image_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "1:1"):
 def get_model_selection_keyboard(preset_id: str, current_model: str = None):
     """Клавиатура выбора модели"""
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="⚡ Nano Banana Flash", callback_data=f"model_{preset_id}_flash"
-    )
+    builder.button(text="⚡ Nano Banana Flash", callback_data=f"model_{preset_id}_flash")
     builder.button(text="💎 Nano Banana Pro", callback_data=f"model_{preset_id}_pro")
     builder.button(text="🔙 Назад", callback_data=f"preset_{preset_id}")
     builder.adjust(1)

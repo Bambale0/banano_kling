@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import logging
 import os
@@ -39,7 +40,6 @@ from bot.keyboards import (
     get_main_menu_keyboard,
     get_model_selection_keyboard,
     get_multiturn_keyboard,
-    get_preset_action_keyboard,
     get_prompt_tips_keyboard,
     get_reference_images_confirmation_keyboard,
     get_reference_images_keyboard,
@@ -53,6 +53,7 @@ from bot.keyboards import (
 )
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
+from bot.services.seedream_service import seedream_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
@@ -784,7 +785,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "model_seedream")
 async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Seedream"""
+    """Выбор модели Seedream 5.0 (Novita)"""
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
 
@@ -793,6 +794,24 @@ async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="seedream",
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "model_seedream_45")
+async def handle_model_seedream_45(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор модели Seedream 4.5 (Novita)"""
+    data = await state.get_data()
+    current_ratio = data.get("img_ratio", "1:1")
+
+    await state.update_data(img_service="seedream_45")
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_image_keyboard(
+            current_service="seedream_45",
             current_ratio=current_ratio,
         )
     )
@@ -1154,11 +1173,7 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
                         text="⚙️ Изменить опции", callback_data="video_options_change"
                     )
                 ],
-                [
-                    types.InlineKeyboardButton(
-                        text="🔙 Назад", callback_data="back_main"
-                    )
-                ],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")],
             ]
         ),
         parse_mode="HTML",
@@ -1467,144 +1482,6 @@ async def show_video_edit_options(
 # =============================================================================
 # ОБРАБОТЧИКИ ПРЕСЕТОВ (ЕСЛИ НУЖНО ВЕРНУТЬ)
 # =============================================================================
-
-
-@router.callback_query(F.data.startswith("cat_"))
-async def show_category(callback: types.CallbackQuery):
-    """Показывает пресеты выбранной категории"""
-    category = callback.data.replace("cat_", "")
-    presets = preset_manager.get_category_presets(category)
-    categories = preset_manager.get_categories()
-
-    if not presets:
-        await callback.answer("Категория пуста")
-        return
-
-    if category not in categories:
-        await callback.answer("Категория не найдена")
-        return
-
-    user_credits = await get_user_credits(callback.from_user.id)
-
-    # UX: Добавляем подсказку для пользователя
-    hint = UserHints.get_hint_for_stage("category")
-
-    await callback.message.edit_text(
-        f"📂 <b>{categories[category]['name']}</b>\n"
-        f"📝 {categories[category].get('description', '')}\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
-        f"Выберите пресет:\n\n"
-        f"<i>{hint}</i>",
-        reply_markup=get_category_keyboard(category, presets, user_credits),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data.startswith("preset_"))
-async def show_preset_details(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает детали пресета и варианты действий"""
-    preset_id = callback.data.replace("preset_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    # Инициализируем опции генерации согласно banana_api.md
-    generation_options = {
-        "model": preset.model,
-        "aspect_ratio": preset.aspect_ratio or "1:1",
-        "resolution": "1K",
-        "enable_search": False,
-        "reference_images": [],
-        "person_references": [],
-    }
-
-    # Для видео свои опции
-    video_options = {}
-    if preset.category in ["video_generation", "video_editing"]:
-        video_options = {
-            "duration": preset.duration or 5,
-            "aspect_ratio": preset.aspect_ratio or "16:9",
-            "quality": getattr(preset, "quality", "std"),
-            "generate_audio": True,
-        }
-
-    await state.update_data(
-        preset_id=preset_id,
-        video_options=video_options,
-        generation_options=generation_options,
-    )
-
-    user_credits = await get_user_credits(callback.from_user.id)
-    is_admin = config.is_admin(callback.from_user.id)
-
-    # Админы могут использовать бесплатно
-    if not is_admin and user_credits < preset.cost:
-        error_msg = get_error_handling()["no_credits"].format(
-            cost=preset.cost, credits=user_credits
-        )
-        await callback.message.edit_text(
-            error_msg,
-            reply_markup=get_back_keyboard("back_main"),
-            parse_mode="HTML",
-        )
-        return
-
-    # Формируем текст с информацией о пресете
-    text = f"🎯 <b>{preset.name}</b>\n\n"
-    text += f"🍌 Стоимость: <code>{preset.cost}</code>🍌\n"
-    text += f"🤖 Модель: <code>{preset.model}</code>\n"
-
-    if hasattr(preset, "description") and preset.description:
-        text += f"\n📝 {preset.description}\n"
-
-    # Показываем опции для видео
-    if preset.category in ["video_generation", "video_editing"]:
-        opts = video_options
-        quality_emoji = "💎" if opts.get("quality") == "pro" else "⚡"
-        text += f"\n🎬 <b>Опции видео:</b>\n"
-        text += f"   ⏱ Длительность: <code>{opts.get('duration', 5)} сек</code>\n"
-        text += f"   📐 Формат: <code>{opts.get('aspect_ratio', '16:9')}</code>\n"
-        text += f"   {quality_emoji} Качество: <code>{opts.get('quality', 'std').upper()}</code>\n"
-        text += f"   🔊 Звук: <code>{'ВКЛ' if opts.get('generate_audio') else 'ВЫКЛ'}</code>\n"
-
-    # Показываем опции для изображений
-    elif preset.category in ["image_generation", "image_editing"]:
-        # Добавляем секцию опций генерации (согласно banana_api.md)
-        text += f"\n⚙️ <b>Опции генерации:</b>\n"
-        model_emoji = "💎" if "pro" in generation_options["model"] else "⚡"
-        text += f"   {model_emoji} Модель: <code>{generation_options['model']}</code>\n"
-        text += f"   📐 Формат: <code>{generation_options['aspect_ratio']}</code>\n"
-        text += f"   👁 Разрешение: <code>{generation_options['resolution']}</code>\n"
-        if generation_options["enable_search"]:
-            text += f"   🔍 Поиск: <code>ВКЛ</code>\n"
-
-    if preset.aspect_ratio and preset.category not in [
-        "video_generation",
-        "video_editing",
-    ]:
-        text += f"   📐 Формат: <code>{preset.aspect_ratio}</code>\n"
-
-    # Добавляем подсказку
-    hint = UserHints.get_hint_for_stage("preset")
-    text += f"\n<i>{hint}</i>"
-
-    # Выбираем клавиатуру в зависимости от категории
-    if preset.category in ["image_generation", "image_editing"]:
-        reply_markup = get_preset_action_keyboard(
-            preset_id, preset.requires_input, preset.category
-        )
-    else:
-        reply_markup = get_preset_action_keyboard(
-            preset_id, preset.requires_input, preset.category
-        )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=reply_markup,
-        parse_mode="HTML",
-    )
 
 
 # =============================================================================
@@ -2393,11 +2270,7 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         await run_motion_control(message, state, user_prompt)
         return
 
-    # Старый код для пресетов
-    if not preset_id:
-        await message.answer("Ошибка: пресет не выбран. Начните заново.")
-        await state.clear()
-        return
+    # Старый код для пресетов удалён - теперь только новый UX без пресетов
 
     preset = preset_manager.get_preset(preset_id)
 
@@ -2521,7 +2394,7 @@ async def start_no_preset_generation(
                     await complete_video_task(task_id, saved_url)
 
                 # Отправляем превью (photo) и оригинал как документ
-                photo = types.BufferedInputFile(result, filename="generated.png")
+                photo = types.BufferedInputFile(image_bytes, filename="generated.png")
                 await message.answer_photo(
                     photo=photo,
                     caption=f"✅ <b>Готово!</b>\n\n" f"<code>{cost}</code>🍌 списано",
@@ -3018,7 +2891,7 @@ async def generate_image(
                 await complete_video_task(task_id, saved_url)
 
             # Отправляем результат с опциями многоходового редактирования
-            photo = types.BufferedInputFile(result, filename="generated.png")
+            photo = types.BufferedInputFile(image_bytes, filename="generated.png")
 
             success_text = get_success_message(preset.name, preset.cost)
             if saved_url:
@@ -3255,9 +3128,7 @@ async def run_editing_inline(
                     await _send_download_link(message.answer, saved_url)
             else:
                 await add_credits(message.from_user.id, cost)
-                await message.answer(
-                    "❌ Не удалось отредактировать. Бананы возвращены."
-                )
+                await message.answer("❌ Не удалось отредактировать. Бананы возвращены.")
 
         except Exception as e:
             logger.exception(f"Edit error: {e}")
@@ -3622,9 +3493,7 @@ async def confirm_image_references(callback: types.CallbackQuery, state: FSMCont
     # Переходим к вводу промпта
     await state.set_state(GenerationStates.waiting_for_input)
 
-    ref_text = (
-        f"\n📎 Референсов: <code>{len(ref_images)}</code>\n" if ref_images else ""
-    )
+    ref_text = f"\n📎 Референсов: <code>{len(ref_images)}</code>\n" if ref_images else ""
 
     await callback.message.edit_text(
         f"🖼 <b>Генерация фото</b>\n\n"
@@ -3803,18 +3672,6 @@ async def run_no_preset_image_generation(
     # Получаем загруженные референсные изображения
     raw_reference_images = data.get("reference_images", [])
 
-    # Конвертируем байты референсных изображений в URL для Novita API
-    reference_images = []
-    for img_data in raw_reference_images:
-        if isinstance(img_data, bytes):
-            # Сохраняем как файл и получаем URL
-            img_url = save_uploaded_file(img_data, "png")
-            if img_url:
-                reference_images.append(img_url)
-        elif isinstance(img_data, str):
-            # Уже URL
-            reference_images.append(img_data)
-
     # Определяем пользователя (для callback message.from_user это бот)
     if user_id is None:
         user_id = message.from_user.id
@@ -3834,6 +3691,11 @@ async def run_no_preset_image_generation(
         service = novita_service
         model_name = "🎨 Seedream"
         cost = preset_manager.get_generation_cost("seedream")
+    elif image_service == "seedream_45":
+        service = seedream_service
+        model_name = "🌟 Seedream 4.5"
+        cost = preset_manager.get_generation_cost("seedream")
+
     elif image_service == "z_image_turbo":
         # Z-Image Turbo LoRA через Novita
         from bot.services.novita_service import novita_service
@@ -3842,12 +3704,12 @@ async def run_no_preset_image_generation(
         model_name = "🚀 Z-Image Turbo LoRA"
         cost = preset_manager.get_generation_cost("z_image_turbo")
     else:
-        # Nano Banana (Gemini)
+        # Nano Banana Pro (Gemini) - ИСПРАВЛЕНО: используем banana_pro для nanobanana pro
         from bot.services.gemini_service import gemini_service
 
         service = gemini_service
-        model_name = "🍌 Nano Banana"
-        cost = preset_manager.get_generation_cost("gemini-2.5-flash")
+    model_name = "🍌 Nano Banana"
+    cost = preset_manager.get_generation_cost("gemini-2.5-flash-image")
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
@@ -3876,6 +3738,16 @@ async def run_no_preset_image_generation(
         if image_service == "novita" or image_service == "flux_pro":
             # FLUX.2 Pro через Novita - async API, returns task_id
             size = f"{aspect_ratio}_hq"
+            # Конвертируем байты референсов в URL для Novita
+            reference_images = []
+            for img_data in raw_reference_images:
+                if isinstance(img_data, bytes):
+                    img_url = save_uploaded_file(img_data, "png")
+                    if img_url:
+                        reference_images.append(img_url)
+                elif isinstance(img_data, str):
+                    reference_images.append(img_data)
+
             task_response = await service.generate_image(
                 prompt=prompt,
                 size=size,
@@ -3915,18 +3787,23 @@ async def run_no_preset_image_generation(
                         model_name=model_name,
                     )
                 )
-            else:
-                await processing.delete()
-                await add_credits(user_id, cost)
-                await message.answer(
-                    "❌ Не удалось создать задачу. Бананы возвращены.",
-                    reply_markup=get_main_menu_keyboard(),
-                )
-            await state.clear()
+
+                await state.clear()
+                return
             return
         elif image_service == "seedream":
             # Seedream через Novita - может возвращать как task_id, так и сразу изображение
             size = "2048x2048"  # Default 2K for Seedream
+            # Конвертируем байты референсов в URL для Novita
+            reference_images = []
+            for img_data in raw_reference_images:
+                if isinstance(img_data, bytes):
+                    img_url = save_uploaded_file(img_data, "png")
+                    if img_url:
+                        reference_images.append(img_url)
+                elif isinstance(img_data, str):
+                    reference_images.append(img_data)
+
             task_response = await service.generate_seedream_image(
                 prompt=prompt,
                 size=size,
@@ -4008,17 +3885,9 @@ async def run_no_preset_image_generation(
                             model_name=model_name,
                         )
                     )
+
                     await state.clear()
                     return
-
-            # Ошибка
-            await processing.delete()
-            await add_credits(message.from_user.id, cost)
-            await message.answer(
-                "❌ Не удалось создать задачу. Бананы возвращены.",
-                reply_markup=get_main_menu_keyboard(),
-            )
-            await state.clear()
             return
         elif image_service == "z_image_turbo":
             # Z-Image Turbo LoRA через Novita
@@ -4071,12 +3940,117 @@ async def run_no_preset_image_generation(
                 )
             await state.clear()
             return
-        else:
-            # Gemini uses aspect_ratio and returns bytes directly
+
+        elif image_service == "seedream_45":
+            service = seedream_service
+            model_name = "🌟 Seedream 4.5"
+            cost = preset_manager.get_generation_cost("seedream")
+
+            aspect_to_size = {
+                "1:1": "2048x2048",
+                "16:9": "2560x1440",
+                "9:16": "1440x2560",
+                "4:3": "2560x1920",
+                "3:4": "1920x2560",
+                "3:2": "2560x1707",
+                "2:3": "1707x2560",
+            }
+            size = aspect_to_size.get(aspect_ratio, "2048x2048")
+
+            # Convert reference images to URLs (API expects URLs, not base64)
+            reference_images = []
+            for img_data in raw_reference_images:
+                if isinstance(img_data, bytes):
+                    img_url = save_uploaded_file(img_data, "png")
+                    if img_url:
+                        reference_images.append(img_url)
+                elif isinstance(img_data, str):
+                    reference_images.append(img_data)
+
             result = await service.generate_image(
                 prompt=prompt,
+                size=size,
+                images=reference_images,
+                watermark=False,  # Match successful Seedream 5.0 config
+            )
+            await processing.delete()
+            if result:
+                # Seedream returns List[bytes], take first image
+                image_bytes = result[0] if isinstance(result, list) else result
+                saved_url = save_uploaded_file(image_bytes, "png")
+
+                # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
+                try:
+                    await state.update_data(
+                        last_generated_image_bytes=result,
+                        last_generated_image_url=saved_url,
+                    )
+                except Exception:
+                    logger.exception("Failed to update state with last_generated_image")
+
+                if saved_url:
+                    from bot.database import add_generation_task, complete_video_task
+
+                    user = await get_or_create_user(user_id)
+                    task_id = f"seedream_45_{uuid.uuid4().hex[:12]}"
+                    await add_generation_task(user.id, task_id, "image", "no_preset")
+                    await complete_video_task(task_id, saved_url)
+
+                photo = types.BufferedInputFile(image_bytes, filename="generated.png")
+                await message.answer_photo(
+                    photo=photo,
+                    caption=f"✅ <b>Готово!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Размер: <code>{size}</code>\n"
+                    f"<code>{cost}</code>🍌 списано",
+                    parse_mode="HTML",
+                    reply_markup=get_multiturn_keyboard("no_preset"),
+                )
+
+                await _send_original_document(
+                    message.answer_document, result, saved_url
+                )
+                if saved_url:
+                    await _send_download_link(message.answer, saved_url)
+            else:
+                await add_credits(user_id, cost)
+                await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
+
+            await state.clear()
+            return
+        else:
+            # Nano Banana / Gemini
+            # Map service to correct model
+            if image_service == "nanobanana":
+                model_to_use = "gemini-2.5-flash-image"
+            elif image_service == "banana_pro":
+                model_to_use = "gemini-3-pro-image-preview"
+            else:
+                model_to_use = "gemini-2.5-flash-image"
+
+            # Prepare reference images for Gemini: separate bytes and URLs
+            reference_images_bytes = []
+            reference_image_urls = []
+            for ref in raw_reference_images:
+                if isinstance(ref, bytes):
+                    reference_images_bytes.append(ref)
+                elif isinstance(ref, str):
+                    reference_image_urls.append(ref)
+
+            result = await service.generate_image(
+                prompt=prompt,
+                model=model_to_use,
                 aspect_ratio=aspect_ratio,
                 image_input=None,
+                reference_images=reference_images_bytes
+                if reference_images_bytes
+                else None,
+                reference_image_urls=reference_image_urls
+                if reference_image_urls
+                else None,
+                preserve_faces=True
+                if (reference_images_bytes or reference_image_urls)
+                else False,
             )
 
         await processing.delete()
