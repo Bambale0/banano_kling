@@ -1225,6 +1225,39 @@ def get_motion_control_keyboard(preset_id: str = None):
     return builder.as_markup()
 
 
+def get_video_in_video_keyboard(
+    quality: str = "std",
+    duration: int = 5,
+    aspect_ratio: str = "16:9",
+):
+    """Клавиатура опций видео в видео"""
+    builder = InlineKeyboardBuilder()
+
+    quality_emoji = "💎" if quality == "pro" else "⚡"
+    builder.button(
+        text=f"Качество: {quality_emoji} {quality.upper()}", 
+        callback_data="viov_change_quality"
+    )
+    builder.button(text="⚡ Standard", callback_data="viov_quality_std")
+    builder.button(text="💎 Pro", callback_data="viov_quality_pro")
+
+    builder.button(text="⏱ Длительность:", callback_data="viov_change_duration")
+    builder.button(text="5 сек", callback_data="viov_duration_5")
+    builder.button(text="10 сек", callback_data="viov_duration_10")
+
+    builder.button(text="📐 Формат:", callback_data="viov_change_ratio")
+    builder.button(text="16:9", callback_data="viov_ratio_16_9")
+    builder.button(text="9:16", callback_data="viov_ratio_9_16")
+    builder.button(text="1:1", callback_data="viov_ratio_1_1")
+
+    builder.button(text="📎 Загрузить видео", callback_data="viov_upload_video")
+    builder.button(text="▶️ Запустить", callback_data="run_video_in_video")
+    builder.button(text="🔙 Назад", callback_data="back_main")
+
+    builder.adjust(1, 2, 1, 2, 1, 3, 1, 2, 1)
+    return builder.as_markup()
+
+
 def get_video_edit_confirm_keyboard():
     """Клавиатура подтверждения видео-эффектов"""
     builder = InlineKeyboardBuilder()
@@ -1232,3 +1265,4 @@ def get_video_edit_confirm_keyboard():
     builder.button(text="❌ Отмена", callback_data="edit_video")
     builder.adjust(2)
     return builder.as_markup()
+
