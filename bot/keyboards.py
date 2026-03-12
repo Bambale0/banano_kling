@@ -125,13 +125,17 @@ def get_create_video_keyboard(
 
     builder = InlineKeyboardBuilder()
 
-    # Тип генерации - текст или фото+текст
+    # Тип генерации - текст, фото+текст или видео+текст
     text_check = "✅ " if current_v_type == "text" else ""
     imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
+    video_check = "✅ " if current_v_type == "video" else ""
 
     builder.button(text=f"{text_check}📝 Текст → Видео", callback_data="v_type_text")
     builder.button(
         text=f"{imgtxt_check}🖼 Фото + Текст → Видео", callback_data="v_type_imgtxt"
+    )
+    builder.button(
+        text=f"{video_check}🎬 Видео + Текст → Видео", callback_data="v_type_video"
     )
 
     # Модели - из price.json
@@ -139,6 +143,9 @@ def get_create_video_keyboard(
     v3_std_data = VIDEO_COSTS.get("v3_std", {"base": 6, "duration_costs": {"5": 6}})
     v3_pro_data = VIDEO_COSTS.get("v3_pro", {"base": 8, "duration_costs": {"5": 8}})
     omni_data = VIDEO_COSTS.get("v3_omni_std", {"base": 8, "duration_costs": {"5": 8}})
+    v3_omni_pro_data = VIDEO_COSTS.get(
+        "v3_omni_pro", {"base": 8, "duration_costs": {"5": 8, "10": 14, "15": 16}}
+    )
     v26_motion_data = VIDEO_COSTS.get(
         "v26_motion_pro", {"base": 10, "duration_costs": {"5": 10}}
     )
@@ -159,32 +166,49 @@ def get_create_video_keyboard(
         str(current_duration), v26_motion_data.get("base", 10)
     )
 
-    v26_check = "✅ " if current_model == "v26_pro" else ""
-    v3_std_check = "✅ " if current_model == "v3_std" else ""
-    v3_pro_check = "✅ " if current_model == "v3_pro" else ""
-    omni_check = "✅ " if "omni" in current_model else ""
-    v26_motion_check = "✅ " if current_model == "v26_motion_pro" else ""
+    v3_omni_std_cost = omni_data.get("duration_costs", {}).get(
+        str(current_duration), omni_data.get("base", 8)
+    )
+    v3_omni_pro_cost = v3_omni_pro_data.get("duration_costs", {}).get(
+        str(current_duration), v3_omni_pro_data.get("base", 8)
+    )
 
-    # Модели - каждая на отдельной строке с ценой
-    builder.button(
-        text=f"{v26_check}⚡ Kling 2.6 • {v26_cost}🍌", callback_data="v_model_v26_pro"
-    )
-    builder.button(
-        text=f"{v3_std_check}⚡ Kling 3 Std • {v3_std_cost}🍌",
-        callback_data="v_model_v3_std",
-    )
-    builder.button(
-        text=f"{v3_pro_check}💎 Kling 3 Pro • {v3_pro_cost}🍌",
-        callback_data="v_model_v3_pro",
-    )
-    builder.button(
-        text=f"{omni_check}🔄 Kling 3 Omni • {omni_cost}🍌",
-        callback_data="v_model_omni",
-    )
-    builder.button(
-        text=f"{v26_motion_check}🎬 Kling 2.6 Motion • {v26_motion_cost}🍌",
-        callback_data="v_model_v26_motion_pro",
-    )
+    if current_v_type == "video":
+        models = [
+            {
+                "key": "v3_omni_std_r2v",
+                "label": "⚡ Kling 3 Omni Std",
+                "cost": v3_omni_std_cost,
+            },
+            {
+                "key": "v3_omni_pro_r2v",
+                "label": "💎 Kling 3 Omni Pro",
+                "cost": v3_omni_pro_cost,
+            },
+        ]
+    else:
+        models = [
+            {"key": "v26_pro", "label": "⚡ Kling 2.6", "cost": v26_cost},
+            {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
+            {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
+            {
+                "key": "v3_omni_std",
+                "label": "🔄 Kling 3 Omni Std",
+                "cost": v3_omni_std_cost,
+            },
+            {
+                "key": "v3_omni_pro",
+                "label": "🔄 Kling 3 Omni Pro",
+                "cost": v3_omni_pro_cost,
+            },
+        ]
+
+    for model_info in models:
+        check = "✅ " if current_model == model_info["key"] else ""
+        builder.button(
+            text=f"{check}{model_info['label']} • {model_info['cost']}🍌",
+            callback_data=f"v_model_{model_info['key']}",
+        )
 
     # Размер - все доступные форматы
     r1_1 = "✅ " if current_ratio == "1:1" else ""
@@ -218,9 +242,10 @@ def get_create_video_keyboard(
     builder.button(text=f"💰 {total_cost}🍌", callback_data="back_main")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
-    # adjust: 2 типа генерации + 5 моделей + "Размер:" + 5 форматов + 3 длительности + цена + ввод промпта
-    builder.adjust(2, 1, 1, 1, 1, 1, 5, 3, 1, 1)
+    widths = [3] + [1] * num_models + [5, 3, 2]
+    builder.adjust(*widths)
     return builder.as_markup()
+
 
 
 # =============================================================================
@@ -273,6 +298,14 @@ def get_create_image_keyboard(
         callback_data="model_z_image_turbo_lora",
     )
 
+    banana2_check = "✅ " if current_service == "banana_2" else ""
+
+    banana2_cost = IMAGE_COSTS.get("banana_2", 7)
+    builder.button(
+        text=f"{banana2_check}⚡ Banana 2 • {banana2_cost}🍌",
+        callback_data="model_banana_2",
+    )
+
     # Размер - под моделями
     r1_1 = "✅ " if current_ratio == "1:1" else ""
     r16_9 = "✅ " if current_ratio == "16:9" else ""
@@ -292,10 +325,9 @@ def get_create_image_keyboard(
     # Кнопка запуска - после выбора опций пользователь отправляет промпт
     builder.button(text=f"🏠 Главное меню", callback_data="back_main")
 
-    builder.adjust(
-        1, 1, 1, 1, 1, 1, 5, 1
-    )  # 5 моделей + "Размер:" (отдельно) + 5 аспект ратио + ввод промпта + назад
+    builder.adjust(1,1,1,1,1,1,1,5,1)
     return builder.as_markup()
+
 
 
 # =============================================================================
@@ -1235,8 +1267,8 @@ def get_video_in_video_keyboard(
 
     quality_emoji = "💎" if quality == "pro" else "⚡"
     builder.button(
-        text=f"Качество: {quality_emoji} {quality.upper()}", 
-        callback_data="viov_change_quality"
+        text=f"Качество: {quality_emoji} {quality.upper()}",
+        callback_data="viov_change_quality",
     )
     builder.button(text="⚡ Standard", callback_data="viov_quality_std")
     builder.button(text="💎 Pro", callback_data="viov_quality_pro")
@@ -1265,4 +1297,3 @@ def get_video_edit_confirm_keyboard():
     builder.button(text="❌ Отмена", callback_data="edit_video")
     builder.adjust(2)
     return builder.as_markup()
-
