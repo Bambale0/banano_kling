@@ -136,6 +136,21 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
 
+        # Таблица batch_jobs
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS batch_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL,
+                mode TEXT NOT NULL,
+                total_cost INTEGER NOT NULL,
+                results_count INTEGER DEFAULT 0,
+                duration REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+
         await db.commit()
         logger.info("Database initialized successfully")
 

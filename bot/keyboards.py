@@ -242,6 +242,7 @@ def get_create_video_keyboard(
     builder.button(text=f"💰 {total_cost}🍌", callback_data="back_main")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
+    num_models = len(models)
     widths = [3] + [1] * num_models + [5, 3, 2]
     builder.adjust(*widths)
     return builder.as_markup()
