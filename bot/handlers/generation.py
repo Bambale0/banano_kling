@@ -380,7 +380,8 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
         parse_mode="HTML",
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
 
 
 # Обработчики для меню создания видео
@@ -2183,15 +2184,27 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
 
 @router.message(GenerationStates.waiting_for_video_prompt, F.text)
 async def handle_video_prompt_text(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод промпта для видео (новый UX)."""
+    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
+    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
     prompt = message.text.strip()
 
     if not prompt:
         await message.answer("⚠️ Введите описание видео перед запуском генерации.")
         return
 
+    data = await state.get_data()
+    generation_type = data.get("generation_type", "")
+    logger.info(f"Generation type: {generation_type}")
+
     await state.update_data(user_prompt=prompt)
-    await run_no_preset_video_from_message(message, state, prompt)
+
+    if generation_type == "motion_control":
+        logger.info("Calling run_motion_control")
+        await run_motion_control(message, state, prompt)
+    else:
+        logger.info("Calling run_no_preset_video_from_message")
+        await run_no_preset_video_from_message(message, state, prompt)
+
 
 
 @router.message(GenerationStates.waiting_for_video_prompt, F.video | (F.document & F.document.mime_type.startswith("video/")))
@@ -2236,200 +2249,7 @@ async def process_video_for_video_prompt_state(
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
             return
-    # Если это редактирование изображения - показываем выбор формата
-    if generation_type == "image_edit":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
 
-        # Показываем клавиатуру выбора формата
-        await message.answer(
-            f"✏️ <b>Выберите формат изображения</b>\n\n"
-            f"Промпт: <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n\n"
-            f"<i>Выберите формат и нажмите кнопку для запуска</i>",
-            reply_markup=get_image_aspect_ratio_no_preset_edit_keyboard("1:1"),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это редактирование видео - показываем подтверждение
-    if generation_type == "video_edit":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
-
-        video_edit_options = data.get("video_edit_options", {})
-        quality = video_edit_options.get("quality", "std")
-        quality_emoji = "💎" if quality == "pro" else "⚡"
-
-        # Используем preset_manager для получения стоимости
-        video_model = "v3_omni_pro_r2v" if quality == "pro" else "v3_omni_std_r2v"
-        duration = video_edit_options.get("duration", 5)
-        cost = preset_manager.get_video_cost(video_model, duration)
-
-        await message.answer(
-            f"✂️ <b>Подтвердите генерацию</b>\n\n"
-            f"<b>Эффект:</b> <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n\n"
-            f"<b>Опции:</b>\n"
-            f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
-            f"   ⏱ Длительность: <code>{duration} сек</code>\n"
-            f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
-            f"Стоимость: <code>{cost}🍌</code>",
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text="▶️ Запустить", callback_data="run_video_edit"
-                        )
-                    ],
-                    [
-                        types.InlineKeyboardButton(
-                            text="🔙 Назад", callback_data="edit_video"
-                        )
-                    ],
-                ]
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Стандартное поведение для пресетов
-    final_prompt = message.text
-    await state.update_data(final_prompt=final_prompt)
-
-    preset = preset_manager.get_preset(preset_id)
-    if preset:
-        await state.set_state(GenerationStates.confirming_generation)
-
-        # Показываем подтверждение с возможностью добавить референсы
-        has_refs = bool(data.get("reference_images"))
-
-        await message.answer(
-            f"▶️ <b>Подтвердите генерацию</b>\n\n"
-            f"Пресет: <b>{preset.name}</b>\n"
-            f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
-            f"<b>Промпт:</b>\n"
-            f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-            f"📎 Референсы: {'✅ Загружено' if has_refs else '❌ Нет'} (до 14 изображений)",
-            reply_markup=get_preset_action_keyboard(preset_id, has_input=True),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это создание видео из изображения через видео-эффекты
-    if generation_type == "video_edit_image":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
-
-        video_edit_options = data.get("video_edit_options", {})
-        quality = video_edit_options.get("quality", "std")
-        quality_emoji = "💎" if quality == "pro" else "⚡"
-
-        # Используем preset_manager для получения стоимости
-        video_model = "v3_omni_pro" if quality == "pro" else "v3_omni_std"
-        duration = video_edit_options.get("duration", 5)
-        cost = preset_manager.get_video_cost(video_model, duration)
-
-        await message.answer(
-            f"✂️ <b>Подтвердите генерацию</b>\n\n"
-            f"<b>Эффект:</b> <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n\n"
-            f"<b>Опции:</b>\n"
-            f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
-            f"   ⏱ Длительность: <code>{duration} сек</code>\n"
-            f"   📐 Формат: <code>{video_edit_options.get('aspect_ratio', '16:9')}</code>\n\n"
-            f"🍌 Стоимость: <code>{cost}</code>🍌",
-            reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text="▶️ Запустить", callback_data="run_video_edit_image"
-                        )
-                    ],
-                    [
-                        types.InlineKeyboardButton(
-                            text="🔙 Назад", callback_data="edit_video"
-                        )
-                    ],
-                ]
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это "Фото в видео" - запускаем генерацию
-    if generation_type == "image_to_video":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
-
-        # Запускаем генерацию видео из фото
-        await run_image_to_video(message, state, user_prompt)
-        return
-
-    # Если это Motion Control - запускаем генерацию
-    if generation_type == "motion_control":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
-
-        # Запускаем Motion Control генерацию
-        await run_motion_control(message, state, user_prompt)
-        return
-
-    # Старый код для пресетов удалён - теперь только новый UX без пресетов
-
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await message.answer("Ошибка: пресет не найден.")
-        await state.clear()
-        return
-
-    # Формируем финальный промпт
-    placeholder_values = {}
-    if preset.placeholders:
-        placeholder_values[preset.placeholders[0]] = message.text
-
-        defaults = preset_manager.get_default_values("styles") or ["минимализм"]
-        color_defaults = preset_manager.get_default_values("color_schemes") or ["яркий"]
-
-        for placeholder in preset.placeholders[1:]:
-            if "style" in placeholder.lower():
-                placeholder_values[placeholder] = defaults[0]
-            elif "color" in placeholder.lower():
-                placeholder_values[placeholder] = color_defaults[0]
-            else:
-                placeholder_values[placeholder] = "пример"
-
-    try:
-        final_prompt = preset.format_prompt(**placeholder_values)
-    except:
-        final_prompt = preset.prompt.replace("{", "").replace("}", "")
-
-    await state.update_data(final_prompt=final_prompt, user_input=message.text)
-
-    # Подтверждение с опциями
-    generation_options = data.get("generation_options", {})
-
-    await message.answer(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
-        f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
-        f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-        f"{format_generation_options(generation_options)}",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Запустить", callback_data=f"run_{preset_id}"
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data=f"preset_{preset_id}"
-                    )
-                ],
-            ]
-        ),
-        parse_mode="HTML",
-    )
 
 
 async def start_no_preset_generation(
@@ -4715,7 +4535,7 @@ async def process_uploaded_video(message: types.Message, state: FSMContext):
             await state.update_data(motion_video_url_data=video_data)
 
         # Запрашиваем промпт для описания движения
-        await state.set_state(GenerationStates.waiting_for_input)
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
         await message.answer(
             f"✅ <b>Видео-референс получен!</b>\n\n"
             f"Теперь опишите желаемое движение:\n"
