@@ -4154,6 +4154,9 @@ async def run_no_preset_image_generation(
             else:
                 model_to_use = "gemini-2.5-flash-image"
 
+            # Calculate cost for Gemini models
+            cost = preset_manager.get_generation_cost(model_to_use)
+
             # Prepare reference images for Gemini: separate bytes and URLs
             reference_images_bytes = []
             reference_image_urls = []
