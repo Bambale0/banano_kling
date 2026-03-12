@@ -177,34 +177,49 @@ async def _show_video_creation_screen(
     reference_images = data.get("reference_images", [])
     user_prompt = data.get("user_prompt", "")
     v_image_url = data.get("v_image_url")
+    v_video_url = data.get("v_video_url")
 
     # Формируем текст о референсах
     ref_text = ""
     if reference_images:
         ref_text = f"📎 Референсов: <code>{len(reference_images)}</code>\n"
 
-    # Формируем текст о стартовом изображении для imgtxt
-    image_status = ""
+    # Формируем статус медиа в зависимости от типа
+    media_status = ""
     if current_v_type == "imgtxt":
         if v_image_url:
-            image_status = "✅ <b>Стартовое изображение загружено!</b>\n"
+            media_status = "✅ <b>Стартовое изображение загружено!</b>\n"
         else:
-            image_status = "📷 <b>Загрузите стартовое изображение</b>\n"
+            media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
+    elif current_v_type == "video":
+        if v_video_url:
+            media_status = "✅ <b>Референсное видео загружено!</b>\n"
+        else:
+            media_status = "📹 <b>Загрузите референсное видео</b>\n"
 
     # Формируем текст о промпте
     prompt_text = ""
     if user_prompt:
         prompt_text = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n"
 
+    # Тип в настройках
+    type_text = (
+        "Текст → Видео"
+        if current_v_type == "text"
+        else "Фото + Текст → Видео"
+        if current_v_type == "imgtxt"
+        else "Видео + Текст → Видео"
+    )
+
     text = (
         f"🎬 <b>Создание видео</b>\n\n"
         f"{ref_text}"
         f"⚙️ <b>Текущие настройки:</b>\n"
-        f"   📝 Тип: <code>{'Текст → Видео' if current_v_type == 'text' else 'Фото + Текст → Видео'}</code>\n"
+        f"   📝 Тип: <code>{type_text}</code>\n"
         f"   🤖 Модель: <code>{current_model}</code>\n"
         f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
         f"   📐 Формат: <code>{current_ratio}</code>\n"
-        f"{image_status}"
+        f"{media_status}"
         f"{prompt_text}\n"
         f"<b>Введите промпт для генерации:</b>\n\n"
         f"Опишите видео, которое хотите создать:\n"
@@ -213,9 +228,11 @@ async def _show_video_creation_screen(
         f"• Стиль и атмосфера"
     )
 
-    # Для imgtxt режима - добавляем напоминание о загрузке фото
+    # Напоминание о загрузке медиа
     if current_v_type == "imgtxt" and not v_image_url:
         text += f"\n\n<i>📷 Загрузите фото, которое станет первым кадром видео</i>"
+    elif current_v_type == "video" and not v_video_url:
+        text += f"\n\n<i>📹 Загрузите видео-референс (3-10 сек) для стиля/движения</i>"
 
     # Используем edit для callback, send для message
     try:
@@ -434,110 +451,68 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
     # State will be waiting_for_input from previous handler
 
 
-@router.callback_query(F.data == "v_model_v26_pro")
-async def handle_v_model_v26_pro(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели v26_pro"""
+@router.callback_query(F.data == "v_type_video")
+async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор типа генерации: видео+текст - запрашиваем видео на том же экране"""
     data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
+    v_video_url = data.get("v_video_url")
 
-    await state.update_data(v_model="v26_pro")
+    await state.update_data(v_type="video")
 
-    await callback.message.edit_reply_markup(
+    # Показываем сообщение с просьбой загрузить видео на ТОМ ЖЕ экране
+    video_status = ""
+    if v_video_url:
+        video_status = "\n✅ <b>Референсное видео загружено!</b>\n"
+
+    text = (
+        f"🎬 <b>Создание видео</b>\n\n"
+        f"⚙️ <b>Текущие настройки:</b>\n"
+        f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
+        f"   🤖 Модель: <code>{current_model}</code>\n"
+        f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
+        f"   📐 Формат: <code>{current_ratio}</code>\n"
+        f"{video_status}\n"
+        f"<b>📹 Загрузите референсное видео</b>\n\n"
+        f"Отправьте видео (3-10 сек), которое станет референсом для стиля/движения.\n"
+        f"После загрузки введите промпт для генерации.\n\n"
+        f"<i>Пример: 'преобразовать в футуристический стиль с неоновым свечением'</i>"
+    )
+
+    await callback.message.edit_text(
+        text,
         reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="v26_pro",
+            current_v_type="video",
+            current_model=current_model,
             current_duration=current_duration,
             current_ratio=current_ratio,
-        )
+        ),
+        parse_mode="HTML",
     )
+    if v_video_url:
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+    else:
+        await state.set_state(GenerationStates.waiting_for_reference_video)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data == "v_model_v3_std")
-async def handle_v_model_v3_std(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели v3_std"""
+@router.callback_query(F.data.startswith("v_model_"))
+async def handle_v_model(callback: types.CallbackQuery, state: FSMContext):
+    """Generic handler for all video model selections"""
+    model = callback.data.replace("v_model_", "")
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
 
-    await state.update_data(v_model="v3_std")
+    await state.update_data(v_model=model)
 
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
-            current_model="v3_std",
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "v_model_v3_pro")
-async def handle_v_model_v3_pro(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели v3_pro"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_model="v3_pro")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="v3_pro",
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "v_model_omni")
-async def handle_v_model_omni(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели omni"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_model="v3_omni_std")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="v3_omni_std",
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "v_model_v26_motion_pro")
-async def handle_v_model_v26_motion_pro(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Выбор модели v26_motion_pro"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_model="v26_motion_pro")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="v26_motion_pro",
+            current_model=model,
             current_duration=current_duration,
             current_ratio=current_ratio,
         )
@@ -832,6 +807,24 @@ async def handle_model_z_image_turbo_lora(
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service="z_image_turbo_lora",
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "model_banana_2")
+async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор модели Banana 2 (Gemini 3.1 Flash Image Preview)"""
+    data = await state.get_data()
+    current_ratio = data.get("img_ratio", "1:1")
+
+    await state.update_data(img_service="banana_2")
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_image_keyboard(
+            current_service="banana_2",
             current_ratio=current_ratio,
         )
     )
@@ -2086,54 +2079,163 @@ async def process_photo_for_video_prompt_state(
     return
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.text)
-async def process_video_prompt_and_generate(message: types.Message, state: FSMContext):
-    """Получает промпт и СРАЗУ запускает генерацию видео — без подтверждения"""
-    user_prompt = message.text.strip()
-
-    if not user_prompt:
-        await message.answer("Пожалуйста, введите описание видео.")
-        return
-
-    # Сохраняем промпт
-    await state.update_data(user_prompt=user_prompt)
-
-    # СРАЗУ запускаем генерацию — без экрана подтверждения
-    await run_no_preset_video_from_message(message, state, user_prompt)
-
-
-@router.message(GenerationStates.waiting_for_input)
-async def process_custom_input(message: types.Message, state: FSMContext):
-    """Обрабатывает текстовый ввод пользователя"""
+@router.message(GenerationStates.waiting_for_reference_video, F.video | (F.document & F.document.mime_type.startswith("video/")))
+async def process_reference_video_upload(message: types.Message, state: FSMContext):
+    """
+    Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
+    Сохраняет видео и переключает в состояние ожидания промпта.
+    """
     data = await state.get_data()
-    preset_id = data.get("preset_id")
     generation_type = data.get("generation_type")
+    v_type = data.get("v_type")
 
-    # Guard: ensure we have text input — avoid NoneType slicing errors
-    if not message.text:
-        await message.answer("Пожалуйста, отправьте текстовый промпт (только текст).")
+    if generation_type == "video" and v_type == "video":
+        # Определяем источник файла (video или document)
+        if message.video:
+            video_obj = message.video
+        elif message.document and message.document.mime_type.startswith("video/"):
+            video_obj = message.document
+        else:
+            await message.answer("❌ Неверный тип файла. Отправьте видео.")
+            return
+
+        file = await message.bot.get_file(video_obj.file_id)
+
+        # Проверяем размер (макс 50MB)
+        file_size = getattr(video_obj, 'file_size', 0)
+        if file_size > 50 * 1024 * 1024:
+            await message.answer("❌ Видео слишком большое (макс 50MB).")
+            return
+
+        video_bytes = await message.bot.download_file(file.file_path)
+        video_data = video_bytes.read()
+
+        # Сохраняем видео и получаем URL
+        video_url = save_uploaded_file(video_data, "mp4")
+
+        if video_url:
+            await state.update_data(v_video_url=video_url)
+            logger.info(f"Saved reference video for video mode: {video_url}")
+        else:
+            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
+            return
+
+        # Переключаемся в состояние ожидания промпта
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+        # Получаем обновлённые данные
+        data = await state.get_data()
+        current_v_type = data.get("v_type", "video")
+        current_model = data.get("v_model", "v26_pro")
+        current_duration = data.get("v_duration", 5)
+        current_ratio = data.get("v_ratio", "16:9")
+        user_prompt = data.get("user_prompt", "")
+
+        # Показываем экран с промптом
+        video_status = "\n✅ <b>Референсное видео загружено!</b>\n"
+
+        prompt_display = ""
+        if user_prompt:
+            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
+
+        text = (
+            f"🎬 <b>Создание видео</b>\n\n"
+            f"{video_status}"
+            f"⚙️ <b>Текущие настройки:</b>\n"
+            f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
+            f"   🤖 Модель: <code>{current_model}</code>\n"
+            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
+            f"   📐 Формат: <code>{current_ratio}</code>\n"
+            f"{prompt_display}\n"
+            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"Опишите желаемый эффект/стиль:\n"
+            f"• Стиль видео\n"
+            f"• Дополнительные эффекты\n"
+            f"• Атмосфера\n\n"
+            f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
+        )
+
+        await message.answer(
+            text,
+            reply_markup=get_create_video_keyboard(
+                current_v_type=current_v_type,
+                current_model=current_model,
+                current_duration=current_duration,
+                current_ratio=current_ratio,
+            ),
+            parse_mode="HTML",
+        )
         return
 
-    # Если это генерация изображения - показываем выбор формата
-    # Если это генерация изображения - запускаем сразу (новый UX)
-    if generation_type == "image":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
+    await message.answer("Пожалуйста, отправьте текстовое описание.")
 
-        # Запускаем генерацию изображения сразу после ввода промпта
-        await run_no_preset_image_from_message(message, state, user_prompt)
+
+@router.message(GenerationStates.waiting_for_reference_video)
+async def invalid_reference_video_input(message: types.Message, state: FSMContext):
+    """
+    Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
+    """
+    await message.answer(
+        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
+        "Это видео будет использовано как референс для стиля/движения."
+    )
+
+
+@router.message(GenerationStates.waiting_for_video_prompt, F.text)
+async def handle_video_prompt_text(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод промпта для видео (новый UX)."""
+    prompt = message.text.strip()
+
+    if not prompt:
+        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
         return
 
-    # Если это генерация видео - показываем меню опций
-    # Если это генерация видео - запускаем сразу (новый UX)
-    if generation_type == "video":
-        user_prompt = message.text
-        await state.update_data(user_prompt=user_prompt)
+    await state.update_data(user_prompt=prompt)
+    await run_no_preset_video_from_message(message, state, prompt)
 
-        # Запускаем генерацию видео
-        await run_no_preset_video_from_message(message, state, user_prompt)
-        return
 
+@router.message(GenerationStates.waiting_for_video_prompt, F.video | (F.document & F.document.mime_type.startswith("video/")))
+async def process_video_for_video_prompt_state(
+    message: types.Message, state: FSMContext
+):
+    """
+    Обрабатывает загруженное видео когда пользователь в состоянии waiting_for_video_prompt.
+    Это для режима video (видео+текст → видео). Поддерживает video и document.
+    """
+    data = await state.get_data()
+    generation_type = data.get("generation_type")
+    v_type = data.get("v_type")
+
+    if generation_type == "video" and v_type == "video":
+        # Определяем источник файла
+        if message.video:
+            video_obj = message.video
+        elif message.document and message.document.mime_type.startswith("video/"):
+            video_obj = message.document
+        else:
+            await message.answer("❌ Неверный тип файла. Отправьте видео.")
+            return
+
+        file = await message.bot.get_file(video_obj.file_id)
+
+        # Проверяем размер (макс 50MB)
+        file_size = getattr(video_obj, 'file_size', 0)
+        if file_size > 50 * 1024 * 1024:
+            await message.answer("❌ Видео слишком большое (макс 50MB).")
+            return
+
+        video_bytes = await message.bot.download_file(file.file_path)
+        video_data = video_bytes.read()
+
+        # Сохраняем видео и получаем URL
+        video_url = save_uploaded_file(video_data, "mp4")
+
+        if video_url:
+            await state.update_data(v_video_url=video_url)
+            logger.info(f"Saved reference video for video mode (prompt state): {video_url}")
+        else:
+            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
+            return
     # Если это редактирование изображения - показываем выбор формата
     if generation_type == "image_edit":
         user_prompt = message.text
@@ -2766,6 +2868,27 @@ async def invalid_reference_upload(message: types.Message, state: FSMContext):
     )
 
 
+
+
+@router.message(GenerationStates.waiting_for_input, F.text)
+async def handle_generation_prompt(message: types.Message, state: FSMContext):
+    """Обрабатывает текстовые промпты для нового UX генерации изображений."""
+    prompt = message.text.strip()
+    if not prompt:
+        await message.answer("⚠️ Введите описание перед генерацией.")
+        return
+
+    data = await state.get_data()
+    generation_type = data.get("generation_type")
+
+    if generation_type != "image":
+        return
+
+    await state.update_data(user_prompt=prompt)
+    aspect_ratio = data.get("img_ratio", "1:1")
+    await run_no_preset_image_generation(
+        message, state, prompt, aspect_ratio, message.from_user.id
+    )
 # =============================================================================
 # ЗАПУСК ГЕНЕРАЦИИ
 # =============================================================================
@@ -3677,15 +3800,14 @@ async def run_no_preset_image_generation(
         user_id = message.from_user.id
 
     # Определяем сервис и стоимость через preset_manager
-    if image_service == "novita" or image_service == "flux_pro":
-        # FLUX.2 Pro через Novita
+    model_override = None
+    if image_service in ("novita", "flux_pro"):
         from bot.services.novita_service import novita_service
 
         service = novita_service
         model_name = "✨ FLUX.2 Pro"
         cost = preset_manager.get_generation_cost("z_image_turbo")
     elif image_service == "seedream":
-        # Seedream через Novita
         from bot.services.novita_service import novita_service
 
         service = novita_service
@@ -3695,21 +3817,25 @@ async def run_no_preset_image_generation(
         service = seedream_service
         model_name = "🌟 Seedream 4.5"
         cost = preset_manager.get_generation_cost("seedream")
-
     elif image_service == "z_image_turbo":
-        # Z-Image Turbo LoRA через Novita
         from bot.services.novita_service import novita_service
 
         service = novita_service
         model_name = "🚀 Z-Image Turbo LoRA"
         cost = preset_manager.get_generation_cost("z_image_turbo")
-    else:
-        # Nano Banana Pro (Gemini) - ИСПРАВЛЕНО: используем banana_pro для nanobanana pro
+    elif image_service == "banana_2":
         from bot.services.gemini_service import gemini_service
 
         service = gemini_service
-    model_name = "🍌 Nano Banana"
-    cost = preset_manager.get_generation_cost("gemini-2.5-flash-image")
+        model_name = "⚡ Banana 2"
+        cost = preset_manager.get_generation_cost("gemini-3.1-flash-image-preview")
+        model_override = "google/gemini-3.1-flash-image-preview"
+    else:
+        from bot.services.gemini_service import gemini_service
+
+        service = gemini_service
+        model_name = "🍌 Nano Banana"
+        cost = preset_manager.get_generation_cost("gemini-2.5-flash-image")
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
@@ -3747,13 +3873,11 @@ async def run_no_preset_image_generation(
                         reference_images.append(img_url)
                 elif isinstance(img_data, str):
                     reference_images.append(img_data)
-
             task_response = await service.generate_image(
                 prompt=prompt,
+                model="flux-pro",  # or appropriate model
                 size=size,
-                webhook_url=(
-                    config.novita_notification_url if config.WEBHOOK_HOST else None
-                ),
+                webhook_url=config.novita_notification_url if config.WEBHOOK_HOST else None,
                 reference_images=reference_images,
             )
 
@@ -4025,6 +4149,8 @@ async def run_no_preset_image_generation(
                 model_to_use = "gemini-2.5-flash-image"
             elif image_service == "banana_pro":
                 model_to_use = "gemini-3-pro-image-preview"
+            elif image_service == "banana_2":
+                model_to_use = "gemini-3.1-flash-image-preview"
             else:
                 model_to_use = "gemini-2.5-flash-image"
 

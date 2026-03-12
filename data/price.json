@@ -51,10 +51,12 @@
     "image_models": {
       "gemini_2_5_flash": 3,
       "gemini_3_pro": 5,
+      "banana_2": 7,
       "z_image_turbo": 3,
       "seedream": 3,
       "flux_pro": 3
     },
+
     "video_models": {
       "v26_pro": {
         "base": 8,

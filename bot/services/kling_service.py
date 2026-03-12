@@ -38,26 +38,26 @@ logger = logging.getLogger(__name__)
 class KlingService:
     """Сервис для работы с Kling API через Freepik (поддерживает Kling 2.6 и Kling 3)"""
 
-    # API Endpoints (without /v1 prefix - it's already in base_url)
+    # API Endpoints (base_url includes /v1)
     ENDPOINTS = {
         # Kling 2.6 Pro (image-to-video)
-        "v26_pro": "/v1/ai/image-to-video/kling-v2-6-pro",
-        "v26_tasks": "/v1/ai/image-to-video/kling-v2-6",
+        "v26_pro": "/ai/image-to-video/kling-v2-6-pro",
+        "v26_tasks": "/ai/image-to-video/kling-v2-6",
         # Kling 2.6 Motion Control
-        "v26_motion_pro": "/v1/ai/video/kling-v2-6-motion-control-pro",
-        "v26_motion_std": "/v1/ai/video/kling-v2-6-motion-control-std",
+        "v26_motion_pro": "/ai/video/kling-v2-6-motion-control-pro",
+        "v26_motion_std": "/ai/video/kling-v2-6-motion-control-std",
         # Kling 3 Pro/Standard
-        "v3_pro": "/v1/ai/video/kling-v3-pro",
-        "v3_std": "/v1/ai/video/kling-v3-std",
-        "v3_tasks": "/v1/ai/video/kling-v3",
+        "v3_pro": "/ai/video/kling-v3-pro",
+        "v3_std": "/ai/video/kling-v3-std",
+        "v3_tasks": "/ai/video/kling-v3",
         # Kling 3 Omni
-        "v3_omni_pro": "/v1/ai/video/kling-v3-omni-pro",
-        "v3_omni_std": "/v1/ai/video/kling-v3-omni-std",
-        "v3_omni_tasks": "/v1/ai/video/kling-v3-omni",
+        "v3_omni_pro": "/ai/video/kling-v3-omni-pro",
+        "v3_omni_std": "/ai/video/kling-v3-omni-std",
+        "v3_omni_tasks": "/ai/video/kling-v3-omni",
         # Kling 3 Omni Reference-to-Video
-        "v3_omni_pro_r2v": "/v1/ai/reference-to-video/kling-v3-omni-pro",
-        "v3_omni_std_r2v": "/v1/ai/reference-to-video/kling-v3-omni-std",
-        "v3_omni_r2v_tasks": "/v1/ai/reference-to-video/kling-v3-omni",
+        "v3_omni_pro_r2v": "/ai/reference-to-video/kling-v3-omni-pro",
+        "v3_omni_std_r2v": "/ai/reference-to-video/kling-v3-omni-std",
+        "v3_omni_r2v_tasks": "/ai/reference-to-video/kling-v3-omni",
     }
 
     # Valid parameters

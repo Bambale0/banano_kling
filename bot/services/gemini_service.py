@@ -17,12 +17,14 @@ class GeminiService:
     MODELS = {
         "flash": "google/gemini-2.5-flash-image",  # Быстрая генерация
         "pro": "google/gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
+        "banana_2": "google/gemini-3.1-flash-image-preview",  # Banana 2 (Gemini 3.1 Flash Image Preview)
     }
 
     # Native Gemini model names (for direct API calls)
     NATIVE_MODELS = {
         "flash": "gemini-2.5-flash-image",
         "pro": "gemini-3-pro-image-preview",
+        "banana_2": "gemini-3.1-flash-image-preview",
     }
 
     # Поддерживаемые разрешения (согласно banana_api.md)
@@ -149,11 +151,18 @@ MAXIMUM FIDELITY CHARACTER CONSISTENCY:
         - Разрешение до 4K
         - Face/character preservation (до 4 персонажей)
         """
+        logger.info(f"=== GEMINI GENERATE_IMAGE CALLED ===")
+        logger.info(f"Input model parameter: {model}")
+        logger.info(f"Available MODELS mapping: {self.MODELS}")
+        
         # Автоматически назначаем разрешение по модели если не указано явно:
+        # - Banana 2: 4K (по требованию пользователя)
         # - Flash модели: 2K (оптимально для скорости)
         # - Pro модели: 4K (максимальное качество)
         if not resolution:
-            if "flash" in model.lower():
+            if "banana_2" in model.lower() or "3.1" in model.lower():
+                resolution = "4K"
+            elif "flash" in model.lower():
                 resolution = "2K"
             else:
                 resolution = "4K"
@@ -202,17 +211,12 @@ Use the {ref_count} reference images to maintain character consistency and prese
                 return result
             logger.info("Nano Banana failed, trying OpenRouter...")
 
-        # 2. Пробуем OpenRouter
+        # 2. Пробуем OpenRouter - передаем native model name для правильного маппинга
         if self.openrouter_key:
-            # Determine which OpenRouter model to use based on the requested model
-            or_model = self.MODELS.get("flash")  # Default to flash
-            # Use Pro model for explicit 'pro' requests or when 4K is requested
-            if "pro" in model.lower() or (resolution and resolution.upper() == "4K"):
-                or_model = self.MODELS.get("pro")  # Use pro model
-
+            logger.info(f"Passing native model '{model}' to OpenRouter mapper")
             result = await self._generate_via_openrouter(
                 prompt=prompt,
-                model=or_model,
+                model=model,  # Native model name для REVERSE_MODEL_MAP
                 image_input=image_input,
                 image_input_url=image_input_url,
                 aspect_ratio=aspect_ratio,
@@ -367,6 +371,13 @@ Use the {ref_count} reference images to maintain character consistency and prese
             logger.exception(f"Nano Banana generation failed: {e}")
             return None
 
+    # Reverse mapping from native model names to OpenRouter keys
+    REVERSE_MODEL_MAP = {
+        "gemini-2.5-flash-image": "flash",
+        "gemini-3-pro-image-preview": "pro",
+        "gemini-3.1-flash-image-preview": "banana_2",
+    }
+
     async def _generate_via_openrouter(
         self,
         prompt: str,
@@ -386,6 +397,11 @@ Use the {ref_count} reference images to maintain character consistency and prese
             from bot.config import config
 
             session = await self._get_session()
+
+            # Map native model name to OpenRouter key
+            model_key = self.REVERSE_MODEL_MAP.get(model, "flash")
+            or_model = self.MODELS.get(model_key, self.MODELS["flash"])
+            logger.info(f"Model mapping: {model} (key: {model_key}) -> {or_model}")
 
             # Добавляем aspect_ratio в промпт (согласно banana_api.md - работаем через текст)
             final_prompt = prompt
@@ -440,7 +456,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
             # Разные модели поддерживают разные параметры imageConfig:
             # - gemini-2.5-flash-image: только aspect_ratio (разрешение фиксировано 1K)
             # - gemini-3.x: aspect_ratio + image_size (1K, 2K, 4K)
-            is_gemini3 = "gemini-3" in model.lower()
+            is_gemini3 = "gemini-3" in or_model.lower()
 
             image_config = {}
             if aspect_ratio:
@@ -457,15 +473,16 @@ Use the {ref_count} reference images to maintain character consistency and prese
                 generation_config["imageConfig"] = image_config
 
             payload = {
-                "model": model,
+                "model": or_model,
                 "messages": [{"role": "user", "content": contents}],
                 "modalities": ["image", "text"],
                 "generationConfig": generation_config,
             }
 
             logger.info(
-                f"OpenRouter request: model={model}, aspect_ratio={aspect_ratio}"
+                f"OpenRouter request: model={or_model}, aspect_ratio={aspect_ratio}"
             )
+            logger.info(f"OpenRouter payload model field: {payload['model']}")
 
             async with session.post(
                 f"{config.OPENROUTER_BASE_URL}/chat/completions",

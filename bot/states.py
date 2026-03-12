@@ -8,6 +8,7 @@ class GenerationStates(StatesGroup):
     waiting_for_image = State()  # Ожидание загрузки фото
     waiting_for_video = State()  # Ожидание загрузки видео
     waiting_for_video_prompt = State()  # Ожидание ввода промпта для видео
+    waiting_for_reference_video = State()  # Ожидание референсного видео для video+text
     waiting_for_video_start_image = (
         State()
     )  # Ожидание загрузки стартового изображения для imgtxt
