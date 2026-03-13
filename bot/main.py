@@ -238,9 +238,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         logger.info(f"Processing Kling task {task_id} with status {status}")
 
         if status == "completed":
-            # PiAPI format: output.video
+            # PiAPI format: output.video_url or nested in works[].video.resource_without_watermark
             output = webhook_data.get("output", {})
-            video_url = output.get("video")
+            video_url = output.get("video_url") or (
+                output.get("works")
+                and output["works"][0]
+                .get("video", {})
+                .get("resource_without_watermark")
+            )
 
             if not video_url:
                 logger.error(f"No video URL in completed task: {webhook_data}")

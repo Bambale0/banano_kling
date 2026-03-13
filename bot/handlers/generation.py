@@ -2274,10 +2274,12 @@ async def process_video_for_video_prompt_state(
 
         file = await message.bot.get_file(video_obj.file_id)
 
-        # Проверяем размер (макс 50MB)
+        # Проверяем размер (Telegram bot limit 20MB)
         file_size = getattr(video_obj, "file_size", 0)
-        if file_size > 50 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 50MB).")
+        if file_size > 20 * 1024 * 1024:
+            await message.answer(
+                "❌ Видео слишком большое (макс 20MB).\n💡 Используйте короткое видео или фото-референс."
+            )
             return
 
         video_bytes = await message.bot.download_file(file.file_path)
@@ -2966,35 +2968,44 @@ async def generate_video(
 
     try:
         logger.info(
-            f"generate_video: calling kling_service with duration={duration} (type={type(duration).__name__})"
+            f"DEBUG v_type={v_type}, v_image_url={v_image_url}, v_video_url={v_video_url}, image_url={image_url}, elements={elements}"
         )
-        result = await kling_service.generate_video(
-            prompt=prompt,
-            model=model,
-            duration=duration,
-            aspect_ratio=aspect_ratio,
-            webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_url,
-        )
+
+        # Switch to omni model if image reference provided for better consistency support
+        if (v_type == "imgtxt" or ref_urls) and "omni" not in v_model.lower():
+            logger.info(
+                f"Switching model from {v_model} to v3_omni_std for image reference support"
+            )
+            v_model = "v3_omni_std"
+
+        # v_type="video" в меню создания видео: Kling Motion Pro с video_url
+        if v_type == "video" and v_video_url:
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model="v26_motion_pro",
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+                image_url=v_image_url,
+                video_url=v_video_url,
+            )
+        else:
+            # Standard with image/elements (text/imgtxt/omni)
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+                image_url=image_url,
+                elements=elements,
+            )
 
         if result and result.get("task_id"):
-            user = await get_or_create_user(callback.from_user.id)
-            await add_generation_task(
-                user_id=user.id,
-                task_id=result["task_id"],
-                type="video",
-                preset_id=preset.id,
-            )
-
-            await callback.message.answer(
-                f"✅ <b>Задача создана</b>\n\n"
-                f"ID: <code>{result['task_id']}</code>\n"
-                f"🍌 Списано: <code>{preset.cost}</code>🍌\n\n"
-                f"Я пришлю видео автоматически.",
-                reply_markup=get_main_menu_keyboard(),
-                parse_mode="HTML",
-            )
-
             # Запускаем фоновый опрос статуса
             asyncio.create_task(
                 poll_video_task_status(
@@ -4597,9 +4608,11 @@ async def process_uploaded_video(message: types.Message, state: FSMContext):
     video = message.video
     file = await message.bot.get_file(video.file_id)
 
-    # Проверяем размер файла (максимум 50MB для Telegram)
-    if video.file_size > 50 * 1024 * 1024:
-        await message.answer("❌ Видео слишком большое. Максимум 50MB.")
+    # Проверяем размер файла (Telegram bot limit 20MB)
+    if video.file_size > 20 * 1024 * 1024:
+        await message.answer(
+            "❌ Видео слишком большое (макс 20MB).\n💡 Используйте короткое видео или фото-референс."
+        )
         return
 
     # Скачиваем байты

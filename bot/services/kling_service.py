@@ -245,9 +245,9 @@ class KlingService:
         if images:
             seen = set()
             images = [img for img in images if img not in seen and not seen.add(img)]
-        # Enhance prompt for consistency if images provided
+        # Enhance prompt for consistency if images provided - STRONGER for Kling 3 Omni character preservation
         if images:
-            prompt = f"Use the exact character and appearance from @image_1 as the main subject throughout the video. {prompt}"
+            prompt = f"CRITICAL: The MAIN SUBJECT must be the EXACT SAME PERSON/CHARACTER from reference image @image_1. Maintain identical face, hair, clothing, pose, age, gender, ethnicity, body type throughout ALL frames. Do not change, regenerate, or invent new character. Exact match required. {prompt}"
         # Map legacy models to PiAPI task_types/mode
         if model in ["v3_std", "v3_pro"]:
             mode = "std" if "std" in model else "pro"
