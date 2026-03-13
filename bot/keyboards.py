@@ -98,11 +98,13 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎬 Motion Control", callback_data="menu_motion_control")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="📸 Фото=Промпт", callback_data="photo_to_prompt")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🆘 Тех. поддержка", callback_data="menu_support")
     builder.button(text="❓ Помощь бота", callback_data="menu_help")
 
-    builder.adjust(2, 2, 2)
+    builder.adjust(2, 2, 2, 1)
+
     return builder.as_markup()
 
 
@@ -248,7 +250,6 @@ def get_create_video_keyboard(
     return builder.as_markup()
 
 
-
 # =============================================================================
 # МЕНЮ СОЗДАНИЯ ФОТО - всё на одном экране
 # =============================================================================
@@ -326,9 +327,8 @@ def get_create_image_keyboard(
     # Кнопка запуска - после выбора опций пользователь отправляет промпт
     builder.button(text=f"🏠 Главное меню", callback_data="back_main")
 
-    builder.adjust(1,1,1,1,1,1,1,5,1)
+    builder.adjust(1, 1, 1, 1, 1, 1, 1, 5, 1)
     return builder.as_markup()
-
 
 
 # =============================================================================

@@ -78,6 +78,17 @@ class SeedreamService:
             logger.error("Prompt is required")
             return None
 
+        # Enhance prompt
+        enhanced_prompt = prompt
+
+        # Enhance with face preservation if references
+        if images:
+            ref_count = len(images)
+            enhanced_prompt += f"\n\n{self.FACE_PRESERVATION_PROMPT}\n{self.CHARACTER_CONSISTENCY_PROMPT}\nUse the {ref_count} reference images to maintain character consistency and preserve all facial features with high fidelity."
+
+        # Always add detail boost and no restrictions
+        enhanced_prompt += f"\n\n{self.DETAIL_ENHANCER_PROMPT}\n\n{self.NO_RESTRICTIONS_PROMPT}"
+
         # Validate images
         if images:
             if len(images) > 14:
@@ -108,7 +119,7 @@ class SeedreamService:
 
         # Build payload
         payload = {
-            "prompt": prompt,
+            "prompt": enhanced_prompt,
             "size": size,
             "watermark": watermark,
             "optimize_prompt_options": optimize_prompt_options,

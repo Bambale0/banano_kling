@@ -58,3 +58,9 @@ class BatchGenerationStates(StatesGroup):
     uploading_references = State()  # Загрузка референсных изображений
     confirming_batch = State()  # Подтверждение перед запуском
     selecting_batch_count = State()  # Количество изображений (для одиночного промпта)
+
+
+class ImageAnalyzerStates(StatesGroup):
+    """Состояния для анализа изображения в промпт"""
+
+    waiting_for_photo = State()

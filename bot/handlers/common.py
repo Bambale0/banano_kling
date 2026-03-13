@@ -255,9 +255,16 @@ async def show_help(callback: types.CallbackQuery):
 <b>❓ Или выбери "Тех. поддержка" для связи с нами</b>
 """
 
-    await callback.message.edit_text(
-        help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Cannot edit message in show_help: {e}")
+        await callback.message.answer(
+            help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "back_main")

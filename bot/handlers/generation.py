@@ -120,7 +120,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     )
 
     # Показываем экран загрузки референсов (ШАГ 1)
-    await callback.message.edit_text(
+    text = (
         f"🖼 <b>Создание фото</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
         f"<b>Шаг 1: Загрузка референсов (опционально)</b>\n\n"
@@ -128,12 +128,47 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
         f"• Персонажей (до 14 фото)\n\n"
-        f"После загрузки нажмите 'Продолжить' или 'Пропустить'",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        f"После загрузки нажмите 'Продолжить' или 'Пропустить'"
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            parse_mode="HTML",
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            parse_mode="HTML",
+        )
+    await callback.answer()
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "photo_prompt")
+async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Простой промпт для фото (без референсов и выбора параметров)"""
+    from bot.database import get_user_credits
+
+    user_credits = await get_user_credits(callback.from_user.id)
+
+    await state.update_data(
+        generation_type="image",
+        img_service="flux_pro",
+        img_ratio="1:1",
+    )
+
+    await callback.message.edit_text(
+        f"📸 <b>Фото по промпту</b>\n\n"
+        f"🍌 Баланс: <code>{user_credits}</code>🍌\n\n"
+        f"<b>Введите промпт:</b>\n\n"
+        f"Опишите фото (FLUX Pro, 1:1):",
+        reply_markup=get_back_keyboard("back_main"),
         parse_mode="HTML",
     )
     await callback.answer()
-    await state.set_state(GenerationStates.uploading_reference_images)
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "img_ref_upload_new")
@@ -381,7 +416,6 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
     )
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
-
 
 
 # Обработчики для меню создания видео
@@ -2080,7 +2114,10 @@ async def process_photo_for_video_prompt_state(
     return
 
 
-@router.message(GenerationStates.waiting_for_reference_video, F.video | (F.document & F.document.mime_type.startswith("video/")))
+@router.message(
+    GenerationStates.waiting_for_reference_video,
+    F.video | (F.document & F.document.mime_type.startswith("video/")),
+)
 async def process_reference_video_upload(message: types.Message, state: FSMContext):
     """
     Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
@@ -2103,7 +2140,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         file = await message.bot.get_file(video_obj.file_id)
 
         # Проверяем размер (макс 50MB)
-        file_size = getattr(video_obj, 'file_size', 0)
+        file_size = getattr(video_obj, "file_size", 0)
         if file_size > 50 * 1024 * 1024:
             await message.answer("❌ Видео слишком большое (макс 50MB).")
             return
@@ -2206,8 +2243,10 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
         await run_no_preset_video_from_message(message, state, prompt)
 
 
-
-@router.message(GenerationStates.waiting_for_video_prompt, F.video | (F.document & F.document.mime_type.startswith("video/")))
+@router.message(
+    GenerationStates.waiting_for_video_prompt,
+    F.video | (F.document & F.document.mime_type.startswith("video/")),
+)
 async def process_video_for_video_prompt_state(
     message: types.Message, state: FSMContext
 ):
@@ -2232,7 +2271,7 @@ async def process_video_for_video_prompt_state(
         file = await message.bot.get_file(video_obj.file_id)
 
         # Проверяем размер (макс 50MB)
-        file_size = getattr(video_obj, 'file_size', 0)
+        file_size = getattr(video_obj, "file_size", 0)
         if file_size > 50 * 1024 * 1024:
             await message.answer("❌ Видео слишком большое (макс 50MB).")
             return
@@ -2245,11 +2284,12 @@ async def process_video_for_video_prompt_state(
 
         if video_url:
             await state.update_data(v_video_url=video_url)
-            logger.info(f"Saved reference video for video mode (prompt state): {video_url}")
+            logger.info(
+                f"Saved reference video for video mode (prompt state): {video_url}"
+            )
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
             return
-
 
 
 async def start_no_preset_generation(
@@ -2688,8 +2728,6 @@ async def invalid_reference_upload(message: types.Message, state: FSMContext):
     )
 
 
-
-
 @router.message(GenerationStates.waiting_for_input, F.text)
 async def handle_generation_prompt(message: types.Message, state: FSMContext):
     """Обрабатывает текстовые промпты для нового UX генерации изображений."""
@@ -2709,6 +2747,8 @@ async def handle_generation_prompt(message: types.Message, state: FSMContext):
     await run_no_preset_image_generation(
         message, state, prompt, aspect_ratio, message.from_user.id
     )
+
+
 # =============================================================================
 # ЗАПУСК ГЕНЕРАЦИИ
 # =============================================================================
@@ -3695,9 +3735,10 @@ async def run_no_preset_image_generation(
                     reference_images.append(img_data)
             task_response = await service.generate_image(
                 prompt=prompt,
-                model="flux-pro",  # or appropriate model
                 size=size,
-                webhook_url=config.novita_notification_url if config.WEBHOOK_HOST else None,
+                webhook_url=config.novita_notification_url
+                if config.WEBHOOK_HOST
+                else None,
                 reference_images=reference_images,
             )
 

@@ -29,6 +29,7 @@ from bot.handlers import (
     batch_generation_router,
     common_router,
     generation_router,
+    image_analyzer_router,
     payments_router,
 )
 from bot.handlers.payments import handle_tbank_webhook
@@ -164,6 +165,7 @@ def setup_dispatcher() -> Dispatcher:
     # 5. common_router (общие команды /start /help - самые общие)
 
     dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
+    dp.include_router(image_analyzer_router)  # Анализ фото в промпт
     dp.include_router(admin_router)  # Админ-команды
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация
