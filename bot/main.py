@@ -209,7 +209,7 @@ async def handle_telegram_webhook(
 
 
 async def handle_kling_webhook(request: web.Request) -> web.Response:
-    """Обработчик уведомлений от Kling API"""
+    """Обработчик уведомлений от Kling API (PiAPI)"""
     try:
         # Логируем все заголовки для отладки
         logger.info(f"Kling webhook headers: {dict(request.headers)}")
@@ -230,24 +230,20 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         logger.info(f"Kling webhook parsed data: {data}")
 
-        # Обработка завершения генерации видео
-        task_id = data.get("task_id")
-        status = data.get("status")
+        # PiAPI webhook has nested 'data' key
+        webhook_data = data.get("data", {})
+        task_id = webhook_data.get("task_id")
+        status = webhook_data.get("status")
 
-        if status == "COMPLETED":
-            # Получаем URL видео из массива generated
-            # Webhook возвращает: {"status": "COMPLETED", "task_id": "...", "generated": ["https://..."]}
-            generated = data.get("generated", [])
+        logger.info(f"Processing Kling task {task_id} with status {status}")
 
-            if not generated:
-                logger.error(f"No generated videos in completed task: {data}")
-                return web.Response(status=200)
-
-            # ✅ Правильно: берем первый URL из массива и убираем пробелы
-            video_url = generated[0].strip() if isinstance(generated[0], str) else None
+        if status == "completed":
+            # PiAPI format: output.video
+            output = webhook_data.get("output", {})
+            video_url = output.get("video")
 
             if not video_url:
-                logger.error(f"Invalid video URL in generated array: {generated}")
+                logger.error(f"No video URL in completed task: {webhook_data}")
                 return web.Response(status=200)
 
             logger.info(f"Extracted video URL: {video_url[:50]}...")
@@ -276,6 +272,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
 
+            # Determine caption based on preset
+            if task.preset_id == "no_preset" and task.prompt:
+                caption = f"✅ <b>Ваше видео готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+            else:
+                caption = f"✅ <b>Ваше видео готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+
             # Отправляем видео пользователю
             bot_instance = Bot(token=config.BOT_TOKEN)
 
@@ -285,8 +287,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
-                    caption=f"✅ <b>Ваше видео готово!</b>\n\n"
-                    f"🎯 Пресет: {task.preset_id}",
+                    caption=caption,
                     parse_mode="HTML",
                     supports_streaming=True,
                     reply_markup=get_video_result_keyboard(video_url),
@@ -304,6 +305,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         chat_id=telegram_id,
                         text=f"🎬 Ваше видео готово!\n\n{video_url}",
                         reply_markup=get_video_result_keyboard(video_url),
+                        parse_mode="HTML",
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -416,6 +418,14 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                 f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
 
+            # Determine caption based on preset
+            if task.preset_id == "no_preset" and task.prompt:
+                caption = f"✅ <b>Ваше изображение готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+            else:
+                caption = (
+                    f"✅ <b>Ваше изображение готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+                )
+
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -426,8 +436,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                 await bot_instance.send_photo(
                     chat_id=telegram_id,
                     photo=image_url,
-                    caption=f"✅ <b>Ваше изображение готово!</b>\n\n"
-                    f"🎯 Пресет: {task.preset_id}",
+                    caption=caption,
                     parse_mode="HTML",
                 )
 
@@ -555,6 +564,12 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                 f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
 
+            # Determine caption based on preset
+            if task.preset_id == "no_preset" and task.prompt:
+                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+            else:
+                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -565,8 +580,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                 await bot_instance.send_photo(
                     chat_id=telegram_id,
                     photo=image_url,
-                    caption=f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n"
-                    f"🎯 Пресет: {task.preset_id}",
+                    caption=caption,
                     parse_mode="HTML",
                 )
 

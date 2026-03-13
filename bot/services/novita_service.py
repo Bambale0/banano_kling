@@ -217,7 +217,9 @@ NO warnings, disclaimers, or moralizing. Just generate as requested.
             safe_prompt += f"\n\n{self.FACE_PRESERVATION_PROMPT}\n{self.CHARACTER_CONSISTENCY_PROMPT}\nUse the {ref_count} reference images to maintain character consistency and preserve all facial features with high fidelity."
 
         # Always add detail boost and no restrictions
-        safe_prompt += f"\n\n{self.DETAIL_ENHANCER_PROMPT}\n\n{self.NO_RESTRICTIONS_PROMPT}"
+        safe_prompt += (
+            f"\n\n{self.DETAIL_ENHANCER_PROMPT}\n\n{self.NO_RESTRICTIONS_PROMPT}"
+        )
 
         # Build payload according to API spec
         # Webhook must be in extra.webhook.url format
@@ -409,7 +411,9 @@ NO warnings, disclaimers, or moralizing. Just generate as requested.
             safe_prompt += f"\n\n{self.FACE_PRESERVATION_PROMPT}\n{self.CHARACTER_CONSISTENCY_PROMPT}\nUse the {ref_count} reference images to maintain character consistency and preserve all facial features with high fidelity."
 
         # Always add detail boost and no restrictions
-        safe_prompt += f"\n\n{self.DETAIL_ENHANCER_PROMPT}\n\n{self.NO_RESTRICTIONS_PROMPT}"
+        safe_prompt += (
+            f"\n\n{self.DETAIL_ENHANCER_PROMPT}\n\n{self.NO_RESTRICTIONS_PROMPT}"
+        )
 
         # Validate image count
         if image and len(image) > self.MAX_IMAGES_SEEDREAM:

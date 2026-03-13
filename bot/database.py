@@ -40,6 +40,7 @@ class GenerationTask:
     task_id: str
     type: str
     preset_id: str
+    prompt: Optional[str]
     status: str
     result_url: Optional[str]
     created_at: datetime
@@ -87,6 +88,7 @@ async def init_db():
                 task_id TEXT UNIQUE NOT NULL,
                 type TEXT NOT NULL,
                 preset_id TEXT NOT NULL,
+                prompt TEXT,
                 status TEXT DEFAULT 'pending',
                 result_url TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -95,6 +97,12 @@ async def init_db():
             )
         """
         )
+
+        # Migration: add prompt column if not exists
+        try:
+            await db.execute("ALTER TABLE generation_tasks ADD COLUMN prompt TEXT")
+        except aiosqlite.OperationalError:
+            pass  # Column already exists
 
         # Таблица истории генераций
         await db.execute(
@@ -339,16 +347,16 @@ async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
 
 
 async def add_generation_task(
-    user_id: int, task_id: str, type: str, preset_id: str
+    user_id: int, task_id: str, type: str, preset_id: str, prompt: Optional[str] = None
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO generation_tasks 
-                   (user_id, task_id, type, preset_id, status) 
-                   VALUES (?, ?, ?, ?, 'pending')""",
-                (user_id, task_id, type, preset_id),
+                   (user_id, task_id, type, preset_id, prompt, status) 
+                   VALUES (?, ?, ?, ?, ?, 'pending')""",
+                (user_id, task_id, type, preset_id, prompt),
             )
             await db.commit()
             return True
@@ -376,6 +384,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             task_id=row["task_id"],
             type=row["type"],
             preset_id=row["preset_id"],
+            prompt=row["prompt"],
             status=row["status"],
             result_url=row["result_url"],
             created_at=datetime.fromisoformat(row["created_at"]),

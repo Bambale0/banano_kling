@@ -26,12 +26,14 @@ class Config:
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
+    PIAPI_API_KEY: str = os.getenv("PIAPI_API_KEY", "")
 
     # API Endpoints
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     NANOBANANA_BASE_URL: str = "https://api.nanobanana.com/v1"
     FREEPIK_BASE_URL: str = "https://api.freepik.com/v1"
     KLING_BASE_URL: str = "https://api.freepik.com/v1"  # Legacy alias
+    PIAPI_BASE_URL: str = "https://api.piapi.ai"
     NOVITA_BASE_URL: str = "https://api.novita.ai"
 
     # Вебхуки

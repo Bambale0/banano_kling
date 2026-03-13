@@ -1,4756 +1,2378 @@
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Webhooks
-
-> Webhooks are a powerful way to connect different systems and services. Learn about webhooks and how to integrate them securely.
-
-### What are webhooks?
-
-Webhooks are a way for one system to send real-time data to another system. They are a powerful tool for integrating different services and automating workflows. With webhooks, you can receive notifications, updates, and data from external systems without having to poll for changes.
-
-### How do webhooks work?
-
-Webhooks work by allowing you to register a URL with a service that supports them. When an event occurs in the service, it sends an HTTP POST request to the registered URL with relevant data. The receiving system can then process the data and take appropriate actions based on the event.
-
-### Why use webhooks?
-
-Webhooks offer several advantages over traditional polling-based methods:
-
-* **Real-time updates**: Webhooks provide instant notifications, allowing you to react to events as they happen.
-* **Efficiency**: They reduce the overhead of constant requests by delivering data only when an event occurs.
-* **Automation**: Webhooks trigger automatic workflows, reducing manual processes and streamlining tasks.
-* **Seamless integration**: They facilitate easy data exchange between systems, enabling efficient communication between different platforms.
-
-### Common use cases for webhooks
-
-Webhooks are widely used in the following scenarios:
-
-* **Notifications**: Sending real-time alerts and updates to users or systems.
-* **Data synchronization**: Ensuring that data remains consistent across multiple platforms.
-* **Workflow automation**: Initiating tasks like sending emails, updating databases, or processing transactions based on specific events.
-
-By using webhooks, you can streamline your workflows, improve efficiency, and create seamless integrations between different systems.
-
-## Webhook security
-
-### Why webhook security is important?
-
-Webhooks are a powerful way to connect different systems and services. They allow you to send real-time data from one system to another. However, with great power comes great responsibility. Webhooks can be a security risk if not implemented correctly, as they can be exploited by attackers to send malicious data to your system.
-
-### Webhook security headers
-
-To ensure the integrity and authenticity of incoming webhook requests, we deliver three headers with each request:
-
-* `webhook-id`: A unique identifier for the webhook request. This helps to detect and prevent replay attacks.
-* `webhook-timestamp`: A timestamp indicating when the webhook request was sent. This is used to ensure that the request is recent and prevents replay attacks within a specific time window.
-* `webhook-signature`: A signature generated using a secret key. This is used to verify the authenticity of the request, ensuring that it was sent by a trusted source.
-
-### Generating the string to sign for verification
-
-You must generate a content string that will be signed and verified. This content is created by concatenating the `webhook-id`, `webhook-timestamp`, and the request body with a period (`.`) separator. You can do this by following these steps:
-
-1. **Retrieve the headers**: Extract the `webhook-id` and `webhook-timestamp` from the request headers.
-2. **Access the request body**: Obtain the raw body of the webhook request.
-3. **Concatenate the values**: Combine the `webhook-id`, `webhook-timestamp`, and body into a single string using the format mentioned earlier.
-
-Here is an example of how you can generate the content to sign in Python:
-
-<CodeGroup>
-  ```python python.py theme={null}
-  content_to_sign = f"{webhook_id}.{webhook_timestamp}.{body}"
-  ```
-
-  ```javascript javascript.js theme={null}
-  const contentToSign = `${webhookId}.${webhookTimestamp}.${body}`;
-  ```
-
-  ```php php.php theme={null}
-  $content_to_sign = "$webhook_id.$webhook_timestamp.$body";
-  ```
-
-  ```java java.java theme={null}
-  String contentToSign = webhookId + "." + webhookTimestamp + "." + body;
-  ```
-</CodeGroup>
-
-### Obtaining the secret key
-
-The secret key is a shared secret between your system and the webhook provider. It is used to generate the signature and verify the authenticity of the request. Make sure to keep the secret key secure and never expose it in your code or configuration files.
-
-To obtain the secret key, you can go to the [User Dashboard](https://www.freepik.com/developers/dashboard/api-key) and generate a new secret key. Copy the secret key and store it securely in your system.
-
-### Generating the signature
-
-For the webhook signature, we use HMAC-SHA256 as the hashing algorithm. You can generate the signature by following these steps:
-
-1. Encode the secret key as bytes.
-2. Obtain the HMAC-SHA256 hash as bytes of the content to sign using the secret key.
-3. Encode the hash in base64 to get the signature.
-
-Here is an example of how you can generate the signature in Python:
-
-<CodeGroup>
-  ```python python.py theme={null}
-  import hmac
-  import hashlib
-  import base64
-
-  def generate_signature(secret_key, content_to_sign):
-      secret_key_bytes = secret_key.encode()
-
-      hmac_bytes = hmac.new(secret_key_bytes, content_to_sign.encode(), hashlib.sha256).digest()
-
-      signature = base64.b64encode(hmac_bytes).decode()
-
-      return signature
-  ```
-
-  ```javascript javascript.js theme={null}
-  const crypto = require('crypto');
-
-  function generateSignature(secretKey, contentToSign) {
-      const secretKeyBytes = Buffer.from(secretKey, 'utf-8');
-
-      const hmac = crypto.createHmac('sha256', secretKeyBytes);
-
-      hmac.update(contentToSign);
-
-      const signature = hmac.digest('base64');
-
-      return signature;
-  }
-  ```
-
-  ```php php.php theme={null}
-  function generateSignature($secretKey, $contentToSign) {
-      $secretKey = base64_decode($secretKey);
-
-      $hmac = hash_hmac(
-          'sha256',
-          $contentToSign,
-          $secretKey,
-          true
-      );
-
-      $signature = base64_encode($hmac);
-
-      return $signature;
-  }
-  ```
-
-  ```java java.java theme={null}
-  import javax.crypto.Mac;
-  import javax.crypto.spec.SecretKeySpec;
-  import java.util.Base64;
-
-
-  public static String generateSignature(String secretKey, String contentToSign) throws Exception {
-      byte[] secretKeyBytes = secretKey.getBytes("UTF-8");
-
-      Mac mac = Mac.getInstance("HmacSHA256");
-      SecretKeySpec secretKeySpec = new SecretKeySpec(secretKeyBytes, "HmacSHA256");
-      mac.init(secretKeySpec);
-
-      byte[] hmacBytes = mac.doFinal(contentToSign.getBytes("UTF-8"));
-
-      String signature = Base64.getEncoder().encodeToString(hmacBytes);
-
-      return signature;
-  }
-  ```
-</CodeGroup>
-
-The obtained signature must be compared with the `webhook-signature` header in the incoming request to verify the authenticity of the request. If the signatures match, the request is considered valid, and you can process it further.
-
-The `webhook-signature` header is composed of a list of space-delimited signatures and their corresponding version identifiers. This allows you to rotate the secret key without breaking existing webhook integrations. For example, the header might look like this:
-
-```
-v1,signature1 v2,signature2
-```
-
-You should iterate over the list of signatures and verify each one using the corresponding secret key version. If any of the signatures match, the request is considered valid. For example, you can implement this logic in Python as follows:
-
-<CodeGroup>
-  ```python python.py theme={null}
-  def verify_signature(generated_signature, header_signatures):
-      for signature in header_signatures.split():
-          version, expected_signature = signature.split(',')
-          if expected_signature == generated_signature:
-              return True
-      return False
-  ```
-
-  ```javascript javascript.js theme={null}
-  function verifySignature(generatedSignature, headerSignatures) {
-      const signatures = headerSignatures.split(' ');
-
-      for (const signature of signatures) {
-          const [version, expectedSignature] = signature.split(',');
-
-          if (expectedSignature === generatedSignature) {
-              return true;
-          }
-      }
-
-      return false;
-  }
-  ```
-
-  ```php php.php theme={null}
-  function verifySignature($generatedSignature, $headerSignatures) {
-      $signatures = explode(' ', $headerSignatures);
-
-      foreach ($signatures as $signature) {
-          list($version, $expectedSignature) = explode(',', $signature);
-
-          if ($expectedSignature === $generatedSignature) {
-              return true;
-          }
-      }
-
-      return false;
-  }
-  ```
-
-  ```java java.java theme={null}
-  public static boolean verifySignature(String generatedSignature, String headerSignatures) {
-      String[] signatures = headerSignatures.split(" ");
-
-      for (String signature : signatures) {
-          String[] parts = signature.split(",");
-          String version = parts[0];
-          String expectedSignature = parts[1];
-
-          if (expectedSignature.equals(generatedSignature)) {
-              return true;
-          }
-      }
-
-      return false;
-  }
-  ```
-</CodeGroup>
-
-By following these steps, you can ensure the security of your webhook implementation and protect your system from unauthorized access and data tampering.
-
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Authentication
-
-> Learn how to authenticate your requests to the Freepik API
-
-## API Key Authentication
-
-Freepik API uses API keys to authenticate requests. You need to include your API key in the header of every API request to access the Freepik resources.
-
-Currently, private API keys are the only way to authenticate with the Freepik API. This means that only server-to-server calls can be made to the API
-
-All API endpoints are authenticated using API keys and picked up from the specification file.
-
-<div className="my-11">
-  <Columns>
-    <Card title="Freepik API" icon="leaf" href="https://storage.googleapis.com/fc-freepik-pro-rev1-eu-api-specs/freepik-api-v1-openapi.yaml">
-      Download the OpenAPI specification file
-    </Card>
-  </Columns>
-</div>
-
-## Obtaining an API Key
-
-To get an API key:
-
-1. Sign up for a Freepik account at [freepik.com/api](https://www.freepik.com/api)
-2. If you are already registered, visit the API dashboard at [freepik.com/developers/dashboard](https://www.freepik.com/developers/dashboard)
-3. Look for the API key section and generate a new API key
-
-<div className="my-11">
-  <Card icon="circle-exclamation" title="Keep your API key secure and do not share it publicly.">
-    If you believe your key has been compromised, please contact us and we will generate a new one for you.
-  </Card>
-</div>
-
-## Using the API Key
-
-Include your API key in the `x-freepik-api-key` header of your HTTP requests:
-
-```bash  theme={null}
-curl -H "x-freepik-api-key: YOUR_API_KEY" https://api.freepik.com/v1/resources
-```
-
-<CodeGroup>
-  ```javascript JavaScript theme={null}
-  const axios = require('axios');
-
-  const response = await axios.get('https://api.freepik.com/v1/resources', {
-    headers: {
-      'x-freepik-api-key': 'YOUR_API_KEY'
-    }
-  });
-  ```
-
-  ```python Python theme={null}
-  import requests
-
-  headers = {
-      'x-freepik-api-key': 'YOUR_API_KEY'
-  }
-
-  response = requests.get('https://api.freepik.com/v1/resources', headers=headers)
-  ```
-
-  ```ruby Ruby theme={null}
-  require 'net/http'
-  require 'uri'
-
-  uri = URI.parse('https://api.freepik.com/v1/resources')
-  request = Net::HTTP::Get.new(uri)
-  request['x-freepik-api-key'] = 'YOUR_API_KEY'
-
-  response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
-    http.request(request)
-  end
-  ```
-</CodeGroup>
-
-## Rate limiting
-
-Be aware that API requests are subject to [rate limiting](/ratelimits). The specific limits may vary based on your account type and agreement with Freepik. Always check the API response headers for rate limit information.
-
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 API
-
-> Generate AI videos from text or images with Kling 3. Multi-shot support, first/end frame control, and durations from 3-15 seconds. Pro and Standard tiers for creative video production.
-
-<Card title="Kling 3 integration" icon="video">
-  Generate high-quality videos from text prompts or images using Kling's latest V3 model with multi-shot support and advanced frame control.
-</Card>
-
-Kling 3 is a dual-mode video generation API that creates professional-grade videos from either text descriptions or source images. It supports multi-shot mode for creating complex narratives with up to 6 scenes, first and end frame image control, and flexible durations from 3 to 15 seconds. Available in Pro and Standard tiers to balance quality and cost.
-
-### Key capabilities
-
-* **Text-to-Video (T2V)**: Generate videos from text prompts up to 2500 characters
-* **Image-to-Video (I2V)**: Use first\_frame and/or end\_frame images to control video start and end points
-* **Multi-shot mode**: Create videos with up to 6 scenes, each with custom prompts and durations (max 15 seconds total)
-* **Flexible durations**: 3-15 seconds with per-shot duration control in multi-shot mode
-* **Element consistency**: Pre-registered element IDs for consistent characters/styles across videos
-* **CFG scale control**: Adjust prompt adherence from 0 (creative) to 1 (strict), default 0.5
-* **Negative prompts**: Exclude unwanted elements, styles, or artifacts
-* **Async processing**: Webhook notifications or polling for task completion
-
-### Pro vs Standard
-
-| Feature  | Kling 3 Pro                    | Kling 3 Standard             |
-| -------- | ------------------------------ | ---------------------------- |
-| Quality  | Higher fidelity, richer detail | Good quality, cost-effective |
-| Speed    | Standard processing            | Faster processing            |
-| Best for | Premium content, marketing     | High-volume, testing         |
-
-### Use cases
-
-* **Marketing and advertising**: Create multi-scene product narratives with consistent branding
-* **Social media content**: Generate vertical videos for TikTok, Instagram Reels, and YouTube Shorts
-* **E-commerce**: Animate product images with controlled start and end frames
-* **Storyboarding**: Turn scripts into multi-shot video sequences
-* **Creative storytelling**: Build narratives with scene-by-scene control
-
-### Generate videos with Kling 3
-
-Create videos by submitting a text prompt (T2V) or images with prompt (I2V) to the API. The service returns a task ID for async polling or webhook notification.
-
-<div className="my-11">
-  <Columns cols={2}>
-    <Card title="POST /v1/ai/video/kling-v3-pro" icon="video" href="/api-reference/video/kling-v3/generate-pro">
-      Generate video with Kling 3 Pro
-    </Card>
-
-    <Card title="POST /v1/ai/video/kling-v3-std" icon="video" href="/api-reference/video/kling-v3/generate-std">
-      Generate video with Kling 3 Standard
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3" icon="list" href="/api-reference/video/kling-v3/kling-v3-tasks">
-      List all Kling 3 tasks
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3/{task-id}" icon="magnifying-glass" href="/api-reference/video/kling-v3/task-by-id">
-      Get task status by ID
-    </Card>
-  </Columns>
-</div>
-
-### Parameters
-
-| Parameter         | Type      | Required | Default | Description                                                            |
-| ----------------- | --------- | -------- | ------- | ---------------------------------------------------------------------- |
-| `prompt`          | `string`  | No       | -       | Text prompt describing the video (max 2500 chars). Required for T2V.   |
-| `negative_prompt` | `string`  | No       | -       | Text describing what to avoid (max 2500 chars)                         |
-| `image_list`      | `array`   | No       | -       | Reference images with `image_url` and `type` (first\_frame/end\_frame) |
-| `multi_shot`      | `boolean` | No       | `false` | Enable multi-shot mode for multi-scene videos                          |
-| `shot_type`       | `string`  | No       | -       | Use `customize` for custom shot definitions                            |
-| `multi_prompt`    | `array`   | No       | -       | Shot definitions: `index` (0-5), `prompt`, `duration` (min 3s)         |
-| `element_list`    | `array`   | No       | -       | Pre-registered element IDs for character/style consistency             |
-| `aspect_ratio`    | `string`  | No       | `16:9`  | Video ratio: `16:9`, `9:16`, `1:1`                                     |
-| `duration`        | `integer` | No       | `5`     | Duration in seconds: 3-15 (default 5)                                  |
-| `cfg_scale`       | `number`  | No       | `0.5`   | Prompt adherence: 0 (creative) to 1 (strict)                           |
-| `webhook_url`     | `string`  | No       | -       | URL for task completion notification                                   |
-
-### Image list item
-
-| Field       | Type     | Description                                                         |
-| ----------- | -------- | ------------------------------------------------------------------- |
-| `image_url` | `string` | Publicly accessible image URL (300x300 min, 10MB max, JPG/JPEG/PNG) |
-| `type`      | `string` | Image role: `first_frame` or `end_frame`                            |
-
-### Multi-prompt item
-
-| Field      | Type      | Description                                |
-| ---------- | --------- | ------------------------------------------ |
-| `index`    | `integer` | Shot order (0-5)                           |
-| `prompt`   | `string`  | Text prompt for this shot (max 2500 chars) |
-| `duration` | `number`  | Shot duration (minimum 3 seconds)          |
-
-## Frequently Asked Questions
-
-<AccordionGroup>
-  <Accordion title="What is Kling 3 and how does it work?">
-    Kling 3 is an AI video generation model that creates videos from text prompts (T2V) or images (I2V). You submit your request via the API, receive a task ID immediately, then poll for results or receive a webhook notification when processing completes. Typical generation takes 30-120 seconds depending on duration and complexity.
-  </Accordion>
-
-  <Accordion title="What is multi-shot mode?">
-    Multi-shot mode lets you create videos with up to 6 distinct scenes. Each scene can have its own prompt and duration. The total duration across all shots cannot exceed 15 seconds, and each shot must be at least 3 seconds. Enable with `multi_shot: true` and define scenes in `multi_prompt`.
-  </Accordion>
-
-  <Accordion title="How do first_frame and end_frame work?">
-    Use the `image_list` parameter to provide reference images. Set `type: "first_frame"` to use an image as the video's starting point, or `type: "end_frame"` for the ending point. You can use both to create a transition from one image to another.
-  </Accordion>
-
-  <Accordion title="What image formats does Kling 3 support?">
-    Kling 3 accepts JPG, JPEG, and PNG images via publicly accessible URLs. Requirements: minimum 300x300 pixels, maximum 10MB file size, aspect ratio between 1:2.5 and 2.5:1.
-  </Accordion>
-
-  <Accordion title="What is cfg_scale and how should I set it?">
-    CFG scale controls how closely the model follows your prompt. Use 0 for maximum creativity and artistic interpretation, 0.5 (default) for balanced results, or 1 for strict adherence to your prompt with less creative variation.
-  </Accordion>
-
-  <Accordion title="What is the difference between Pro and Standard?">
-    Pro delivers higher fidelity with richer detail, ideal for premium content and marketing. Standard offers good quality with faster processing, suitable for high-volume generation and testing. Both share the same parameters and capabilities.
-  </Accordion>
-
-  <Accordion title="What are the rate limits for Kling 3?">
-    Rate limits vary by subscription tier. See [Rate Limits](/ratelimits) for current limits and quotas.
-  </Accordion>
-
-  <Accordion title="How much does Kling 3 cost?">
-    Pricing varies based on model tier (Pro vs Standard) and video duration. See the [Pricing](/pricing) page for current rates.
-  </Accordion>
-</AccordionGroup>
-
-## Best practices
-
-* **Prompt clarity**: Write detailed prompts specifying subject, action, camera movement, and atmosphere
-* **Start simple**: Begin with single-shot mode before attempting multi-shot sequences
-* **Image quality**: For I2V, use high-resolution source images with clear subjects (min 300x300)
-* **Duration planning**: For multi-shot, plan scene durations to stay within 15-second total limit
-* **Element consistency**: Use pre-registered elements for recurring characters across multiple videos
-* **CFG tuning**: Start with 0.5, decrease for more creativity, increase for prompt precision
-* **Production integration**: Use webhooks instead of polling for scalable applications
-* **Error handling**: Implement retry logic with exponential backoff for 503 errors
-
-## Related APIs
-
-* **[Kling 3 Omni](/api-reference/video/kling-v3-omni/overview)**: Kling 3 with video reference support for motion/style guidance
-* **[Kling 2.6 Pro](/api-reference/image-to-video/kling-v2-6-pro)**: Previous generation with motion control capabilities
-* **[Kling O1](/api-reference/image-to-video/kling-o1/overview)**: High-performance video generation
-* **[Runway Gen 4.5](/api-reference/video/runway-gen-4-5/overview)**: Alternative video generation model
-
-
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 API
-
-> Generate AI videos from text or images with Kling 3. Multi-shot support, first/end frame control, and durations from 3-15 seconds. Pro and Standard tiers for creative video production.
-
-<Card title="Kling 3 integration" icon="video">
-  Generate high-quality videos from text prompts or images using Kling's latest V3 model with multi-shot support and advanced frame control.
-</Card>
-
-Kling 3 is a dual-mode video generation API that creates professional-grade videos from either text descriptions or source images. It supports multi-shot mode for creating complex narratives with up to 6 scenes, first and end frame image control, and flexible durations from 3 to 15 seconds. Available in Pro and Standard tiers to balance quality and cost.
-
-### Key capabilities
-
-* **Text-to-Video (T2V)**: Generate videos from text prompts up to 2500 characters
-* **Image-to-Video (I2V)**: Use first\_frame and/or end\_frame images to control video start and end points
-* **Multi-shot mode**: Create videos with up to 6 scenes, each with custom prompts and durations (max 15 seconds total)
-* **Flexible durations**: 3-15 seconds with per-shot duration control in multi-shot mode
-* **Element consistency**: Pre-registered element IDs for consistent characters/styles across videos
-* **CFG scale control**: Adjust prompt adherence from 0 (creative) to 1 (strict), default 0.5
-* **Negative prompts**: Exclude unwanted elements, styles, or artifacts
-* **Async processing**: Webhook notifications or polling for task completion
-
-### Pro vs Standard
-
-| Feature  | Kling 3 Pro                    | Kling 3 Standard             |
-| -------- | ------------------------------ | ---------------------------- |
-| Quality  | Higher fidelity, richer detail | Good quality, cost-effective |
-| Speed    | Standard processing            | Faster processing            |
-| Best for | Premium content, marketing     | High-volume, testing         |
-
-### Use cases
-
-* **Marketing and advertising**: Create multi-scene product narratives with consistent branding
-* **Social media content**: Generate vertical videos for TikTok, Instagram Reels, and YouTube Shorts
-* **E-commerce**: Animate product images with controlled start and end frames
-* **Storyboarding**: Turn scripts into multi-shot video sequences
-* **Creative storytelling**: Build narratives with scene-by-scene control
-
-### Generate videos with Kling 3
-
-Create videos by submitting a text prompt (T2V) or images with prompt (I2V) to the API. The service returns a task ID for async polling or webhook notification.
-
-<div className="my-11">
-  <Columns cols={2}>
-    <Card title="POST /v1/ai/video/kling-v3-pro" icon="video" href="/api-reference/video/kling-v3/generate-pro">
-      Generate video with Kling 3 Pro
-    </Card>
-
-    <Card title="POST /v1/ai/video/kling-v3-std" icon="video" href="/api-reference/video/kling-v3/generate-std">
-      Generate video with Kling 3 Standard
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3" icon="list" href="/api-reference/video/kling-v3/kling-v3-tasks">
-      List all Kling 3 tasks
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3/{task-id}" icon="magnifying-glass" href="/api-reference/video/kling-v3/task-by-id">
-      Get task status by ID
-    </Card>
-  </Columns>
-</div>
-
-### Parameters
-
-| Parameter         | Type      | Required | Default | Description                                                            |
-| ----------------- | --------- | -------- | ------- | ---------------------------------------------------------------------- |
-| `prompt`          | `string`  | No       | -       | Text prompt describing the video (max 2500 chars). Required for T2V.   |
-| `negative_prompt` | `string`  | No       | -       | Text describing what to avoid (max 2500 chars)                         |
-| `image_list`      | `array`   | No       | -       | Reference images with `image_url` and `type` (first\_frame/end\_frame) |
-| `multi_shot`      | `boolean` | No       | `false` | Enable multi-shot mode for multi-scene videos                          |
-| `shot_type`       | `string`  | No       | -       | Use `customize` for custom shot definitions                            |
-| `multi_prompt`    | `array`   | No       | -       | Shot definitions: `index` (0-5), `prompt`, `duration` (min 3s)         |
-| `element_list`    | `array`   | No       | -       | Pre-registered element IDs for character/style consistency             |
-| `aspect_ratio`    | `string`  | No       | `16:9`  | Video ratio: `16:9`, `9:16`, `1:1`                                     |
-| `duration`        | `integer` | No       | `5`     | Duration in seconds: 3-15 (default 5)                                  |
-| `cfg_scale`       | `number`  | No       | `0.5`   | Prompt adherence: 0 (creative) to 1 (strict)                           |
-| `webhook_url`     | `string`  | No       | -       | URL for task completion notification                                   |
-
-### Image list item
-
-| Field       | Type     | Description                                                         |
-| ----------- | -------- | ------------------------------------------------------------------- |
-| `image_url` | `string` | Publicly accessible image URL (300x300 min, 10MB max, JPG/JPEG/PNG) |
-| `type`      | `string` | Image role: `first_frame` or `end_frame`                            |
-
-### Multi-prompt item
-
-| Field      | Type      | Description                                |
-| ---------- | --------- | ------------------------------------------ |
-| `index`    | `integer` | Shot order (0-5)                           |
-| `prompt`   | `string`  | Text prompt for this shot (max 2500 chars) |
-| `duration` | `number`  | Shot duration (minimum 3 seconds)          |
-
-## Frequently Asked Questions
-
-<AccordionGroup>
-  <Accordion title="What is Kling 3 and how does it work?">
-    Kling 3 is an AI video generation model that creates videos from text prompts (T2V) or images (I2V). You submit your request via the API, receive a task ID immediately, then poll for results or receive a webhook notification when processing completes. Typical generation takes 30-120 seconds depending on duration and complexity.
-  </Accordion>
-
-  <Accordion title="What is multi-shot mode?">
-    Multi-shot mode lets you create videos with up to 6 distinct scenes. Each scene can have its own prompt and duration. The total duration across all shots cannot exceed 15 seconds, and each shot must be at least 3 seconds. Enable with `multi_shot: true` and define scenes in `multi_prompt`.
-  </Accordion>
-
-  <Accordion title="How do first_frame and end_frame work?">
-    Use the `image_list` parameter to provide reference images. Set `type: "first_frame"` to use an image as the video's starting point, or `type: "end_frame"` for the ending point. You can use both to create a transition from one image to another.
-  </Accordion>
-
-  <Accordion title="What image formats does Kling 3 support?">
-    Kling 3 accepts JPG, JPEG, and PNG images via publicly accessible URLs. Requirements: minimum 300x300 pixels, maximum 10MB file size, aspect ratio between 1:2.5 and 2.5:1.
-  </Accordion>
-
-  <Accordion title="What is cfg_scale and how should I set it?">
-    CFG scale controls how closely the model follows your prompt. Use 0 for maximum creativity and artistic interpretation, 0.5 (default) for balanced results, or 1 for strict adherence to your prompt with less creative variation.
-  </Accordion>
-
-  <Accordion title="What is the difference between Pro and Standard?">
-    Pro delivers higher fidelity with richer detail, ideal for premium content and marketing. Standard offers good quality with faster processing, suitable for high-volume generation and testing. Both share the same parameters and capabilities.
-  </Accordion>
-
-  <Accordion title="What are the rate limits for Kling 3?">
-    Rate limits vary by subscription tier. See [Rate Limits](/ratelimits) for current limits and quotas.
-  </Accordion>
-
-  <Accordion title="How much does Kling 3 cost?">
-    Pricing varies based on model tier (Pro vs Standard) and video duration. See the [Pricing](/pricing) page for current rates.
-  </Accordion>
-</AccordionGroup>
-
-## Best practices
-
-* **Prompt clarity**: Write detailed prompts specifying subject, action, camera movement, and atmosphere
-* **Start simple**: Begin with single-shot mode before attempting multi-shot sequences
-* **Image quality**: For I2V, use high-resolution source images with clear subjects (min 300x300)
-* **Duration planning**: For multi-shot, plan scene durations to stay within 15-second total limit
-* **Element consistency**: Use pre-registered elements for recurring characters across multiple videos
-* **CFG tuning**: Start with 0.5, decrease for more creativity, increase for prompt precision
-* **Production integration**: Use webhooks instead of polling for scalable applications
-* **Error handling**: Implement retry logic with exponential backoff for 503 errors
-
-## Related APIs
-
-* **[Kling 3 Omni](/api-reference/video/kling-v3-omni/overview)**: Kling 3 with video reference support for motion/style guidance
-* **[Kling 2.6 Pro](/api-reference/image-to-video/kling-v2-6-pro)**: Previous generation with motion control capabilities
-* **[Kling O1](/api-reference/image-to-video/kling-o1/overview)**: High-performance video generation
-* **[Runway Gen 4.5](/api-reference/video/runway-gen-4-5/overview)**: Alternative video generation model
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 API
-
-> Generate AI videos from text or images with Kling 3. Multi-shot support, first/end frame control, and durations from 3-15 seconds. Pro and Standard tiers for creative video production.
-
-<Card title="Kling 3 integration" icon="video">
-  Generate high-quality videos from text prompts or images using Kling's latest V3 model with multi-shot support and advanced frame control.
-</Card>
-
-Kling 3 is a dual-mode video generation API that creates professional-grade videos from either text descriptions or source images. It supports multi-shot mode for creating complex narratives with up to 6 scenes, first and end frame image control, and flexible durations from 3 to 15 seconds. Available in Pro and Standard tiers to balance quality and cost.
-
-### Key capabilities
-
-* **Text-to-Video (T2V)**: Generate videos from text prompts up to 2500 characters
-* **Image-to-Video (I2V)**: Use first\_frame and/or end\_frame images to control video start and end points
-* **Multi-shot mode**: Create videos with up to 6 scenes, each with custom prompts and durations (max 15 seconds total)
-* **Flexible durations**: 3-15 seconds with per-shot duration control in multi-shot mode
-* **Element consistency**: Pre-registered element IDs for consistent characters/styles across videos
-* **CFG scale control**: Adjust prompt adherence from 0 (creative) to 1 (strict), default 0.5
-* **Negative prompts**: Exclude unwanted elements, styles, or artifacts
-* **Async processing**: Webhook notifications or polling for task completion
-
-### Pro vs Standard
-
-| Feature  | Kling 3 Pro                    | Kling 3 Standard             |
-| -------- | ------------------------------ | ---------------------------- |
-| Quality  | Higher fidelity, richer detail | Good quality, cost-effective |
-| Speed    | Standard processing            | Faster processing            |
-| Best for | Premium content, marketing     | High-volume, testing         |
-
-### Use cases
-
-* **Marketing and advertising**: Create multi-scene product narratives with consistent branding
-* **Social media content**: Generate vertical videos for TikTok, Instagram Reels, and YouTube Shorts
-* **E-commerce**: Animate product images with controlled start and end frames
-* **Storyboarding**: Turn scripts into multi-shot video sequences
-* **Creative storytelling**: Build narratives with scene-by-scene control
-
-### Generate videos with Kling 3
-
-Create videos by submitting a text prompt (T2V) or images with prompt (I2V) to the API. The service returns a task ID for async polling or webhook notification.
-
-<div className="my-11">
-  <Columns cols={2}>
-    <Card title="POST /v1/ai/video/kling-v3-pro" icon="video" href="/api-reference/video/kling-v3/generate-pro">
-      Generate video with Kling 3 Pro
-    </Card>
-
-    <Card title="POST /v1/ai/video/kling-v3-std" icon="video" href="/api-reference/video/kling-v3/generate-std">
-      Generate video with Kling 3 Standard
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3" icon="list" href="/api-reference/video/kling-v3/kling-v3-tasks">
-      List all Kling 3 tasks
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3/{task-id}" icon="magnifying-glass" href="/api-reference/video/kling-v3/task-by-id">
-      Get task status by ID
-    </Card>
-  </Columns>
-</div>
-
-### Parameters
-
-| Parameter         | Type      | Required | Default | Description                                                            |
-| ----------------- | --------- | -------- | ------- | ---------------------------------------------------------------------- |
-| `prompt`          | `string`  | No       | -       | Text prompt describing the video (max 2500 chars). Required for T2V.   |
-| `negative_prompt` | `string`  | No       | -       | Text describing what to avoid (max 2500 chars)                         |
-| `image_list`      | `array`   | No       | -       | Reference images with `image_url` and `type` (first\_frame/end\_frame) |
-| `multi_shot`      | `boolean` | No       | `false` | Enable multi-shot mode for multi-scene videos                          |
-| `shot_type`       | `string`  | No       | -       | Use `customize` for custom shot definitions                            |
-| `multi_prompt`    | `array`   | No       | -       | Shot definitions: `index` (0-5), `prompt`, `duration` (min 3s)         |
-| `element_list`    | `array`   | No       | -       | Pre-registered element IDs for character/style consistency             |
-| `aspect_ratio`    | `string`  | No       | `16:9`  | Video ratio: `16:9`, `9:16`, `1:1`                                     |
-| `duration`        | `integer` | No       | `5`     | Duration in seconds: 3-15 (default 5)                                  |
-| `cfg_scale`       | `number`  | No       | `0.5`   | Prompt adherence: 0 (creative) to 1 (strict)                           |
-| `webhook_url`     | `string`  | No       | -       | URL for task completion notification                                   |
-
-### Image list item
-
-| Field       | Type     | Description                                                         |
-| ----------- | -------- | ------------------------------------------------------------------- |
-| `image_url` | `string` | Publicly accessible image URL (300x300 min, 10MB max, JPG/JPEG/PNG) |
-| `type`      | `string` | Image role: `first_frame` or `end_frame`                            |
-
-### Multi-prompt item
-
-| Field      | Type      | Description                                |
-| ---------- | --------- | ------------------------------------------ |
-| `index`    | `integer` | Shot order (0-5)                           |
-| `prompt`   | `string`  | Text prompt for this shot (max 2500 chars) |
-| `duration` | `number`  | Shot duration (minimum 3 seconds)          |
-
-## Frequently Asked Questions
-
-<AccordionGroup>
-  <Accordion title="What is Kling 3 and how does it work?">
-    Kling 3 is an AI video generation model that creates videos from text prompts (T2V) or images (I2V). You submit your request via the API, receive a task ID immediately, then poll for results or receive a webhook notification when processing completes. Typical generation takes 30-120 seconds depending on duration and complexity.
-  </Accordion>
-
-  <Accordion title="What is multi-shot mode?">
-    Multi-shot mode lets you create videos with up to 6 distinct scenes. Each scene can have its own prompt and duration. The total duration across all shots cannot exceed 15 seconds, and each shot must be at least 3 seconds. Enable with `multi_shot: true` and define scenes in `multi_prompt`.
-  </Accordion>
-
-  <Accordion title="How do first_frame and end_frame work?">
-    Use the `image_list` parameter to provide reference images. Set `type: "first_frame"` to use an image as the video's starting point, or `type: "end_frame"` for the ending point. You can use both to create a transition from one image to another.
-  </Accordion>
-
-  <Accordion title="What image formats does Kling 3 support?">
-    Kling 3 accepts JPG, JPEG, and PNG images via publicly accessible URLs. Requirements: minimum 300x300 pixels, maximum 10MB file size, aspect ratio between 1:2.5 and 2.5:1.
-  </Accordion>
-
-  <Accordion title="What is cfg_scale and how should I set it?">
-    CFG scale controls how closely the model follows your prompt. Use 0 for maximum creativity and artistic interpretation, 0.5 (default) for balanced results, or 1 for strict adherence to your prompt with less creative variation.
-  </Accordion>
-
-  <Accordion title="What is the difference between Pro and Standard?">
-    Pro delivers higher fidelity with richer detail, ideal for premium content and marketing. Standard offers good quality with faster processing, suitable for high-volume generation and testing. Both share the same parameters and capabilities.
-  </Accordion>
-
-  <Accordion title="What are the rate limits for Kling 3?">
-    Rate limits vary by subscription tier. See [Rate Limits](/ratelimits) for current limits and quotas.
-  </Accordion>
-
-  <Accordion title="How much does Kling 3 cost?">
-    Pricing varies based on model tier (Pro vs Standard) and video duration. See the [Pricing](/pricing) page for current rates.
-  </Accordion>
-</AccordionGroup>
-
-## Best practices
-
-* **Prompt clarity**: Write detailed prompts specifying subject, action, camera movement, and atmosphere
-* **Start simple**: Begin with single-shot mode before attempting multi-shot sequences
-* **Image quality**: For I2V, use high-resolution source images with clear subjects (min 300x300)
-* **Duration planning**: For multi-shot, plan scene durations to stay within 15-second total limit
-* **Element consistency**: Use pre-registered elements for recurring characters across multiple videos
-* **CFG tuning**: Start with 0.5, decrease for more creativity, increase for prompt precision
-* **Production integration**: Use webhooks instead of polling for scalable applications
-* **Error handling**: Implement retry logic with exponential backoff for 503 errors
-
-## Related APIs
-
-* **[Kling 3 Omni](/api-reference/video/kling-v3-omni/overview)**: Kling 3 with video reference support for motion/style guidance
-* **[Kling 2.6 Pro](/api-reference/image-to-video/kling-v2-6-pro)**: Previous generation with motion control capabilities
-* **[Kling O1](/api-reference/image-to-video/kling-o1/overview)**: High-performance video generation
-* **[Runway Gen 4.5](/api-reference/video/runway-gen-4-5/overview)**: Alternative video generation model
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 API
-
-> Generate AI videos from text or images with Kling 3. Multi-shot support, first/end frame control, and durations from 3-15 seconds. Pro and Standard tiers for creative video production.
-
-<Card title="Kling 3 integration" icon="video">
-  Generate high-quality videos from text prompts or images using Kling's latest V3 model with multi-shot support and advanced frame control.
-</Card>
-
-Kling 3 is a dual-mode video generation API that creates professional-grade videos from either text descriptions or source images. It supports multi-shot mode for creating complex narratives with up to 6 scenes, first and end frame image control, and flexible durations from 3 to 15 seconds. Available in Pro and Standard tiers to balance quality and cost.
-
-### Key capabilities
-
-* **Text-to-Video (T2V)**: Generate videos from text prompts up to 2500 characters
-* **Image-to-Video (I2V)**: Use first\_frame and/or end\_frame images to control video start and end points
-* **Multi-shot mode**: Create videos with up to 6 scenes, each with custom prompts and durations (max 15 seconds total)
-* **Flexible durations**: 3-15 seconds with per-shot duration control in multi-shot mode
-* **Element consistency**: Pre-registered element IDs for consistent characters/styles across videos
-* **CFG scale control**: Adjust prompt adherence from 0 (creative) to 1 (strict), default 0.5
-* **Negative prompts**: Exclude unwanted elements, styles, or artifacts
-* **Async processing**: Webhook notifications or polling for task completion
-
-### Pro vs Standard
-
-| Feature  | Kling 3 Pro                    | Kling 3 Standard             |
-| -------- | ------------------------------ | ---------------------------- |
-| Quality  | Higher fidelity, richer detail | Good quality, cost-effective |
-| Speed    | Standard processing            | Faster processing            |
-| Best for | Premium content, marketing     | High-volume, testing         |
-
-### Use cases
-
-* **Marketing and advertising**: Create multi-scene product narratives with consistent branding
-* **Social media content**: Generate vertical videos for TikTok, Instagram Reels, and YouTube Shorts
-* **E-commerce**: Animate product images with controlled start and end frames
-* **Storyboarding**: Turn scripts into multi-shot video sequences
-* **Creative storytelling**: Build narratives with scene-by-scene control
-
-### Generate videos with Kling 3
-
-Create videos by submitting a text prompt (T2V) or images with prompt (I2V) to the API. The service returns a task ID for async polling or webhook notification.
-
-<div className="my-11">
-  <Columns cols={2}>
-    <Card title="POST /v1/ai/video/kling-v3-pro" icon="video" href="/api-reference/video/kling-v3/generate-pro">
-      Generate video with Kling 3 Pro
-    </Card>
-
-    <Card title="POST /v1/ai/video/kling-v3-std" icon="video" href="/api-reference/video/kling-v3/generate-std">
-      Generate video with Kling 3 Standard
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3" icon="list" href="/api-reference/video/kling-v3/kling-v3-tasks">
-      List all Kling 3 tasks
-    </Card>
-
-    <Card title="GET /v1/ai/video/kling-v3/{task-id}" icon="magnifying-glass" href="/api-reference/video/kling-v3/task-by-id">
-      Get task status by ID
-    </Card>
-  </Columns>
-</div>
-
-### Parameters
-
-| Parameter         | Type      | Required | Default | Description                                                            |
-| ----------------- | --------- | -------- | ------- | ---------------------------------------------------------------------- |
-| `prompt`          | `string`  | No       | -       | Text prompt describing the video (max 2500 chars). Required for T2V.   |
-| `negative_prompt` | `string`  | No       | -       | Text describing what to avoid (max 2500 chars)                         |
-| `image_list`      | `array`   | No       | -       | Reference images with `image_url` and `type` (first\_frame/end\_frame) |
-| `multi_shot`      | `boolean` | No       | `false` | Enable multi-shot mode for multi-scene videos                          |
-| `shot_type`       | `string`  | No       | -       | Use `customize` for custom shot definitions                            |
-| `multi_prompt`    | `array`   | No       | -       | Shot definitions: `index` (0-5), `prompt`, `duration` (min 3s)         |
-| `element_list`    | `array`   | No       | -       | Pre-registered element IDs for character/style consistency             |
-| `aspect_ratio`    | `string`  | No       | `16:9`  | Video ratio: `16:9`, `9:16`, `1:1`                                     |
-| `duration`        | `integer` | No       | `5`     | Duration in seconds: 3-15 (default 5)                                  |
-| `cfg_scale`       | `number`  | No       | `0.5`   | Prompt adherence: 0 (creative) to 1 (strict)                           |
-| `webhook_url`     | `string`  | No       | -       | URL for task completion notification                                   |
-
-### Image list item
-
-| Field       | Type     | Description                                                         |
-| ----------- | -------- | ------------------------------------------------------------------- |
-| `image_url` | `string` | Publicly accessible image URL (300x300 min, 10MB max, JPG/JPEG/PNG) |
-| `type`      | `string` | Image role: `first_frame` or `end_frame`                            |
-
-### Multi-prompt item
-
-| Field      | Type      | Description                                |
-| ---------- | --------- | ------------------------------------------ |
-| `index`    | `integer` | Shot order (0-5)                           |
-| `prompt`   | `string`  | Text prompt for this shot (max 2500 chars) |
-| `duration` | `number`  | Shot duration (minimum 3 seconds)          |
-
-## Frequently Asked Questions
-
-<AccordionGroup>
-  <Accordion title="What is Kling 3 and how does it work?">
-    Kling 3 is an AI video generation model that creates videos from text prompts (T2V) or images (I2V). You submit your request via the API, receive a task ID immediately, then poll for results or receive a webhook notification when processing completes. Typical generation takes 30-120 seconds depending on duration and complexity.
-  </Accordion>
-
-  <Accordion title="What is multi-shot mode?">
-    Multi-shot mode lets you create videos with up to 6 distinct scenes. Each scene can have its own prompt and duration. The total duration across all shots cannot exceed 15 seconds, and each shot must be at least 3 seconds. Enable with `multi_shot: true` and define scenes in `multi_prompt`.
-  </Accordion>
-
-  <Accordion title="How do first_frame and end_frame work?">
-    Use the `image_list` parameter to provide reference images. Set `type: "first_frame"` to use an image as the video's starting point, or `type: "end_frame"` for the ending point. You can use both to create a transition from one image to another.
-  </Accordion>
-
-  <Accordion title="What image formats does Kling 3 support?">
-    Kling 3 accepts JPG, JPEG, and PNG images via publicly accessible URLs. Requirements: minimum 300x300 pixels, maximum 10MB file size, aspect ratio between 1:2.5 and 2.5:1.
-  </Accordion>
-
-  <Accordion title="What is cfg_scale and how should I set it?">
-    CFG scale controls how closely the model follows your prompt. Use 0 for maximum creativity and artistic interpretation, 0.5 (default) for balanced results, or 1 for strict adherence to your prompt with less creative variation.
-  </Accordion>
-
-  <Accordion title="What is the difference between Pro and Standard?">
-    Pro delivers higher fidelity with richer detail, ideal for premium content and marketing. Standard offers good quality with faster processing, suitable for high-volume generation and testing. Both share the same parameters and capabilities.
-  </Accordion>
-
-  <Accordion title="What are the rate limits for Kling 3?">
-    Rate limits vary by subscription tier. See [Rate Limits](/ratelimits) for current limits and quotas.
-  </Accordion>
-
-  <Accordion title="How much does Kling 3 cost?">
-    Pricing varies based on model tier (Pro vs Standard) and video duration. See the [Pricing](/pricing) page for current rates.
-  </Accordion>
-</AccordionGroup>
-
-## Best practices
-
-* **Prompt clarity**: Write detailed prompts specifying subject, action, camera movement, and atmosphere
-* **Start simple**: Begin with single-shot mode before attempting multi-shot sequences
-* **Image quality**: For I2V, use high-resolution source images with clear subjects (min 300x300)
-* **Duration planning**: For multi-shot, plan scene durations to stay within 15-second total limit
-* **Element consistency**: Use pre-registered elements for recurring characters across multiple videos
-* **CFG tuning**: Start with 0.5, decrease for more creativity, increase for prompt precision
-* **Production integration**: Use webhooks instead of polling for scalable applications
-* **Error handling**: Implement retry logic with exponential backoff for 503 errors
-
-## Related APIs
-
-* **[Kling 3 Omni](/api-reference/video/kling-v3-omni/overview)**: Kling 3 with video reference support for motion/style guidance
-* **[Kling 2.6 Pro](/api-reference/image-to-video/kling-v2-6-pro)**: Previous generation with motion control capabilities
-* **[Kling O1](/api-reference/image-to-video/kling-o1/overview)**: High-performance video generation
-* **[Runway Gen 4.5](/api-reference/video/runway-gen-4-5/overview)**: Alternative video generation model
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 - List tasks
-
-> Retrieve the list of all Kling 3 video generation tasks for the authenticated user.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/video/kling-v3
-openapi: 3.0.0
+# Kling 3.0
+документация по миграции с freepic на piapi.
+от freepic отказываемся полность.
+## OpenAPI Specification
+
+```yaml
+openapi: 3.0.1
 info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
+  title: ''
+  description: ''
   version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
 paths:
-  /v1/ai/video/kling-v3:
-    get:
-      tags:
-        - video
-        - kling-v3
-      summary: Kling 3 - List tasks
-      description: >-
-        Retrieve the list of all Kling 3 video generation tasks for the
-        authenticated user.
-      operationId: getAiVideoKlingV3Tasks
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_200_response'
-          description: OK - The list of Kling 3 tasks is returned
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-components:
-  schemas:
-    get_all_style_transfer_tasks_200_response:
-      example:
-        data:
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/task'
-          type: array
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 - List tasks
-
-> Retrieve the list of all Kling 3 video generation tasks for the authenticated user.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/video/kling-v3
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3:
-    get:
-      tags:
-        - video
-        - kling-v3
-      summary: Kling 3 - List tasks
-      description: >-
-        Retrieve the list of all Kling 3 video generation tasks for the
-        authenticated user.
-      operationId: getAiVideoKlingV3Tasks
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_200_response'
-          description: OK - The list of Kling 3 tasks is returned
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-components:
-  schemas:
-    get_all_style_transfer_tasks_200_response:
-      example:
-        data:
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/task'
-          type: array
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Standard - Generate video
-
-> Generate AI video using Kling 3 Standard with text-to-video or image-to-video capabilities.
-
-**Features:**
-- **Text-to-video**: Generate videos from text prompts
-- **Image-to-video**: Use start and/or end frame images to guide generation
-- **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-- **Element control**: Include reference images for consistent character/style
-
-**Duration:** 3-15 seconds
-**Quality:** Standard mode offers faster generation at slightly lower quality compared to Pro.
-
-
-
-
-## OpenAPI
-
-````yaml post /v1/ai/video/kling-v3-std
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-std:
+  /api/v1/task:
     post:
-      tags:
-        - video
-        - kling-v3-std
-        - background_tasks
-      summary: Kling 3 Standard - Generate video
-      description: >
-        Generate AI video using Kling 3 Standard with text-to-video or
-        image-to-video capabilities.
-
-
-        **Features:**
-
-        - **Text-to-video**: Generate videos from text prompts
-
-        - **Image-to-video**: Use start and/or end frame images to guide
-        generation
-
-        - **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-
-        - **Element control**: Include reference images for consistent
-        character/style
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Standard mode offers faster generation at slightly lower
-        quality compared to Pro.
-      operationId: postAiVideoKlingV3Std
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-request:
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-            Required for text-to-video mode or when not using multi_prompt.
-
-
-            **Tips for better results:**
-
-            - Be specific about motion, camera angles, and actions
-
-            - Describe the scene, characters, and atmosphere
-
-            - Reference elements in your prompt as @Element1, @Element2
-
-            - Reference voices with <<<voice_1>>> and <<<voice_2>>>
-          maxLength: 2500
-          type: string
-        multi_prompt:
-          description: |
-            Multi-shot prompts with durations for sequential video generation.
-            Each item specifies a prompt and duration for that shot.
-            Maximum 6 shots, total duration cannot exceed 15 seconds.
-          items:
-            $ref: '#/components/schemas/kling-v3-multi-prompt-item'
-          maxItems: 6
-          type: array
-        start_image_url:
-          description: |
-            URL of the image to use as the first frame of the video.
-            Required for image-to-video mode.
-
-            **Image requirements:**
-            - Minimum: 300x300 pixels
-            - Maximum: 10MB file size
-            - Aspect ratio: 1:2.5 to 2.5:1
-            - Formats: JPG, JPEG, PNG
-          type: string
-        end_image_url:
-          description: |
-            URL of the image to use as the final frame of the video.
-            Optional for image-to-video mode.
-
-            **Image requirements:**
-            - Same as start_image_url
-          type: string
-        elements:
-          description: >
-            Custom characters/objects with reference images for consistent
-            identity across the video.
-
-            Reference in your prompt as @Element1, @Element2, etc.
-
-            When elements are provided, the request is processed in
-            image-to-video mode.
-
-            For best results, also provide a `start_image_url`.
-          items:
-            $ref: '#/components/schemas/kling-v3-element'
-          type: array
-        generate_audio:
-          default: true
-          description: Whether to generate native audio for the video.
-          type: boolean
-        voice_ids:
-          description: >
-            Custom voice identifiers for video generation.
-
-            Maximum 2 voices per task.
-
-            Reference voices in your prompt with <<<voice_1>>> and
-            <<<voice_2>>>.
-          items:
-            type: string
-          type: array
-        shot_type:
-          default: customize
-          description: |
-            Multi-shot generation type:
-            - `customize`: Define each shot manually with multi_prompt
-            - `intelligent`: AI-assisted shot generation
-          enum:
-            - customize
-            - intelligent
-          type: string
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-aspect-ratio'
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-        negative_prompt:
-          default: blur, distort, and low quality
-          description: >-
-            Undesired elements to avoid in the generated video. Maximum 2500
-            characters.
-          maxLength: 2500
-          type: string
-        cfg_scale:
-          default: 0.5
-          description: >
-            Guidance scale for prompt adherence. Higher values mean stronger
-            adherence to the prompt.
-
-
-            - **0**: Maximum flexibility, more creative interpretation
-
-            - **0.5** (default): Balanced between prompt adherence and
-            creativity
-
-            - **2**: Strict adherence to prompt, less creative variation
-          format: float
-          maximum: 2
-          minimum: 0
-          type: number
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-multi-prompt-item:
-      description: Multi-shot prompt item with prompt text and duration for Kling V3.
-      properties:
-        prompt:
-          description: Text prompt for this specific shot segment. Maximum 2500 characters.
-          maxLength: 2500
-          type: string
-        duration:
-          description: Duration of this segment in seconds (3-15).
-          enum:
-            - '3'
-            - '4'
-            - '5'
-            - '6'
-            - '7'
-            - '8'
-            - '9'
-            - '10'
-            - '11'
-            - '12'
-            - '13'
-            - '14'
-            - '15'
-          type: string
-      type: object
-    kling-v3-element:
+      summary: Kling 3.0
+      deprecated: false
       description: >-
-        Element definition for Kling V3 with reference images for consistent
-        character/object identity.
-      properties:
-        reference_image_urls:
-          description: >-
-            Array of reference image URLs for this element. Multiple angles
-            improve consistency.
-          items:
-            type: string
-          type: array
-        frontal_image_url:
-          description: >-
-            URL of a frontal/primary reference image for this element. Best
-            results with clear face/front view.
-          type: string
-      type: object
-    kling-v3-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for the generated video:
-
-        - `16:9`: Landscape (widescreen) - ideal for YouTube, presentations
-
-        - `9:16`: Portrait (vertical) - ideal for TikTok, Instagram Stories,
-        Reels
-
-        - `1:1`: Square - ideal for Instagram posts, social media
-      enum:
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
+        This is the api for Kling's video generation API. Kling 3.0 is a
+        upgraded version of Kling 2.6.
 
 
-        **Range:** 3-15 seconds
+        **Pricing**
 
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
+        | Resolution | Enable audio | Price(USD) per second |
 
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
+        | --- | --- | --- |
 
-# Kling 3 Standard - Generate video
+        | 720 | false | 0.1 |
 
-> Generate AI video using Kling 3 Standard with text-to-video or image-to-video capabilities.
+        | 720 | true | 0.15 |
 
-**Features:**
-- **Text-to-video**: Generate videos from text prompts
-- **Image-to-video**: Use start and/or end frame images to guide generation
-- **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-- **Element control**: Include reference images for consistent character/style
+        | 1080 | false | 0.15 |
 
-**Duration:** 3-15 seconds
-**Quality:** Standard mode offers faster generation at slightly lower quality compared to Pro.
+        | 1080 | true | 0.2 |
 
 
+        Price example
+
+        - generate a 10 second video of 720p without audio will cost: 10 \*
+        \$0.10 \= \$1.0
+
+        - generate a multi-shots video, shot1 2s, shot2 3s, 720p with audio will
+        cost: \(2 \+ 3\) \* \$0.15 \= \$1.5
 
 
-## OpenAPI
+        **Note**
 
-````yaml post /v1/ai/video/kling-v3-std
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-std:
-    post:
+        - Support more flexible duration between 3 - 15 seconds
+
+        - If multi shots used, param `prompt` and `duration` will be ignored
+
+        - Maximum 6 multi shots, total duration should not exceed 15 seconds
+
+        - response struct is different, see [Get
+        Task](https://goapi.ai/docs/kling-api/get-task) for details
       tags:
-        - video
-        - kling-v3-std
-        - background_tasks
-      summary: Kling 3 Standard - Generate video
-      description: >
-        Generate AI video using Kling 3 Standard with text-to-video or
-        image-to-video capabilities.
-
-
-        **Features:**
-
-        - **Text-to-video**: Generate videos from text prompts
-
-        - **Image-to-video**: Use start and/or end frame images to guide
-        generation
-
-        - **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-
-        - **Element control**: Include reference images for consistent
-        character/style
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Standard mode offers faster generation at slightly lower
-        quality compared to Pro.
-      operationId: postAiVideoKlingV3Std
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-request:
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-            Required for text-to-video mode or when not using multi_prompt.
-
-
-            **Tips for better results:**
-
-            - Be specific about motion, camera angles, and actions
-
-            - Describe the scene, characters, and atmosphere
-
-            - Reference elements in your prompt as @Element1, @Element2
-
-            - Reference voices with <<<voice_1>>> and <<<voice_2>>>
-          maxLength: 2500
-          type: string
-        multi_prompt:
-          description: |
-            Multi-shot prompts with durations for sequential video generation.
-            Each item specifies a prompt and duration for that shot.
-            Maximum 6 shots, total duration cannot exceed 15 seconds.
-          items:
-            $ref: '#/components/schemas/kling-v3-multi-prompt-item'
-          maxItems: 6
-          type: array
-        start_image_url:
-          description: |
-            URL of the image to use as the first frame of the video.
-            Required for image-to-video mode.
-
-            **Image requirements:**
-            - Minimum: 300x300 pixels
-            - Maximum: 10MB file size
-            - Aspect ratio: 1:2.5 to 2.5:1
-            - Formats: JPG, JPEG, PNG
-          type: string
-        end_image_url:
-          description: |
-            URL of the image to use as the final frame of the video.
-            Optional for image-to-video mode.
-
-            **Image requirements:**
-            - Same as start_image_url
-          type: string
-        elements:
-          description: >
-            Custom characters/objects with reference images for consistent
-            identity across the video.
-
-            Reference in your prompt as @Element1, @Element2, etc.
-
-            When elements are provided, the request is processed in
-            image-to-video mode.
-
-            For best results, also provide a `start_image_url`.
-          items:
-            $ref: '#/components/schemas/kling-v3-element'
-          type: array
-        generate_audio:
-          default: true
-          description: Whether to generate native audio for the video.
-          type: boolean
-        voice_ids:
-          description: >
-            Custom voice identifiers for video generation.
-
-            Maximum 2 voices per task.
-
-            Reference voices in your prompt with <<<voice_1>>> and
-            <<<voice_2>>>.
-          items:
-            type: string
-          type: array
-        shot_type:
-          default: customize
-          description: |
-            Multi-shot generation type:
-            - `customize`: Define each shot manually with multi_prompt
-            - `intelligent`: AI-assisted shot generation
-          enum:
-            - customize
-            - intelligent
-          type: string
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-aspect-ratio'
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-        negative_prompt:
-          default: blur, distort, and low quality
-          description: >-
-            Undesired elements to avoid in the generated video. Maximum 2500
-            characters.
-          maxLength: 2500
-          type: string
-        cfg_scale:
-          default: 0.5
-          description: >
-            Guidance scale for prompt adherence. Higher values mean stronger
-            adherence to the prompt.
-
-
-            - **0**: Maximum flexibility, more creative interpretation
-
-            - **0.5** (default): Balanced between prompt adherence and
-            creativity
-
-            - **2**: Strict adherence to prompt, less creative variation
-          format: float
-          maximum: 2
-          minimum: 0
-          type: number
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-multi-prompt-item:
-      description: Multi-shot prompt item with prompt text and duration for Kling V3.
-      properties:
-        prompt:
-          description: Text prompt for this specific shot segment. Maximum 2500 characters.
-          maxLength: 2500
-          type: string
-        duration:
-          description: Duration of this segment in seconds (3-15).
-          enum:
-            - '3'
-            - '4'
-            - '5'
-            - '6'
-            - '7'
-            - '8'
-            - '9'
-            - '10'
-            - '11'
-            - '12'
-            - '13'
-            - '14'
-            - '15'
-          type: string
-      type: object
-    kling-v3-element:
-      description: >-
-        Element definition for Kling V3 with reference images for consistent
-        character/object identity.
-      properties:
-        reference_image_urls:
-          description: >-
-            Array of reference image URLs for this element. Multiple angles
-            improve consistency.
-          items:
-            type: string
-          type: array
-        frontal_image_url:
-          description: >-
-            URL of a frontal/primary reference image for this element. Best
-            results with clear face/front view.
-          type: string
-      type: object
-    kling-v3-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for the generated video:
-
-        - `16:9`: Landscape (widescreen) - ideal for YouTube, presentations
-
-        - `9:16`: Portrait (vertical) - ideal for TikTok, Instagram Stories,
-        Reels
-
-        - `1:1`: Square - ideal for Instagram posts, social media
-      enum:
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
-
-
-        **Range:** 3-15 seconds
-
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Pro - Generate video from text or image
-
-> Generate AI video using Kling 3 Omni Pro with advanced multi-modal capabilities.
-
-**Features:**
-- **Text-to-video**: Generate videos from text prompts
-- **Image-to-video**: Use start and/or end frame images to guide generation
-- **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-- **Element control**: Include reference images for consistent character/style
-
-**Duration:** 3-15 seconds
-**Quality:** Pro mode offers highest quality output.
-
-**Note:** For video-to-video generation using a reference video, use the `/ai/reference-to-video/kling-v3-omni-pro` endpoint instead.
-
-
-
-
-## OpenAPI
-
-````yaml post /v1/ai/video/kling-v3-omni-pro
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-omni-pro:
-    post:
-      tags:
-        - video
-        - kling-v3-omni-pro
-        - background_tasks
-      summary: Kling 3 Omni Pro - Generate video from text or image
-      description: >
-        Generate AI video using Kling 3 Omni Pro with advanced multi-modal
-        capabilities.
-
-
-        **Features:**
-
-        - **Text-to-video**: Generate videos from text prompts
-
-        - **Image-to-video**: Use start and/or end frame images to guide
-        generation
-
-        - **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-
-        - **Element control**: Include reference images for consistent
-        character/style
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Pro mode offers highest quality output.
-
-
-        **Note:** For video-to-video generation using a reference video, use the
-        `/ai/reference-to-video/kling-v3-omni-pro` endpoint instead.
-      operationId: postAiVideoKlingV3OmniPro
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-omni-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-omni-request:
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-
-            **Usage by mode:**
-
-            - **Text-to-video:** Required unless multi_prompt is provided
-
-            - **Image-to-video:** Either prompt or multi_prompt must be
-            provided, but not both
-          maxLength: 2500
-          type: string
-        multi_prompt:
-          description: >
-            List of prompts for multi-shot video generation. Each item is a
-            string prompt for that shot.
-
-            Use with shot_type to control multi-shot behavior.
-          items:
-            type: string
-          maxItems: 6
-          type: array
-        shot_type:
-          default: customize
-          description: >-
-            The type of multi-shot video generation. Currently only 'customize'
-            is supported for Omni.
-          enum:
-            - customize
-          type: string
-        image_url:
-          description: |
-            URL of the start frame image for image-to-video generation.
-            Required for image-to-video mode.
-
-            **Image requirements:**
-            - Minimum: 300x300 pixels
-            - Maximum: 10MB file size
-            - Formats: JPG, JPEG, PNG
-          type: string
-        start_image_url:
-          description: >
-            Image to use as the first frame of the video.
-
-            Use together with end_image_url to control both start and end frames
-            in image-to-video mode.
-          type: string
-        end_image_url:
-          description: |
-            Image to use as the last frame of the video.
-            Optional for image-to-video mode to guide the final frame.
-          type: string
-        image_urls:
-          description: |
-            Reference images for style/appearance guidance.
-            Reference in your prompt as @Image1, @Image2, etc.
-            Maximum 4 total (elements + reference images).
-          items:
-            type: string
-          type: array
-        elements:
-          description: >
-            Elements (characters/objects) to include for consistent identity
-            across the video.
-
-            Reference in your prompt as @Element1, @Element2, etc.
-          items:
-            $ref: '#/components/schemas/kling-v3-omni-element'
-          type: array
-        generate_audio:
-          description: Whether to generate native audio for the video.
-          type: boolean
-        voice_ids:
-          description: >
-            Optional Voice IDs for video generation.
-
-            Reference voices in your prompt with <<<voice_1>>> and
-            <<<voice_2>>>.
-
-            Maximum 2 voices per task.
-          items:
-            type: string
-          type: array
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-omni-aspect-ratio'
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-omni-element:
-      description: Element definition for Kling V3 Omni with reference images.
-      properties:
-        reference_image_urls:
-          description: >-
-            Array of reference image URLs for this element. Multiple angles
-            improve consistency.
-          items:
-            type: string
-          type: array
-        frontal_image_url:
-          description: >-
-            URL of a frontal/primary reference image for this element. Best
-            results with clear face/front view.
-          type: string
-      type: object
-    kling-v3-omni-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for Kling V3 Omni video generation:
-
-        - `auto`: Automatically match the input image aspect ratio
-        (image-to-video only)
-
-        - `16:9`: Landscape (widescreen)
-
-        - `9:16`: Portrait (vertical)
-
-        - `1:1`: Square
-      enum:
-        - auto
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
-
-
-        **Range:** 3-15 seconds
-
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Pro - Video-to-video generation
-
-> Generate AI video using Kling 3 Omni Pro with a reference video for motion and style guidance.
-
-**Video-to-video mode:** This endpoint requires a `video_url` parameter. Reference the video in your prompt using `@Video1`.
-
-**Features:**
-- Use a reference video (3-10s) to guide motion and style
-- Combine with an image for start frame control
-- High-quality pro output
-
-**Use case:** Create videos that follow motion patterns from a reference video while applying your creative prompt.
-
-**Duration:** 3-15 seconds
-**Quality:** Pro mode offers highest quality output.
-
-**Tip:** For text-to-video or image-to-video without a reference video, use the `/ai/video/kling-v3-omni-pro` endpoint instead.
-
-
-
-
-## OpenAPI
-
-````yaml post /v1/ai/reference-to-video/kling-v3-omni-pro
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/reference-to-video/kling-v3-omni-pro:
-    post:
-      tags:
-        - reference-to-video
-        - kling-v3-omni-pro-r2v
-        - background_tasks
-      summary: Kling 3 Omni Pro - Video-to-video generation
-      description: >
-        Generate AI video using Kling 3 Omni Pro with a reference video for
-        motion and style guidance.
-
-
-        **Video-to-video mode:** This endpoint requires a `video_url` parameter.
-        Reference the video in your prompt using `@Video1`.
-
-
-        **Features:**
-
-        - Use a reference video (3-10s) to guide motion and style
-
-        - Combine with an image for start frame control
-
-        - High-quality pro output
-
-
-        **Use case:** Create videos that follow motion patterns from a reference
-        video while applying your creative prompt.
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Pro mode offers highest quality output.
-
-
-        **Tip:** For text-to-video or image-to-video without a reference video,
-        use the `/ai/video/kling-v3-omni-pro` endpoint instead.
-      operationId: postAiReferenceToVideoKlingV3OmniPro
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-omni-video-reference-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-omni-video-reference-request:
-      description: >
-        Generate video using Kling 3 Omni with a reference video for
-        motion/style guidance.
-
-
-        **Required:** The `video_url` parameter is required for this endpoint.
-        Reference the video in your prompt using `@Video1`.
-
-
-        **Best for:**
-
-        - Transferring motion patterns from reference videos
-
-        - Maintaining visual consistency with reference material
-
-        - Creating videos that follow a specific style or movement pattern
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-            Reference the video in your prompt as @Video1.
-
-
-            **Tips for better results:**
-
-            - Be specific about actions, camera movements, and mood
-
-            - Reference @Video1 to indicate how the reference video should
-            influence generation
-          maxLength: 2500
-          type: string
-        image_url:
-          description: >
-            URL of the start frame image for image-to-video generation with
-            video reference.
-
-
-            **Image requirements:**
-
-            - Minimum: 300x300 pixels
-
-            - Maximum: 10MB file size
-
-            - Formats: JPG, JPEG, PNG
-          type: string
-        video_url:
-          description: >
-            **Required.** URL of the reference video to use as a creative guide
-            for video-to-video generation.
-
-            Reference in your prompt as `@Video1`.
-
-
-            **Video constraints:**
-
-            - Duration: 3-10 seconds
-
-            - Resolution: 720-2160px (minimum 720px width or height)
-
-            - Max file size: 200MB
-
-            - Frame rate: 24-60 FPS
-
-            - Formats: `.mp4` or `.mov` only
-          format: uri
-          type: string
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-omni-aspect-ratio'
-        cfg_scale:
-          default: 0.5
-          description: >
-            Guidance scale for prompt adherence. Higher values mean stronger
-            adherence to the prompt.
-
-
-            - **0**: Maximum flexibility, more creative interpretation
-
-            - **0.5** (default): Balanced between prompt adherence and
-            creativity
-
-            - **2**: Strict adherence to prompt, less creative variation
-          format: float
-          maximum: 2
-          minimum: 0
-          type: number
-        negative_prompt:
-          default: blur, distort, and low quality
-          description: >-
-            Undesired elements to avoid in the generated video. Maximum 2500
-            characters.
-          maxLength: 2500
-          type: string
-      required:
-        - video_url
-      title: Kling 3 Omni Video Reference Request
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
-
-
-        **Range:** 3-15 seconds
-
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    kling-v3-omni-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for Kling V3 Omni video generation:
-
-        - `auto`: Automatically match the input image aspect ratio
-        (image-to-video only)
-
-        - `16:9`: Landscape (widescreen)
-
-        - `9:16`: Portrait (vertical)
-
-        - `1:1`: Square
-      enum:
-        - auto
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Standard - Generate video from text or image
-
-> Generate AI video using Kling 3 Omni Standard with advanced multi-modal capabilities.
-
-**Features:**
-- **Text-to-video**: Generate videos from text prompts
-- **Image-to-video**: Use start and/or end frame images to guide generation
-- **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-- **Element control**: Include reference images for consistent character/style
-
-**Duration:** 3-15 seconds
-**Quality:** Standard mode offers faster generation at slightly lower quality.
-
-**Note:** For video-to-video generation using a reference video, use the `/ai/reference-to-video/kling-v3-omni-std` endpoint instead.
-
-
-
-
-## OpenAPI
-
-````yaml post /v1/ai/video/kling-v3-omni-std
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-omni-std:
-    post:
-      tags:
-        - video
-        - kling-v3-omni-std
-        - background_tasks
-      summary: Kling 3 Omni Standard - Generate video from text or image
-      description: >
-        Generate AI video using Kling 3 Omni Standard with advanced multi-modal
-        capabilities.
-
-
-        **Features:**
-
-        - **Text-to-video**: Generate videos from text prompts
-
-        - **Image-to-video**: Use start and/or end frame images to guide
-        generation
-
-        - **Multi-shot**: Create videos with up to 6 shots (max 15s total)
-
-        - **Element control**: Include reference images for consistent
-        character/style
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Standard mode offers faster generation at slightly lower
-        quality.
-
-
-        **Note:** For video-to-video generation using a reference video, use the
-        `/ai/reference-to-video/kling-v3-omni-std` endpoint instead.
-      operationId: postAiVideoKlingV3OmniStd
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-omni-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-omni-request:
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-
-            **Usage by mode:**
-
-            - **Text-to-video:** Required unless multi_prompt is provided
-
-            - **Image-to-video:** Either prompt or multi_prompt must be
-            provided, but not both
-          maxLength: 2500
-          type: string
-        multi_prompt:
-          description: >
-            List of prompts for multi-shot video generation. Each item is a
-            string prompt for that shot.
-
-            Use with shot_type to control multi-shot behavior.
-          items:
-            type: string
-          maxItems: 6
-          type: array
-        shot_type:
-          default: customize
-          description: >-
-            The type of multi-shot video generation. Currently only 'customize'
-            is supported for Omni.
-          enum:
-            - customize
-          type: string
-        image_url:
-          description: |
-            URL of the start frame image for image-to-video generation.
-            Required for image-to-video mode.
-
-            **Image requirements:**
-            - Minimum: 300x300 pixels
-            - Maximum: 10MB file size
-            - Formats: JPG, JPEG, PNG
-          type: string
-        start_image_url:
-          description: >
-            Image to use as the first frame of the video.
-
-            Use together with end_image_url to control both start and end frames
-            in image-to-video mode.
-          type: string
-        end_image_url:
-          description: |
-            Image to use as the last frame of the video.
-            Optional for image-to-video mode to guide the final frame.
-          type: string
-        image_urls:
-          description: |
-            Reference images for style/appearance guidance.
-            Reference in your prompt as @Image1, @Image2, etc.
-            Maximum 4 total (elements + reference images).
-          items:
-            type: string
-          type: array
-        elements:
-          description: >
-            Elements (characters/objects) to include for consistent identity
-            across the video.
-
-            Reference in your prompt as @Element1, @Element2, etc.
-          items:
-            $ref: '#/components/schemas/kling-v3-omni-element'
-          type: array
-        generate_audio:
-          description: Whether to generate native audio for the video.
-          type: boolean
-        voice_ids:
-          description: >
-            Optional Voice IDs for video generation.
-
-            Reference voices in your prompt with <<<voice_1>>> and
-            <<<voice_2>>>.
-
-            Maximum 2 voices per task.
-          items:
-            type: string
-          type: array
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-omni-aspect-ratio'
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-omni-element:
-      description: Element definition for Kling V3 Omni with reference images.
-      properties:
-        reference_image_urls:
-          description: >-
-            Array of reference image URLs for this element. Multiple angles
-            improve consistency.
-          items:
-            type: string
-          type: array
-        frontal_image_url:
-          description: >-
-            URL of a frontal/primary reference image for this element. Best
-            results with clear face/front view.
-          type: string
-      type: object
-    kling-v3-omni-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for Kling V3 Omni video generation:
-
-        - `auto`: Automatically match the input image aspect ratio
-        (image-to-video only)
-
-        - `16:9`: Landscape (widescreen)
-
-        - `9:16`: Portrait (vertical)
-
-        - `1:1`: Square
-      enum:
-        - auto
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
-
-
-        **Range:** 3-15 seconds
-
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Standard - Video-to-video generation
-
-> Generate AI video using Kling 3 Omni Standard with a reference video for motion and style guidance.
-
-**Video-to-video mode:** This endpoint requires a `video_url` parameter. Reference the video in your prompt using `@Video1`.
-
-**Features:**
-- Use a reference video (3-10s) to guide motion and style
-- Combine with an image for start frame control
-- Faster generation at slightly lower quality
-
-**Use case:** Create videos that follow motion patterns from a reference video while applying your creative prompt.
-
-**Duration:** 3-15 seconds
-**Quality:** Standard mode offers faster generation at slightly lower quality.
-
-**Tip:** For text-to-video or image-to-video without a reference video, use the `/ai/video/kling-v3-omni-std` endpoint instead.
-
-
-
-
-## OpenAPI
-
-````yaml post /v1/ai/reference-to-video/kling-v3-omni-std
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/reference-to-video/kling-v3-omni-std:
-    post:
-      tags:
-        - reference-to-video
-        - kling-v3-omni-std-r2v
-        - background_tasks
-      summary: Kling 3 Omni Standard - Video-to-video generation
-      description: >
-        Generate AI video using Kling 3 Omni Standard with a reference video for
-        motion and style guidance.
-
-
-        **Video-to-video mode:** This endpoint requires a `video_url` parameter.
-        Reference the video in your prompt using `@Video1`.
-
-
-        **Features:**
-
-        - Use a reference video (3-10s) to guide motion and style
-
-        - Combine with an image for start frame control
-
-        - Faster generation at slightly lower quality
-
-
-        **Use case:** Create videos that follow motion patterns from a reference
-        video while applying your creative prompt.
-
-
-        **Duration:** 3-15 seconds
-
-        **Quality:** Standard mode offers faster generation at slightly lower
-        quality.
-
-
-        **Tip:** For text-to-video or image-to-video without a reference video,
-        use the `/ai/video/kling-v3-omni-std` endpoint instead.
-      operationId: postAiReferenceToVideoKlingV3OmniStd
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/kling-v3-omni-video-reference-request'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/task-detail-200-default-response'
-          description: OK - Task created successfully
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    kling-v3-omni-video-reference-request:
-      description: >
-        Generate video using Kling 3 Omni with a reference video for
-        motion/style guidance.
-
-
-        **Required:** The `video_url` parameter is required for this endpoint.
-        Reference the video in your prompt using `@Video1`.
-
-
-        **Best for:**
-
-        - Transferring motion patterns from reference videos
-
-        - Maintaining visual consistency with reference material
-
-        - Creating videos that follow a specific style or movement pattern
-      properties:
-        webhook_url:
-          description: >
-            Optional callback URL that receives asynchronous notifications when
-            the task changes status.
-
-            The payload includes the task status and result URL when completed.
-          format: uri
-          type: string
-        prompt:
-          description: >
-            Text prompt describing the desired video content. Maximum 2500
-            characters.
-
-            Reference the video in your prompt as @Video1.
-
-
-            **Tips for better results:**
-
-            - Be specific about actions, camera movements, and mood
-
-            - Reference @Video1 to indicate how the reference video should
-            influence generation
-          maxLength: 2500
-          type: string
-        image_url:
-          description: >
-            URL of the start frame image for image-to-video generation with
-            video reference.
-
-
-            **Image requirements:**
-
-            - Minimum: 300x300 pixels
-
-            - Maximum: 10MB file size
-
-            - Formats: JPG, JPEG, PNG
-          type: string
-        video_url:
-          description: >
-            **Required.** URL of the reference video to use as a creative guide
-            for video-to-video generation.
-
-            Reference in your prompt as `@Video1`.
-
-
-            **Video constraints:**
-
-            - Duration: 3-10 seconds
-
-            - Resolution: 720-2160px (minimum 720px width or height)
-
-            - Max file size: 200MB
-
-            - Frame rate: 24-60 FPS
-
-            - Formats: `.mp4` or `.mov` only
-          format: uri
-          type: string
-        duration:
-          $ref: '#/components/schemas/kling-v3-duration'
-        aspect_ratio:
-          $ref: '#/components/schemas/kling-v3-omni-aspect-ratio'
-        cfg_scale:
-          default: 0.5
-          description: >
-            Guidance scale for prompt adherence. Higher values mean stronger
-            adherence to the prompt.
-
-
-            - **0**: Maximum flexibility, more creative interpretation
-
-            - **0.5** (default): Balanced between prompt adherence and
-            creativity
-
-            - **2**: Strict adherence to prompt, less creative variation
-          format: float
-          maximum: 2
-          minimum: 0
-          type: number
-        negative_prompt:
-          default: blur, distort, and low quality
-          description: >-
-            Undesired elements to avoid in the generated video. Maximum 2500
-            characters.
-          maxLength: 2500
-          type: string
-      required:
-        - video_url
-      title: Kling 3 Omni Video Reference Request
-      type: object
-    task-detail-200-default-response:
-      description: OK - The task exists and the status is returned
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    kling-v3-duration:
-      default: '5'
-      description: >
-        Duration of the generated video in seconds.
-
-
-        **Range:** 3-15 seconds
-
-        **Note:** When using multi-shot mode, total duration across all shots
-        cannot exceed 15 seconds.
-      enum:
-        - '3'
-        - '4'
-        - '5'
-        - '6'
-        - '7'
-        - '8'
-        - '9'
-        - '10'
-        - '11'
-        - '12'
-        - '13'
-        - '14'
-        - '15'
-      type: string
-    kling-v3-omni-aspect-ratio:
-      default: '16:9'
-      description: >
-        Aspect ratio for Kling V3 Omni video generation:
-
-        - `auto`: Automatically match the input image aspect ratio
-        (image-to-video only)
-
-        - `16:9`: Landscape (widescreen)
-
-        - `9:16`: Portrait (vertical)
-
-        - `1:1`: Square
-      enum:
-        - auto
-        - '16:9'
-        - '9:16'
-        - '1:1'
-      type: string
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni - List tasks
-
-> Retrieve the list of all Kling 3 Omni video generation tasks for the authenticated user.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/video/kling-v3-omni
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-omni:
-    get:
-      tags:
-        - video
-        - kling-v3-omni
-      summary: Kling 3 Omni - List tasks
-      description: >-
-        Retrieve the list of all Kling 3 Omni video generation tasks for the
-        authenticated user.
-      operationId: getAiVideoKlingV3OmniTasks
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_200_response'
-          description: OK - The list of Kling 3 Omni tasks is returned
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-components:
-  schemas:
-    get_all_style_transfer_tasks_200_response:
-      example:
-        data:
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/task'
-          type: array
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni - Get task status
-
-> Retrieve the status and result of a specific Kling 3 Omni video generation task by its task ID.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/video/kling-v3-omni/{task-id}
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/video/kling-v3-omni/{task-id}:
-    get:
-      tags:
-        - video
-        - kling-v3-omni
-      summary: Kling 3 Omni - Get task status
-      description: >-
-        Retrieve the status and result of a specific Kling 3 Omni video
-        generation task by its task ID.
-      operationId: getAiVideoKlingV3OmniTask
+        - Endpoints/Kling
       parameters:
-        - description: ID of the task
+        - name: x-api-key
+          in: header
+          description: you api key
+          required: true
+          example: ''
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  default: kling
+                  enum:
+                    - kling
+                  x-apidog-enum:
+                    - value: kling
+                      name: ''
+                      description: ''
+                task_type:
+                  type: string
+                  default: video_generation
+                  enum:
+                    - video_generation
+                  x-apidog-enum:
+                    - value: video_generation
+                      name: ''
+                      description: ''
+                input:
+                  type: object
+                  description: |
+                    the input param of the task
+                  x-apidog-orders:
+                    - prompt
+                    - version
+                    - mode
+                    - image_url
+                    - image_tail_url
+                    - duration
+                    - aspect_ratio
+                    - enable_audio
+                    - prefer_multi_shots
+                    - multi_shots
+                  properties:
+                    prompt:
+                      type: string
+                      description: text prompt used to generate video
+                    version:
+                      type: string
+                      description: must provide version 3.0
+                      examples:
+                        - '3.0'
+                    mode:
+                      type: string
+                      enum:
+                        - std
+                        - pro
+                      x-apidog-enum:
+                        - value: std
+                          name: ''
+                          description: ''
+                        - value: pro
+                          name: ''
+                          description: ''
+                      default: std
+                      description: std mode is 720p, pro mode is 1080p
+                    image_url:
+                      type: string
+                      description: the image used as first frame
+                    image_tail_url:
+                      type: string
+                      description: the image used as last frame
+                    duration:
+                      type: integer
+                      description: duration of the generated video
+                      default: 5
+                      minimum: 3
+                      maximum: 15
+                    aspect_ratio:
+                      type: string
+                      enum:
+                        - '16:9'
+                        - '9:16'
+                        - '1:1'
+                      x-apidog-enum:
+                        - value: '16:9'
+                          name: ''
+                          description: ''
+                        - value: '9:16'
+                          name: ''
+                          description: ''
+                        - value: '1:1'
+                          name: ''
+                          description: ''
+                      default: '16:9'
+                      description: >-
+                        aspect ratio of the generated video, ignored if start
+                        image provided
+                    enable_audio:
+                      type: boolean
+                      description: generate audio if true
+                    prefer_multi_shots:
+                      type: boolean
+                      description: more likely to generate multi-shots video if true
+                    multi_shots:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Kling%20omni%20multi%20shot'
+                      description: >-
+                        give detail prompt and duration for each shot. will
+                        ignore prompt and duration if given
+                  required:
+                    - prompt
+                    - version
+                  x-apidog-ignore-properties: []
+                config:
+                  type: object
+                  properties:
+                    webhook_config:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                        secret:
+                          type: string
+                      x-apidog-orders:
+                        - endpoint
+                        - secret
+                      description: >-
+                        Webhook provides timely task notifications. Check [PiAPI
+                        webhook](/docs/unified-webhook) for detail.
+                      x-apidog-ignore-properties: []
+                    service_mode:
+                      type: string
+                      description: >
+                        This allows users to choose whether this specific task
+                        will get processed under PAYG or HYA mode. If
+                        unspecified, then this task will get processed under
+                        whatever mode (PAYG or HYA)
+                         the user chose on the workspace setting of your account.
+                        - `public` means this task will be processed under PAYG
+                        mode.
+
+                        - `private` means this task will be processed under HYA
+                        mode.
+                      enum:
+                        - public
+                        - private
+                      x-apidog-enum:
+                        - value: public
+                          name: ''
+                          description: means this task will be processed under PAYG mode.
+                        - value: private
+                          name: ''
+                          description: >-
+                            means this task will be processed under HYA
+                            modesetting of your account.
+                  x-apidog-orders:
+                    - webhook_config
+                    - service_mode
+                  x-apidog-ignore-properties: []
+              x-apidog-orders:
+                - model
+                - task_type
+                - input
+                - 01JZ4Z64RY9PZ6Z3P8K0BWV7TN
+              required:
+                - model
+                - task_type
+                - input
+              x-apidog-refs:
+                01JZ4Z64RY9PZ6Z3P8K0BWV7TN:
+                  $ref: '#/components/schemas/config'
+              x-apidog-ignore-properties:
+                - config
+            examples:
+              '1':
+                value:
+                  model: kling
+                  task_type: video_generation
+                  input:
+                    prompt: >-
+                      Close-up, static camera, a woman in swim suit near the sea
+                      is introducing herself.
+                    duration: 5
+                    aspect_ratio: '16:9'
+                    enable_audio: false
+                    prefer_multi_shots: false
+                    mode: std
+                    version: '3.0'
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/64e7e8fa-a47a-4d30-b00a-8746d2d04590
+                      secret: ''
+                summary: basic usage
+              '2':
+                value:
+                  model: kling
+                  task_type: video_generation
+                  input:
+                    multi_shots:
+                      - prompt: A dog running near the sea
+                        duration: 3
+                      - prompt: The dog stop before a cat on beach
+                        duration: 2
+                    prefer_multi_shots: true
+                    aspect_ratio: '16:9'
+                    enable_audio: true
+                    mode: std
+                    version: '3.0'
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                summary: custom multi shots
+              '3':
+                value:
+                  model: kling
+                  task_type: video_generation
+                  input:
+                    prompt: >-
+                      The flowers gradually open in a gentle, time-lapse motion.
+                      Make the video loop
+                    image_url: https://piapi.ai/workspace/flux/input_example.png
+                    image_tail_url: https://piapi.ai/workspace/flux/input_example.png
+                    mode: std
+                    version: '3.0'
+                    duration: 5
+                    enable_audio: false
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/f10f2cd3-2109-4a4d-b82b-c0f1233e33a3
+                      secret: '123456'
+                summary: image to video
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                x-apidog-orders: []
+                x-apidog-ignore-properties: []
+              example:
+                code: 200
+                data:
+                  task_id: 40680c72-279e-42c2-a4c0-e96e71865f04
+                  model: kling
+                  task_type: video_generation
+                  status: pending
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                  input:
+                    aspect_ratio: '16:9'
+                    enable_audio: true
+                    mode: std
+                    multi_shots:
+                      - duration: 3
+                        prompt: A dog running near the sea
+                      - duration: 2
+                        prompt: The dog stop before a cat on beach
+                    prefer_multi_shots: true
+                    version: '3.0'
+                  output:
+                    video: ''
+                  meta:
+                    created_at: '2026-02-13T04:17:29.108326563Z'
+                    started_at: '0001-01-01T00:00:00Z'
+                    ended_at: '0001-01-01T00:00:00Z'
+                    usage:
+                      type: point
+                      frozen: 10000000
+                      consume: 0
+                    is_using_private_pool: false
+                  detail: null
+                  logs: null
+                  error:
+                    code: 0
+                    raw_message: ''
+                    message: ''
+                    detail: null
+                message: success
+          headers: {}
+          x-apidog-name: Success
+      security: []
+      x-apidog-folder: Endpoints/Kling
+      x-apidog-status: released
+      x-run-in-apidog: https://app.apidog.com/web/project/675356/apis/api-28017121-run
+components:
+  schemas:
+    Kling omni multi shot:
+      type: object
+      properties:
+        prompt:
+          type: string
+          description: prompt of the shot
+        duration:
+          type: integer
+          default: 3
+          minimum: 1
+          maximum: 14
+          description: >-
+            duraton of the shot, total duration of all shots should not exceed
+            15
+      x-apidog-orders:
+        - prompt
+        - duration
+      required:
+        - prompt
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+    config:
+      type: object
+      properties:
+        config:
+          type: object
+          properties:
+            webhook_config:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                secret:
+                  type: string
+              x-apidog-orders:
+                - endpoint
+                - secret
+              description: >-
+                Webhook provides timely task notifications. Check [PiAPI
+                webhook](/docs/unified-webhook) for detail.
+              x-apidog-ignore-properties: []
+            service_mode:
+              type: string
+              description: >
+                This allows users to choose whether this specific task will get
+                processed under PAYG or HYA mode. If unspecified, then this task
+                will get processed under whatever mode (PAYG or HYA)
+                 the user chose on the workspace setting of your account.
+                - `public` means this task will be processed under PAYG mode.
+
+                - `private` means this task will be processed under HYA mode.
+              enum:
+                - public
+                - private
+              x-apidog-enum:
+                - value: public
+                  name: ''
+                  description: means this task will be processed under PAYG mode.
+                - value: private
+                  name: ''
+                  description: >-
+                    means this task will be processed under HYA modesetting of
+                    your account.
+          x-apidog-orders:
+            - webhook_config
+            - service_mode
+          x-apidog-ignore-properties: []
+      x-apidog-orders:
+        - config
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+  securitySchemes: {}
+servers:
+  - url: https://api.piapi.ai
+    description: Develop Env
+security: []
+
+```
+# Get Task
+
+## OpenAPI Specification
+
+```yaml
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /api/v1/task/{task_id}:
+    get:
+      summary: Get Task
+      deprecated: false
+      description: >-
+        This is provided as part of the [Kling API](https://piapi.ai/kling-api)
+        from PiAPI. 
+
+        This endpoint could get video generation progress or result of Kling
+        task.
+      operationId: kling-api/get-task
+      tags:
+        - Endpoints/Kling
+      parameters:
+        - name: task_id
           in: path
-          name: task-id
+          description: ''
           required: true
           schema:
             type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              examples:
-                success - completed task:
-                  $ref: '#/components/examples/200-task-completed'
-                success - in progress task:
-                  $ref: '#/components/examples/200-task-in-progress'
-              schema:
-                $ref: >-
-                  #/components/schemas/get_style_transfer_task_status_200_response
-          description: OK - The task exists and the status is returned
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-components:
-  examples:
-    200-task-completed:
-      summary: Success - Task completed
-      value:
-        data:
-          generated:
-            - https://ai-statics.freepik.com/completed_task_image.jpg
-          task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-          status: COMPLETED
-    200-task-in-progress:
-      summary: Success - Task in progress
-      value:
-        data:
-          generated: []
-          task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-          status: IN_PROGRESS
-  schemas:
-    get_style_transfer_task_status_200_response:
-      example:
-        data:
-          generated:
-            - https://openapi-generator.tech
-            - https://openapi-generator.tech
-          task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-          status: CREATED
-      properties:
-        data:
-          $ref: '#/components/schemas/task-detail'
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task-detail:
-      allOf:
-        - $ref: '#/components/schemas/task'
-        - properties:
-            generated:
-              items:
-                description: URL of the generated image
-                format: uri
-                type: string
-              type: array
-          required:
-            - generated
-          type: object
-      example:
-        generated:
-          - https://openapi-generator.tech
-          - https://openapi-generator.tech
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Reference-to-Video - List tasks
-
-> Retrieve the list of all Kling 3 Omni reference-to-video tasks (both Pro and Standard) for the authenticated user.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/reference-to-video/kling-v3-omni
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/reference-to-video/kling-v3-omni:
-    get:
-      tags:
-        - reference-to-video
-        - kling-v3-omni-r2v
-      summary: Kling 3 Omni Reference-to-Video - List tasks
-      description: >-
-        Retrieve the list of all Kling 3 Omni reference-to-video tasks (both Pro
-        and Standard) for the authenticated user.
-      operationId: getAiReferenceToVideoKlingV3OmniTasks
-      parameters:
-        - description: Page number for pagination (1-indexed)
-          in: query
-          name: page
-          schema:
-            default: 1
-            minimum: 1
-            type: integer
-        - description: Number of items per page
-          in: query
-          name: page_size
-          schema:
-            default: 20
-            maximum: 100
-            minimum: 1
-            type: integer
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_200_response'
-          description: OK - The list of Kling 3 Omni reference-to-video tasks is returned
-        '400':
-          content:
-            application/json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
-                  value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
-                  value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
-                  value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
-components:
-  schemas:
-    get_all_style_transfer_tasks_200_response:
-      example:
-        data:
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-          - task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-            status: CREATED
-      properties:
-        data:
-          items:
-            $ref: '#/components/schemas/task'
-          type: array
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
-        message:
-          example: Your request parameters didn't validate.
-          type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
-
-````
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.freepik.com/llms.txt
-> Use this file to discover all available pages before exploring further.
-
-# Kling 3 Omni Reference-to-Video - Get task status
-
-> Retrieve the status and result of a specific Kling 3 Omni reference-to-video task (Pro or Standard) by its task ID.
-
-
-
-## OpenAPI
-
-````yaml get /v1/ai/reference-to-video/kling-v3-omni/{task-id}
-openapi: 3.0.0
-info:
-  description: >-
-    The Freepik API is your gateway to a vast collection of high-quality digital
-    resources for your applications and projects. As a leading platform, it
-    offers a wide range of graphics, including vectors, photos, illustrations,
-    icons, PSD templates, and more, all curated by talented designers from
-    around the world.
-  title: Freepik API
-  version: 1.0.0
-servers:
-  - description: B2B API Production V1
-    url: https://api.freepik.com
-security:
-  - apiKey: []
-paths:
-  /v1/ai/reference-to-video/kling-v3-omni/{task-id}:
-    get:
-      tags:
-        - reference-to-video
-        - kling-v3-omni-r2v
-      summary: Kling 3 Omni Reference-to-Video - Get task status
-      description: >-
-        Retrieve the status and result of a specific Kling 3 Omni
-        reference-to-video task (Pro or Standard) by its task ID.
-      operationId: getAiReferenceToVideoKlingV3OmniTask
-      parameters:
-        - description: ID of the task
-          in: path
-          name: task-id
+        - name: x-api-key
+          in: header
+          description: Your API Key used for request authorization
           required: true
+          example: ''
           schema:
             type: string
       responses:
         '200':
+          description: ''
           content:
             application/json:
               schema:
-                $ref: >-
-                  #/components/schemas/get_style_transfer_task_status_200_response
-          description: OK - The task exists and the status is returned
-        '400':
-          content:
-            application/json:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    type: object
+                    properties:
+                      task_id:
+                        type: string
+                      model:
+                        type: string
+                      task_type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - Completed
+                          - Processing
+                          - Pending
+                          - Failed
+                          - Staged
+                        x-apidog-enum:
+                          - value: Completed
+                            name: ''
+                            description: ''
+                          - value: Processing
+                            name: ''
+                            description: >-
+                              Means that your jobs is currently being processed.
+                              Number of "processing" jobs counts as part of the
+                              "concurrent jobs"
+                          - value: Pending
+                            name: ''
+                            description: >-
+                              Means that we recognizes the jobs you sent should
+                              be processed by MJ/Luma/Suno/Kling/etc but right
+                              now none of the  account is available to receive
+                              further jobs. During peak loads there can be
+                              longer wait time to get your jobs from "pending"
+                              to "processing". If reducing waiting time is your
+                              primary concern, then a combination of
+                              Pay-as-you-go and Host-your-own-account option
+                              might suit you better.Number of "pending" jobs
+                              counts as part of the "concurrent jobs"
+                          - value: Failed
+                            name: ''
+                            description: Task failed. Check the error message for detail.
+                          - value: Staged
+                            name: ''
+                            description: >-
+                              A stage only in Midjourney task . Means that you
+                              have exceeded the number of your "concurrent jobs"
+                              limit and your jobs are being queuedNumber of
+                              "staged" jobs does not count as part of the
+                              "concurrent jobs". Also, please note the maximum
+                              number of jobs in the "staged" queue is 50. So if
+                              your operational needs exceed the 50 jobs limit,
+                              then please create your own queuing system logic. 
+                        description: >-
+                          Hover on the "Completed" option and you coult see the
+                          explaintion of all status:
+                          completed/processing/pending/failed/staged
+                      input:
+                        type: object
+                        properties: {}
+                        x-apidog-orders: []
+                        x-apidog-ignore-properties: []
+                      output:
+                        type: object
+                        properties: {}
+                        x-apidog-orders: []
+                        x-apidog-ignore-properties: []
+                      meta:
+                        type: object
+                        properties:
+                          created_at:
+                            type: string
+                            description: >-
+                              The time when the task was submitted to us (staged
+                              and/or pending)
+                          started_at:
+                            type: string
+                            description: >-
+                              The time when the task started processing. the
+                              time from created_at to time of started_at is time
+                              the job spent in the "staged“ stage and/or
+                              the"pending" stage if there were any.
+                          ended_at:
+                            type: string
+                            description: The time when the task finished processing.
+                          usage:
+                            type: object
+                            properties:
+                              type:
+                                type: string
+                              frozen:
+                                type: number
+                              consume:
+                                type: number
+                            x-apidog-orders:
+                              - type
+                              - frozen
+                              - consume
+                            required:
+                              - type
+                              - frozen
+                              - consume
+                            x-apidog-ignore-properties: []
+                          is_using_private_pool:
+                            type: boolean
+                        x-apidog-orders:
+                          - created_at
+                          - started_at
+                          - ended_at
+                          - usage
+                          - is_using_private_pool
+                        required:
+                          - usage
+                          - is_using_private_pool
+                        x-apidog-ignore-properties: []
+                      detail:
+                        type: 'null'
+                      logs:
+                        type: array
+                        items:
+                          type: object
+                          properties: {}
+                          x-apidog-orders: []
+                          x-apidog-ignore-properties: []
+                      error:
+                        type: object
+                        properties:
+                          code:
+                            type: integer
+                          message:
+                            type: string
+                        x-apidog-orders:
+                          - code
+                          - message
+                        x-apidog-ignore-properties: []
+                    x-apidog-orders:
+                      - task_id
+                      - model
+                      - task_type
+                      - status
+                      - input
+                      - output
+                      - meta
+                      - detail
+                      - logs
+                      - error
+                    required:
+                      - task_id
+                      - model
+                      - task_type
+                      - status
+                      - input
+                      - output
+                      - meta
+                      - detail
+                      - logs
+                      - error
+                    x-apidog-ignore-properties: []
+                  message:
+                    type: string
+                    description: >-
+                      If you get non-null error message, here are some steps you
+                      chould follow:
+
+                      - Check our [common error
+                      message](https://climbing-adapter-afb.notion.site/Common-Error-Messages-6d108f5a8f644238b05ca50d47bbb0f4)
+
+                      - Retry for several times
+
+                      - If you have retried for more than 3 times and still not
+                      work, file a ticket on Discord and our support will be
+                      with you soon.
+                x-apidog-orders:
+                  - 01J8MXKN2C0FPCAMTSG8FV1PZ8
+                required:
+                  - code
+                  - data
+                  - message
+                x-apidog-refs:
+                  01J8MXKN2C0FPCAMTSG8FV1PZ8:
+                    $ref: '#/components/schemas/Unified-Task-Response'
+                x-apidog-ignore-properties:
+                  - code
+                  - data
+                  - message
               examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
+                '1':
+                  summary: kling
                   value:
-                    message: Parameter 'page' must be greater than 0
-                invalid_query:
-                  summary: Parameter 'query' is not valid
+                    code: 200
+                    data:
+                      task_id: b3efc0ab-3fdb-4b88-b20a-94eef777e125
+                      model: kling
+                      task_type: video_generation
+                      status: completed
+                      config:
+                        service_mode: private
+                        webhook_config:
+                          endpoint: ''
+                          secret: ''
+                      input: {}
+                      output:
+                        type: m2v_txt2video_hq
+                        status: 99
+                        works:
+                          - status: 99
+                            type: m2v_txt2video_hq
+                            cover:
+                              resource: https://xxx.png
+                              resource_without_watermark: ''
+                              height: 1440
+                              width: 1440
+                              duration: 0
+                            video:
+                              resource: https://xxx.mp4
+                              resource_without_watermark: https://storage.goapi.ai/xxx.mp4
+                              height: 1440
+                              width: 1440
+                              duration: 5100
+                      meta: {}
+                      detail: null
+                      logs: []
+                      error:
+                        code: 0
+                        raw_message: ''
+                        message: ''
+                        detail: null
+                    message: success
+                '2':
+                  summary: kling turbo
                   value:
-                    message: Parameter 'query' must not be empty
-                invalid_filter:
-                  summary: Parameter 'filter' is not valid
+                    timestamp: 1766571018
+                    data:
+                      task_id: 98aad4db-41a1-42ca-b06a-aa77714b4ff8
+                      model: kling-turbo
+                      task_type: video_generation
+                      status: completed
+                      config:
+                        service_mode: ''
+                        webhook_config:
+                          endpoint: >-
+                            https://webhook.site/20d9b15f-bfb8-4237-8e4a-993f462f9eb9
+                          secret: ''
+                      input:
+                        aspect_ratio: '16:9'
+                        duration: 5
+                        prompt: >-
+                          Close-up, static camera, a woman in swim suit near the
+                          sea is introducing herself.
+                      output:
+                        video: >-
+                          https://img.theapi.app/ephemeral/fe08dad8-f79b-44ce-9fe5-c1e7fd14d45a.mp4
+                      meta:
+                        created_at: '2025-12-24T10:08:00.260200381Z'
+                        started_at: '2025-12-24T10:08:01.091506008Z'
+                        ended_at: '2025-12-24T10:10:18.112349385Z'
+                        usage:
+                          type: llm
+                          frozen: 0
+                          consume: 2800000
+                        is_using_private_pool: false
+                      detail: null
+                      logs: []
+                      error:
+                        code: 0
+                        raw_message: ''
+                        message: ''
+                        detail: null
+                '3':
+                  summary: kling motion control
+                '4':
+                  summary: kling motion control
                   value:
-                    message: Parameter 'filter' is not valid
-                generic_bad_request:
-                  summary: Bad Request
+                    timestamp: 1767705595
+                    data:
+                      task_id: 820b72ec-5235-4315-a3ea-cf95057787b8
+                      model: kling
+                      task_type: motion_control
+                      status: completed
+                      config:
+                        service_mode: public
+                        webhook_config:
+                          endpoint: >-
+                            https://webhook.site/ce576103-6cd3-43a6-8aac-c8f0dc13adc0
+                          secret: ''
+                      input:
+                        image_url: https://example.com/kling/digital/image/Isabella.png
+                        keep_original_sound: true
+                        mode: std
+                        motion_direction: video
+                        preset_motion: Heart Gesture Dance
+                        version: '2.6'
+                        video_url: ''
+                      output:
+                        video_url: https://storage.theapi.app/videos/299676610318135.mp4
+                        type: m2v_motion_control
+                        status: 99
+                        works:
+                          - content_type: video
+                            status: 99
+                            type: m2v_motion_control
+                            cover:
+                              resource: >-
+                                https://s15-kling.klingai.com/kimg/EMXN1y8qYwoGdXBsb2FkEg55bGFiLXN0dW50LXNncBpJNTU3YTEzNTktY2I1MC00NzkxLWEzZWItODg3MThhNTNkNDIzLXhacEdFUGFQaHlOdjhCODRqUE1wZGctb3V0cHV0X2ZmLmpwZw.origin?x-kcdn-pid=112372
+                              resource_without_watermark: ''
+                              height: 1280
+                              width: 720
+                              duration: 0
+                            video:
+                              resource: >-
+                                https://v15-kling.klingai.com/bs2/upload-ylab-stunt-sgp/557a1359-cb50-4791-a3eb-88718a53d423-xZpGEPaPhyNv8B84jPMpdg-output.mp4?x-kcdn-pid=112372
+                              resource_without_watermark: >-
+                                https://storage.theapi.app/videos/299676610318135.mp4
+                              height: 1280
+                              width: 720
+                              duration: 8766
+                      meta:
+                        created_at: '2026-01-06T13:11:22.513893572Z'
+                        started_at: '2026-01-06T13:11:23.45584817Z'
+                        ended_at: '2026-01-06T13:19:55.707304033Z'
+                        usage:
+                          type: point
+                          frozen: 5850000
+                          consume: 5850000
+                        is_using_private_pool: false
+                      detail: null
+                      logs: null
+                      error:
+                        code: 0
+                        raw_message: ''
+                        message: ''
+                        detail: null
+                '5':
+                  summary: Kling 3.0
                   value:
-                    message: Parameter ':attribute' is not valid
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-            application/problem+json:
-              examples:
-                invalid_page:
-                  summary: Parameter 'page' is not valid
-                  value:
-                    message: Your request parameters didn't validate.
-                    invalid_params:
-                      - name: page
-                        reason: Parameter 'page' must be greater than 0
-                      - name: per_page
-                        reason: Parameter 'per_page' must be greater than 0
-              schema:
-                $ref: >-
-                  #/components/schemas/get_all_style_transfer_tasks_400_response_1
-          description: >-
-            Bad Request - The server could not understand the request due to
-            invalid syntax.
-        '401':
-          content:
-            application/json:
-              examples:
-                invalid_api_key:
-                  summary: API key is not valid
-                  value:
-                    message: Invalid API key
-                missing_api_key:
-                  summary: API key is not provided
-                  value:
-                    message: Missing API key
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_400_response'
-          description: >-
-            Unauthorized - The client must authenticate itself to get the
-            requested response.
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_500_response'
-          description: >-
-            Internal Server Error - The server has encountered a situation it
-            doesn't know how to handle.
-        '503':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/get_all_style_transfer_tasks_503_response'
-          description: Service Unavailable
-      security:
-        - apiKey: []
+                    timestamp: 1770952944
+                    data:
+                      task_id: 259da62f-9516-4e44-82d6-ce747267a44c
+                      model: kling
+                      task_type: video_generation
+                      status: completed
+                      config:
+                        service_mode: public
+                        webhook_config:
+                          endpoint: >-
+                            https://webhook.site/64e7e8fa-a47a-4d30-b00a-8746d2d04590
+                          secret: ''
+                      input:
+                        aspect_ratio: '16:9'
+                        duration: 5
+                        enable_audio: false
+                        mode: std
+                        prompt: >-
+                          Close-up, static camera, a woman in swim suit near the
+                          sea is introducing herself.
+                        version: '3.0'
+                      output:
+                        video: https://storage.theapi.app/videos/302924319317897.mp4
+                      meta:
+                        created_at: '2026-02-13T03:20:33.392553085Z'
+                        started_at: '2026-02-13T03:20:34.305168282Z'
+                        ended_at: '2026-02-13T03:22:24.64542152Z'
+                        usage:
+                          type: point
+                          frozen: 0
+                          consume: 7500000
+                        is_using_private_pool: false
+                      detail: null
+                      logs: null
+                      error:
+                        code: 0
+                        raw_message: ''
+                        message: ''
+                        detail: null
+          headers: {}
+          x-apidog-name: Success
+      security: []
+      x-apidog-folder: Endpoints/Kling
+      x-apidog-status: released
+      x-run-in-apidog: https://app.apidog.com/web/project/675356/apis/api-10275890-run
 components:
   schemas:
-    get_style_transfer_task_status_200_response:
-      example:
+    Unified-Task-Response:
+      type: object
+      properties:
+        code:
+          type: integer
         data:
-          generated:
-            - https://openapi-generator.tech
-            - https://openapi-generator.tech
-          task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-          status: CREATED
-      properties:
-        data:
-          $ref: '#/components/schemas/task-detail'
-      required:
-        - data
-      type: object
-    get_all_style_transfer_tasks_400_response:
-      example:
-        message: message
-      properties:
-        message:
-          type: string
-      type: object
-    get_all_style_transfer_tasks_400_response_1:
-      properties:
-        problem:
-          $ref: >-
-            #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem
-      type: object
-    get_all_style_transfer_tasks_500_response:
-      example:
-        message: Internal Server Error
-      properties:
-        message:
-          example: Internal Server Error
-          type: string
-      type: object
-    get_all_style_transfer_tasks_503_response:
-      example:
-        message: Service Unavailable. Please try again later.
-      properties:
-        message:
-          example: Service Unavailable. Please try again later.
-          type: string
-      type: object
-    task-detail:
-      allOf:
-        - $ref: '#/components/schemas/task'
-        - properties:
-            generated:
-              items:
-                description: URL of the generated image
-                format: uri
-                type: string
-              type: array
-          required:
-            - generated
           type: object
-      example:
-        generated:
-          - https://openapi-generator.tech
-          - https://openapi-generator.tech
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-    get_all_style_transfer_tasks_400_response_1_problem:
-      properties:
+          properties:
+            task_id:
+              type: string
+            model:
+              type: string
+            task_type:
+              type: string
+            status:
+              type: string
+              enum:
+                - Completed
+                - Processing
+                - Pending
+                - Failed
+                - Staged
+              x-apidog-enum:
+                - value: Completed
+                  name: ''
+                  description: ''
+                - value: Processing
+                  name: ''
+                  description: >-
+                    Means that your jobs is currently being processed. Number of
+                    "processing" jobs counts as part of the "concurrent jobs"
+                - value: Pending
+                  name: ''
+                  description: >-
+                    Means that we recognizes the jobs you sent should be
+                    processed by MJ/Luma/Suno/Kling/etc but right now none of
+                    the  account is available to receive further jobs. During
+                    peak loads there can be longer wait time to get your jobs
+                    from "pending" to "processing". If reducing waiting time is
+                    your primary concern, then a combination of Pay-as-you-go
+                    and Host-your-own-account option might suit you
+                    better.Number of "pending" jobs counts as part of the
+                    "concurrent jobs"
+                - value: Failed
+                  name: ''
+                  description: Task failed. Check the error message for detail.
+                - value: Staged
+                  name: ''
+                  description: >-
+                    A stage only in Midjourney task . Means that you have
+                    exceeded the number of your "concurrent jobs" limit and your
+                    jobs are being queuedNumber of "staged" jobs does not count
+                    as part of the "concurrent jobs". Also, please note the
+                    maximum number of jobs in the "staged" queue is 50. So if
+                    your operational needs exceed the 50 jobs limit, then please
+                    create your own queuing system logic. 
+              description: >-
+                Hover on the "Completed" option and you coult see the
+                explaintion of all status:
+                completed/processing/pending/failed/staged
+            input:
+              type: object
+              properties: {}
+              x-apidog-orders: []
+              x-apidog-ignore-properties: []
+            output:
+              type: object
+              properties: {}
+              x-apidog-orders: []
+              x-apidog-ignore-properties: []
+            meta:
+              type: object
+              properties:
+                created_at:
+                  type: string
+                  description: >-
+                    The time when the task was submitted to us (staged and/or
+                    pending)
+                started_at:
+                  type: string
+                  description: >-
+                    The time when the task started processing. the time from
+                    created_at to time of started_at is time the job spent in
+                    the "staged“ stage and/or the"pending" stage if there were
+                    any.
+                ended_at:
+                  type: string
+                  description: The time when the task finished processing.
+                usage:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    frozen:
+                      type: number
+                    consume:
+                      type: number
+                  x-apidog-orders:
+                    - type
+                    - frozen
+                    - consume
+                  required:
+                    - type
+                    - frozen
+                    - consume
+                  x-apidog-ignore-properties: []
+                is_using_private_pool:
+                  type: boolean
+              x-apidog-orders:
+                - created_at
+                - started_at
+                - ended_at
+                - usage
+                - is_using_private_pool
+              required:
+                - usage
+                - is_using_private_pool
+              x-apidog-ignore-properties: []
+            detail:
+              type: 'null'
+            logs:
+              type: array
+              items:
+                type: object
+                properties: {}
+                x-apidog-orders: []
+                x-apidog-ignore-properties: []
+            error:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+              x-apidog-orders:
+                - code
+                - message
+              x-apidog-ignore-properties: []
+          x-apidog-orders:
+            - task_id
+            - model
+            - task_type
+            - status
+            - input
+            - output
+            - meta
+            - detail
+            - logs
+            - error
+          required:
+            - task_id
+            - model
+            - task_type
+            - status
+            - input
+            - output
+            - meta
+            - detail
+            - logs
+            - error
+          x-apidog-ignore-properties: []
         message:
-          example: Your request parameters didn't validate.
           type: string
-        invalid_params:
-          items:
-            $ref: >-
-              #/components/schemas/get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner
-          type: array
-      required:
-        - invalid_params
-        - message
-      type: object
-    task:
-      example:
-        task_id: 046b6c7f-0b8a-43b9-b35d-6489e6daee91
-        status: CREATED
-      properties:
-        task_id:
-          description: Task identifier
-          format: uuid
-          type: string
-        status:
-          description: Task status
-          enum:
-            - CREATED
-            - IN_PROGRESS
-            - COMPLETED
-            - FAILED
-          type: string
-      required:
-        - status
-        - task_id
-      type: object
-    get_all_style_transfer_tasks_400_response_1_problem_invalid_params_inner:
-      properties:
-        name:
-          example: page
-          type: string
-        reason:
-          example: Parameter 'page' must be greater than 0
-          type: string
-      required:
-        - name
-        - reason
-      type: object
-  securitySchemes:
-    apiKey:
-      description: >
-        Your Freepik API key. Required for authentication. [Learn how to obtain
-        an API
-        key](https://docs.freepik.com/authentication#obtaining-an-api-key)
-      in: header
-      name: x-freepik-api-key
-      type: apiKey
+          description: >-
+            If you get non-null error message, here are some steps you chould
+            follow:
 
-````
+            - Check our [common error
+            message](https://climbing-adapter-afb.notion.site/Common-Error-Messages-6d108f5a8f644238b05ca50d47bbb0f4)
+
+            - Retry for several times
+
+            - If you have retried for more than 3 times and still not work, file
+            a ticket on Discord and our support will be with you soon.
+      x-examples:
+        Example 1:
+          code: 200
+          data:
+            task_id: 49638cd2-4689-4f33-9336-164a8f6b1111
+            model: Qubico/flux1-dev
+            task_type: txt2img
+            status: pending
+            input:
+              prompt: a bear
+            output: null
+            meta:
+              account_id: 0
+              account_name: Qubico_test_user
+              created_at: '2024-08-16T16:13:21.194049Z'
+              started_at: ''
+              completed_at: ''
+            detail: null
+            logs: []
+            error:
+              code: 0
+              message: ''
+          message: success
+      x-apidog-orders:
+        - code
+        - data
+        - message
+      required:
+        - code
+        - data
+        - message
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+  securitySchemes: {}
+servers:
+  - url: https://api.piapi.ai
+    description: Develop Env
+security: []
+
+```
+# Kling Motion Control
+
+## OpenAPI Specification
+
+```yaml
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /api/v1/task:
+    post:
+      summary: Kling Motion Control
+      deprecated: false
+      description: >-
+        This is the api for Kling's Motion Control video generation API.
+
+
+        **Pricing**
+
+        According to the duration of input motion video(preset or uploaded)
+
+        - std: $0.065 per second
+
+        - pro: $0.104 per second
+
+
+        **Note**
+
+        - Currently only version 2.6 supports motion control
+
+        - One of `video_url` and `preset_motion` must be provided as motion
+        reference
+      tags:
+        - Endpoints/Kling
+      parameters:
+        - name: x-api-key
+          in: header
+          description: you api key
+          required: true
+          example: ''
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  description: should be `kling`
+                  default: kling
+                  enum:
+                    - kling
+                  x-apidog-enum:
+                    - value: kling
+                      name: ''
+                      description: ''
+                task_type:
+                  type: string
+                  description: should be `motion_control`
+                  default: motion_control
+                  enum:
+                    - motion_control
+                  x-apidog-enum:
+                    - value: motion_control
+                      name: ''
+                      description: ''
+                input:
+                  type: object
+                  description: |
+                    the input param of the task
+                  x-apidog-orders:
+                    - image_url
+                    - video_url
+                    - preset_motion
+                    - motion_direction
+                    - keep_original_sound
+                    - mode
+                  properties:
+                    image_url:
+                      type: string
+                      description: the image of avatar
+                    video_url:
+                      type: string
+                      description: the motion video url
+                    preset_motion:
+                      type: string
+                      description: preset motion name, if provided will ignore video_url
+                      enum:
+                        - Cute Baby Dance
+                        - Nezha
+                        - Heart Gesture Dance
+                        - Motorcycle Dance
+                        - Subject 3 Dance
+                        - Ghost Step Dance
+                        - Martial Arts
+                        - Running
+                        - Poping
+                      x-apidog-enum:
+                        - value: Cute Baby Dance
+                          name: ''
+                          description: ''
+                        - value: Nezha
+                          name: ''
+                          description: ''
+                        - value: Heart Gesture Dance
+                          name: ''
+                          description: ''
+                        - value: Motorcycle Dance
+                          name: ''
+                          description: ''
+                        - value: Subject 3 Dance
+                          name: ''
+                          description: ''
+                        - value: Ghost Step Dance
+                          name: ''
+                          description: ''
+                        - value: Martial Arts
+                          name: ''
+                          description: ''
+                        - value: Running
+                          name: ''
+                          description: ''
+                        - value: Poping
+                          name: ''
+                          description: ''
+                    motion_direction:
+                      type: string
+                      enum:
+                        - video
+                        - image
+                      x-apidog-enum:
+                        - value: video
+                          name: ''
+                          description: ''
+                        - value: image
+                          name: ''
+                          description: ''
+                      default: video
+                      description: >-
+                        when character orientation matches the video, complex
+                        motions perform better; when it matches the image,
+                        camera movements are better supported.
+                    keep_original_sound:
+                      type: boolean
+                      description: keep motion video(preset or uploaded) audio if true
+                    mode:
+                      type: string
+                      enum:
+                        - std
+                        - pro
+                      x-apidog-enum:
+                        - value: std
+                          name: ''
+                          description: ''
+                        - value: pro
+                          name: ''
+                          description: ''
+                      default: std
+                      description: mode to generate video
+                  required:
+                    - image_url
+                  x-apidog-ignore-properties: []
+                config:
+                  type: object
+                  properties:
+                    webhook_config:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                        secret:
+                          type: string
+                      x-apidog-orders:
+                        - endpoint
+                        - secret
+                      description: >-
+                        Webhook provides timely task notifications. Check [PiAPI
+                        webhook](/docs/unified-webhook) for detail.
+                      x-apidog-ignore-properties: []
+                    service_mode:
+                      type: string
+                      description: >
+                        This allows users to choose whether this specific task
+                        will get processed under PAYG or HYA mode. If
+                        unspecified, then this task will get processed under
+                        whatever mode (PAYG or HYA)
+                         the user chose on the workspace setting of your account.
+                        - `public` means this task will be processed under PAYG
+                        mode.
+
+                        - `private` means this task will be processed under HYA
+                        mode.
+                      enum:
+                        - public
+                        - private
+                      x-apidog-enum:
+                        - value: public
+                          name: ''
+                          description: means this task will be processed under PAYG mode.
+                        - value: private
+                          name: ''
+                          description: >-
+                            means this task will be processed under HYA
+                            modesetting of your account.
+                  x-apidog-orders:
+                    - webhook_config
+                    - service_mode
+                  x-apidog-ignore-properties: []
+              x-apidog-orders:
+                - model
+                - task_type
+                - input
+                - 01JZ4Z64RY9PZ6Z3P8K0BWV7TN
+              required:
+                - model
+                - task_type
+                - input
+              x-apidog-refs:
+                01JZ4Z64RY9PZ6Z3P8K0BWV7TN:
+                  $ref: '#/components/schemas/config'
+              x-apidog-ignore-properties:
+                - config
+            example:
+              model: kling
+              task_type: motion_control
+              input:
+                image_url: https://example.com/kling/digital/image/Isabella.png
+                video_url: ''
+                preset_motion: Heart Gesture Dance
+                motion_direction: video
+                keep_original_sound: true
+                mode: std
+                version: '2.6'
+              config:
+                service_mode: public
+                webhook_config:
+                  endpoint: https://webhook.site/ce576103-6cd3-43a6-8aac-c8f0dc13adc0
+                  secret: ''
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                x-apidog-orders: []
+                x-apidog-ignore-properties: []
+              example:
+                code: 200
+                data:
+                  task_id: 820b72ec-5235-4315-a3ea-cf95057787b8
+                  model: kling
+                  task_type: motion_control
+                  status: pending
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/ce576103-6cd3-43a6-8aac-c8f0dc13adc0
+                      secret: ''
+                  input:
+                    image_url: https://example.com/kling/digital/image/Isabella.png
+                    keep_original_sound: true
+                    mode: std
+                    motion_direction: video
+                    preset_motion: Heart Gesture Dance
+                    version: '2.6'
+                    video_url: ''
+                  output:
+                    type: ''
+                    status: 0
+                    works: null
+                  meta:
+                    created_at: '2026-01-06T13:11:22.513893572Z'
+                    started_at: '0001-01-01T00:00:00Z'
+                    ended_at: '0001-01-01T00:00:00Z'
+                    usage:
+                      type: point
+                      frozen: 0
+                      consume: 0
+                    is_using_private_pool: false
+                  detail: null
+                  logs: null
+                  error:
+                    code: 0
+                    raw_message: ''
+                    message: ''
+                    detail: null
+                message: success
+          headers: {}
+          x-apidog-name: Success
+      security: []
+      x-apidog-folder: Endpoints/Kling
+      x-apidog-status: released
+      x-run-in-apidog: https://app.apidog.com/web/project/675356/apis/api-26374403-run
+components:
+  schemas:
+    config:
+      type: object
+      properties:
+        config:
+          type: object
+          properties:
+            webhook_config:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                secret:
+                  type: string
+              x-apidog-orders:
+                - endpoint
+                - secret
+              description: >-
+                Webhook provides timely task notifications. Check [PiAPI
+                webhook](/docs/unified-webhook) for detail.
+              x-apidog-ignore-properties: []
+            service_mode:
+              type: string
+              description: >
+                This allows users to choose whether this specific task will get
+                processed under PAYG or HYA mode. If unspecified, then this task
+                will get processed under whatever mode (PAYG or HYA)
+                 the user chose on the workspace setting of your account.
+                - `public` means this task will be processed under PAYG mode.
+
+                - `private` means this task will be processed under HYA mode.
+              enum:
+                - public
+                - private
+              x-apidog-enum:
+                - value: public
+                  name: ''
+                  description: means this task will be processed under PAYG mode.
+                - value: private
+                  name: ''
+                  description: >-
+                    means this task will be processed under HYA modesetting of
+                    your account.
+          x-apidog-orders:
+            - webhook_config
+            - service_mode
+          x-apidog-ignore-properties: []
+      x-apidog-orders:
+        - config
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+  securitySchemes: {}
+servers:
+  - url: https://api.piapi.ai
+    description: Develop Env
+security: []
+
+```
+# Kling 3.0 omni
+
+## OpenAPI Specification
+
+```yaml
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /api/v1/task:
+    post:
+      summary: Kling 3.0 omni
+      deprecated: false
+      description: >-
+        This is the api for Kling's video generation API. Kling 3.0 Omni is a
+        upgraded version of Kling o1.
+
+
+        **Pricing**
+
+        According to the resolution and duration of generated video
+
+
+        ***A price reduction is applied for this API on 2026/2/13.***
+
+
+        | Resolution | Enable audio | Price(USD) per second |
+
+        | --- | --- | --- |
+
+        | 720 | false | 0.1 |
+
+        | 720 | true | 0.15 |
+
+        | 1080 | false | 0.15 |
+
+        | 1080 | true | 0.2 |
+
+
+        Price example
+
+        - generate a 10 second video of 720p without audio will cost: 10 \*
+        \$0.10 \= \$1.0
+
+        - generate a multi-shots video, shot1 2s, shot2 3s, 720p with audio will
+        cost: \(2 \+ 3\) \* \$0.15 \= \$1.5
+
+
+
+        **Note**
+
+        - If multi shots used, param `prompt` and `duration` will be ignored
+
+        - Maximum 6 multi shots, total duration should not exceed 15 seconds
+
+        - if ref images provided, use @image_i in prompt to reference. i starts
+        at 1, so use @image_1 for the first image in images list, @image_2 for
+        the second image, etc.
+
+        - ref images can be used multiple times in prompt, for example: use
+        @image_1 as start frame, a woman @image_2 is introducing herself, and
+        use @image_1 as end frame
+      tags:
+        - Endpoints/Kling omni
+      parameters:
+        - name: x-api-key
+          in: header
+          description: you api key
+          required: true
+          example: ''
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  default: kling
+                  enum:
+                    - kling
+                  x-apidog-enum:
+                    - value: kling
+                      name: ''
+                      description: ''
+                task_type:
+                  type: string
+                  default: omni_video_generation
+                  enum:
+                    - omni_video_generation
+                  x-apidog-enum:
+                    - value: omni_video_generation
+                      name: ''
+                      description: ''
+                input:
+                  type: object
+                  description: |
+                    the input param of the task
+                  x-apidog-orders:
+                    - prompt
+                    - version
+                    - resolution
+                    - duration
+                    - aspect_ratio
+                    - enable_audio
+                    - multi_shots
+                    - images
+                  properties:
+                    prompt:
+                      type: string
+                      description: text prompt used to generate video
+                    version:
+                      type: string
+                      enum:
+                        - '3.0'
+                      x-apidog-enum:
+                        - value: '3.0'
+                          name: ''
+                          description: ''
+                    resolution:
+                      type: string
+                      enum:
+                        - 720p
+                        - 1080p
+                      x-apidog-enum:
+                        - value: 720p
+                          name: ''
+                          description: ''
+                        - value: 1080p
+                          name: ''
+                          description: ''
+                      default: 720p
+                    duration:
+                      type: integer
+                      description: duration of the generated video
+                      default: 5
+                      minimum: 3
+                      maximum: 15
+                    aspect_ratio:
+                      type: string
+                      enum:
+                        - '16:9'
+                        - '9:16'
+                        - '1:1'
+                      x-apidog-enum:
+                        - value: '16:9'
+                          name: ''
+                          description: ''
+                        - value: '9:16'
+                          name: ''
+                          description: ''
+                        - value: '1:1'
+                          name: ''
+                          description: ''
+                      default: '16:9'
+                      description: aspect ratio of the generated video
+                    enable_audio:
+                      type: boolean
+                      default: false
+                    multi_shots:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Kling%20omni%20multi%20shot'
+                      description: >-
+                        describe multi shots. prompt and duration will be
+                        ignored if used
+                    images:
+                      type: array
+                      items:
+                        type: string
+                        description: valid image url for reference
+                      description: must use @image_i in prompt to reference, i starts at 1
+                  x-apidog-ignore-properties: []
+                config:
+                  type: object
+                  properties:
+                    webhook_config:
+                      type: object
+                      properties:
+                        endpoint:
+                          type: string
+                        secret:
+                          type: string
+                      x-apidog-orders:
+                        - endpoint
+                        - secret
+                      description: >-
+                        Webhook provides timely task notifications. Check [PiAPI
+                        webhook](/docs/unified-webhook) for detail.
+                      x-apidog-ignore-properties: []
+                    service_mode:
+                      type: string
+                      description: >
+                        This allows users to choose whether this specific task
+                        will get processed under PAYG or HYA mode. If
+                        unspecified, then this task will get processed under
+                        whatever mode (PAYG or HYA)
+                         the user chose on the workspace setting of your account.
+                        - `public` means this task will be processed under PAYG
+                        mode.
+
+                        - `private` means this task will be processed under HYA
+                        mode.
+                      enum:
+                        - public
+                        - private
+                      x-apidog-enum:
+                        - value: public
+                          name: ''
+                          description: means this task will be processed under PAYG mode.
+                        - value: private
+                          name: ''
+                          description: >-
+                            means this task will be processed under HYA
+                            modesetting of your account.
+                  x-apidog-orders:
+                    - webhook_config
+                    - service_mode
+                  x-apidog-ignore-properties: []
+              x-apidog-orders:
+                - model
+                - task_type
+                - input
+                - 01JZ4Z64RY9PZ6Z3P8K0BWV7TN
+              required:
+                - model
+                - task_type
+                - input
+              x-apidog-refs:
+                01JZ4Z64RY9PZ6Z3P8K0BWV7TN:
+                  $ref: '#/components/schemas/config'
+              x-apidog-ignore-properties:
+                - config
+            examples:
+              '1':
+                value:
+                  model: kling
+                  task_type: omni_video_generation
+                  input:
+                    prompt: >-
+                      Close-up, static camera, a woman in swim suit near the sea
+                      is introducing herself.
+                    version: '3.0'
+                    resolution: 720p
+                    duration: 3
+                    aspect_ratio: '16:9'
+                    enable_audio: false
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                summary: text to video
+              '2':
+                value:
+                  model: kling
+                  task_type: omni_video_generation
+                  input:
+                    multi_shots:
+                      - prompt: a dog stands near sea
+                        duration: 2
+                      - prompt: the dog turns around and walks on beach
+                        duration: 3
+                    version: '3.0'
+                    resolution: 720p
+                    aspect_ratio: '16:9'
+                    enable_audio: true
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                summary: multi shots
+              '3':
+                value:
+                  model: kling
+                  task_type: omni_video_generation
+                  input:
+                    prompt: >-
+                      A woman and a child are doing interview at New York
+                      street. Use @image_1 as first frame
+                    images:
+                      - https://piapi.ai/workspace/qwen/txt_output_example.png
+                    version: '3.0'
+                    resolution: 720p
+                    duration: 3
+                    aspect_ratio: '16:9'
+                    enable_audio: false
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                summary: image to video
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {}
+                x-apidog-orders: []
+                x-apidog-ignore-properties: []
+              example:
+                code: 200
+                data:
+                  task_id: 5a9b4d8f-6f1c-460d-b295-ab1d663f9b90
+                  model: kling
+                  task_type: omni_video_generation
+                  status: pending
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                  input:
+                    aspect_ratio: '16:9'
+                    enable_audio: true
+                    multi_shots:
+                      - duration: 2
+                        prompt: a dog stands near sea
+                      - duration: 3
+                        prompt: the dog turns around and walks on beach
+                    resolution: 720p
+                    version: '3.0'
+                  output:
+                    video: ''
+                  meta:
+                    created_at: '2026-02-07T02:31:17.998381738Z'
+                    started_at: '0001-01-01T00:00:00Z'
+                    ended_at: '0001-01-01T00:00:00Z'
+                    usage:
+                      type: point
+                      frozen: 10000000
+                      consume: 0
+                    is_using_private_pool: false
+                  detail: null
+                  logs: null
+                  error:
+                    code: 0
+                    raw_message: ''
+                    message: ''
+                    detail: null
+                message: success
+          headers: {}
+          x-apidog-name: Success
+      security: []
+      x-apidog-folder: Endpoints/Kling omni
+      x-apidog-status: released
+      x-run-in-apidog: https://app.apidog.com/web/project/675356/apis/api-27719117-run
+components:
+  schemas:
+    Kling omni multi shot:
+      type: object
+      properties:
+        prompt:
+          type: string
+          description: prompt of the shot
+        duration:
+          type: integer
+          default: 3
+          minimum: 1
+          maximum: 14
+          description: >-
+            duraton of the shot, total duration of all shots should not exceed
+            15
+      x-apidog-orders:
+        - prompt
+        - duration
+      required:
+        - prompt
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+    config:
+      type: object
+      properties:
+        config:
+          type: object
+          properties:
+            webhook_config:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                secret:
+                  type: string
+              x-apidog-orders:
+                - endpoint
+                - secret
+              description: >-
+                Webhook provides timely task notifications. Check [PiAPI
+                webhook](/docs/unified-webhook) for detail.
+              x-apidog-ignore-properties: []
+            service_mode:
+              type: string
+              description: >
+                This allows users to choose whether this specific task will get
+                processed under PAYG or HYA mode. If unspecified, then this task
+                will get processed under whatever mode (PAYG or HYA)
+                 the user chose on the workspace setting of your account.
+                - `public` means this task will be processed under PAYG mode.
+
+                - `private` means this task will be processed under HYA mode.
+              enum:
+                - public
+                - private
+              x-apidog-enum:
+                - value: public
+                  name: ''
+                  description: means this task will be processed under PAYG mode.
+                - value: private
+                  name: ''
+                  description: >-
+                    means this task will be processed under HYA modesetting of
+                    your account.
+          x-apidog-orders:
+            - webhook_config
+            - service_mode
+          x-apidog-ignore-properties: []
+      x-apidog-orders:
+        - config
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+  securitySchemes: {}
+servers:
+  - url: https://api.piapi.ai
+    description: Develop Env
+security: []
+
+```
+# Get Task
+
+## OpenAPI Specification
+
+```yaml
+openapi: 3.0.1
+info:
+  title: ''
+  description: ''
+  version: 1.0.0
+paths:
+  /api/v1/task/{task_id}:
+    get:
+      summary: Get Task
+      deprecated: false
+      description: >-
+        This is provided as part of the [Kling API](https://piapi.ai/kling-api)
+        from PiAPI. 
+
+        This endpoint could get video generation progress or result of Kling
+        task.
+      operationId: kling-api/get-task
+      tags:
+        - Endpoints/Kling omni
+      parameters:
+        - name: task_id
+          in: path
+          description: ''
+          required: true
+          schema:
+            type: string
+        - name: x-api-key
+          in: header
+          description: Your API Key used for request authorization
+          required: true
+          example: ''
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                  data:
+                    type: object
+                    properties:
+                      task_id:
+                        type: string
+                      model:
+                        type: string
+                      task_type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - Completed
+                          - Processing
+                          - Pending
+                          - Failed
+                          - Staged
+                        x-apidog-enum:
+                          - value: Completed
+                            name: ''
+                            description: ''
+                          - value: Processing
+                            name: ''
+                            description: >-
+                              Means that your jobs is currently being processed.
+                              Number of "processing" jobs counts as part of the
+                              "concurrent jobs"
+                          - value: Pending
+                            name: ''
+                            description: >-
+                              Means that we recognizes the jobs you sent should
+                              be processed by MJ/Luma/Suno/Kling/etc but right
+                              now none of the  account is available to receive
+                              further jobs. During peak loads there can be
+                              longer wait time to get your jobs from "pending"
+                              to "processing". If reducing waiting time is your
+                              primary concern, then a combination of
+                              Pay-as-you-go and Host-your-own-account option
+                              might suit you better.Number of "pending" jobs
+                              counts as part of the "concurrent jobs"
+                          - value: Failed
+                            name: ''
+                            description: Task failed. Check the error message for detail.
+                          - value: Staged
+                            name: ''
+                            description: >-
+                              A stage only in Midjourney task . Means that you
+                              have exceeded the number of your "concurrent jobs"
+                              limit and your jobs are being queuedNumber of
+                              "staged" jobs does not count as part of the
+                              "concurrent jobs". Also, please note the maximum
+                              number of jobs in the "staged" queue is 50. So if
+                              your operational needs exceed the 50 jobs limit,
+                              then please create your own queuing system logic. 
+                        description: >-
+                          Hover on the "Completed" option and you coult see the
+                          explaintion of all status:
+                          completed/processing/pending/failed/staged
+                      input:
+                        type: object
+                        properties: {}
+                        x-apidog-orders: []
+                        x-apidog-ignore-properties: []
+                      output:
+                        type: object
+                        properties: {}
+                        x-apidog-orders: []
+                        x-apidog-ignore-properties: []
+                      meta:
+                        type: object
+                        properties:
+                          created_at:
+                            type: string
+                            description: >-
+                              The time when the task was submitted to us (staged
+                              and/or pending)
+                          started_at:
+                            type: string
+                            description: >-
+                              The time when the task started processing. the
+                              time from created_at to time of started_at is time
+                              the job spent in the "staged“ stage and/or
+                              the"pending" stage if there were any.
+                          ended_at:
+                            type: string
+                            description: The time when the task finished processing.
+                          usage:
+                            type: object
+                            properties:
+                              type:
+                                type: string
+                              frozen:
+                                type: number
+                              consume:
+                                type: number
+                            x-apidog-orders:
+                              - type
+                              - frozen
+                              - consume
+                            required:
+                              - type
+                              - frozen
+                              - consume
+                            x-apidog-ignore-properties: []
+                          is_using_private_pool:
+                            type: boolean
+                        x-apidog-orders:
+                          - created_at
+                          - started_at
+                          - ended_at
+                          - usage
+                          - is_using_private_pool
+                        required:
+                          - usage
+                          - is_using_private_pool
+                        x-apidog-ignore-properties: []
+                      detail:
+                        type: 'null'
+                      logs:
+                        type: array
+                        items:
+                          type: object
+                          properties: {}
+                          x-apidog-orders: []
+                          x-apidog-ignore-properties: []
+                      error:
+                        type: object
+                        properties:
+                          code:
+                            type: integer
+                          message:
+                            type: string
+                        x-apidog-orders:
+                          - code
+                          - message
+                        x-apidog-ignore-properties: []
+                    x-apidog-orders:
+                      - task_id
+                      - model
+                      - task_type
+                      - status
+                      - input
+                      - output
+                      - meta
+                      - detail
+                      - logs
+                      - error
+                    required:
+                      - task_id
+                      - model
+                      - task_type
+                      - status
+                      - input
+                      - output
+                      - meta
+                      - detail
+                      - logs
+                      - error
+                    x-apidog-ignore-properties: []
+                  message:
+                    type: string
+                    description: >-
+                      If you get non-null error message, here are some steps you
+                      chould follow:
+
+                      - Check our [common error
+                      message](https://climbing-adapter-afb.notion.site/Common-Error-Messages-6d108f5a8f644238b05ca50d47bbb0f4)
+
+                      - Retry for several times
+
+                      - If you have retried for more than 3 times and still not
+                      work, file a ticket on Discord and our support will be
+                      with you soon.
+                x-apidog-orders:
+                  - 01J8MXKN2C0FPCAMTSG8FV1PZ8
+                required:
+                  - code
+                  - data
+                  - message
+                x-apidog-refs:
+                  01J8MXKN2C0FPCAMTSG8FV1PZ8:
+                    $ref: '#/components/schemas/Unified-Task-Response'
+                x-apidog-ignore-properties:
+                  - code
+                  - data
+                  - message
+              example:
+                timestamp: 1770423368
+                data:
+                  task_id: f43657f9-5655-4869-a201-651ded8649bb
+                  model: kling
+                  task_type: omni_video_generation
+                  status: completed
+                  config:
+                    service_mode: public
+                    webhook_config:
+                      endpoint: >-
+                        https://webhook.site/5468eca8-1cad-4dd3-9799-b6fbd9770fda
+                      secret: ''
+                  input:
+                    aspect_ratio: '16:9'
+                    duration: 5
+                    prompt: >-
+                      Close-up, static camera, a woman in swim suit near the sea
+                      is introducing herself.
+                    resolution: 720p
+                    version: o1
+                  output:
+                    video: https://storage.theapi.app/videos/302394780311449.mp4
+                  meta:
+                    created_at: '2026-02-07T00:14:45.539719292Z'
+                    started_at: '2026-02-07T00:14:45.759947942Z'
+                    ended_at: '2026-02-07T00:16:08.628146393Z'
+                    usage:
+                      type: point
+                      frozen: 3900000
+                      consume: 3900000
+                    is_using_private_pool: false
+                  detail: null
+                  logs: null
+                  error:
+                    code: 0
+                    raw_message: ''
+                    message: ''
+                    detail: null
+          headers: {}
+          x-apidog-name: Success
+      security: []
+      x-apidog-folder: Endpoints/Kling omni
+      x-apidog-status: released
+      x-run-in-apidog: https://app.apidog.com/web/project/675356/apis/api-27719115-run
+components:
+  schemas:
+    Unified-Task-Response:
+      type: object
+      properties:
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            task_id:
+              type: string
+            model:
+              type: string
+            task_type:
+              type: string
+            status:
+              type: string
+              enum:
+                - Completed
+                - Processing
+                - Pending
+                - Failed
+                - Staged
+              x-apidog-enum:
+                - value: Completed
+                  name: ''
+                  description: ''
+                - value: Processing
+                  name: ''
+                  description: >-
+                    Means that your jobs is currently being processed. Number of
+                    "processing" jobs counts as part of the "concurrent jobs"
+                - value: Pending
+                  name: ''
+                  description: >-
+                    Means that we recognizes the jobs you sent should be
+                    processed by MJ/Luma/Suno/Kling/etc but right now none of
+                    the  account is available to receive further jobs. During
+                    peak loads there can be longer wait time to get your jobs
+                    from "pending" to "processing". If reducing waiting time is
+                    your primary concern, then a combination of Pay-as-you-go
+                    and Host-your-own-account option might suit you
+                    better.Number of "pending" jobs counts as part of the
+                    "concurrent jobs"
+                - value: Failed
+                  name: ''
+                  description: Task failed. Check the error message for detail.
+                - value: Staged
+                  name: ''
+                  description: >-
+                    A stage only in Midjourney task . Means that you have
+                    exceeded the number of your "concurrent jobs" limit and your
+                    jobs are being queuedNumber of "staged" jobs does not count
+                    as part of the "concurrent jobs". Also, please note the
+                    maximum number of jobs in the "staged" queue is 50. So if
+                    your operational needs exceed the 50 jobs limit, then please
+                    create your own queuing system logic. 
+              description: >-
+                Hover on the "Completed" option and you coult see the
+                explaintion of all status:
+                completed/processing/pending/failed/staged
+            input:
+              type: object
+              properties: {}
+              x-apidog-orders: []
+              x-apidog-ignore-properties: []
+            output:
+              type: object
+              properties: {}
+              x-apidog-orders: []
+              x-apidog-ignore-properties: []
+            meta:
+              type: object
+              properties:
+                created_at:
+                  type: string
+                  description: >-
+                    The time when the task was submitted to us (staged and/or
+                    pending)
+                started_at:
+                  type: string
+                  description: >-
+                    The time when the task started processing. the time from
+                    created_at to time of started_at is time the job spent in
+                    the "staged“ stage and/or the"pending" stage if there were
+                    any.
+                ended_at:
+                  type: string
+                  description: The time when the task finished processing.
+                usage:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    frozen:
+                      type: number
+                    consume:
+                      type: number
+                  x-apidog-orders:
+                    - type
+                    - frozen
+                    - consume
+                  required:
+                    - type
+                    - frozen
+                    - consume
+                  x-apidog-ignore-properties: []
+                is_using_private_pool:
+                  type: boolean
+              x-apidog-orders:
+                - created_at
+                - started_at
+                - ended_at
+                - usage
+                - is_using_private_pool
+              required:
+                - usage
+                - is_using_private_pool
+              x-apidog-ignore-properties: []
+            detail:
+              type: 'null'
+            logs:
+              type: array
+              items:
+                type: object
+                properties: {}
+                x-apidog-orders: []
+                x-apidog-ignore-properties: []
+            error:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+              x-apidog-orders:
+                - code
+                - message
+              x-apidog-ignore-properties: []
+          x-apidog-orders:
+            - task_id
+            - model
+            - task_type
+            - status
+            - input
+            - output
+            - meta
+            - detail
+            - logs
+            - error
+          required:
+            - task_id
+            - model
+            - task_type
+            - status
+            - input
+            - output
+            - meta
+            - detail
+            - logs
+            - error
+          x-apidog-ignore-properties: []
+        message:
+          type: string
+          description: >-
+            If you get non-null error message, here are some steps you chould
+            follow:
+
+            - Check our [common error
+            message](https://climbing-adapter-afb.notion.site/Common-Error-Messages-6d108f5a8f644238b05ca50d47bbb0f4)
+
+            - Retry for several times
+
+            - If you have retried for more than 3 times and still not work, file
+            a ticket on Discord and our support will be with you soon.
+      x-examples:
+        Example 1:
+          code: 200
+          data:
+            task_id: 49638cd2-4689-4f33-9336-164a8f6b1111
+            model: Qubico/flux1-dev
+            task_type: txt2img
+            status: pending
+            input:
+              prompt: a bear
+            output: null
+            meta:
+              account_id: 0
+              account_name: Qubico_test_user
+              created_at: '2024-08-16T16:13:21.194049Z'
+              started_at: ''
+              completed_at: ''
+            detail: null
+            logs: []
+            error:
+              code: 0
+              message: ''
+          message: success
+      x-apidog-orders:
+        - code
+        - data
+        - message
+      required:
+        - code
+        - data
+        - message
+      x-apidog-ignore-properties: []
+      x-apidog-folder: ''
+  securitySchemes: {}
+servers:
+  - url: https://api.piapi.ai
+    description: Develop Env
+security: []
+
+```

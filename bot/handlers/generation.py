@@ -90,7 +90,7 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
     await state.update_data(
         generation_type="video",
         v_type="text",  # text или imgtxt
-        v_model="v26_pro",  # модель видео
+        v_model="v3_std",  # модель видео
         v_duration=5,
         v_ratio="16:9",
         reference_images=[],  # Для референсов (до 14)
@@ -168,7 +168,7 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "img_ref_upload_new")
@@ -295,6 +295,9 @@ async def _show_video_creation_screen(
 
     # Устанавливаем состояние ожидания промпта для видео
     await state.set_state(GenerationStates.waiting_for_video_prompt)
+    logger.info(
+        f"[DEBUG] State set to waiting_for_video_prompt for user {message_or_callback.from_user.id if hasattr(message_or_callback, 'from_user') else 'callback'}"
+    )
 
 
 @router.callback_query(F.data == "img_ref_skip_new")
@@ -553,7 +556,7 @@ async def handle_v_model(callback: types.CallbackQuery, state: FSMContext):
         )
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # Обработчики формата видео
@@ -2139,10 +2142,10 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
 
         file = await message.bot.get_file(video_obj.file_id)
 
-        # Проверяем размер (макс 50MB)
+        # Проверяем размер (макс 20MB для стабильности)
         file_size = getattr(video_obj, "file_size", 0)
-        if file_size > 50 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 50MB).")
+        if file_size > 20 * 1024 * 1024:
+            await message.answer("❌ Видео слишком большое (макс 20MB).")
             return
 
         video_bytes = await message.bot.download_file(file.file_path)
@@ -2222,6 +2225,7 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
 @router.message(GenerationStates.waiting_for_video_prompt, F.text)
 async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
+    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
     logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
     prompt = message.text.strip()
 
@@ -4557,9 +4561,9 @@ async def process_uploaded_video(message: types.Message, state: FSMContext):
         video = message.video
         file = await message.bot.get_file(video.file_id)
 
-        # Проверяем размер файла (максимум 50MB для Telegram)
-        if video.file_size > 50 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое. Максимум 50MB.")
+        # Проверяем размер файла (максимум 20MB для стабильности)
+        if video.file_size > 20 * 1024 * 1024:
+            await message.answer("❌ Видео слишком большое. Максимум 20MB.")
             return
 
         # Скачиваем байты
@@ -5547,17 +5551,35 @@ async def start_no_preset_video_from_message(
             f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}"
         )
 
-        # Генерируем с webhook для асинхронной обработки
-        # ВАЖНО: Для Kling 3 нужно передавать и image_url (основное изображение), и elements (референсы для консистентности)
-        result = await kling_service.generate_video(
-            prompt=prompt,
-            model=v_model,
-            duration=v_duration,
-            aspect_ratio=v_ratio,
-            webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_url,  # Всегда передаем основное изображение
-            elements=elements,  # Всегда передаем elements (могут быть None)
-        )
+        # Для v_type="video" используем motion_control с video_url
+        if v_type == "video" and v_video_url:
+            if not v_image_url:
+                await message.answer("Для видео-референса нужно изображение персонажа!")
+                return
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model="v26_motion_pro",
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+                image_url=v_image_url,
+                video_url=v_video_url,
+            )
+        else:
+            # Стандартный omni с image/elements
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+                image_url=image_url,
+                elements=elements,
+            )
 
         if result and result.get("task_id"):
             task_id = result["task_id"]
