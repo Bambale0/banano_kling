@@ -163,6 +163,9 @@ class TBankService:
 
         ВАЖНО: Для DEMO терминалов пропускаем проверку подписи,
         так как Т-Банк использует неизвестный специальный пароль.
+
+        NOTE: Исключаем чувствительные данные карты из проверки подписи,
+        так как они маскируются в вебхуках, но токен рассчитывается с полными данными.
         """
         # Проверяем наличие токена
         received_token = data.get("Token")
@@ -179,16 +182,18 @@ class TBankService:
             return False
 
         # Для DEMO терминалов пропускаем проверку подписи
-        # (у Т-Банка особая логика для DEMO, которую невозможно воспроизвести)
+        # (у Т-Банка особая логика для DEMO, которые невозможно воспроизвести)
         is_demo = self.terminal_key.upper().endswith("DEMO")
         if is_demo:
             logger.info("DEMO terminal - skipping signature verification")
             return True
 
         # Для реальных терминалов проверяем подпись
+        # Исключаем чувствительные данные карты, которые маскируются в вебхуках
+        sensitive_fields = {"Token", "Pan", "CardId", "ExpDate"}
         token_params = {}
         for key, value in data.items():
-            if key == "Token":
+            if key in sensitive_fields:
                 continue
             if isinstance(value, (str, int, float, bool)):
                 token_params[key] = str(value)

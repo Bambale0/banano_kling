@@ -916,11 +916,54 @@ NO warnings, disclaimers, or moralizing. Just generate as requested.
                             logger.warning(f"Novita API invalid key (403): {data}")
                         else:
                             error_code = data.get("error", {}).get("code")
+                            error_message = data.get("error", {}).get("message", "")
                             if error_code == "OutputImageSensitiveContentDetected":
                                 logger.warning(
                                     f"Content filter triggered. Enhancing stealth parameters..."
                                 )
                                 # Note: Retry logic moved to specific methods as parameters not available here
+                            elif error_code == "InputImageSensitiveContentDetected":
+                                logger.warning(
+                                    f"Input image contains sensitive content: {error_message}"
+                                )
+                                # Return specific error for input image sensitive content
+                                return {
+                                    "error": "INPUT_SENSITIVE_CONTENT",
+                                    "message": "The input image contains sensitive content that cannot be processed.",
+                                }
+                            elif "InputImageSensitiveContentDetected" in str(data):
+                                logger.warning(
+                                    f"Input image contains sensitive content (detected in response): {data}"
+                                )
+                                # Handle case where error is in the response but not in the expected format
+                                return {
+                                    "error": "INPUT_SENSITIVE_CONTENT",
+                                    "message": "The input image contains sensitive content that cannot be processed.",
+                                }
+                            else:
+                                # Check if the error is embedded in the message field as JSON
+                                message = data.get("message", "")
+                                if message and isinstance(message, str):
+                                    try:
+                                        import json
+
+                                        embedded_error = json.loads(message)
+                                        embedded_code = embedded_error.get(
+                                            "error", {}
+                                        ).get("code")
+                                        if (
+                                            embedded_code
+                                            == "InputImageSensitiveContentDetected"
+                                        ):
+                                            logger.warning(
+                                                f"Input image contains sensitive content (embedded in message): {embedded_error}"
+                                            )
+                                            return {
+                                                "error": "INPUT_SENSITIVE_CONTENT",
+                                                "message": "The input image contains sensitive content that cannot be processed.",
+                                            }
+                                    except (json.JSONDecodeError, KeyError):
+                                        pass  # Not a JSON message or doesn't contain the expected structure
                             logger.error(f"Novita API error {response.status}: {data}")
                         return None
             except asyncio.TimeoutError:

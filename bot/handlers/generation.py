@@ -3757,6 +3757,40 @@ async def run_no_preset_image_generation(
                 reference_images=reference_images,
             )
 
+            # Check for input sensitive content error
+            if (
+                task_response
+                and task_response.get("error") == "INPUT_SENSITIVE_CONTENT"
+            ):
+                await processing.delete()
+                await message.answer(
+                    "❌ <b>Изображение содержит чувствительный контент</b>\n\n"
+                    "Ваше изображение было отклонено системой модерации контента.\n"
+                    "Пожалуйста, используйте другое изображение без чувствительного контента.\n\n"
+                    "🍌 Бананы возвращены на счёт.",
+                    reply_markup=get_main_menu_keyboard(),
+                    parse_mode="HTML",
+                )
+                await add_credits(message.from_user.id, cost)
+                await state.clear()
+                return
+            # Check for API error response (when task_response is None due to HTTP error)
+            elif task_response is None:
+                # Check if this was due to sensitive content by examining the last error
+                # The service may have logged the error, but we need to handle it here
+                await processing.delete()
+                await message.answer(
+                    "❌ <b>Ошибка генерации изображения</b>\n\n"
+                    "Возможно, изображение содержит чувствительный контент.\n"
+                    "Пожалуйста, используйте другое изображение без чувствительного контента.\n\n"
+                    "🍌 Бананы возвращены на счёт.",
+                    reply_markup=get_main_menu_keyboard(),
+                    parse_mode="HTML",
+                )
+                await add_credits(message.from_user.id, cost)
+                await state.clear()
+                return
+
             if task_response and task_response.get("task_id"):
                 task_id = task_response["task_id"]
 
