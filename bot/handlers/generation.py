@@ -712,7 +712,7 @@ async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
         )
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "video_dur_15")
@@ -734,7 +734,7 @@ async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
         )
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # =============================================================================
@@ -5613,9 +5613,31 @@ async def start_no_preset_video_from_message(
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML",
             )
+        elif result and result.get("error"):
+            # API вернул ошибку
+            error_msg = result.get("message", "Неизвестная ошибка API")
+            logger.error(f"Kling API error: {error_msg}")
+
+            # Возвращаем кредиты при ошибке
+            await add_credits(message.from_user.id, cost)
+            await processing.delete()
+            await message.answer(
+                f"❌ <b>Ошибка генерации видео</b>\n\n"
+                f"{error_msg}\n\n"
+                "Бананы возвращены. Попробуйте выбрать другую модель или повторите позже.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML",
+            )
         else:
-            await processing.edit_text(
-                "❌ Ошибка при запуске генерации. Попробуйте ещё раз."
+            # Возвращаем кредиты при ошибке
+            await add_credits(message.from_user.id, cost)
+            await processing.delete()
+            await message.answer(
+                "❌ <b>Ошибка генерации видео</b>\n\n"
+                "Не удалось создать задачу. Бананы возвращены.\n"
+                "Попробуйте выбрать другую модель или повторите позже.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML",
             )
     except Exception as e:
         logger.exception("Video generation error")

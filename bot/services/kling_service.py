@@ -65,10 +65,33 @@ class KlingService:
                     else:
                         data = await resp.json()
                         logger.error(f"API error {resp.status}: {data}")
-                        return None
+
+                        # Handle specific error codes
+                        if resp.status == 429:
+                            return {
+                                "error": "rate_limit",
+                                "message": "Достигнут дневной лимит использования Kling API. Попробуйте завтра или выберите другую модель.",
+                                "status_code": 429,
+                            }
+                        elif resp.status == 402:
+                            return {
+                                "error": "insufficient_credits",
+                                "message": "Недостаточно кредитов на аккаунте Kling API.",
+                                "status_code": 402,
+                            }
+                        else:
+                            return {
+                                "error": "api_error",
+                                "message": f"Ошибка API Kling: {data.get('message', 'Неизвестная ошибка')}",
+                                "status_code": resp.status,
+                            }
             except Exception as e:
                 logger.exception(f"Request error: {e}")
-                return None
+                return {
+                    "error": "network_error",
+                    "message": f"Ошибка сети: {str(e)}",
+                    "status_code": 0,
+                }
 
     async def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
         if not self.headers:
@@ -159,8 +182,9 @@ class KlingService:
         preset_motion: Optional[str] = None,
         prompt: Optional[str] = None,
         motion_direction: str = "video",
-        keep_original_sound: bool = False,
+        keep_original_sound: bool = True,
         mode: str = "std",
+        aspect_ratio: str = "16:9",
         webhook_url: Optional[str] = None,
         service_mode: str = "public",
     ) -> Optional[Dict]:
@@ -245,30 +269,53 @@ class KlingService:
         if images:
             seen = set()
             images = [img for img in images if img not in seen and not seen.add(img)]
-        # Enhance prompt for consistency if images provided - STRONGER for Kling 3 Omni character preservation
+        # Enhance prompt for consistency if images provided
         if images:
-            prompt = f"CRITICAL: The MAIN SUBJECT must be the EXACT SAME PERSON/CHARACTER from reference image @image_1. Maintain identical face, hair, clothing, pose, age, gender, ethnicity, body type throughout ALL frames. Do not change, regenerate, or invent new character. Exact match required. {prompt}"
+            if "omni" in model.lower():
+                # For Kling 3.0 Omni, use @image_1 reference as per API docs
+                prompt = f"Use @image_1 as first frame. {prompt}"
+            else:
+                # For Kling 3.0 std/pro, explicitly reference the image in prompt for better control
+                prompt = f"Use the provided reference image as the starting point and main subject. {prompt}"
         # Map legacy models to PiAPI task_types/mode
         if model in ["v3_std", "v3_pro"]:
-            mode = "std" if "std" in model else "pro"
-            return await self.generate_video_generation(
-                prompt=prompt,
-                mode=mode,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                image_url=image_url,
-                image_tail_url=end_image_url,
-                enable_audio=generate_audio,
-                webhook_url=webhook_url,
-            )
+            # Use Omni API for Pro models and when images are provided for better prompt following
+            if "pro" in model or images:
+                # Determine resolution based on model quality
+                resolution = "1080p" if "pro" in model.lower() else "720p"
+                return await self.generate_omni_video_generation(
+                    prompt=prompt,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    enable_audio=generate_audio,
+                    images=images,
+                    webhook_url=webhook_url,
+                    resolution=resolution,
+                )
+            else:
+                # Use standard API for Std model without images
+                mode = "std"
+                return await self.generate_video_generation(
+                    prompt=prompt,
+                    mode=mode,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    image_url=image_url,
+                    image_tail_url=end_image_url,
+                    enable_audio=generate_audio,
+                    webhook_url=webhook_url,
+                )
         elif "motion" in model.lower():
             return await self.generate_motion_control(
                 image_url=image_url,
                 video_url=video_url,
                 prompt=prompt if negative_prompt is None else prompt,
+                aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
             )
         elif "omni" in model.lower():
+            # Determine resolution based on model quality
+            resolution = "1080p" if "pro" in model.lower() else "720p"
             return await self.generate_omni_video_generation(
                 prompt=prompt,
                 duration=duration,
@@ -276,6 +323,7 @@ class KlingService:
                 enable_audio=generate_audio,
                 images=images,
                 webhook_url=webhook_url,
+                resolution=resolution,
             )
         else:
             logger.error(f"Unknown model: {model}. Defaulting to video_generation std.")
