@@ -6,7 +6,9 @@ from .batch_service import BatchEditingService, BatchJob, BatchStatus, batch_ser
 from .gemini_service import GeminiService, gemini_service
 from .kling_service import KlingService, kling_service
 from .novita_service import NovitaService, novita_service
+from .runway_service import RunwayService, runway_service
 from .tbank_service import TBankService, tbank_service
+from .wanx_service import WanXService, wanx_service
 
 __all__ = [
     "tbank_service",
@@ -17,8 +19,12 @@ __all__ = [
     "KlingService",
     "novita_service",
     "NovitaService",
+    "runway_service",
+    "RunwayService",
+    "wanx_service",
+    "WanXService",
     "batch_service",
-    "BatchGenerationService",
+    "BatchEditingService",
     "BatchJob",
     "BatchStatus",
 ]

@@ -17,16 +17,32 @@ class Config:
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
+    # YooKassa
+    YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
+    YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
+    YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
+    YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
+
     # AI Services API Keys
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
+    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
     PIAPI_API_KEY: str = os.getenv("PIAPI_API_KEY", "")
+
+    # NSFW Content Control
+    ALLOW_NSFW: bool = os.getenv("ALLOW_NSFW", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
     # API Endpoints
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -38,11 +54,18 @@ class Config:
 
     # Вебхуки
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")
-    WEBHOOK_PATH: str = "/webhook"
+    WEBHOOK_PATH: str = "/telegram/webhook"
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+
+    # Партнёрская программа
+    PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
+    PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
+    PARTNER_MIN_WITHDRAWAL_RUB: int = int(
+        os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "2000")
+    )
 
     # Пути к JSON
     PRESETS_PATH: str = "data/presets.json"
@@ -77,6 +100,20 @@ class Config:
         return f"{self.WEBHOOK_HOST}/tbank/webhook"
 
     @property
+    def yookassa_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/yookassa/webhook"
+
+    @property
+    def payment_provider(self) -> str:
+        if self.PAYMENT_PROVIDER in {"yookassa", "tbank"}:
+            return self.PAYMENT_PROVIDER
+        return "tbank"
+
+    @property
+    def has_yookassa(self) -> bool:
+        return bool(self.YOOKASSA_SHOP_ID and self.YOOKASSA_SECRET_KEY)
+
+    @property
     def kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"
 
@@ -91,6 +128,10 @@ class Config:
     @property
     def z_image_turbo_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/z-image-turbo"
+
+    @property
+    def wanx_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/webhook/wanx"
 
     def _old_kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"

@@ -32,7 +32,7 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_tbank_webhook
+from bot.handlers.payments import handle_tbank_webhook, handle_yookassa_webhook
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -116,6 +116,7 @@ async def on_shutdown(bot: Bot):
     """Действия при остановке"""
     logger.info("Bot shutting down...")
     await bot.delete_webhook()
+    await bot.session.close()
 
 
 async def errors_handler(event: types.ErrorEvent):
@@ -230,24 +231,60 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         logger.info(f"Kling webhook parsed data: {data}")
 
-        # PiAPI webhook has nested 'data' key
-        webhook_data = data.get("data", {})
-        task_id = webhook_data.get("task_id")
-        status = webhook_data.get("status")
+        # PiAPI / Replicate webhooks may arrive in slightly different shapes.
+        # Use a recursive extractor so we can handle flat payloads, nested `data`
+        # objects, or other vendor variants without losing the task id.
+        def _extract_first(obj, keys):
+            if isinstance(obj, dict):
+                for key in keys:
+                    value = obj.get(key)
+                    if value not in (None, ""):
+                        return value
+                for value in obj.values():
+                    found = _extract_first(value, keys)
+                    if found not in (None, ""):
+                        return found
+            elif isinstance(obj, list):
+                for item in obj:
+                    found = _extract_first(item, keys)
+                    if found not in (None, ""):
+                        return found
+            return None
+
+        webhook_data = data.get("data") if isinstance(data.get("data"), dict) else data
+        task_id = _extract_first(
+            webhook_data, ("task_id", "id", "prediction_id", "predictionId")
+        )
+        status = _extract_first(
+            webhook_data, ("status", "state", "result", "prediction_status")
+        )
+
+        if not task_id:
+            logger.error(
+                f"Kling webhook missing task id. Top-level keys: {list(data.keys())}, payload: {webhook_data}"
+            )
+            return web.Response(status=200)
 
         logger.info(f"Processing Kling task {task_id} with status {status}")
 
-        if status == "completed":
-            # PiAPI format: output.video_url or nested in works[].video.resource_without_watermark
-            output = webhook_data.get("output", {})
+        normalized_status = str(status).lower() if status else ""
+
+        if normalized_status in {"completed", "succeeded", "success", "finished"}:
+            # Replicate can return either a direct URL/string or a nested object.
+            output = (
+                webhook_data.get("output", {}) if isinstance(webhook_data, dict) else {}
+            )
             video_url = (
-                output.get("video_url")
-                or output.get("video")
+                (output.get("video_url") if isinstance(output, dict) else None)
+                or (output.get("video") if isinstance(output, dict) else None)
+                or (output if isinstance(output, str) else None)
                 or (
                     output.get("works")
                     and output["works"][0]
                     .get("video", {})
                     .get("resource_without_watermark")
+                    if isinstance(output, dict)
+                    else None
                 )
             )
 
@@ -320,6 +357,47 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
             finally:
                 await bot_instance.session.close()
+        else:
+            logger.error(f"Kling task {task_id} failed with status: {status}")
+            # Check for sensitive content error
+            error_msg = str(
+                webhook_data.get("error", "") + " " + webhook_data.get("logs", "")
+            ).lower()
+            if "sensitive" in error_msg or "e005" in error_msg:
+                from bot.database import (
+                    add_credits,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
+
+                task = await get_task_by_id(task_id)
+                if task:
+                    telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                    if telegram_id:
+                        bot_instance = Bot(token=config.BOT_TOKEN)
+                        try:
+                            # Try to get preset cost from preset manager (presets.json)
+                            preset = preset_manager.get_preset(task.preset_id)
+                            preset_cost = preset.cost if preset else 0
+                            await add_credits(telegram_id, preset_cost)
+                            await bot_instance.send_message(
+                                chat_id=telegram_id,
+                                text=(
+                                    "❌ <b>Ваш промпт был помечен как чувствительный контент</b>\n\n"
+                                    "Пожалуйста, попробуйте другой промпт без чувствительного контента.\n\n"
+                                    "🍌 Кредиты возвращены на счёт."
+                                ),
+                                parse_mode="HTML",
+                            )
+                            logger.info(
+                                f"Sent sensitive content notification to {telegram_id}, returned {preset_cost} credits"
+                            )
+                        except Exception as notify_error:
+                            logger.error(
+                                f"Failed to notify user about sensitive content: {notify_error}"
+                            )
+                        finally:
+                            await bot_instance.session.close()
 
         return web.Response(status=200)
 
@@ -618,9 +696,124 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
         return web.Response(status=500)
 
 
+async def handle_wanx_webhook(request: web.Request) -> web.Response:
+    """Обработчик уведомлений от PiAPI WanX API"""
+    try:
+        logger.info(f"WanX webhook headers: {dict(request.headers)}")
+
+        body = await request.text()
+        logger.info(f"WanX webhook raw body: {repr(body)[:500]}")
+
+        if not body:
+            logger.warning("WanX webhook received empty body")
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            logger.warning(f"WanX webhook received invalid JSON: {e}")
+            return web.Response(status=200)
+
+        logger.info(f"WanX webhook parsed data: {data}")
+
+        webhook_data = data.get("data") or data.get("payload") or data
+        task_id = webhook_data.get("task_id")
+        status = webhook_data.get("status")
+
+        if not task_id:
+            logger.warning(f"No task_id in WanX webhook: {data}")
+            return web.Response(status=200)
+
+        normalized_status = str(status).lower() if status else ""
+        logger.info(f"WanX task {task_id} status: {status}")
+
+        if normalized_status in (
+            "completed",
+            "succeeded",
+            "success",
+            "task_status_succeed",
+        ):
+            output = webhook_data.get("output", {})
+            video_url = (
+                output.get("video_url")
+                or output.get("video")
+                or (
+                    output.get("works")
+                    and output["works"][0]
+                    .get("video", {})
+                    .get("resource_without_watermark")
+                )
+            )
+
+            if not video_url:
+                logger.error(f"No video URL in WanX completed task: {webhook_data}")
+                return web.Response(status=200)
+
+            from bot.database import (
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
+
+            task = await get_task_by_id(task_id)
+            if not task:
+                logger.warning(f"WanX task {task_id} not found in database")
+                return web.Response(status=200)
+
+            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            if not telegram_id:
+                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
+                return web.Response(status=200)
+
+            caption = (
+                f"✅ <b>Ваше видео WanX готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
+                if task.preset_id == "no_preset" and task.prompt
+                else f"✅ <b>Ваше видео WanX готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+            )
+
+            bot_instance = Bot(token=config.BOT_TOKEN)
+            try:
+                from bot.keyboards import get_video_result_keyboard
+
+                await bot_instance.send_video(
+                    chat_id=telegram_id,
+                    video=video_url,
+                    caption=caption,
+                    parse_mode="HTML",
+                    supports_streaming=True,
+                    reply_markup=get_video_result_keyboard(video_url),
+                )
+                await complete_video_task(task_id, video_url)
+                logger.info(f"WanX video sent to user {telegram_id}")
+            except Exception as e:
+                logger.error(f"Failed to send WanX video: {e}")
+                try:
+                    from bot.keyboards import get_video_result_keyboard
+
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"🎬 Ваше видео WanX готово!\n\n{video_url}",
+                        reply_markup=get_video_result_keyboard(video_url),
+                        parse_mode="HTML",
+                    )
+                except Exception as fallback_error:
+                    logger.error(
+                        f"Failed to send WanX fallback message: {fallback_error}"
+                    )
+            finally:
+                await bot_instance.session.close()
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"WanX webhook error: {e}")
+        return web.Response(status=500)
+
+
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
+    app["bot"] = bot
 
     # Serve static uploads directory to fix 404 errors for Novita image downloads
     app.router.add_static(
@@ -636,6 +829,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     # Вебхук Т-Банка
     app.router.add_post("/tbank/webhook", handle_tbank_webhook)
 
+    # Вебхук YooKassa
+    app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
 
@@ -644,6 +840,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Вебхук Novita FLUX.2 Pro
     app.router.add_post("/webhook/novita", handle_novita_webhook)
+
+    # Вебхук WanX (PiAPI)
+    app.router.add_post("/webhook/wanx", handle_wanx_webhook)
 
     # Health check endpoint
     async def health_check(request: web.Request) -> web.Response:

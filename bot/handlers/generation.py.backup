@@ -53,7 +53,6 @@ from bot.keyboards import (
 )
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
-from bot.services.runway_service import runway_service
 from bot.services.seedream_service import seedream_service
 from bot.services.wanx_service import wanx_service
 from bot.states import GenerationStates
@@ -211,7 +210,6 @@ async def _show_video_creation_screen(
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    current_duration = data.get("v_duration", 5)
     reference_images = data.get("reference_images", [])
     user_prompt = data.get("user_prompt", "")
     v_image_url = data.get("v_image_url")
@@ -749,10 +747,8 @@ async def handle_video_dur_5(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа, чтобы избежать
-    # гонок состояний при быстром вводе пользователем.
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "video_dur_10")
@@ -773,9 +769,8 @@ async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа — согласовано с 5сек
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "video_dur_15")
@@ -796,9 +791,8 @@ async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа — согласовано с 5/10 сек
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # =============================================================================
@@ -5532,16 +5526,6 @@ async def run_no_preset_image_from_message(
     )
 
 
-# Backwards-compatible alias expected by tests
-def process_generation():
-    """Compatibility shim used by tests to verify handler mapping.
-
-    Historically tests import `process_generation` from this module.
-    Provide a no-op function to keep imports working.
-    """
-    return None
-
-
 @router.callback_query(F.data == "run_no_preset_video")
 async def run_no_preset_video_from_message(
     message: types.Message, state: FSMContext, user_prompt: str
@@ -5672,96 +5656,18 @@ async def start_no_preset_video_from_message(
             f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}"
         )
 
-        # WanX txt2video + LoRA или img2video + LoRA
+        # WanX txt2video + LoRA
         if v_model.startswith("wanx"):
             wanx_loras = data.get("wanx_lora_settings") or [
                 {"lora_type": "nsfw-general", "lora_strength": 1.0}
             ]
-            # Если есть загруженное изображение для режима imgtxt, используем img2video
-            if v_type == "imgtxt" and v_image_url:
-                # Загружаем изображение из URL или файла
-                try:
-                    import aiohttp
-
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(v_image_url) as resp:
-                            if resp.status == 200:
-                                image_bytes = await resp.read()
-                            else:
-                                # Пытаемся прочитать локальный файл
-                                import os
-
-                                if os.path.exists(
-                                    v_image_url.replace(
-                                        config.static_base_url, "static"
-                                    ).lstrip("/")
-                                ):
-                                    with open(
-                                        v_image_url.replace(
-                                            config.static_base_url, "static"
-                                        ).lstrip("/"),
-                                        "rb",
-                                    ) as f:
-                                        image_bytes = f.read()
-                                else:
-                                    # Если не удалось получить изображение, fallback на txt2video
-                                    logger.warning(
-                                        f"Failed to load image for WanX img2video, falling back to txt2video"
-                                    )
-                                    result = await wanx_service.generate_txt2video_lora(
-                                        prompt=prompt,
-                                        aspect_ratio=v_ratio,
-                                        lora_settings=wanx_loras,
-                                        webhook_url=config.wanx_notification_url
-                                        if config.WEBHOOK_HOST
-                                        else None,
-                                    )
-                except Exception as e:
-                    logger.error(f"Error loading image for WanX img2video: {e}")
-                    # Fallback на txt2video
-                    result = await wanx_service.generate_txt2video_lora(
-                        prompt=prompt,
-                        aspect_ratio=v_ratio,
-                        lora_settings=wanx_loras,
-                        webhook_url=config.wanx_notification_url
-                        if config.WEBHOOK_HOST
-                        else None,
-                    )
-                else:
-                    # Используем img2video с изображением
-                    result = await wanx_service.generate_img2video_lora(
-                        image_bytes=image_bytes,
-                        prompt=prompt,
-                        aspect_ratio=v_ratio,
-                        lora_settings=wanx_loras,
-                        webhook_url=config.wanx_notification_url
-                        if config.WEBHOOK_HOST
-                        else None,
-                    )
-            else:
-                # Стандартный txt2video
-                result = await wanx_service.generate_txt2video_lora(
-                    prompt=prompt,
-                    aspect_ratio=v_ratio,
-                    lora_settings=wanx_loras,
-                    webhook_url=config.wanx_notification_url
-                    if config.WEBHOOK_HOST
-                    else None,
-                )
-        elif v_model == "runway_gen45":
-            from bot.services.runway_service import runway_service as _runway_service
-
-            image_url_runway = image_url if v_type == "imgtxt" else None
-            webhook_url_runway = (
-                config.kling_notification_url if config.WEBHOOK_HOST else None
-            )  # Reuse kling webhook for now
-            result = await _runway_service.generate_video(
+            result = await wanx_service.generate_txt2video_lora(
                 prompt=prompt,
-                duration=v_duration,
                 aspect_ratio=v_ratio,
-                image_url=image_url_runway,
-                reference_image_urls=ref_urls if ref_urls else None,
-                webhook_url=webhook_url_runway,
+                lora_settings=wanx_loras,
+                webhook_url=config.wanx_notification_url
+                if config.WEBHOOK_HOST
+                else None,
             )
         # Для v_type="video" используем motion_control с video_url
         elif v_type == "video" and v_video_url:

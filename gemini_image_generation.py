@@ -25,14 +25,25 @@ import os
 from openai import OpenAI
 
 # Get API key from environment variable
-api_key = os.getenv("OPENROUTER_API_KEY")
-if not api_key:
-    raise ValueError("Please set the OPENROUTER_API_KEY environment variable")
+_CLIENT = None
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=api_key,
-)
+
+def _get_client():
+    """Lazily create OpenAI client using OPENROUTER_API_KEY.
+
+    This avoids raising at import time so tests can import the module
+    without requiring the environment variable.
+    """
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+
+    _CLIENT = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+    return _CLIENT
 
 
 def generate_image(
@@ -52,6 +63,10 @@ def generate_image(
         ValueError: If API key is not set
         Exception: If image generation fails
     """
+    client = _get_client()
+    if client is None:
+        raise ValueError("Please set the OPENROUTER_API_KEY environment variable")
+
     try:
         # Generate an image
         response = client.chat.completions.create(

@@ -60,6 +60,7 @@ class PresetManager:
             "v26_pro": 8,
             "v26_motion_pro": 10,
             "v26_motion_std": 8,
+            "wanx_lora": 15,
         }
         self.load_all()
 
@@ -273,6 +274,9 @@ class PresetManager:
             "kling_v3_omni": "v3_omni_pro",
             "kling_v3_omni_std": "v3_omni_std",
             "kling_v3_omni_pro": "v3_omni_pro",
+            "wanx": "wanx_lora",
+            "wanx_lora": "wanx_lora",
+            "wanx_txt2video_lora": "wanx_lora",
         }
 
         mapped_model = model_map.get(model_lower, model_lower)

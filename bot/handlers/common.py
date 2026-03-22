@@ -7,15 +7,23 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database import (
+    accept_partner_agreement,
+    create_partner_withdrawal,
     get_or_create_user,
+    get_partner_overview,
+    get_referral_stats,
     get_user_settings,
     get_user_stats,
+    process_referral,
     save_user_settings,
 )
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
     get_main_menu_keyboard,
+    get_partner_consent_keyboard,
+    get_partner_program_keyboard,
+    get_referral_keyboard,
 )
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates, GenerationStates, PaymentStates
@@ -133,6 +141,16 @@ async def cmd_start(message: types.Message):
         )
         return
 
+    referral_bonus_text = ""
+    if args and args[0].startswith("ref_"):
+        referral_code = args[0].replace("ref_", "", 1)
+        processed = await process_referral(message.from_user.id, referral_code)
+        if processed:
+            referral_bonus_text = (
+                "\n🎁 <b>Реферальный бонус активирован!</b>\n"
+                "Вы получили бонус за регистрацию по приглашению."
+            )
+
     # Приветственное сообщение
     welcome_text = f"""
 Хватит просто смотреть — создавай с AI! 🔥
@@ -143,6 +161,8 @@ async def cmd_start(message: types.Message):
 ✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.
 
 🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов
+
+{referral_bonus_text}
 
 📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>
 
@@ -320,6 +340,8 @@ async def show_balance(callback: types.CallbackQuery):
 📊 Всего генераций: <code>{stats['generations']}</code>
 💸 Потрачено бананов: <code>{stats['total_spent']}</code>
 📅 Дата регистрации: <code>{stats['member_since']}</code>
+🎁 Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>
+💰 Заработано на рефералах: <code>{stats.get('referral_earned', 0)}</code>
 """
 
     await callback.message.edit_text(
@@ -327,6 +349,166 @@ async def show_balance(callback: types.CallbackQuery):
         reply_markup=get_main_menu_keyboard(user.credits),
         parse_mode="HTML",
     )
+
+
+@router.message(Command("ref"), StateFilter(None))
+@router.message(Command("earn"), StateFilter(None))
+async def cmd_partner(message: types.Message):
+    """Показывает партнёрскую программу."""
+    await render_partner_program(message, user_id=message.from_user.id)
+
+
+@router.callback_query(F.data.in_({"menu_referrals", "menu_partner"}))
+async def show_partner(callback: types.CallbackQuery):
+    """Показывает партнёрскую программу."""
+    await render_partner_program(callback.message, user_id=callback.from_user.id)
+    await callback.answer()
+
+
+async def render_partner_program(target, user_id: int):
+    """Рендерит экран партнёрской программы."""
+    user = await get_or_create_user(user_id)
+    stats = await get_partner_overview(user_id)
+
+    bot = target.bot
+    me = await bot.get_me()
+    referral_code = user.referral_code or ""
+    referral_link = (
+        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+    )
+
+    tier = stats.get("tier", "basic")
+    percent = stats.get("percent", 30)
+    offer_url = "https://example.com/offer"
+    rules_url = "https://example.com/rules"
+    if hasattr(bot, "offer_url"):
+        offer_url = bot.offer_url
+
+    text = (
+        "💼 <b>Партнёрам</b>\n\n"
+        "Это практическое руководство по участию в партнёрской программе.\n"
+        "Юридически значимые условия содержатся в Публичной оферте.\n\n"
+        f"🔗 Ваша личная ссылка: <code>{referral_link or 'Ссылка появится после активации'} </code>\n"
+        f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
+        f"💰 Заработано: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
+        f"🧮 Текущий баланс: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>\n\n"
+        "<b>Уровни вознаграждения:</b>\n"
+        "• 30% — базовый уровень\n"
+        "• 35% — от 100 000 ₽ оборота рефералов\n"
+        "• 50% — от 1 000 000 ₽ оборота рефералов\n\n"
+        "<b>Как это работает:</b>\n"
+        "• Пользователь переходит по вашей ссылке\n"
+        "• Регистрируется и закрепляется за вами навсегда\n"
+        "• После оплат рефералов начисляется денежное вознаграждение\n"
+        "• Вывод доступен после достижения минимальной суммы\n"
+    )
+
+    markup = (
+        get_partner_program_keyboard(
+            referral_link, is_partner=stats.get("is_partner", False)
+        )
+        if referral_link
+        else get_partner_consent_keyboard()
+    )
+
+    if isinstance(target, types.Message):
+        await target.answer(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await target.edit_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "partner_accept")
+async def accept_partner(callback: types.CallbackQuery):
+    """Подтверждение участия в партнёрской программе."""
+    from bot.database import generate_referral_code, update_user_referral_code
+
+    await accept_partner_agreement(callback.from_user.id)
+
+    # Ensure user has a referral code after activation — some older users may lack it
+    user = await get_or_create_user(callback.from_user.id)
+    try:
+        if not user.referral_code:
+            new_code = await generate_referral_code()
+            await update_user_referral_code(callback.from_user.id, new_code)
+            # refresh user object
+            user = await get_or_create_user(callback.from_user.id)
+    except Exception:
+        # Non-fatal: if generation/update fails, continue without blocking the flow
+        logger.exception("Failed to ensure referral code on partner accept")
+    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
+    me = await callback.bot.get_me()
+    referral_code = user.referral_code
+    referral_link = (
+        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+    )
+
+    await callback.message.edit_text(
+        "✅ <b>Партнёрский статус активирован</b>\n\n"
+        "Теперь вы получаете денежное вознаграждение за оплату рефералов.\n"
+        "Ваш процент зависит от оборота рефералов и обновляется автоматически.",
+        reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
+        parse_mode="HTML",
+    )
+    await callback.answer("Партнёрская программа активирована")
+
+
+@router.callback_query(F.data == "partner_stats")
+async def partner_stats(callback: types.CallbackQuery):
+    """Показывает детальную статистику партнёра."""
+    stats = await get_partner_overview(callback.from_user.id)
+    text = (
+        "📈 <b>Детальная статистика</b>\n\n"
+        f"• Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
+        f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
+        f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
+        f"• Доход за месяц: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
+        f"• Новые за сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
+        f"• Доход за сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
+    )
+    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
+    user = await get_or_create_user(callback.from_user.id)
+    me = await callback.bot.get_me()
+    referral_code = user.referral_code
+    referral_link = (
+        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_partner_program_keyboard(
+            referral_link, is_partner=stats.get("is_partner", False)
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "partner_withdraw")
+async def partner_withdraw(callback: types.CallbackQuery):
+    """Показывает меню вывода."""
+    stats = await get_partner_overview(callback.from_user.id)
+    min_withdraw = 2000
+    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
+    user = await get_or_create_user(callback.from_user.id)
+    me = await callback.bot.get_me()
+    referral_code = user.referral_code
+    referral_link = (
+        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+    )
+
+    await callback.message.edit_text(
+        "🎟️ <b>Вывод заработка</b>\n\n"
+        f"Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽\n\n"
+        "Для оформления вывода напишите реквизиты и сумму в поддержку или добавим форму следующим шагом.",
+        reply_markup=get_partner_program_keyboard(
+            referral_link, is_partner=stats.get("is_partner", False)
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "menu_settings")

@@ -5,6 +5,7 @@ AI Assistant Service - ИИ-ассистент для помощи пользо�
 
 import json
 import logging
+import os
 from typing import Optional
 
 import aiohttp
@@ -13,8 +14,22 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
-# Фиксированные цены
-IMAGE_COSTS = {
+PRICE_FILE = os.path.join("data", "price.json")
+
+
+def _load_price_data() -> dict:
+    """Загрузить данные о ценах из data/price.json.
+    Возвращает пустой словарь при ошибке - тогда будут использованы встроенные fallback-значения.
+    """
+    try:
+        with open(PRICE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+# Встроенные fallback-значения на случай отсутствия файла цен
+FALLBACK_IMAGE_COSTS = {
     "novita": 3,
     "nanobanana": 3,
     "banana_pro": 5,
@@ -22,7 +37,7 @@ IMAGE_COSTS = {
     "z_image_turbo": 3,
 }
 
-VIDEO_COSTS = {
+FALLBACK_VIDEO_COSTS = {
     "v3_std": 6,
     "v3_pro": 8,
     "v3_omni_std": 8,
@@ -208,57 +223,117 @@ class AIAssistantService:
             )
             lines.append(f"- Сервис изображений: {service}")
 
-        if "menu_location" in context:
-            lines.append(f"- Где находится пользователь: {context['menu_location']}")
-
-        if "available_models" in context:
-            lines.append(f"- Доступные модели: {context['available_models']}")
-
         return "\n".join(lines) if lines else "Нет дополнительного контекста"
 
     def get_pricing_info(self) -> str:
         """
         Получение актуальной информации о ценах для AI ассистента.
-        Использует фиксированные цены.
+        Пытается загрузить цены из data/price.json и формирует читабельный блок с актуальными ценами.
+        Если файл недоступен - используются встроенные fallback-значения.
         """
-        # Используем фиксированные цены из словарей
-        flash_cost = IMAGE_COSTS.get("nanobanana", 3)
-        pro_cost = IMAGE_COSTS.get("banana_pro", 5)
-        novita_cost = IMAGE_COSTS.get("novita", 3)
-        seedream_cost = IMAGE_COSTS.get("seedream", 3)
+        price_data = _load_price_data()
 
-        # Цены видео для разных длительностей
-        video_std_5 = VIDEO_COSTS.get("v3_std", 6)
-        video_std_10 = VIDEO_COSTS.get("v3_std", 6) * 2
-        video_std_15 = VIDEO_COSTS.get("v3_std", 6) * 3
+        costs_ref = price_data.get("costs_reference", {}) if price_data else {}
 
-        video_pro_5 = VIDEO_COSTS.get("v3_pro", 8)
-        video_pro_10 = VIDEO_COSTS.get("v3_pro", 8) * 2
-        video_pro_15 = VIDEO_COSTS.get("v3_pro", 8) * 3
+        image_models = costs_ref.get("image_models", {}) or {}
+        legacy = costs_ref.get("legacy_keys", {}) or {}
 
-        omni_std_5 = VIDEO_COSTS.get("v3_omni_std", 8)
-        omni_std_10 = VIDEO_COSTS.get("v3_omni_std", 8) * 2
-        omni_std_15 = VIDEO_COSTS.get("v3_omni_std", 8) * 3
+        # Resolve image costs with fallbacks
+        def _img_cost(key, fallback_name=None):
+            # Try exact key in image_models, then legacy, then fallback hardcoded
+            if key in image_models:
+                return image_models.get(key)
+            if key in legacy:
+                return legacy.get(key)
+            # mapping for friendly names
+            fbmap = {
+                "novita": legacy.get("flux_pro") or image_models.get("flux_pro"),
+                "nanobanana": image_models.get("banana_2")
+                or legacy.get("gemini_2_5_flash"),
+                "banana_pro": image_models.get("gemini_3_pro")
+                or legacy.get("gemini_3_pro"),
+                "seedream": image_models.get("seedream") or legacy.get("seedream"),
+            }
+            if (
+                fallback_name
+                and fallback_name in fbmap
+                and fbmap[fallback_name] is not None
+            ):
+                return fbmap[fallback_name]
+            return FALLBACK_IMAGE_COSTS.get(fallback_name or key, 3)
 
-        omni_pro_5 = VIDEO_COSTS.get("v3_omni_pro", 8)
-        omni_pro_10 = VIDEO_COSTS.get("v3_omni_pro", 8) * 2
-        omni_pro_15 = VIDEO_COSTS.get("v3_omni_pro", 8) * 3
+        novita_cost = _img_cost("flux_pro", "novita") or FALLBACK_IMAGE_COSTS["novita"]
+        flash_cost = (
+            _img_cost("banana_2", "nanobanana") or FALLBACK_IMAGE_COSTS["nanobanana"]
+        )
+        pro_cost = (
+            _img_cost("gemini_3_pro", "banana_pro")
+            or FALLBACK_IMAGE_COSTS["banana_pro"]
+        )
+        seedream_cost = (
+            _img_cost("seedream", "seedream") or FALLBACK_IMAGE_COSTS["seedream"]
+        )
 
-        # V2V (Video-to-Video) цены
-        v2v_std_5 = VIDEO_COSTS.get("v3_omni_std_r2v", 8)
-        v2v_std_10 = VIDEO_COSTS.get("v3_omni_std_r2v", 8) * 2
-        v2v_pro_5 = VIDEO_COSTS.get("v3_omni_pro_r2v", 8)
-        v2v_pro_10 = VIDEO_COSTS.get("v3_omni_pro_r2v", 8) * 2
+        # Video models
+        video_models = costs_ref.get("video_models", {}) or {}
+        duration_table = costs_ref.get("video_duration_costs", {}) or {}
 
-        # Kling 2.6 цены
-        v26_5 = VIDEO_COSTS.get("v26_pro", 8)
-        v26_10 = VIDEO_COSTS.get("v26_pro", 8) * 2
-        motion_pro_5 = VIDEO_COSTS.get("v26_motion_pro", 10)
-        motion_pro_10 = VIDEO_COSTS.get("v26_motion_pro", 10) * 2
-        motion_std_5 = VIDEO_COSTS.get("v26_motion_std", 8)
-        motion_std_10 = VIDEO_COSTS.get("v26_motion_std", 8) * 2
+        def _video_cost(model_key, duration: int):
+            # If model has explicit duration_costs, use it. Else use base * multiplier from duration_table
+            model_info = video_models.get(model_key) or {}
+            if model_info:
+                dur_costs = model_info.get("duration_costs")
+                if dur_costs and str(duration) in dur_costs:
+                    return dur_costs[str(duration)]
+                base = model_info.get("base") or model_info.get("cost")
+                if base and str(duration) in duration_table:
+                    return int(base) + int(duration_table.get(str(duration), 0))
+                if base:
+                    # fallback: scale linearly by 1x per 5 seconds
+                    factor = max(1, duration // 5)
+                    return int(base) * factor
+            # last resort: try legacy keys
+            legacy_val = legacy.get(model_key)
+            if legacy_val:
+                factor = max(1, duration // 5)
+                return int(legacy_val) * factor
+            # fallback default
+            default_base = FALLBACK_VIDEO_COSTS.get(model_key, 8)
+            factor = max(1, duration // 5)
+            return int(default_base) * factor
 
-        return f"""## АКТУАЛЬНЫЕ ЦЕНЫ
+        # Build common durations
+        video_std_5 = _video_cost("v3_std", 5)
+        video_std_10 = _video_cost("v3_std", 10)
+        video_std_15 = _video_cost("v3_std", 15)
+
+        video_pro_5 = _video_cost("v3_pro", 5)
+        video_pro_10 = _video_cost("v3_pro", 10)
+        # V2V (Video-to-Video)
+        v2v_std_5 = _video_cost("v3_omni_std_r2v", 5)
+        v2v_std_10 = _video_cost("v3_omni_std_r2v", 10)
+        v2v_pro_5 = _video_cost("v3_omni_pro_r2v", 5)
+        v2v_pro_10 = _video_cost("v3_omni_pro_r2v", 10)
+
+        # Kling 2.6
+        v26_5 = _video_cost("v26_pro", 5)
+        v26_10 = _video_cost("v26_pro", 10)
+        motion_pro_5 = _video_cost("v26_motion_pro", 5)
+        motion_pro_10 = _video_cost("v26_motion_pro", 10)
+        motion_std_5 = _video_cost("v26_motion_std", 5)
+        motion_std_10 = _video_cost("v26_motion_std", 10)
+        # Дополнительные расчёты для таблицы (некоторые модели имеют значения для 15 сек)
+        video_pro_15 = _video_cost("v3_pro", 15)
+
+        omni_std_5 = _video_cost("v3_omni_std", 5)
+        omni_std_10 = _video_cost("v3_omni_std", 10)
+        omni_std_15 = _video_cost("v3_omni_std", 15)
+
+        omni_pro_5 = _video_cost("v3_omni_pro", 5)
+        omni_pro_10 = _video_cost("v3_omni_pro", 10)
+        omni_pro_15 = _video_cost("v3_omni_pro", 15)
+
+        return f"""## АКТУАЛЬНЫЕ ЦЕНЫ (автоматически загружены из data/price.json)
 
 🖼 Генерация изображений:
 - FLUX.2 Pro (Novita): {novita_cost}🍌
@@ -267,31 +342,22 @@ class AIAssistantService:
 - Seedream: {seedream_cost}🍌
 
 🎬 Генерация видео (текст → видео):
-┌─────────────────┬────────┬────────┬────────┐
-│ Модель          │ 5 сек  │ 10 сек │ 15 сек │
-├─────────────────┼────────┼────────┼────────┤
-│ Kling 2.6       │ {v26_5}🍌   │ {v26_10}🍌   │   -   │
-│ Kling 3 Std     │ {video_std_5}🍌   │ {video_std_10}🍌   │ {video_std_15}🍌   │
-│ Kling 3 Pro     │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
-│ Kling 3 Omni Std│ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
-│ Kling 3 Omni Pro│ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
-└─────────────────┴────────┴────────┴────────┘
+│ Модель              │ 5 сек │ 10 сек │ 15 сек │
+│ Kling 2.6           │ {v26_5}🍌   │ {v26_10}🍌  │  -     │
+│ Kling 3 Std         │ {video_std_5}🍌   │ {video_std_10}🍌  │ {video_std_15}🍌  │
+│ Kling 3 Pro         │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
+│ Kling 3 Omni Std    │ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
+│ Kling 3 Omni Pro    │ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
 
 🎬 Kling 2.6 Motion Control (движение с видео):
-┌─────────────────┬────────┬────────┐
-│ Модель          │ 5 сек  │ 10 сек │
-├─────────────────┼────────┼────────┤
-│ Pro             │ {motion_pro_5}🍌   │ {motion_pro_10}🍌   │
-│ Std             │ {motion_std_5}🍌   │ {motion_std_10}🍌   │
-└─────────────────┴────────┴────────┘
+│ Модель  │ 5 сек │ 10 сек │
+│ Pro     │ {motion_pro_5}🍌   │ {motion_pro_10}🍌  │
+│ Std     │ {motion_std_5}🍌   │ {motion_std_10}🍌  │
 
 ✂️ Видео-эффекты (видео → видео):
-┌─────────────────┬────────┬────────┐
-│ Модель          │ 5 сек  │ 10 сек │
-├─────────────────┼────────┼────────┤
-│ V2V Std         │ {v2v_std_5}🍌   │ {v2v_std_10}🍌   │
-│ V2V Pro         │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌   │
-└─────────────────┴────────┴────────┘
+│ Модель  │ 5 сек │ 10 сек │
+│ V2V Std │ {v2v_std_5}🍌   │ {v2v_std_10}🍌  │
+│ V2V Pro │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌  │
 
 ✏️ Редактирование: {pro_cost}🍌"""
 

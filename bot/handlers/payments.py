@@ -2,12 +2,15 @@ import logging
 import time
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
+from aiohttp import web
 
 from bot.config import config
 from bot.database import (
     add_credits,
     create_transaction,
+    credit_first_payment_referral_bonus,
     get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
@@ -22,20 +25,40 @@ from bot.keyboards import (
 )
 from bot.services.preset_manager import preset_manager
 from bot.services.tbank_service import tbank_service
+from bot.services.yookassa_service import yookassa_service
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-@router.callback_query(F.data == "menu_topup")
-async def show_topup_menu(callback: types.CallbackQuery):
-    """Показывает меню пополнения баланса"""
-    packages = preset_manager.get_packages()
+def _is_ignored_telegram_error(error: Exception) -> bool:
+    error_msg = str(error).lower()
+    return (
+        "chat not found" in error_msg
+        or "bot was blocked" in error_msg
+        or "user is deactivated" in error_msg
+        or "bot can't initiate conversation" in error_msg
+        or "forbidden" in error_msg
+        or "chat is deactivated" in error_msg
+    )
 
+
+async def _notify_user(bot: Bot, telegram_id: int, text: str, *, parse_mode=None):
+    """Send a Telegram message using the shared bot instance."""
+    try:
+        await bot.send_message(telegram_id, text, parse_mode=parse_mode)
+    except TelegramBadRequest as e:
+        if _is_ignored_telegram_error(e):
+            raise
+        raise
+
+
+async def _render_topup_menu(message: types.Message, provider: str):
+    packages = preset_manager.get_packages()
     text = """
 🍌 <b>Пополнение баланса</b>
 
-Выберите пакет бананов:
+Выберите способ оплаты и пакет бананов:
 <i>Чем больше пакет — тем выгоднее цена за банан</i>
 
 🍌 <b>Бананы расходуются на генерации:</b>
@@ -43,37 +66,53 @@ async def show_topup_menu(callback: types.CallbackQuery):
 • Премиум генерации стоят 2-6 бананов
 """
 
-    await callback.message.edit_text(
-        text, reply_markup=get_payment_packages_keyboard(packages), parse_mode="HTML"
+    await message.edit_text(
+        text,
+        reply_markup=get_payment_packages_keyboard(packages, provider=provider),
+        parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "menu_topup")
+async def show_topup_menu(callback: types.CallbackQuery):
+    """Показывает меню пополнения баланса"""
+    await _render_topup_menu(callback.message, config.payment_provider)
 
 
 # Алиас для обратной совместимости
 @router.callback_query(F.data == "menu_buy_credits")
 async def show_packages(callback: types.CallbackQuery):
     """Показывает пакеты для покупки (алиас для menu_topup)"""
-    packages = preset_manager.get_packages()
+    await _render_topup_menu(callback.message, config.payment_provider)
 
-    text = """
-🍌 <b>Пополнение баланса</b>
 
-Выберите пакет бананов:
-<i>Чем больше пакет — тем выгоднее цена за банан</i>
-
-🍌 <b>Бананы расходуются на генерации:</b>
-• 1 банан = 1 стандартная генерация
-• Премиум генерации стоят 2-6 бананов
-"""
-
-    await callback.message.edit_text(
-        text, reply_markup=get_payment_packages_keyboard(packages), parse_mode="HTML"
+@router.callback_query(F.data.startswith("topup_provider_"))
+async def select_topup_provider(callback: types.CallbackQuery):
+    """Меняет платёжного провайдера в меню пополнения"""
+    provider = callback.data.replace("topup_provider_", "")
+    if provider not in {"tbank", "yookassa"}:
+        provider = config.payment_provider
+    await _render_topup_menu(callback.message, provider)
+    await callback.answer(
+        "Выбран YooKassa" if provider == "yookassa" else "Выбран Т-Банк"
     )
 
 
 @router.callback_query(F.data.startswith("buy_"))
 async def initiate_payment(callback: types.CallbackQuery):
-    """Создаёт платёж в Т-Банке"""
-    package_id = callback.data.replace("buy_", "")
+    """Создаёт платёж через выбранного провайдера"""
+    payload = callback.data.replace("buy_", "")
+    provider = config.payment_provider
+
+    if payload.startswith("yookassa_"):
+        provider = "yookassa"
+        package_id = payload.replace("yookassa_", "", 1)
+    elif payload.startswith("tbank_"):
+        provider = "tbank"
+        package_id = payload.replace("tbank_", "", 1)
+    else:
+        package_id = payload
+
     package = preset_manager.get_package(package_id)
 
     if not package:
@@ -89,16 +128,27 @@ async def initiate_payment(callback: types.CallbackQuery):
     success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
     fail_url = f"https://t.me/{bot_info.username}?start=fail_{order_id}"
 
-    # Создаём платёж
-    result = await tbank_service.init_payment(
-        amount=amount_kop,
-        order_id=order_id,
-        description=f"Покупка {package['credits']} бананов ({package['name']})",
-        customer_key=str(callback.from_user.id),
-        success_url=success_url,
-        fail_url=fail_url,
-        notification_url=config.tbank_notification_url,
-    )
+    use_yookassa = provider == "yookassa" and yookassa_service.enabled
+
+    if use_yookassa:
+        result = await yookassa_service.create_payment(
+            amount_rub=package["price_rub"],
+            order_id=order_id,
+            description=f"Покупка {package['credits']} бананов ({package['name']})",
+            return_url=success_url,
+            notification_url=config.yookassa_notification_url,
+        )
+    else:
+        # Создаём платёж в Т-Банке
+        result = await tbank_service.init_payment(
+            amount=amount_kop,
+            order_id=order_id,
+            description=f"Покупка {package['credits']} бананов ({package['name']})",
+            customer_key=str(callback.from_user.id),
+            success_url=success_url,
+            fail_url=fail_url,
+            notification_url=config.tbank_notification_url,
+        )
 
     if result and result.get("Success"):
         payment_id = result["PaymentId"]
@@ -111,6 +161,7 @@ async def initiate_payment(callback: types.CallbackQuery):
             order_id=order_id,
             user_id=user.id,
             payment_id=str(payment_id),
+            provider=provider if use_yookassa else "tbank",
             credits=total_credits,
             amount_rub=package["price_rub"],
             status="pending",
@@ -144,6 +195,17 @@ async def initiate_payment(callback: types.CallbackQuery):
         )
 
 
+@router.message(F.text.startswith("/yookassa"))
+async def yookassa_status_hint(message: types.Message):
+    """Подсказка по доступности YooKassa"""
+    if config.has_yookassa:
+        await message.answer("✅ YooKassa настроена и готова к приёму платежей.")
+    else:
+        await message.answer(
+            "⚠️ YooKassa не настроена. Проверьте YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY."
+        )
+
+
 @router.callback_query(F.data.startswith("check_payment_"))
 async def check_payment_status(callback: types.CallbackQuery):
     """Ручная проверка статуса платежа (если вебхук не сработал)"""
@@ -164,20 +226,42 @@ async def check_payment_status(callback: types.CallbackQuery):
             parse_mode="HTML",
         )
     elif transaction.status == "pending":
-        # Проверяем статус в Т-Банке
-        result = await tbank_service.get_state(transaction.payment_id)
+        if transaction.provider == "yookassa":
+            result = await yookassa_service.get_payment(transaction.payment_id)
+            paid = bool(
+                result and (result.get("paid") or result.get("status") == "succeeded")
+            )
+        else:
+            # Проверяем статус в Т-Банке
+            result = await tbank_service.get_state(transaction.payment_id)
+            paid = bool(result and result.get("Status") == "CONFIRMED")
 
-        if result and result.get("Status") == "CONFIRMED":
+        if paid:
             # Начисляем бананы
             user = await get_or_create_user(transaction.user_id)
             await add_credits(user.telegram_id, transaction.credits)
             await update_transaction_status(order_id, "completed")
+            referral_bonus = await credit_first_payment_referral_bonus(
+                user.telegram_id, transaction.credits, transaction.amount_rub
+            )
 
-            await callback.message.edit_text(
+            bonus_text = ""
+            if referral_bonus.get("mode") == "partner":
+                bonus_text = (
+                    f"🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽\n"
+                )
+            elif referral_bonus.get("mode") == "banana":
+                bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов\n"
+            message_text = (
                 f"✅ <b>Оплата подтверждена!</b>\n\n"
                 f"🍌 Начислено <code>{transaction.credits}</code> бананов\n"
-                f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
-                f"Теперь вы можете создавать контент!",
+                f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
+                f"{bonus_text}\n"
+                f"Теперь вы можете создавать контент!"
+            )
+
+            await callback.message.edit_text(
+                message_text,
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML",
             )
@@ -238,6 +322,15 @@ async def handle_tbank_webhook(request):
                     # Начисляем кредиты
                     await add_credits(telegram_id, transaction.credits)
                     await update_transaction_status(order_id, "completed")
+                    referral_bonus = await credit_first_payment_referral_bonus(
+                        telegram_id, transaction.credits, transaction.amount_rub
+                    )
+
+                    bonus_text = ""
+                    if referral_bonus.get("mode") == "partner":
+                        bonus_text = f"🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽\n"
+                    elif referral_bonus.get("mode") == "banana":
+                        bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов\n"
 
                     logger.info(
                         f"Credits added: {transaction.credits} to user {telegram_id}"
@@ -245,18 +338,27 @@ async def handle_tbank_webhook(request):
 
                     # Уведомляем пользователя
                     try:
-                        bot = Bot(token=config.BOT_TOKEN)
-                        await bot.send_message(
+                        await _notify_user(
+                            request.app["bot"],
                             telegram_id,
                             f"🎉 <b>Оплата успешна!</b>\n\n"
                             f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
-                            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+                            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
+                            f"{bonus_text}\n"
                             f"Теперь вы можете создавать контент!",
                             parse_mode="HTML",
                         )
-                        await bot.session.close()
+                    except TelegramBadRequest as e:
+                        if _is_ignored_telegram_error(e):
+                            logger.warning(
+                                "Skipping T-Bank notification for user %s: %s",
+                                telegram_id,
+                                e,
+                            )
+                        else:
+                            logger.error("Failed to notify user: %s", e)
                     except Exception as e:
-                        logger.error(f"Failed to notify user: {e}")
+                        logger.error("Failed to notify user: %s", e)
                 else:
                     logger.error(
                         f"Cannot find telegram_id for user_id {transaction.user_id}"
@@ -266,4 +368,88 @@ async def handle_tbank_webhook(request):
 
     except Exception as e:
         logger.exception(f"Error processing T-Bank webhook: {e}")
+        return web.Response(status=500)
+
+
+async def handle_yookassa_webhook(request):
+    """Обработчик уведомлений от YooKassa"""
+    try:
+        data = await request.json()
+        logger.info("YooKassa webhook received: %s", data.get("event"))
+
+        if data.get("type") != "notification":
+            return web.Response(status=200)
+
+        event = data.get("event", "")
+        payment = data.get("object", {})
+
+        if not event.startswith("payment."):
+            return web.Response(status=200)
+
+        if event not in {"payment.succeeded", "payment.waiting_for_capture"}:
+            return web.Response(status=200)
+
+        metadata = payment.get("metadata") or {}
+        order_id = metadata.get("order_id")
+        payment_id = payment.get("id")
+        status = payment.get("status")
+
+        if not order_id:
+            logger.warning("YooKassa webhook missing order_id")
+            return web.Response(status=200)
+
+        transaction = await get_transaction_by_order(order_id)
+        if not transaction or transaction.status == "completed":
+            return web.Response(status=200)
+
+        if (
+            payment_id
+            and transaction.payment_id
+            and str(payment_id) != str(transaction.payment_id)
+        ):
+            logger.warning("YooKassa payment id mismatch for order %s", order_id)
+
+        if status == "succeeded" or event == "payment.succeeded":
+            user = await get_or_create_user(transaction.user_id)
+            await add_credits(user.telegram_id, transaction.credits)
+            await update_transaction_status(order_id, "completed")
+            referral_bonus = await credit_first_payment_referral_bonus(
+                user.telegram_id, transaction.credits, transaction.amount_rub
+            )
+
+            bonus_text = ""
+            if referral_bonus.get("mode") == "partner":
+                bonus_text = (
+                    f"🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽\n"
+                )
+            elif referral_bonus.get("mode") == "banana":
+                bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов\n"
+
+            try:
+                await _notify_user(
+                    request.app["bot"],
+                    user.telegram_id,
+                    f"🎉 <b>Оплата успешна!</b>\n\n"
+                    f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+                    f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
+                    f"{bonus_text}\n"
+                    f"Теперь вы можете создавать контент!",
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest as e:
+                if _is_ignored_telegram_error(e):
+                    logger.warning(
+                        "Failed to notify YooKassa user %s (safe to ignore): %s",
+                        user.telegram_id,
+                        e,
+                    )
+                else:
+                    logger.error("Failed to notify YooKassa user: %s", e)
+            except Exception as e:
+                logger.error("Failed to notify YooKassa user: %s", e)
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"Error processing YooKassa webhook: {e}")
         return web.Response(status=500)

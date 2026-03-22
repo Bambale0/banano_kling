@@ -56,14 +56,14 @@
       "seedream": 4,
       "flux_pro": 4
     },
-
     "video_models": {
+      "runway_gen45": {
+        "base": 15,
+        "duration_costs": { "5": 15, "10": 20 }
+      },
       "v26_pro": {
         "base": 8,
-        "duration_costs": {
-          "5": 8,
-          "10": 14
-        }
+        "duration_costs": { "5": 8, "10": 14 }
       },
       "v26_motion_pro": {
         "base": 10,
@@ -132,6 +132,14 @@
           "10": 30,
           "15": 45
         }
+      },
+      "wanx_lora": {
+        "base": 15,
+        "duration_costs": {
+          "5": 15,
+          "10": 30,
+          "15": 45
+        }
       }
     },
     "video_duration_costs": {
@@ -146,7 +154,8 @@
       "kling_v3_std": 6,
       "kling_v3_pro": 8,
       "kling_v3_omni": 8,
-      "z_image_turbo_lora": 3
+      "z_image_turbo_lora": 3,
+      "wanx_lora": 15
     }
   },
   "batch_pricing": {

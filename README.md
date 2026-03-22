@@ -1,6 +1,6 @@
 # 🍌 Banano Kling — AI Image & Video Generation Telegram Bot
 
-Telegram-бот для генерации изображений и видео с помощью AI. Поддерживает генерацию изображений (Gemini, Seedream, FLUX) и видео (Kling AI), пакетную обработку, систему кредитов и оплату через Т-Банк.
+Telegram-бот для генерации изображений и видео с помощью AI. Поддерживает генерацию изображений (Gemini, Seedream, FLUX) и видео (Kling AI), пакетную обработку, систему кредитов и оплату через Т-Банк или YooKassa.
 
 ## 🚀 Возможности
 
@@ -85,6 +85,13 @@ AI_ASSISTANT_API_KEY=your_openrouter_api_key
 TBANK_TERMINAL_KEY=your_terminal_key
 TBANK_SECRET_KEY=your_secret_key
 TBANK_API_URL=https://rest-api.tbankapi.com
+
+# YooKassa (опционально, для платежей)
+your_shop_id
+YOOKASSA_SECRET_KEY=your_secret_key
+YOOKASSA_RETURN_URL=https://your-domain.com/payment/success
+YOOKASSA_WEBHOOK_SECRET=your_webhook_secret
+PAYMENT_PROVIDER=tbank
 
 # Webhook настройки (для production)
 WEBHOOK_HOST=https://your-domain.com
@@ -216,10 +223,15 @@ banano_kling/
 ```
 Telegram:  https://your-domain.com/webhook
 Т-Банк:    https://your-domain.com/tbank/webhook
+YooKassa:  https://your-domain.com/yookassa/webhook
 Kling:     https://your-domain.com/webhook/kling
 Seedream:  https://your-domain.com/webhook/seedream
 Novita:    https://your-domain.com/webhook/novita
 ```
+
+## 🧩 Nginx
+
+В репозитории добавлен пример конфигурации Nginx: `nginx.conf.example`. Он проксирует Telegram, YooKassa и другие webhook-эндпоинты в aiohttp-сервер бота.
 
 ## 🚦 Системные команды
 
