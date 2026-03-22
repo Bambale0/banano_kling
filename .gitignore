@@ -67,3 +67,4 @@ temp/
 # Static uploads (generated content)
 static/
 static/uploads/
+*.conf0
