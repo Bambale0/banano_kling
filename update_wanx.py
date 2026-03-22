@@ -29,7 +29,7 @@ new_section = """        # WanX txt2video + LoRA или img2video + LoRA
                 # Загружаем изображение из URL или файла
                 try:
                     import aiohttp
-                    async with aiohttp.ClientSession() as session:
+                    async with aiohttp.ClientSession(trust_env=False) as session:
                         async with session.get(v_image_url) as resp:
                             if resp.status == 200:
                                 image_bytes = await resp.read()

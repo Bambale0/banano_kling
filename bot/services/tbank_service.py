@@ -25,12 +25,19 @@ class TBankService:
         4. Конкатенируем значения
         5. SHA-256 хеш
         """
+
+        def _norm(v: Any) -> str:
+            if isinstance(v, bool):
+                # T-Bank may use lowercase boolean literals when building token
+                return "true" if v else "false"
+            return str(v)
+
         token_params = {}
         for key, value in params.items():
             if key == "Token":
                 continue
             if isinstance(value, (str, int, float, bool)):
-                token_params[key] = str(value)
+                token_params[key] = _norm(value)
 
         token_params["Password"] = self.secret_key
         sorted_keys = sorted(token_params.keys())
@@ -89,7 +96,7 @@ class TBankService:
 
         logger.debug(f"Init payment request: {order_id}, amount: {amount}")
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     f"{self.api_url}/Init",
@@ -118,7 +125,7 @@ class TBankService:
         token = self._generate_token(token_base)
         payload = {**token_base, "Token": token}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     f"{self.api_url}/GetState",
@@ -137,7 +144,7 @@ class TBankService:
         token = self._generate_token(token_base)
         payload = {**token_base, "Token": token}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     f"{self.api_url}/Cancel",
@@ -167,15 +174,18 @@ class TBankService:
         NOTE: Исключаем чувствительные данные карты из проверки подписи,
         так как они маскируются в вебхуках, но токен рассчитывается с полными данными.
         """
-        # Проверяем наличие токена
-        received_token = data.get("Token")
+        # Проверяем наличие токена (accept common variants)
+        received_token = (
+            data.get("Token") or data.get("token") or data.get("token".lower())
+        )
         if not received_token:
             logger.warning("No Token in notification")
             return False
 
         # Проверяем TerminalKey
+        # Приводим к строкам на случай, если вебхук присылает число, а в настройках — строка
         received_terminal = data.get("TerminalKey")
-        if received_terminal != self.terminal_key:
+        if str(received_terminal) != str(self.terminal_key):
             logger.warning(
                 f"TerminalKey mismatch: expected={self.terminal_key}, received={received_terminal}"
             )
@@ -191,33 +201,60 @@ class TBankService:
         # Для реальных терминалов проверяем подпись
         # Исключаем чувствительные данные карты, которые маскируются в вебхуках
         sensitive_fields = {"Token", "Pan", "CardId", "ExpDate"}
+
+        def _norm(v: Any) -> str:
+            if isinstance(v, bool):
+                return "true" if v else "false"
+            return str(v)
+
         token_params = {}
         for key, value in data.items():
             if key in sensitive_fields:
                 continue
             if isinstance(value, (str, int, float, bool)):
-                token_params[key] = str(value)
+                token_params[key] = _norm(value)
 
         # Добавляем Password из настроек
         token_params["Password"] = self.secret_key
-
-        # Логируем для отладки
-        logger.info(f"Verifying webhook - params: {token_params}")
-
-        # Сортируем и конкатенируем
+        # Логируем для отладки (покажем отсортированные ключи и конкатенированную строку)
+        # ВАЖНО: не логируем секрет в явном виде — показываем его как ***REDACTED***
         sorted_keys = sorted(token_params.keys())
-        values_str = "".join(token_params[k] for k in sorted_keys)
-        logger.info(f"Concatenated string: '{values_str}'")
+        values_list = [token_params[k] for k in sorted_keys]
+        # redact password for logs
+        redacted_values_list = [
+            ("***REDACTED***" if k == "Password" else token_params[k])
+            for k in sorted_keys
+        ]
+        values_str = "".join(values_list)
+        redacted_values_str = "".join(redacted_values_list)
 
-        # Генерируем ожидаемый токен
+        logger.info(f"Verifying webhook - sorted keys: {sorted_keys}")
+        logger.info(
+            f"Verifying webhook - concatenated values (redacted): '{redacted_values_str}'"
+        )
+
+        # Генерируем ожидаемый токен (используем реальное значение Password здесь)
         expected_token = hashlib.sha256(values_str.encode("utf-8")).hexdigest()
 
+        # Log received/expected tokens (lowercased) to help debugging signature mismatches
         logger.info(f"Received token: {received_token}")
         logger.info(f"Expected token: {expected_token}")
 
-        # Сравниваем токены
-        if received_token != expected_token:
-            logger.warning("Token mismatch - signature verification failed")
+        # Use constant-time comparison to avoid timing attacks. Compare lowercase
+        try:
+            import hmac
+
+            tokens_equal = hmac.compare_digest(
+                str(received_token).lower(), str(expected_token).lower()
+            )
+        except Exception:
+            tokens_equal = str(received_token).lower() == str(expected_token).lower()
+
+        if not tokens_equal:
+            logger.warning(
+                "Token mismatch - signature verification failed.\n"
+                f"Sorted keys: {sorted_keys}\nValues (redacted): {redacted_values_list}\n"
+            )
             return False
 
         logger.info("Token verification successful")

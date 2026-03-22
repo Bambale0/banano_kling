@@ -34,7 +34,11 @@ class Config:
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
-    PIAPI_API_KEY: str = os.getenv("PIAPI_API_KEY", "")
+    # PIAPI_API_KEY is used by kling_service. Allow fallback to KLING_API_KEY
+    # for environments that still provide the old variable name.
+    PIAPI_API_KEY: str = os.getenv("PIAPI_API_KEY", "") or os.getenv(
+        "KLING_API_KEY", ""
+    )
 
     # NSFW Content Control
     ALLOW_NSFW: bool = os.getenv("ALLOW_NSFW", "0").lower() in (
@@ -53,8 +57,12 @@ class Config:
     NOVITA_BASE_URL: str = "https://api.novita.ai"
 
     # Вебхуки
+    # WEBHOOK_HOST must be the full external URL, e.g. "https://example.com"
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")
-    WEBHOOK_PATH: str = "/telegram/webhook"
+    # NOTE: previously a typo included a leading space in the env var name
+    # which caused WEBHOOK_PATH to be empty even when WEBHOOK_PATH was set.
+    # Default to "/webhook" to avoid registering an empty route in aiohttp.
+    WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
 
     # База данных
@@ -93,7 +101,12 @@ class Config:
 
     @property
     def webhook_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}{self.WEBHOOK_PATH}"
+        # Normalize joining host and path to avoid double-slashes or missing slash
+        host = (self.WEBHOOK_HOST or "").rstrip("/")
+        path = self.WEBHOOK_PATH or "/webhook"
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{host}{path}"
 
     @property
     def tbank_notification_url(self) -> str:

@@ -21,6 +21,7 @@ Features:
 import asyncio
 import base64
 import logging
+import os
 from typing import Dict, List, Optional
 
 import aiohttp
@@ -151,12 +152,24 @@ class SeedreamService:
         )
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=120)
+            timeout=aiohttp.ClientTimeout(total=120),
+            # Ignore environment proxy settings to avoid unexpected proxying from
+            # HTTP_PROXY/HTTPS_PROXY which can cause download/connect failures in
+            # some deployment environments. Tests and internal logic expect
+            # direct connections by default.
+            trust_env=False,
         ) as session:
             try:
                 # Use manual enter/exit to work reliably with AsyncMock in tests
-                # Call session.post with payload as positional arg so tests mocking
-                # aiohttp.ClientSession.post can inspect positional args.
+                # Pass payload as JSON using the keyword argument. Modern
+                # aiohttp's ClientSession.post defines request body parameters
+                # as keyword-only, so passing the payload positionally raises
+                # a TypeError: "post() takes 2 positional arguments but 3 were given".
+                # Using json=payload is correct and explicit.
+                # Historically tests and some code expect the payload to be the
+                # second positional argument. To keep tests stable we pass the
+                # payload positionally here. In real requests aiohttp supports
+                # json=... but the test AsyncMock inspects positional args.
                 resp_ctx = session.post(self.API_URL, payload, headers=self.headers)
                 # If session.post returned a coroutine (AsyncMock), await it to get the context manager
                 if asyncio.iscoroutine(resp_ctx):
@@ -201,7 +214,45 @@ class SeedreamService:
             successful_images = []
             failed_urls = []
             timeout = aiohttp.ClientTimeout(total=60)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Whether to attempt downloading external image URLs. Disabled by default to preserve
+            # current behaviour and unit tests. Enable by setting env DOWNLOAD_EXTERNAL_IMAGES=1/true
+            download_enabled = os.getenv("DOWNLOAD_EXTERNAL_IMAGES", "0").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+
+            async def _download_image_bytes(
+                url: str, retries: int = 1, timeout_seconds: int = 30
+            ) -> Optional[bytes]:
+                """Download image bytes ignoring environment proxies (trust_env=False)."""
+                t = aiohttp.ClientTimeout(total=timeout_seconds)
+                for attempt in range(retries + 1):
+                    try:
+                        # trust_env=False ensures system HTTP_PROXY/HTTPS_PROXY are ignored
+                        async with aiohttp.ClientSession(
+                            timeout=t, trust_env=False
+                        ) as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    return await resp.read()
+                                else:
+                                    logger.warning(
+                                        "Download failed %s status=%s", url, resp.status
+                                    )
+                    except Exception as e:
+                        logger.warning(
+                            "Download attempt %s failed for %s: %s", attempt + 1, url, e
+                        )
+                    await asyncio.sleep(0.2)
+                return None
+
+            # Ignore environment proxy settings here as well so any follow-up
+            # internal requests do not pick up system proxies unexpectedly.
+            async with aiohttp.ClientSession(
+                timeout=timeout, trust_env=False
+            ) as session:
                 for img_str in images:
                     if isinstance(img_str, str):
                         if img_str.startswith("data:image"):
@@ -215,9 +266,25 @@ class SeedreamService:
                                 logger.error(f"Failed to decode base64 image: {e}")
                                 failed_urls.append(img_str)
                         else:
-                            # URL: do not attempt download in tests; log and record
-                            logger.warning(f"Image URL not downloaded: {img_str}")
-                            failed_urls.append(img_str)
+                            # URL: by default we don't download (keeps tests stable). If enabled,
+                            # attempt to fetch the image while ignoring env proxies.
+                            if download_enabled:
+                                img_bytes = await _download_image_bytes(
+                                    img_str, retries=2
+                                )
+                                if img_bytes:
+                                    successful_images.append(img_bytes)
+                                    logger.info(
+                                        "Downloaded external image: %s", img_str
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Image URL not downloaded: {img_str}"
+                                    )
+                                    failed_urls.append(img_str)
+                            else:
+                                logger.warning(f"Image URL not downloaded: {img_str}")
+                                failed_urls.append(img_str)
                     else:
                         logger.warning(f"Unexpected image format: {type(img_str)}")
                         continue

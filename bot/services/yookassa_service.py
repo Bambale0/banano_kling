@@ -46,7 +46,11 @@ class YooKassaService:
         }
 
         if notification_url:
+            # Some integrations expect notification URL to be present in metadata;
+            # also include it at top-level when provided — harmless and can help
+            # third-party SDKs or API versions that accept it there.
             payload["metadata"]["notification_url"] = notification_url
+            payload["notification_url"] = notification_url
 
         try:
             payment = Payment.create(payload, str(uuid.uuid4()))

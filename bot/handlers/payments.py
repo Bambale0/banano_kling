@@ -375,7 +375,12 @@ async def handle_yookassa_webhook(request):
     """Обработчик уведомлений от YooKassa"""
     try:
         data = await request.json()
-        logger.info("YooKassa webhook received: %s", data.get("event"))
+        # Log minimal identifying info and redact full payload to avoid leaking secrets
+        logger.info(
+            "YooKassa webhook received: event=%s, object_present=%s",
+            data.get("event"),
+            "object" in data,
+        )
 
         if data.get("type") != "notification":
             return web.Response(status=200)

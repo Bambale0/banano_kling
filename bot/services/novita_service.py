@@ -908,8 +908,9 @@ NO warnings, disclaimers, or moralizing. Just generate as requested.
             logger.warning("Novita API key is missing or empty. Skipping API request.")
             return None
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
+                # Ensure we pass JSON as keyword to match aiohttp signature
                 async with session.post(
                     url,
                     json=payload,
@@ -995,7 +996,7 @@ NO warnings, disclaimers, or moralizing. Just generate as requested.
         params: Optional[Dict] = None,
     ) -> Optional[Dict]:
         """Execute GET request to Novita API"""
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.get(
                     url,

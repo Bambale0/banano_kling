@@ -65,7 +65,7 @@ class WanXService:
         if not self.headers:
             logger.error("API key not configured")
             return None
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     url,
@@ -99,7 +99,7 @@ class WanXService:
         if not self.headers:
             logger.error("API key not configured")
             return None
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.get(
                     url,
@@ -362,3 +362,42 @@ wanx_service = (
     if config.PIAPI_API_KEY
     else None
 )
+
+
+class _DisabledWanXService:
+    """Fallback stub used when WanX (PiAPI) is not configured.
+
+    This prevents callers from getting AttributeError when the module-level
+    `wanx_service` is missing and provides a consistent error response that
+    callers can handle (contains 'error' key).
+    """
+
+    async def create_task(self, *args, **kwargs):
+        logger.error("WanX service called but PIAPI_API_KEY is not configured")
+        return {
+            "error": "service_unavailable",
+            "message": "WanX (PiAPI) API key not configured",
+        }
+
+    async def generate_txt2video_lora(self, *args, **kwargs):
+        return await self.create_task()
+
+    async def generate_img2video_lora(self, *args, **kwargs):
+        return await self.create_task()
+
+    async def get_task_status(self, *args, **kwargs):
+        return {
+            "error": "service_unavailable",
+            "message": "WanX (PiAPI) API key not configured",
+        }
+
+    async def wait_for_completion(self, *args, **kwargs):
+        return {
+            "error": "service_unavailable",
+            "message": "WanX (PiAPI) API key not configured",
+        }
+
+
+# Ensure `wanx_service` is never None to avoid AttributeError in callers.
+if wanx_service is None:
+    wanx_service = _DisabledWanXService()

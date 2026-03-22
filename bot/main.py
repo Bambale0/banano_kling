@@ -106,8 +106,12 @@ async def on_startup(bot: Bot):
     logger.info(f"Loaded {len(preset_manager._presets)} presets")
     # Запускаем задачу очистки static/uploads каждые 6 часов
     try:
-        bot.loop.create_task(_static_cleanup_loop())
-        logger.info("Scheduled static/uploads cleanup task (every 6 hours)")
+        # aiogram.Bot does not expose an event loop attribute in some versions.
+        # Use asyncio.create_task to schedule background tasks on the running loop.
+        asyncio.create_task(_static_cleanup_loop())
+        logger.info(
+            "Scheduled static/uploads cleanup task (every 6 hours) via asyncio.create_task"
+        )
     except Exception:
         logger.exception("Failed to schedule static cleanup task")
 
@@ -360,8 +364,23 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
             # Check for sensitive content error
-            error_msg = str(
-                webhook_data.get("error", "") + " " + webhook_data.get("logs", "")
+            # webhook_data['error'] or webhook_data['logs'] may be dicts (or other types)
+            # so convert them to strings safely before concatenation to avoid TypeError
+            def _to_str(value):
+                if value is None:
+                    return ""
+                if isinstance(value, (str, int, float)):
+                    return str(value)
+                try:
+                    return json.dumps(value, ensure_ascii=False)
+                except Exception:
+                    return str(value)
+
+            # Safely stringify possible dict/complex types in webhook error/logs
+            error_msg = (
+                _to_str(webhook_data.get("error"))
+                + " "
+                + _to_str(webhook_data.get("logs"))
             ).lower()
             if "sensitive" in error_msg or "e005" in error_msg:
                 from bot.database import (
@@ -403,7 +422,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Kling webhook error: {e}")
-        return web.Response(status=500)
+        # Return 200 even on unexpected errors to avoid webhook relayers
+        # repeatedly retrying the same payload. The error is logged above
+        # for investigation.
+        return web.Response(status=200)
 
 
 async def handle_seedream_webhook(request: web.Request) -> web.Response:

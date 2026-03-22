@@ -10,6 +10,7 @@ Docs: kling_api.md
 """
 
 import asyncio
+import base64
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -46,7 +47,8 @@ class KlingService:
         if not self.headers:
             logger.error("API key not configured")
             return None
-        async with aiohttp.ClientSession() as session:
+        # Make the POST request
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     url,
@@ -97,7 +99,7 @@ class KlingService:
         if not self.headers:
             logger.error("API key not configured")
             return None
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.get(
                     url,
@@ -118,10 +120,23 @@ class KlingService:
         self, task_type: str, input_data: Dict, config: Optional[Dict] = None
     ) -> Optional[Dict]:
         url = f"{self.base_url}{self.ENDPOINTS['task']}"
+
+        def _convert_bytes_to_data_uri(obj):
+            # Recursively convert bytes values inside structures to data URI strings
+            if isinstance(obj, (bytes, bytearray)):
+                return f"data:image/png;base64,{base64.b64encode(obj).decode('utf-8')}"
+            if isinstance(obj, dict):
+                return {k: _convert_bytes_to_data_uri(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_convert_bytes_to_data_uri(v) for v in obj]
+            return obj
+
+        safe_input = _convert_bytes_to_data_uri(input_data)
+
         payload = {
             "model": "kling",
             "task_type": task_type,
-            "input": input_data,
+            "input": safe_input,
         }
         if config:
             payload["config"] = config
@@ -152,6 +167,13 @@ class KlingService:
         service_mode: str = "public",
     ) -> Optional[Dict]:
         duration = max(3, min(duration, 15))
+
+        def _maybe_data_uri(v):
+            # Convert bytes to data URI expected by Kling (assume png)
+            if isinstance(v, (bytes, bytearray)):
+                return f"data:image/png;base64,{base64.b64encode(v).decode('utf-8')}"
+            return v
+
         input_data = {
             "prompt": prompt,
             "version": "3.0",
@@ -160,11 +182,14 @@ class KlingService:
             "aspect_ratio": aspect_ratio,
             "enable_audio": enable_audio,
             "prefer_multi_shots": prefer_multi_shots,
+            # Hint Kling to prefer direct HTTP fetching of provided URLs
+            # (helps when Kling's resumable upload/resume flow fails)
+            "prefer_http": True,
         }
         if image_url:
-            input_data["image_url"] = image_url
+            input_data["image_url"] = _maybe_data_uri(image_url)
         if image_tail_url:
-            input_data["image_tail_url"] = image_tail_url
+            input_data["image_tail_url"] = _maybe_data_uri(image_tail_url)
         if multi_shots:
             input_data["multi_shots"] = [
                 {"prompt": s["prompt"], "duration": max(1, min(s["duration"], 14))}
@@ -188,11 +213,18 @@ class KlingService:
         webhook_url: Optional[str] = None,
         service_mode: str = "public",
     ) -> Optional[Dict]:
+        def _maybe_data_uri(v):
+            if isinstance(v, (bytes, bytearray)):
+                return f"data:image/png;base64,{base64.b64encode(v).decode('utf-8')}"
+            return v
+
         input_data = {
-            "image_url": image_url,
+            "image_url": _maybe_data_uri(image_url) if image_url else None,
             "mode": mode,
             "motion_direction": motion_direction,
             "keep_original_sound": keep_original_sound,
+            # Ask Kling to prefer direct HTTP fetch for the image
+            "prefer_http": True,
         }
         if video_url:
             input_data["video_url"] = video_url
@@ -218,6 +250,11 @@ class KlingService:
         webhook_url: Optional[str] = None,
         service_mode: str = "public",
     ) -> Optional[Dict]:
+        def _maybe_data_uri(v):
+            if isinstance(v, (bytes, bytearray)):
+                return f"data:image/png;base64,{base64.b64encode(v).decode('utf-8')}"
+            return v
+
         input_data = {
             "prompt": prompt,
             "version": version,
@@ -225,11 +262,14 @@ class KlingService:
             "duration": duration,
             "aspect_ratio": aspect_ratio,
             "enable_audio": enable_audio,
+            # Prefer direct HTTP fetch when Kling receives external image URLs
+            "prefer_http": True,
         }
         if multi_shots:
             input_data["multi_shots"] = multi_shots
         if images:
-            input_data["images"] = images
+            # Convert any bytes images to data URIs
+            input_data["images"] = [_maybe_data_uri(i) for i in images]
         config = {"service_mode": service_mode}
         if webhook_url:
             config["webhook_config"] = {"endpoint": webhook_url, "secret": ""}

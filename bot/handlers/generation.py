@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -76,6 +77,31 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+async def safe_callback_answer(callback: types.CallbackQuery, *args, **kwargs):
+    """Call callback.answer safely — ignore expired/too old query errors.
+
+    Many Telegram callback queries may arrive after the client-side timeout
+    and raise TelegramBadRequest: "query is too old and response timeout
+    expired or query ID is invalid". We want to ignore these silently and
+    just log at debug level to avoid crashing global handlers.
+    """
+    try:
+        await callback.answer(*args, **kwargs)
+    except TelegramBadRequest as e:
+        msg = str(e).lower()
+        if (
+            "query is too old" in msg
+            or "query id is invalid" in msg
+            or "response timeout" in msg
+        ):
+            logger.debug(f"Ignored stale callback.answer error: {e}")
+            return
+        # For other TelegramBadRequest errors, log a warning
+        logger.warning(f"TelegramBadRequest in callback.answer: {e}")
+    except Exception:
+        logger.exception("Unexpected error in safe_callback_answer")
+
+
 # =============================================================================
 # НОВЫЙ UX: МЕНЮ СОЗДАНИЯ ВИДЕО (get_create_video_keyboard)
 # =============================================================================
@@ -102,7 +128,7 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
 
     # СРАЗУ показываем экран с параметрами видео и полем для промпта (без загрузки референсов)
     await _show_video_creation_screen(callback.message, state)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "create_image_refs_new")
@@ -144,7 +170,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
             reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
             parse_mode="HTML",
         )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
@@ -169,7 +195,7 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=get_back_keyboard("back_main"),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
@@ -188,7 +214,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
@@ -391,7 +417,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
         reply_markup=get_reference_images_upload_keyboard(0, 14, preset_id),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
@@ -420,7 +446,7 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
         reply_markup=get_create_image_keyboard(current_service, current_ratio),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
@@ -443,7 +469,7 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -487,7 +513,7 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     # Не меняем состояние - оставляем waiting_for_input для приёма и фото, и текста
     # State will be waiting_for_input from previous handler
 
@@ -536,7 +562,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(GenerationStates.waiting_for_video_prompt)
     else:
         await state.set_state(GenerationStates.waiting_for_reference_video)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("v_model_"))
@@ -615,7 +641,7 @@ async def _apply_video_model_selection(
                 current_ratio=current_ratio,
             )
         )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
@@ -638,7 +664,7 @@ async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContex
             current_ratio="1:1",
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -660,7 +686,7 @@ async def handle_video_ratio_16_9(callback: types.CallbackQuery, state: FSMConte
             current_ratio="16:9",
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -682,7 +708,7 @@ async def handle_video_ratio_9_16(callback: types.CallbackQuery, state: FSMConte
             current_ratio="9:16",
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -704,7 +730,7 @@ async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContex
             current_ratio="4:3",
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -726,7 +752,7 @@ async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContex
             current_ratio="3:2",
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -820,7 +846,7 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
             current_ratio=current_ratio,
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -838,7 +864,7 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
             current_ratio=current_ratio,
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -856,7 +882,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
             current_ratio=current_ratio,
         )
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -4546,14 +4572,16 @@ async def execute_video_edit_image(
         from bot.config import config
         from bot.services.kling_service import kling_service
 
-        # Для I2V передаём image_url и elements для сохранения лица
+        # Для I2V передаём image (может быть bytes или URL) и elements для сохранения лица
+        # KlingService теперь поддерживает bytes (будут автоматически закодированы в data URI)
+        image_input = image_bytes if image_bytes else image_url
         result = await kling_service.generate_video(
             prompt=prompt,
             model=model,
             duration=duration,
             aspect_ratio=aspect_ratio,
             webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_url,
+            image_url=image_input,
             elements=elements,
         )
 
@@ -4628,7 +4656,7 @@ async def upload_video_for_kling(video_bytes: bytes) -> Optional[str]:
                 content_type="video/mp4",
             )
 
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 async with session.post(
                     "https://api.imgbb.com/1/upload", data=form
                 ) as resp:
@@ -4995,14 +5023,15 @@ async def run_image_to_video(message: types.Message, state: FSMContext, prompt: 
         ]
 
         # Создаём задачу на генерацию видео с Omni моделью
-        # Для I2V используем image_url (станет start_image_url) и elements для сохранения лица
+        # Для I2V используем image (bytes или URL) и elements для сохранения лица
+        image_input = uploaded_image if uploaded_image else image_url
         result = await kling_service.generate_video(
             prompt=prompt,
             model=preferred_i2v_model,
             duration=duration,
             aspect_ratio=aspect_ratio,
             webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_url,
+            image_url=image_input,
             elements=elements,
         )
 
@@ -5683,7 +5712,7 @@ async def start_no_preset_video_from_message(
                 try:
                     import aiohttp
 
-                    async with aiohttp.ClientSession() as session:
+                    async with aiohttp.ClientSession(trust_env=False) as session:
                         async with session.get(v_image_url) as resp:
                             if resp.status == 200:
                                 image_bytes = await resp.read()
