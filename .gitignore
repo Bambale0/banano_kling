@@ -19,17 +19,17 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.pyc
 # Virtual Environment
 venv/
 ENV/
 env/
 .venv/
-
+logs
 # Environment variables / Secrets
 .env
 *.env.local
-
+venv/
 # Database
 *.db
 *.sqlite
