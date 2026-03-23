@@ -116,6 +116,14 @@ class RunwayService:
         # object is available (self.client or the replicate module). This makes it
         # easier to monkeypatch in tests by setting replicate.Client to return a
         # fake client instance.
+        # If no webhook_url supplied, prefer the dedicated replicate webhook
+        # endpoint configured in settings so Replicate callbacks arrive at
+        # /webhook/replicate instead of the generic /webhook/kling. Do this
+        # before we build the create callable so the correct value is captured
+        # by the closure.
+        if not webhook_url and config.WEBHOOK_HOST:
+            webhook_url = config.replicate_notification_url
+
         def _make_create_callable():
             # Return a callable that, when invoked, will perform the
             # synchronous predictions.create call on the appropriate client.
@@ -141,18 +149,6 @@ class RunwayService:
                     )
 
                 return _call
-
-        # If no webhook_url supplied, prefer the dedicated replicate webhook
-        # endpoint configured in settings so Replicate callbacks arrive at
-        # /webhook/replicate instead of the generic /webhook/kling.
-        if not webhook_url and config.WEBHOOK_HOST:
-            webhook_url = config.replicate_notification_url
-
-        # If no webhook_url supplied, prefer the dedicated replicate webhook
-        # endpoint configured in settings so Replicate callbacks arrive at
-        # /webhook/replicate instead of the generic /webhook/kling.
-        if not webhook_url and config.WEBHOOK_HOST:
-            webhook_url = config.replicate_notification_url
 
         # Create the callable with the (possibly updated) webhook_url so it is
         # captured correctly by the function and used when making the request.

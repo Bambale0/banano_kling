@@ -408,12 +408,20 @@ async def handle_yookassa_webhook(request):
 
         transaction = await get_transaction_by_order(order_id)
         if not transaction:
-            logger.warning("No transaction found for order %s (payment %s)", order_id, payment.get("id"))
+            logger.warning(
+                "No transaction found for order %s (payment %s)",
+                order_id,
+                payment.get("id"),
+            )
             return web.Response(status=200)
 
         # Already completed -> idempotent
         if transaction.status == "completed":
-            logger.info("Transaction %s already completed (order %s)", transaction.payment_id, order_id)
+            logger.info(
+                "Transaction %s already completed (order %s)",
+                transaction.payment_id,
+                order_id,
+            )
             return web.Response(status=200)
 
         if (

@@ -4,11 +4,11 @@ import io
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from datetime import datetime
 from typing import Optional
-import re
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -5780,6 +5780,7 @@ async def start_no_preset_video_from_message(
                 )
         elif v_model == "runway_gen45":
             from bot.services.runway_service import runway_service as _runway_service
+
             image_url_runway = image_url if v_type == "imgtxt" else None
             # Use the dedicated Replicate webhook endpoint so Runway/Replicate
             # callbacks arrive at /webhook/replicate rather than the Kling

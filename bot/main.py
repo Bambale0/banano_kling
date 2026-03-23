@@ -274,7 +274,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                 # Try hex comparison (common 'sha256=HEX' or plain HEX)
                 try:
-                    computed_hex = hmac.new(secret_bytes, body_bytes, hashlib.sha256).hexdigest()
+                    computed_hex = hmac.new(
+                        secret_bytes, body_bytes, hashlib.sha256
+                    ).hexdigest()
                     if hmac.compare_digest(computed_hex, sig_val):
                         return True
                 except Exception:
@@ -290,7 +292,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     # Compare with padding and without padding
                     if hmac.compare_digest(computed_b64, sig_val):
                         return True
-                    if hmac.compare_digest(computed_b64.rstrip("="), sig_val.rstrip("=")):
+                    if hmac.compare_digest(
+                        computed_b64.rstrip("="), sig_val.rstrip("=")
+                    ):
                         return True
                 except Exception:
                     pass
