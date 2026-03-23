@@ -117,20 +117,30 @@ class RunwayService:
         # easier to monkeypatch in tests by setting replicate.Client to return a
         # fake client instance.
         def _make_create_callable():
+            # Return a callable that, when invoked, will perform the
+            # synchronous predictions.create call on the appropriate client.
             if self.client:
-                return lambda: self.client.predictions.create(
-                    model=self.MODEL_VERSION,
-                    input=input_data,
-                    webhook=webhook_url,
-                    webhook_events_filter=["completed"] if webhook_url else None,
-                )
+
+                def _call():
+                    return self.client.predictions.create(
+                        model=self.MODEL_VERSION,
+                        input=input_data,
+                        webhook=webhook_url,
+                        webhook_events_filter=["completed"] if webhook_url else None,
+                    )
+
+                return _call
             else:
-                return lambda: replicate.predictions.create(
-                    model=self.MODEL_VERSION,
-                    input=input_data,
-                    webhook=webhook_url,
-                    webhook_events_filter=["completed"] if webhook_url else None,
-                )
+
+                def _call():
+                    return replicate.predictions.create(
+                        model=self.MODEL_VERSION,
+                        input=input_data,
+                        webhook=webhook_url,
+                        webhook_events_filter=["completed"] if webhook_url else None,
+                    )
+
+                return _call
 
         # If no webhook_url supplied, prefer the dedicated replicate webhook
         # endpoint configured in settings so Replicate callbacks arrive at
@@ -138,6 +148,14 @@ class RunwayService:
         if not webhook_url and config.WEBHOOK_HOST:
             webhook_url = config.replicate_notification_url
 
+        # If no webhook_url supplied, prefer the dedicated replicate webhook
+        # endpoint configured in settings so Replicate callbacks arrive at
+        # /webhook/replicate instead of the generic /webhook/kling.
+        if not webhook_url and config.WEBHOOK_HOST:
+            webhook_url = config.replicate_notification_url
+
+        # Create the callable with the (possibly updated) webhook_url so it is
+        # captured correctly by the function and used when making the request.
         create_callable = _make_create_callable()
 
         last_exc: Optional[Exception] = None
@@ -149,6 +167,15 @@ class RunwayService:
                     timeout=60,
                 )
                 logger.info(f"Runway prediction created: {prediction.id}")
+                # If the prediction already finished synchronously (e.g. the
+                # model returned a succeeded/failed/canceled status immediately),
+                # normalize and return the parsed status including any output
+                # URLs. This prevents callers from seeing a transient 'succeeded'
+                # without associated output and makes behavior consistent when
+                # reference images cause the model to process synchronously.
+                if prediction.status in ["succeeded", "failed", "canceled"]:
+                    parsed = await self.get_task_status(prediction.id)
+                    return parsed
                 return {"task_id": prediction.id, "status": prediction.status}
 
             except asyncio.TimeoutError as te:
@@ -178,12 +205,20 @@ class RunwayService:
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
         """Получить статус предсказания"""
         try:
-            get_fn = (
-                lambda: self.client.predictions.get(task_id)
-                if self.client
-                else lambda: replicate.predictions.get(task_id)
-            )
-            prediction = await asyncio.get_event_loop().run_in_executor(None, get_fn)
+            # Build a simple callable that fetches the prediction synchronously
+            # in a thread executor. Avoid nested lambdas which are harder to
+            # reason about and caused confusion.
+            if self.client:
+
+                def _get():
+                    return self.client.predictions.get(task_id)
+
+            else:
+
+                def _get():
+                    return replicate.predictions.get(task_id)
+
+            prediction = await asyncio.get_event_loop().run_in_executor(None, _get)
             if prediction.status in ["succeeded", "failed", "canceled"]:
                 output = getattr(prediction, "output", None)
                 # Normalize output to a list of URLs (strings).

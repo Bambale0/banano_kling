@@ -5781,9 +5781,13 @@ async def start_no_preset_video_from_message(
             from bot.services.runway_service import runway_service as _runway_service
 
             image_url_runway = image_url if v_type == "imgtxt" else None
+            # Use the dedicated Replicate webhook endpoint so Runway/Replicate
+            # callbacks arrive at /webhook/replicate rather than the Kling
+            # webhook. Previously we reused the Kling webhook which caused
+            # Runway tasks to be delivered to the Kling handler.
             webhook_url_runway = (
-                config.kling_notification_url if config.WEBHOOK_HOST else None
-            )  # Reuse kling webhook for now
+                config.replicate_notification_url if config.WEBHOOK_HOST else None
+            )
             # Pass both bytes references and URL references when available.
             raw_refs = data.get("reference_images", [])
             result = await _runway_service.generate_video(

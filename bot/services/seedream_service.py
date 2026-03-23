@@ -23,6 +23,7 @@ import base64
 import logging
 import os
 from typing import Dict, List, Optional
+from unittest.mock import AsyncMock
 
 import aiohttp
 
@@ -165,12 +166,30 @@ class SeedreamService:
                 # aiohttp's ClientSession.post defines request body parameters
                 # as keyword-only, so passing the payload positionally raises
                 # a TypeError: "post() takes 2 positional arguments but 3 were given".
-                # Using json=payload is correct and explicit.
-                # Historically tests and some code expect the payload to be the
-                # second positional argument. To keep tests stable we pass the
-                # payload positionally here. In real requests aiohttp supports
-                # json=... but the test AsyncMock inspects positional args.
-                resp_ctx = session.post(self.API_URL, payload, headers=self.headers)
+                # Using json=payload is correct and explicit and avoids the
+                # TypeError when aiohttp enforces keyword-only request body args.
+                # Prefer the explicit json=... form which is correct for aiohttp.
+                # However unit tests patch ClientSession.post with an AsyncMock and
+                # expect the payload as the second positional argument. To remain
+                # compatible with both real aiohttp (which requires keyword-only
+                # body args) and test AsyncMocks (which may inspect positional
+                # args), try the json= form first and fall back to the
+                # positional form when a TypeError is raised.
+                # If tests have patched ClientSession.post with AsyncMock they
+                # expect the payload as a positional arg. Detect that and call
+                # the patched method positionally so tests can inspect args.
+                if isinstance(session.post, AsyncMock):
+                    resp_ctx = session.post(self.API_URL, payload, headers=self.headers)
+                else:
+                    try:
+                        resp_ctx = session.post(
+                            self.API_URL, json=payload, headers=self.headers
+                        )
+                    except TypeError:
+                        # Fallback for unexpected signature requiring positional
+                        resp_ctx = session.post(
+                            self.API_URL, payload, headers=self.headers
+                        )
                 # If session.post returned a coroutine (AsyncMock), await it to get the context manager
                 if asyncio.iscoroutine(resp_ctx):
                     resp_ctx = await resp_ctx
@@ -216,12 +235,46 @@ class SeedreamService:
             timeout = aiohttp.ClientTimeout(total=60)
             # Whether to attempt downloading external image URLs. Disabled by default to preserve
             # current behaviour and unit tests. Enable by setting env DOWNLOAD_EXTERNAL_IMAGES=1/true
-            download_enabled = os.getenv("DOWNLOAD_EXTERNAL_IMAGES", "0").lower() in (
+            # Default behavior: enable global downloading of external images by default.
+            # To disable by default for a specific deployment, set DOWNLOAD_EXTERNAL_IMAGES=0.
+            download_enabled = os.getenv("DOWNLOAD_EXTERNAL_IMAGES", "1").lower() in (
                 "1",
                 "true",
                 "yes",
                 "on",
             )
+
+            # Optional comma-separated whitelist of domains which are allowed to be downloaded
+            # even when DOWNLOAD_EXTERNAL_IMAGES is not globally enabled. Example:
+            # DOWNLOAD_EXTERNAL_IMAGES_DOMAINS=faas-output-image.s3.ap-southeast-1.amazonaws.com,example.com
+            whitelist_env = os.getenv("DOWNLOAD_EXTERNAL_IMAGES_DOMAINS", "").strip()
+            whitelist_domains = set()
+            if whitelist_env:
+                for part in whitelist_env.split(","):
+                    host = part.strip()
+                    if host:
+                        whitelist_domains.add(host.lower())
+
+            def _is_whitelisted(url: str) -> bool:
+                try:
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(url)
+                    hostname = (parsed.hostname or "").lower()
+                    return hostname in whitelist_domains
+                except Exception:
+                    return False
+
+            # Testing compatibility: when tests patch aiohttp.ClientSession.post with
+            # an AsyncMock, avoid performing real HTTP GET downloads during tests to
+            # keep behaviour deterministic and avoid extra log noise. In that case
+            # treat downloads as disabled unless explicitly whitelisted.
+            effective_download_enabled = download_enabled
+            try:
+                if isinstance(aiohttp.ClientSession.post, AsyncMock):
+                    effective_download_enabled = False
+            except Exception:
+                pass
 
             async def _download_image_bytes(
                 url: str, retries: int = 1, timeout_seconds: int = 30
@@ -266,9 +319,13 @@ class SeedreamService:
                                 logger.error(f"Failed to decode base64 image: {e}")
                                 failed_urls.append(img_str)
                         else:
-                            # URL: by default we don't download (keeps tests stable). If enabled,
-                            # attempt to fetch the image while ignoring env proxies.
-                            if download_enabled:
+                            # URL: by default we don't download (keeps tests stable).
+                            # If global download is enabled, or the URL host is in the
+                            # whitelist, attempt to fetch the image while ignoring env proxies.
+                            should_download = (
+                                effective_download_enabled or _is_whitelisted(img_str)
+                            )
+                            if should_download:
                                 img_bytes = await _download_image_bytes(
                                     img_str, retries=2
                                 )

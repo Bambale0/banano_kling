@@ -394,17 +394,26 @@ async def handle_yookassa_webhook(request):
         if event not in {"payment.succeeded", "payment.waiting_for_capture"}:
             return web.Response(status=200)
 
-        metadata = payment.get("metadata") or {}
-        order_id = metadata.get("order_id")
+        # Try to extract order_id from the payment object using the service helper
+        # (handles cases where metadata may be missing or in a slightly different shape)
+        order_id = yookassa_service.extract_order_id(payment)
         payment_id = payment.get("id")
         status = payment.get("status")
 
         if not order_id:
-            logger.warning("YooKassa webhook missing order_id")
+            logger.warning(
+                "YooKassa webhook missing order_id for payment %s", payment.get("id")
+            )
             return web.Response(status=200)
 
         transaction = await get_transaction_by_order(order_id)
-        if not transaction or transaction.status == "completed":
+        if not transaction:
+            logger.warning("No transaction found for order %s (payment %s)", order_id, payment.get("id"))
+            return web.Response(status=200)
+
+        # Already completed -> idempotent
+        if transaction.status == "completed":
+            logger.info("Transaction %s already completed (order %s)", transaction.payment_id, order_id)
             return web.Response(status=200)
 
         if (
@@ -415,12 +424,30 @@ async def handle_yookassa_webhook(request):
             logger.warning("YooKassa payment id mismatch for order %s", order_id)
 
         if status == "succeeded" or event == "payment.succeeded":
-            user = await get_or_create_user(transaction.user_id)
-            await add_credits(user.telegram_id, transaction.credits)
-            await update_transaction_status(order_id, "completed")
-            referral_bonus = await credit_first_payment_referral_bonus(
-                user.telegram_id, transaction.credits, transaction.amount_rub
-            )
+            try:
+                user = await get_or_create_user(transaction.user_id)
+                logger.info(
+                    "Crediting %s credits to user %s for order %s (payment %s)",
+                    transaction.credits,
+                    user.telegram_id,
+                    order_id,
+                    payment.get("id"),
+                )
+
+                await add_credits(user.telegram_id, transaction.credits)
+                await update_transaction_status(order_id, "completed")
+                referral_bonus = await credit_first_payment_referral_bonus(
+                    user.telegram_id, transaction.credits, transaction.amount_rub
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to credit user for YooKassa payment %s / order %s: %s",
+                    payment.get("id"),
+                    order_id,
+                    exc,
+                )
+                # Return 200 to acknowledge webhook (YooKassa will retry if necessary)
+                return web.Response(status=200)
 
             bonus_text = ""
             if referral_bonus.get("mode") == "partner":
