@@ -11,9 +11,12 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import replicate
+from dotenv import load_dotenv
 
 from bot.config import config
 
+# Load environment variables from .env when running locally/tests
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 
