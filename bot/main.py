@@ -216,20 +216,84 @@ async def handle_telegram_webhook(
 async def handle_kling_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kling API (PiAPI)"""
     try:
+        # Verify Replicate webhook signature if configured
+        from bot.config import config as _config
+
+        def _verify_replicate_signature(
+            secret: str, body: bytes, headers: dict
+        ) -> bool:
+            """Verify HMAC SHA256 signature using common header names.
+
+            Replicate may send signatures in a header such as:
+            - 'x-replicate-signature'
+            - 'x-signature'
+            - 'replicate-signature'
+
+            The header format may be 'sha256=HEX' or plain HEX. We try a few
+            common variants. If secret is empty — verification is skipped.
+            """
+            if not secret:
+                return True
+            import hashlib
+            import hmac
+
+            body_bytes = (
+                body if isinstance(body, (bytes, bytearray)) else body.encode("utf-8")
+            )
+
+            # Candidate headers to check
+            candidates = [
+                headers.get("x-replicate-signature"),
+                headers.get("x-signature"),
+                headers.get("replicate-signature"),
+                headers.get("signature"),
+            ]
+
+            for sig in candidates:
+                if not sig:
+                    continue
+                # Normalize: remove leading 'sha256=' if present
+                if isinstance(sig, str) and sig.startswith("sha256="):
+                    sig_val = sig.split("=", 1)[1]
+                else:
+                    sig_val = sig
+
+                try:
+                    computed = hmac.new(
+                        secret.encode("utf-8"), body_bytes, hashlib.sha256
+                    ).hexdigest()
+                    if hmac.compare_digest(computed, sig_val):
+                        return True
+                except Exception:
+                    # If header isn't hex or parse fails, skip
+                    continue
+            return False
+
+        # Read raw body for verification
+        raw_body = await request.read()
+        if not _verify_replicate_signature(
+            _config.REPLICATE_WEBHOOK_SECRET, raw_body, dict(request.headers)
+        ):
+            logger.warning(
+                "Rejected Kling webhook: replicate signature verification failed"
+            )
+            return web.Response(status=200)
+
+        # Rewind body for normal processing: aiohttp request.text() uses internal stream
+        # We'll load the JSON from raw_body below instead of calling request.text() twice.
         # Логируем все заголовки для отладки
         logger.info(f"Kling webhook headers: {dict(request.headers)}")
 
         # Проверяем, есть ли данные в теле запроса
-        body = await request.text()
-        logger.info(f"Kling webhook raw body: {repr(body)}")
-
-        if not body:
+        if not raw_body:
             logger.warning("Kling webhook received empty body")
             return web.Response(status=200)
 
         try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
+            body_text = raw_body.decode("utf-8")
+            logger.info(f"Kling webhook raw body: {repr(body_text)}")
+            data = json.loads(body_text)
+        except Exception as e:
             logger.warning(f"Kling webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
@@ -856,6 +920,11 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
+
+    # Вебхук Replicate (Runway)
+    # We reuse the same handler which can parse multiple vendor payloads,
+    # but keep a dedicated route so providers can be configured separately.
+    app.router.add_post("/webhook/replicate", handle_kling_webhook)
 
     # Вебхук Seedream (Novita AI)
     app.router.add_post("/webhook/seedream", handle_seedream_webhook)

@@ -1,66 +1,1196 @@
-Seedream 5.0 lite
-Seedream 5.0 lite is ByteDance’s latest image generation model. It goes beyond standard text-to-image by adding multi-step reasoning, example-based editing, and deep domain knowledge to the generation process.
 
-What’s new in 5.0
-Example-based editing
-Instead of describing a complex edit in words, show the model what you want. Give it a before/after pair, then a new image — the model figures out what changed and applies the same transformation. This works for material swaps, style transfers, scene changes, and more.
+Create a prediction
 
-Logical reasoning
-Seedream 5.0 reasons through spatial relationships, physics, and processes. Ask it to put objects on a seesaw with correct weight distribution, draw a clock with hands in the right positions, or illustrate a metamorphosis across life stages — it gets the details right.
+predictions.create
+Headers
+Prefer
+string
+Leave the request open and wait for the model to finish generating output. Set to wait=n where n is a number of seconds between 1 and 60.
 
-Deep domain knowledge
-The model understands professional conventions across architecture, science, health, and design. Feed it a floor plan sketch and get a photorealistic interior rendering. Ask for a scientific cross-section diagram and get labeled, accurate illustrations.
+See sync mode for more information.
 
-Features
-Text-to-image: Generate images from text prompts with strong aesthetic quality
-Image-to-image: Edit existing images using natural language instructions
-Multi-image blending: Combine up to 14 reference images with text to create new compositions
-Sequential batch generation: Generate sets of related images (storyboards, brand identity packages, character sheets) in one request
-Text rendering: Accurate typography with support for multiple languages — wrap text in double quotes for best results
-Output format: PNG or JPEG output
-Resolutions
-2K: Up to 2048px base dimension
-3K: Up to 3072px base dimension
-Supported aspect ratios: 1:1, 4:3, 3:4, 16:9, 9:16, 3:2, 2:3, 21:9
+Show less
+Cancel-After
+string
+The maximum time the prediction can run before it is automatically canceled. The lifetime is measured from when the prediction is created.
 
-Prompting tips
-Use natural language, not keyword lists. “A girl in a lavish dress walking under a parasol along a tree-lined path, in the style of a Monet oil painting” works better than “girl, umbrella, tree-lined street, oil painting texture.”
-Use double quotes for text rendering. If you want specific text in your image, wrap it in double quotation marks.
-Be specific about what to keep. When editing, tell the model what shouldn’t change: “Replace the hat with a crown, keeping the pose and expression unchanged.”
-For example-based editing, show don’t tell. When the transformation is hard to describe in words, provide a before/after example pair as input images.
-Specify your use case. Telling the model “Design a logo for a gaming company” gives better results than just describing the visual elements.
-API quickstart
+The duration can be specified as string with an optional unit suffix:
+
+s for seconds (e.g., 30s, 90s)
+m for minutes (e.g., 5m, 15m)
+h for hours (e.g., 1h, 2h30m)
+defaults to seconds if no unit suffix is provided (e.g. 30 is the same as 30s)
+You can combine units for more precision (e.g., 1h30m45s).
+
+The minimum allowed duration is 5 seconds.
+
+Show less
+Request body
+input
+object
+Required
+The model's input as a JSON object. The input schema depends on what model you are running. To see the available inputs, click the "API" tab on the model you are running or get the model version and look at its openapi_schema property. For example, stability-ai/sdxl takes prompt as an input.
+
+Files should be passed as HTTP URLs or data URLs.
+
+Use an HTTP URL when:
+
+you have a large file > 256kb
+you want to be able to use the file multiple times
+you want your prediction metadata to be associable with your input files
+Use a data URL when:
+
+you have a small file <= 256kb
+you don't want to upload and host the file somewhere
+you don't need to use the file again (Replicate will not store it)
+Show less
+webhook
+string
+An HTTPS URL for receiving a webhook when the prediction has new output. The webhook will be a POST request where the request body is the same as the response body of the get prediction operation. If there are network problems, we will retry the webhook a few times, so make sure it can be safely called more than once. Replicate will not follow redirects when sending webhook requests to your service, so be sure to specify a URL that will resolve without redirecting.
+
+Show less
+webhook_events_filter
+array
+By default, we will send requests to your webhook URL whenever there are new outputs or the prediction has finished. You can change which events trigger webhook requests by specifying webhook_events_filter in the prediction request:
+
+start: immediately on prediction start
+output: each time a prediction generates an output (note that predictions can generate multiple outputs)
+logs: each time log output is generated by a prediction
+completed: when the prediction reaches a terminal state (succeeded/canceled/failed)
+For example, if you only wanted requests to be sent at the start and end of the prediction, you would provide:
+
+{
+  "version": "5c7d5dc6dd8bf75c1acaa8565735e7986bc5b66206b55cca93cb72c9bf15ccaa",
+  "input": {
+    "text": "Alice"
+  },
+  "webhook": "https://example.com/my-webhook",
+  "webhook_events_filter": ["start", "completed"]
+}
+Requests for event types output and logs will be sent at most once every 500ms. If you request start and completed webhooks, then they'll always be sent regardless of throttling.
+
+Show less
+Examples
+
+Create
+Create a prediction and get the output
+
+
+Webhooks
+Make a request
+/predictions
 import replicate
 
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
 output = replicate.run(
-    "bytedance/seedream-5",
-    input={
-        "prompt": "A color film-inspired portrait with shallow depth of field, fine grain suggesting high ISO film stock, candid documentary style",
-        "size": "2K",
-        "aspect_ratio": "3:2",
-    }
+    "runwayml/gen-4.5",
+    input=input
 )
 
-print(output)
+# To access the file URL:
+print(output.url)
+#=> "https://replicate.delivery/.../output.mp4"
 
-Copy
-With image input
-output = replicate.run(
-    "bytedance/seedream-5",
-    input={
-        "prompt": "Transform the color grading to match a Wong Kar-wai film — saturated teal shadows, warm amber highlights, soft diffusion",
-        "image_input": ["https://example.com/portrait.jpg"],
-        "size": "2K",
-    }
-)
+# To write the file to disk:
+with open("output.mp4", "wb") as file:
+    file.write(output.read())
+#=> output.mp4 written to disk
 
 Copy
-Batch generation
+
+Get a prediction
+
+predictions.get
+Input parameters
+prediction_id
+string
+Required
+The ID of the prediction to get.
+Examples
+
+Get
+Get the latest version of a prediction by id
+
+Make a request
+/predictions/{prediction_id}
+import replicate
+
+prediction = replicate.predictions.get(prediction_id)
+print(prediction)
+#=> Prediction(id="xyz...", status="successful", ... )
+
+Copy
+
+Cancel a prediction
+
+predictions.cancel
+Input parameters
+prediction_id
+string
+Required
+The ID of the prediction to cancel.
+Examples
+
+Cancel
+Cancel an in progress prediction
+
+Make a request
+/predictions/{prediction_id}/cancel
+import replicate
+
+prediction = replicate.predictions.get(prediction_id)
+prediction.cancel()
+print(prediction)
+#=> Prediction(id="xyz...", status="canceled", ... )
+
+Copy
+
+List predictions
+
+predictions.list
+Examples
+
+List
+List the first page of your predictions
+
+
+Paginate
+Make a request
+/predictions
+import replicate
+
+predictions = replicate.predictions.list()
+print(predictions.results)
+#=> [Prediction(id="xyz...", status="successful", ... ), Prediction(id="abc...", status="successful", ... )]
+## Basic model info
+
+Model name: runwayml/gen-4.5
+Model description: State-of-the-art video motion quality, prompt adherence and visual fidelity
+
+
+## Model inputs
+
+- prompt (required): Text prompt for video generation (string)
+- image (optional): Optional initial image for video generation (first frame). If not provided, video will be generated from text only. (string)
+- aspect_ratio (optional): Video aspect ratio (string)
+- duration (optional): Duration of the output video in seconds (integer)
+- seed (optional): Random seed. Set for reproducible generation (integer)
+
+
+## Model output schema
+
+{
+  "type": "string",
+  "title": "Output",
+  "format": "uri"
+}
+
+If the input or output schema includes a format of URI, it is referring to a file.
+
+
+## Example inputs and outputs
+
+Use these example outputs to better understand the types of inputs the model accepts, and the types of outputs the model returns:
+
+### Example (https://replicate.com/p/3w3dfb5wxdrmw0cwdt1v9ngfw0)
+
+#### Input
+
+```json
+{
+  "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/AlfC7qolTq1YXysS5Aak9WavhusB7WtrgUu6GEpZCoBIlWELA/tmp82ivy7af.mp4"
+```
+
+
+### Example (https://replicate.com/p/dvj6f7jd7xrmt0cwe59b2fm4xg)
+
+#### Input
+
+```json
+{
+  "prompt": "A raccoon in a plain room in zero gravity trying to steal the garbage from a silver trash can. The garbage floats out in zero gravity. Handheld documentary film style. Natural camera shake. Raw indie film aesthetic. Natural lighting. Unpolished, authentic look. Low budget realism. Observational feel.",
+  "duration": 5,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/yW6nHlIueOVEOKdj2yKfwpNuRxQxht7cFOfAre90Z1tfAFHxC/tmpnu5_sor8.mp4"
+```
+
+
+### Example (https://replicate.com/p/361ccda5wdrmy0cwe5ka3yv2j0)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/sKeeGbf5VkE38JUpOy7E1zgZvXoCKhU53N1TUBICEJWu9xRsA/tmpa37inqbf.mp4"
+```
+
+
+### Example (https://replicate.com/p/jz724z76kxrmr0cwe5nabrh4zm)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back. indie aesthetic, daytime",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/ufGgt53erfVj2pCKXfyswhqCAWoFQT8fTSnjvb5dxGfj0QOiF/tmpogqc4fdt.mp4"
+```
+
+
+## Model readme
+
+> # 🎬 Runway Gen-4.5
+> 
+> **Runway Gen-4.5** is the world’s top-rated video generation model, delivering unprecedented visual fidelity, cinematic realism, and precise creative control. It empowers creators and organizations to produce highly dynamic, controllable, and visually stunning video content at scale.
+> 
+> ---
+> 
+> ## 🚀 Overview
+> 
+> Two years ago, **Gen-1** introduced the first publicly available video generation model, creating an entirely new category of creative tools. Since then, Runway has led the industry in advancing controllable and high-performance video models.
+> 
+> **Gen-4.5** represents the next major leap in video generation — improving both:
+> 
+> - **Pre-training data efficiency**
+> - **Post-training optimization techniques**
+> - **Dynamic action generation**
+> - **Temporal consistency**
+> - **Precise controllability**
+> 
+> With **1,247 Elo points**, Gen-4.5 holds the **#1 position** in the Artificial Analysis Text-to-Video Benchmark (as of November 30, 2025).
+> 
+> Gen-4.5 maintains the speed and efficiency of Gen-4 while delivering breakthrough quality — all at comparable pricing across subscription plans.
+> 
+> ---
+> 
+> ## 🏆 Benchmark Leadership
+> 
+> - **#1 Ranked** in Artificial Analysis Text-to-Video Leaderboard  
+> - **1,247 Elo Score**
+> - Surpasses all competing video generation models
+> 
+> ---
+> 
+> ## ✨ Core Capabilities
+> 
+> ### 🎯 Precise Prompt Adherence
+> 
+> Gen-4.5 achieves unprecedented physical accuracy and visual precision:
+> 
+> - Realistic weight, momentum, and force in object motion  
+> - Accurate liquid dynamics  
+> - High-fidelity surface rendering  
+> - Coherent fine details (hair strands, fabric weave, textures) across motion  
+> 
+> ---
+> 
+> ### 🎬 Complex Scene Generation
+> 
+> #### 🧩 Intricate Multi-Element Scenes
+> Highly detailed environments rendered with precision and consistency.
+> 
+> #### 🖼 Detailed Compositions
+> Precise placement and fluid motion for characters and objects.
+> 
+> #### ⚙️ Physical Accuracy
+> Believable collisions, natural motion, and consistent physics.
+> 
+> #### 🎭 Expressive Characters
+> Nuanced facial expressions, realistic gestures, and lifelike emotional depth.
+> 
+> ---
+> 
+> ## 🎨 Stylistic Control & Visual Consistency
+> 
+> Gen-4.5 supports a broad range of aesthetics while maintaining coherent visual language across frames.
+> 
+> ### 📸 Photorealistic
+> Visuals indistinguishable from real-world footage.
+> 
+> ### 🎨 Non-Photorealistic
+> Stylized and expressive animation unconstrained by realism.
+> 
+> ### 🏡 Slice of Life
+> Authentic everyday environments with true-to-life detail.
+> 
+> ### 🎥 Cinematic
+> Emotionally powerful visuals with striking depth and polish.
+> 
+> ---
+> 
+> ## ⚡ Performance & Deployment
+> 
+> ### 🖥 High-Performance Infrastructure
+> 
+> Gen-4.5 was developed entirely on **NVIDIA GPUs**, spanning:
+> 
+> - Initial research & development  
+> - Pre-training  
+> - Post-training  
+> - Inference  
+> 
+> Inference runs on:
+> - **NVIDIA Hopper GPUs**
+> - **NVIDIA Blackwell GPUs**
+> 
+> Through deep collaboration with NVIDIA, Runway has optimized:
+> 
+> - Training efficiency  
+> - Diffusion model optimization  
+> - Inference speed  
+> 
+> All without compromising quality.
+> 
+> > “This is an incredibly exciting time for video and world models.  
+> > We’re proud that Runway built their groundbreaking video and world model on NVIDIA GPUs…”  
+> > — Jensen Huang, President & CEO of NVIDIA
+> 
+> ---
+> 
+> ## 🏢 Early Access Enterprise Partners
+> 
+> Gen-4.5 is already in use across multiple industries:
+> 
+> - Retail & E-commerce  
+> - Marketing & Advertising  
+> - Gaming  
+> 
+> ---
+> 
+> ## 🧰 Supported Control Modes
+> 
+> Coming to Gen-4.5:
+> 
+> - Image-to-Video  
+> - Keyframes  
+> - Video-to-Video  
+> - Additional advanced control modes  
+> 
+> ---
+> 
+> ## ⚠️ Known Limitations
+> 
+> Despite significant advances, Gen-4.5 shares some limitations common to video generation systems:
+> 
+> ### 🔄 Causal Reasoning
+> Effects may sometimes precede causes  
+> (e.g., a door opening before the handle is pressed).
+> 
+> ### 🫥 Object Permanence
+> Objects may disappear or reappear unexpectedly across frames.
+> 
+> ### 🎯 Success Bias
+> Actions may succeed disproportionately  
+> (e.g., a poorly aimed kick still scoring a goal).
+> 
+> These challenges are especially relevant to world model research, where accurate representation of action outcomes is critical. Ongoing research aims to address these limitations.
+> 
+> ---
+> 
+> ## 🌍 Built for the Future of Video
+> 
+> Gen-4.5 pushes the frontier of video generation by combining:
+> 
+> - State-of-the-art realism  
+> - Fine-grained controllability  
+> - High-performance deployment  
+> - Broad accessibility  
+> 
+> It makes world-class video generation available to creators and enterprises at every scale.
+
+## Basic model info
+
+Model name: runwayml/gen-4.5
+Model description: State-of-the-art video motion quality, prompt adherence and visual fidelity
+
+
+## Model inputs
+
+- prompt (required): Text prompt for video generation (string)
+- image (optional): Optional initial image for video generation (first frame). If not provided, video will be generated from text only. (string)
+- aspect_ratio (optional): Video aspect ratio (string)
+- duration (optional): Duration of the output video in seconds (integer)
+- seed (optional): Random seed. Set for reproducible generation (integer)
+
+
+## Model output schema
+
+{
+  "type": "string",
+  "title": "Output",
+  "format": "uri"
+}
+
+If the input or output schema includes a format of URI, it is referring to a file.
+
+
+## Example inputs and outputs
+
+Use these example outputs to better understand the types of inputs the model accepts, and the types of outputs the model returns:
+
+### Example (https://replicate.com/p/3w3dfb5wxdrmw0cwdt1v9ngfw0)
+
+#### Input
+
+```json
+{
+  "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/AlfC7qolTq1YXysS5Aak9WavhusB7WtrgUu6GEpZCoBIlWELA/tmp82ivy7af.mp4"
+```
+
+
+### Example (https://replicate.com/p/dvj6f7jd7xrmt0cwe59b2fm4xg)
+
+#### Input
+
+```json
+{
+  "prompt": "A raccoon in a plain room in zero gravity trying to steal the garbage from a silver trash can. The garbage floats out in zero gravity. Handheld documentary film style. Natural camera shake. Raw indie film aesthetic. Natural lighting. Unpolished, authentic look. Low budget realism. Observational feel.",
+  "duration": 5,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/yW6nHlIueOVEOKdj2yKfwpNuRxQxht7cFOfAre90Z1tfAFHxC/tmpnu5_sor8.mp4"
+```
+
+
+### Example (https://replicate.com/p/361ccda5wdrmy0cwe5ka3yv2j0)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/sKeeGbf5VkE38JUpOy7E1zgZvXoCKhU53N1TUBICEJWu9xRsA/tmpa37inqbf.mp4"
+```
+
+
+### Example (https://replicate.com/p/jz724z76kxrmr0cwe5nabrh4zm)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back. indie aesthetic, daytime",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/ufGgt53erfVj2pCKXfyswhqCAWoFQT8fTSnjvb5dxGfj0QOiF/tmpogqc4fdt.mp4"
+```
+
+
+## Model readme
+
+> # 🎬 Runway Gen-4.5
+> 
+> **Runway Gen-4.5** is the world’s top-rated video generation model, delivering unprecedented visual fidelity, cinematic realism, and precise creative control. It empowers creators and organizations to produce highly dynamic, controllable, and visually stunning video content at scale.
+> 
+> ---
+> 
+> ## 🚀 Overview
+> 
+> Two years ago, **Gen-1** introduced the first publicly available video generation model, creating an entirely new category of creative tools. Since then, Runway has led the industry in advancing controllable and high-performance video models.
+> 
+> **Gen-4.5** represents the next major leap in video generation — improving both:
+> 
+> - **Pre-training data efficiency**
+> - **Post-training optimization techniques**
+> - **Dynamic action generation**
+> - **Temporal consistency**
+> - **Precise controllability**
+> 
+> With **1,247 Elo points**, Gen-4.5 holds the **#1 position** in the Artificial Analysis Text-to-Video Benchmark (as of November 30, 2025).
+> 
+> Gen-4.5 maintains the speed and efficiency of Gen-4 while delivering breakthrough quality — all at comparable pricing across subscription plans.
+> 
+> ---
+> 
+> ## 🏆 Benchmark Leadership
+> 
+> - **#1 Ranked** in Artificial Analysis Text-to-Video Leaderboard  
+> - **1,247 Elo Score**
+> - Surpasses all competing video generation models
+> 
+> ---
+> 
+> ## ✨ Core Capabilities
+> 
+> ### 🎯 Precise Prompt Adherence
+> 
+> Gen-4.5 achieves unprecedented physical accuracy and visual precision:
+> 
+> - Realistic weight, momentum, and force in object motion  
+> - Accurate liquid dynamics  
+> - High-fidelity surface rendering  
+> - Coherent fine details (hair strands, fabric weave, textures) across motion  
+> 
+> ---
+> 
+> ### 🎬 Complex Scene Generation
+> 
+> #### 🧩 Intricate Multi-Element Scenes
+> Highly detailed environments rendered with precision and consistency.
+> 
+> #### 🖼 Detailed Compositions
+> Precise placement and fluid motion for characters and objects.
+> 
+> #### ⚙️ Physical Accuracy
+> Believable collisions, natural motion, and consistent physics.
+> 
+> #### 🎭 Expressive Characters
+> Nuanced facial expressions, realistic gestures, and lifelike emotional depth.
+> 
+> ---
+> 
+> ## 🎨 Stylistic Control & Visual Consistency
+> 
+> Gen-4.5 supports a broad range of aesthetics while maintaining coherent visual language across frames.
+> 
+> ### 📸 Photorealistic
+> Visuals indistinguishable from real-world footage.
+> 
+> ### 🎨 Non-Photorealistic
+> Stylized and expressive animation unconstrained by realism.
+> 
+> ### 🏡 Slice of Life
+> Authentic everyday environments with true-to-life detail.
+> 
+> ### 🎥 Cinematic
+> Emotionally powerful visuals with striking depth and polish.
+> 
+> ---
+> 
+> ## ⚡ Performance & Deployment
+> 
+> ### 🖥 High-Performance Infrastructure
+> 
+> Gen-4.5 was developed entirely on **NVIDIA GPUs**, spanning:
+> 
+> - Initial research & development  
+> - Pre-training  
+> - Post-training  
+> - Inference  
+> 
+> Inference runs on:
+> - **NVIDIA Hopper GPUs**
+> - **NVIDIA Blackwell GPUs**
+> 
+> Through deep collaboration with NVIDIA, Runway has optimized:
+> 
+> - Training efficiency  
+> - Diffusion model optimization  
+> - Inference speed  
+> 
+> All without compromising quality.
+> 
+> > “This is an incredibly exciting time for video and world models.  
+> > We’re proud that Runway built their groundbreaking video and world model on NVIDIA GPUs…”  
+> > — Jensen Huang, President & CEO of NVIDIA
+> 
+> ---
+> 
+> ## 🏢 Early Access Enterprise Partners
+> 
+> Gen-4.5 is already in use across multiple industries:
+> 
+> - Retail & E-commerce  
+> - Marketing & Advertising  
+> - Gaming  
+> 
+> ---
+> 
+> ## 🧰 Supported Control Modes
+> 
+> Coming to Gen-4.5:
+> 
+> - Image-to-Video  
+> - Keyframes  
+> - Video-to-Video  
+> - Additional advanced control modes  
+> 
+> ---
+> 
+> ## ⚠️ Known Limitations
+> 
+> Despite significant advances, Gen-4.5 shares some limitations common to video generation systems:
+> 
+> ### 🔄 Causal Reasoning
+> Effects may sometimes precede causes  
+> (e.g., a door opening before the handle is pressed).
+> 
+> ### 🫥 Object Permanence
+> Objects may disappear or reappear unexpectedly across frames.
+> 
+> ### 🎯 Success Bias
+> Actions may succeed disproportionately  
+> (e.g., a poorly aimed kick still scoring a goal).
+> 
+> These challenges are especially relevant to world model research, where accurate representation of action outcomes is critical. Ongoing research aims to address these limitations.
+> 
+> ---
+> 
+> ## 🌍 Built for the Future of Video
+> 
+> Gen-4.5 pushes the frontier of video generation by combining:
+> 
+> - State-of-the-art realism  
+> - Fine-grained controllability  
+> - High-performance deployment  
+> - Broad accessibility  
+> 
+> It makes world-class video generation available to creators and enterprises at every scale.
+
+## Basic model info
+
+Model name: runwayml/gen-4.5
+Model description: State-of-the-art video motion quality, prompt adherence and visual fidelity
+
+
+## Model inputs
+
+- prompt (required): Text prompt for video generation (string)
+- image (optional): Optional initial image for video generation (first frame). If not provided, video will be generated from text only. (string)
+- aspect_ratio (optional): Video aspect ratio (string)
+- duration (optional): Duration of the output video in seconds (integer)
+- seed (optional): Random seed. Set for reproducible generation (integer)
+
+
+## Model output schema
+
+{
+  "type": "string",
+  "title": "Output",
+  "format": "uri"
+}
+
+If the input or output schema includes a format of URI, it is referring to a file.
+
+
+## Example inputs and outputs
+
+Use these example outputs to better understand the types of inputs the model accepts, and the types of outputs the model returns:
+
+### Example (https://replicate.com/p/3w3dfb5wxdrmw0cwdt1v9ngfw0)
+
+#### Input
+
+```json
+{
+  "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/AlfC7qolTq1YXysS5Aak9WavhusB7WtrgUu6GEpZCoBIlWELA/tmp82ivy7af.mp4"
+```
+
+
+### Example (https://replicate.com/p/dvj6f7jd7xrmt0cwe59b2fm4xg)
+
+#### Input
+
+```json
+{
+  "prompt": "A raccoon in a plain room in zero gravity trying to steal the garbage from a silver trash can. The garbage floats out in zero gravity. Handheld documentary film style. Natural camera shake. Raw indie film aesthetic. Natural lighting. Unpolished, authentic look. Low budget realism. Observational feel.",
+  "duration": 5,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/yW6nHlIueOVEOKdj2yKfwpNuRxQxht7cFOfAre90Z1tfAFHxC/tmpnu5_sor8.mp4"
+```
+
+
+### Example (https://replicate.com/p/361ccda5wdrmy0cwe5ka3yv2j0)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/sKeeGbf5VkE38JUpOy7E1zgZvXoCKhU53N1TUBICEJWu9xRsA/tmpa37inqbf.mp4"
+```
+
+
+### Example (https://replicate.com/p/jz724z76kxrmr0cwe5nabrh4zm)
+
+#### Input
+
+```json
+{
+  "prompt": "A scene in new york city where all the cars and cabs start floating up. We see a girl watching the scene from the back. indie aesthetic, daytime",
+  "duration": 10,
+  "aspect_ratio": "16:9"
+}
+```
+
+#### Output
+
+```json
+"https://replicate.delivery/xezq/ufGgt53erfVj2pCKXfyswhqCAWoFQT8fTSnjvb5dxGfj0QOiF/tmpogqc4fdt.mp4"
+```
+
+
+## Model readme
+
+> # 🎬 Runway Gen-4.5
+> 
+> **Runway Gen-4.5** is the world’s top-rated video generation model, delivering unprecedented visual fidelity, cinematic realism, and precise creative control. It empowers creators and organizations to produce highly dynamic, controllable, and visually stunning video content at scale.
+> 
+> ---
+> 
+> ## 🚀 Overview
+> 
+> Two years ago, **Gen-1** introduced the first publicly available video generation model, creating an entirely new category of creative tools. Since then, Runway has led the industry in advancing controllable and high-performance video models.
+> 
+> **Gen-4.5** represents the next major leap in video generation — improving both:
+> 
+> - **Pre-training data efficiency**
+> - **Post-training optimization techniques**
+> - **Dynamic action generation**
+> - **Temporal consistency**
+> - **Precise controllability**
+> 
+> With **1,247 Elo points**, Gen-4.5 holds the **#1 position** in the Artificial Analysis Text-to-Video Benchmark (as of November 30, 2025).
+> 
+> Gen-4.5 maintains the speed and efficiency of Gen-4 while delivering breakthrough quality — all at comparable pricing across subscription plans.
+> 
+> ---
+> 
+> ## 🏆 Benchmark Leadership
+> 
+> - **#1 Ranked** in Artificial Analysis Text-to-Video Leaderboard  
+> - **1,247 Elo Score**
+> - Surpasses all competing video generation models
+> 
+> ---
+> 
+> ## ✨ Core Capabilities
+> 
+> ### 🎯 Precise Prompt Adherence
+> 
+> Gen-4.5 achieves unprecedented physical accuracy and visual precision:
+> 
+> - Realistic weight, momentum, and force in object motion  
+> - Accurate liquid dynamics  
+> - High-fidelity surface rendering  
+> - Coherent fine details (hair strands, fabric weave, textures) across motion  
+> 
+> ---
+> 
+> ### 🎬 Complex Scene Generation
+> 
+> #### 🧩 Intricate Multi-Element Scenes
+> Highly detailed environments rendered with precision and consistency.
+> 
+> #### 🖼 Detailed Compositions
+> Precise placement and fluid motion for characters and objects.
+> 
+> #### ⚙️ Physical Accuracy
+> Believable collisions, natural motion, and consistent physics.
+> 
+> #### 🎭 Expressive Characters
+> Nuanced facial expressions, realistic gestures, and lifelike emotional depth.
+> 
+> ---
+> 
+> ## 🎨 Stylistic Control & Visual Consistency
+> 
+> Gen-4.5 supports a broad range of aesthetics while maintaining coherent visual language across frames.
+> 
+> ### 📸 Photorealistic
+> Visuals indistinguishable from real-world footage.
+> 
+> ### 🎨 Non-Photorealistic
+> Stylized and expressive animation unconstrained by realism.
+> 
+> ### 🏡 Slice of Life
+> Authentic everyday environments with true-to-life detail.
+> 
+> ### 🎥 Cinematic
+> Emotionally powerful visuals with striking depth and polish.
+> 
+> ---
+> 
+> ## ⚡ Performance & Deployment
+> 
+> ### 🖥 High-Performance Infrastructure
+> 
+> Gen-4.5 was developed entirely on **NVIDIA GPUs**, spanning:
+> 
+> - Initial research & development  
+> - Pre-training  
+> - Post-training  
+> - Inference  
+> 
+> Inference runs on:
+> - **NVIDIA Hopper GPUs**
+> - **NVIDIA Blackwell GPUs**
+> 
+> Through deep collaboration with NVIDIA, Runway has optimized:
+> 
+> - Training efficiency  
+> - Diffusion model optimization  
+> - Inference speed  
+> 
+> All without compromising quality.
+> 
+> > “This is an incredibly exciting time for video and world models.  
+> > We’re proud that Runway built their groundbreaking video and world model on NVIDIA GPUs…”  
+> > — Jensen Huang, President & CEO of NVIDIA
+> 
+> ---
+> 
+> ## 🏢 Early Access Enterprise Partners
+> 
+> Gen-4.5 is already in use across multiple industries:
+> 
+> - Retail & E-commerce  
+> - Marketing & Advertising  
+> - Gaming  
+> 
+> ---
+> 
+> ## 🧰 Supported Control Modes
+> 
+> Coming to Gen-4.5:
+> 
+> - Image-to-Video  
+> - Keyframes  
+> - Video-to-Video  
+> - Additional advanced control modes  
+> 
+> ---
+> 
+> ## ⚠️ Known Limitations
+> 
+> Despite significant advances, Gen-4.5 shares some limitations common to video generation systems:
+> 
+> ### 🔄 Causal Reasoning
+> Effects may sometimes precede causes  
+> (e.g., a door opening before the handle is pressed).
+> 
+> ### 🫥 Object Permanence
+> Objects may disappear or reappear unexpectedly across frames.
+> 
+> ### 🎯 Success Bias
+> Actions may succeed disproportionately  
+> (e.g., a poorly aimed kick still scoring a goal).
+> 
+> These challenges are especially relevant to world model research, where accurate representation of action outcomes is critical. Ongoing research aims to address these limitations.
+> 
+> ---
+> 
+> ## 🌍 Built for the Future of Video
+> 
+> Gen-4.5 pushes the frontier of video generation by combining:
+> 
+> - State-of-the-art realism  
+> - Fine-grained controllability  
+> - High-performance deployment  
+> - Broad accessibility  
+> 
+> It makes world-class video generation available to creators and enterprises at every scale.
+Authentication
+Whenever you make an API request, you need to authenticate using a token. A token is like a password that uniquely identifies your account and grants you access.
+
+The following examples all expect your Replicate access token to be available from the command line. Because tokens are secrets, they should not be in your code. They should instead be stored in environment variables. Replicate clients look for the REPLICATE_API_TOKEN environment variable and use it if available.
+
+To set this up you can use:
+
+export REPLICATE_API_TOKEN=r8_FjT**********************************
+
+Visibility
+
+Copy
+Some application frameworks and tools also support a text file named .env which you can edit to include the same token:
+
+REPLICATE_API_TOKEN=r8_FjT**********************************
+
+Visibility
+
+Copy
+The Replicate API uses the Authorization HTTP header to authenticate requests. If you’re using a client library this is handled for you.
+
+You can test that your access token is setup correctly by using our account.get endpoint:
+
+What is cURL?
+curl https://api.replicate.com/v1/account -H "Authorization: Bearer $REPLICATE_API_TOKEN"
+# {"type":"user","username":"aron","name":"Aron Carroll","github_url":"https://github.com/aron"}
+
+Copy
+If it is working correctly you will see a JSON object returned containing some information about your account, otherwise ensure that your token is available:
+
+echo "$REPLICATE_API_TOKEN"
+# "r8_xyz"
+
+Copy
+Setup
+First you’ll need to ensure you have a Python environment setup:
+
+python -m venv .venv
+source .venv/bin/activate
+
+Copy
+Then install the replicate Python library:
+
+pip install replicate
+
+Copy
+In a main.py file, import replicate:
+
+import replicate
+
+Copy
+This will use the REPLICATE_API_TOKEN API token you’ve set up in your environment for authorization.
+
+Run the model
+Use the replicate.run() method to run the model:
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
 output = replicate.run(
-    "bytedance/seedream-5",
-    input={
-        "prompt": "A series of 4 coherent illustrations of a courtyard across the four seasons",
-        "sequential_image_generation": "auto",
-        "max_images": 4,
-    }
+    "runwayml/gen-4.5",
+    input=input
 )
+
+# To access the file URL:
+print(output.url)
+#=> "https://replicate.delivery/.../output.mp4"
+
+# To write the file to disk:
+with open("output.mp4", "wb") as file:
+    file.write(output.read())
+#=> output.mp4 written to disk
+
+Copy
+You can learn about pricing for this model on the model page.
+
+The run() function returns the output directly, which you can then use or pass as the input to another model. If you want to access the full prediction object (not just the output), use the replicate.predictions.create() method instead. This will return a Prediction object that includes the prediction id, status, logs, etc.
+
+File inputs
+This model accepts files as input, e.g. image. You can provide a file as input using a URL, a local file on your computer, or a base64 encoded object:
+
+Option 1: Hosted file
+Use a URL as in the earlier example:
+
+image = "https://example.com/path/to/image.png";
+
+Copy
+This is useful if you already have a file hosted somewhere on the internet.
+
+Option 2: Local file
+You can provide Replicate with a file object and the library will handle the upload for you:
+
+image = open("./path/to/my/image.png", "rb");
+
+Copy
+Option 3: Data URI
+Lastly, you can create a data URI consisting of the base64 encoded data for your file, but this is only recommended if the file is < 1mb:
+
+import base64
+
+with open("./path/to/my/image.png", 'rb') as file:
+  data = base64.b64encode(file.read()).decode('utf-8')
+  image = f"data:application/octet-stream;base64,{data}"
+
+Copy
+Then pass the file as part of the input:
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10,
+    "image": image
+}
+
+output = replicate.run(
+    "runwayml/gen-4.5",
+    input=input
+)
+
+# To access the file URL:
+print(output.url)
+#=> "https://replicate.delivery/.../output.mp4"
+
+# To write the file to disk:
+with open("output.mp4", "wb") as file:
+    file.write(output.read())
+#=> output.mp4 written to disk
+
+Copy
+Prediction lifecycle
+Running predictions and trainings can often take significant time to complete, beyond what is reasonable for an HTTP request/response.
+
+When you run a model on Replicate, the prediction is created with a “starting” state, then instantly returned. This will then move to "processing" and eventual one of “successful”, "failed" or "canceled".
+
+Starting
+Running
+Succeeded
+Failed
+Canceled
+You can explore the prediction lifecycle by using the prediction.reload() method update the prediction to it's latest state.
+
+Show example
+Webhooks
+Webhooks provide real-time updates about your prediction. Specify an endpoint when you create a prediction, and Replicate will send HTTP POST requests to that URL when the prediction is created, updated, and finished.
+
+It is possible to provide a URL to the predictions.create() function that will be requested by Replicate when the prediction status changes. This is an alternative to polling.
+
+To receive webhooks you’ll need a web server. The following example uses AIOHTTP, a basic webserver built on top of Python’s asyncio library, but this pattern will apply to most frameworks.
+
+Show example
+Then create the prediction passing in the webhook URL and specify which events you want to receive out of "start" , "output" ”logs” and "completed".
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
+callback_url = "https://my.app/webhooks/replicate"
+replicate.predictions.create(
+  model="runwayml/gen-4.5",
+  input=input,
+  webhook=callback_url,
+  webhook_events_filter=["completed"]
+)
+
+# The server will now handle the event and log:
+#=> Prediction(id='z3wbih3bs64of7lmykbk7tsdf4', ...)
+
+Copy
+The replicate.run() method is not used here. Because we're using webhooks, and we don’t need to poll for updates.
+
+From a security perspective it is also possible to verify that the webhook came from Replicate, check out our documentation on verifying webhooks for more information.
+
+Access a prediction
+You may wish to access the prediction object. In these cases it’s easier to use the replicate.predictions.create() function, which return the prediction object.
+
+Though note that these functions will only return the created prediction, and it will not wait for that prediction to be completed before returning. Use replicate.predictions.get() to fetch the latest prediction.
+
+import replicate
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
+prediction = replicate.predictions.create(
+  model="runwayml/gen-4.5",
+  input=input
+)
+#=> Prediction(id='z3wbih3bs64of7lmykbk7tsdf4', ...)
+
+Copy
+Cancel a prediction
+You may need to cancel a prediction. Perhaps the user has navigated away from the browser or canceled your application. To prevent unnecessary work and reduce runtime costs you can use prediction.cancel() method to call the predictions.cancel endpoint.
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
+prediction = replicate.predictions.create(
+  model="runwayml/gen-4.5",
+  input=input
+)
+
+prediction.cancel()
+
+Copy
+Async Python methods
+asyncio is a module built into Python's standard library for writing concurrent code using the async/await syntax.
+
+Replicate's Python client has support for asyncio. Each of the methods has an async equivalent prefixed with async_<name>.
+
+input = {
+    "prompt": "A dense, verdant jungle world made up of small lego-like pieces. We see a rainbow chameleon running through the 3D world, the camera in and out of focus.",
+    "duration": 10
+}
+
+prediction = replicate.predictions.create(
+  model="runwayml/gen-4.5",
+  input=input
+)
+
+prediction = await replicate.predictions.async_create(
+  model="runwayml/gen-4.5",
+  input=input
+) в пректе

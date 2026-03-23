@@ -30,6 +30,9 @@ class Config:
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
     REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
+    # Optional secret used to verify incoming Replicate webhooks (HMAC SHA256).
+    # If set, the webhook handler will validate signatures to prevent spoofing.
+    REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -129,6 +132,10 @@ class Config:
     @property
     def kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"
+
+    @property
+    def replicate_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/webhook/replicate"
 
     @property
     def seedream_notification_url(self) -> str:

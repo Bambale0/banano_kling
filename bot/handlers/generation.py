@@ -5784,12 +5784,18 @@ async def start_no_preset_video_from_message(
             webhook_url_runway = (
                 config.kling_notification_url if config.WEBHOOK_HOST else None
             )  # Reuse kling webhook for now
+            # Pass both bytes references and URL references when available.
+            raw_refs = data.get("reference_images", [])
             result = await _runway_service.generate_video(
                 prompt=prompt,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 image_url=image_url_runway,
                 reference_image_urls=ref_urls if ref_urls else None,
+                reference_images=[
+                    r for r in raw_refs if isinstance(r, (bytes, bytearray))
+                ]
+                or None,
                 webhook_url=webhook_url_runway,
             )
         # Для v_type="video" используем motion_control с video_url
