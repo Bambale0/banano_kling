@@ -241,32 +241,59 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 body if isinstance(body, (bytes, bytearray)) else body.encode("utf-8")
             )
 
-            # Candidate headers to check
+            # Candidate headers to check. Some providers (Replicate/Runway)
+            # may use different header names such as 'webhook-signature'.
             candidates = [
                 headers.get("x-replicate-signature"),
                 headers.get("x-signature"),
                 headers.get("replicate-signature"),
                 headers.get("signature"),
+                headers.get("webhook-signature"),
             ]
+
+            secret_bytes = secret.encode("utf-8")
 
             for sig in candidates:
                 if not sig:
                     continue
-                # Normalize: remove leading 'sha256=' if present
-                if isinstance(sig, str) and sig.startswith("sha256="):
-                    sig_val = sig.split("=", 1)[1]
-                else:
-                    sig_val = sig
 
+                # Header may contain prefixes or comma-separated values like 'v1,<sig>'
+                # or 'sha256=<hex>'. Normalize to the actual token part.
+                sig_str = sig if isinstance(sig, str) else str(sig)
+                # If comma-separated, take the last non-empty part
+                parts = [p.strip() for p in sig_str.split(",") if p.strip()]
+                sig_candidate = parts[-1]
+
+                # Remove common scheme prefixes
+                if sig_candidate.startswith("sha256="):
+                    sig_val = sig_candidate.split("=", 1)[1]
+                elif sig_candidate.startswith("v1="):
+                    sig_val = sig_candidate.split("=", 1)[1]
+                else:
+                    sig_val = sig_candidate
+
+                # Try hex comparison (common 'sha256=HEX' or plain HEX)
                 try:
-                    computed = hmac.new(
-                        secret.encode("utf-8"), body_bytes, hashlib.sha256
-                    ).hexdigest()
-                    if hmac.compare_digest(computed, sig_val):
+                    computed_hex = hmac.new(secret_bytes, body_bytes, hashlib.sha256).hexdigest()
+                    if hmac.compare_digest(computed_hex, sig_val):
                         return True
                 except Exception:
-                    # If header isn't hex or parse fails, skip
-                    continue
+                    pass
+
+                # Try base64 comparison (some gateways use base64-encoded signature)
+                try:
+                    import base64
+
+                    computed_b64 = base64.b64encode(
+                        hmac.new(secret_bytes, body_bytes, hashlib.sha256).digest()
+                    ).decode()
+                    # Compare with padding and without padding
+                    if hmac.compare_digest(computed_b64, sig_val):
+                        return True
+                    if hmac.compare_digest(computed_b64.rstrip("="), sig_val.rstrip("=")):
+                        return True
+                except Exception:
+                    pass
             return False
 
         # Read raw body for verification

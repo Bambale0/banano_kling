@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Optional
+import re
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -5779,7 +5780,6 @@ async def start_no_preset_video_from_message(
                 )
         elif v_model == "runway_gen45":
             from bot.services.runway_service import runway_service as _runway_service
-
             image_url_runway = image_url if v_type == "imgtxt" else None
             # Use the dedicated Replicate webhook endpoint so Runway/Replicate
             # callbacks arrive at /webhook/replicate rather than the Kling
@@ -5790,8 +5790,40 @@ async def start_no_preset_video_from_message(
             )
             # Pass both bytes references and URL references when available.
             raw_refs = data.get("reference_images", [])
+            # Simplify prompt before sending to Runway to avoid overly long
+            # or noisy inputs (collapse whitespace, remove parentheses/HTML,
+            # strip mentions/hashtags and truncate).
+            def _simplify_prompt_for_runway(p: str, max_chars: int = 800) -> str:
+                if not p:
+                    return p
+                s = p
+                # Collapse whitespace/newlines
+                s = re.sub(r"\s+", " ", s).strip()
+                # Remove parenthetical content which often contains meta notes
+                s = re.sub(r"\([^\)]*\)", "", s)
+                # Strip simple HTML tags if present
+                s = re.sub(r"<[^>]+>", "", s)
+                # Remove @mentions and #hashtags
+                s = re.sub(r"[@#]\S+", "", s)
+                # Collapse extra spaces again
+                s = re.sub(r"\s+", " ", s).strip()
+                # Truncate to last full word under max_chars
+                if len(s) > max_chars:
+                    s = s[:max_chars]
+                    # avoid cutting in middle of word
+                    if " " in s:
+                        s = s.rsplit(" ", 1)[0]
+                return s
+
+            simplified_prompt = _simplify_prompt_for_runway(prompt)
+            logger.info(
+                "Runway: sending simplified prompt (len %d -> %d)",
+                len(prompt or ""),
+                len(simplified_prompt or ""),
+            )
+
             result = await _runway_service.generate_video(
-                prompt=prompt,
+                prompt=simplified_prompt,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 image_url=image_url_runway,
