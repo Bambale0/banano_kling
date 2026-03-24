@@ -5823,6 +5823,9 @@ async def start_no_preset_video_from_message(
                 len(simplified_prompt or ""),
             )
 
+            # Do not auto-save characters. Use the freshly uploaded/attached
+            # reference images for this single generation request — users
+            # explicitly upload new photos/refs for each generation.
             result = await _runway_service.generate_video(
                 prompt=simplified_prompt,
                 duration=v_duration,

@@ -7,7 +7,10 @@ Docs: runway.md
 
 import asyncio
 import base64
+import hashlib
+import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import replicate
@@ -18,6 +21,59 @@ from bot.config import config
 # Load environment variables from .env when running locally/tests
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# Persistent store for saved characters/references. This file contains a
+# mapping of character_id -> {name, refs: [data_uri_or_url], tags: [...]}
+CHARACTER_DB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data",
+    "runway_characters.json",
+)
+
+
+def _ensure_character_db():
+    parent = os.path.dirname(CHARACTER_DB_PATH)
+    if not os.path.exists(parent):
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except Exception:
+            logger.exception("Failed to create data directory for character DB")
+    if not os.path.exists(CHARACTER_DB_PATH):
+        try:
+            with open(CHARACTER_DB_PATH, "w", encoding="utf-8") as fh:
+                json.dump({}, fh)
+        except Exception:
+            logger.exception("Failed to initialize character DB file")
+
+
+def _load_character_db() -> Dict[str, Any]:
+    _ensure_character_db()
+    try:
+        with open(CHARACTER_DB_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except Exception:
+        logger.exception("Failed to load character DB")
+        return {}
+
+
+def _save_character_db(db: Dict[str, Any]) -> None:
+    try:
+        with open(CHARACTER_DB_PATH, "w", encoding="utf-8") as fh:
+            json.dump(db, fh, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("Failed to save character DB")
+
+
+def _bytes_to_data_uri(b: bytes) -> str:
+    return f"data:image/png;base64,{base64.b64encode(b).decode('utf-8')}"
+
+
+def _hash_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+
+# Ensure DB file exists on import
+_ensure_character_db()
 
 
 class RunwayService:
@@ -48,6 +104,61 @@ class RunwayService:
             )
             self.client = None
 
+    # ---------- Character / reference persistence API ----------
+    def save_character(
+        self,
+        name: str,
+        reference_image_urls: Optional[List[str]] = None,
+        reference_images: Optional[List[bytes]] = None,
+        tags: Optional[List[str]] = None,
+    ) -> str:
+        """Save a named character with reference images.
+
+        reference_images may be raw bytes (PNG/JPEG). Stored refs are kept as
+        data URIs (for bytes) or raw URLs. Returns the generated character id.
+        """
+        db = _load_character_db()
+        # Normalize refs to data URIs or strings
+        refs: List[str] = []
+        if reference_images:
+            for b in reference_images:
+                if isinstance(b, (bytes, bytearray)):
+                    refs.append(_bytes_to_data_uri(bytes(b)))
+        if reference_image_urls:
+            for u in reference_image_urls:
+                refs.append(u)
+
+        # Create a stable id from name + refs
+        digest = hashlib.sha1((name + "|" + ",".join(refs)).encode("utf-8")).hexdigest()
+        char_id = f"ch_{digest[:16]}"
+        db[char_id] = {"id": char_id, "name": name, "refs": refs, "tags": tags or []}
+        _save_character_db(db)
+        logger.info(f"Saved character {char_id} name={name} refs={len(refs)}")
+        return char_id
+
+    def get_character(self, char_id: str) -> Optional[Dict[str, Any]]:
+        db = _load_character_db()
+        return db.get(char_id)
+
+    def list_characters(self) -> List[Dict[str, Any]]:
+        db = _load_character_db()
+        return list(db.values())
+
+    def delete_character(self, char_id: str) -> bool:
+        db = _load_character_db()
+        if char_id in db:
+            del db[char_id]
+            _save_character_db(db)
+            logger.info(f"Deleted character {char_id}")
+            return True
+        return False
+
+    def _load_character_refs(self, char_id: str) -> List[str]:
+        ch = self.get_character(char_id)
+        if not ch:
+            return []
+        return ch.get("refs", [])
+
     async def generate_video(
         self,
         prompt: str,
@@ -56,6 +167,7 @@ class RunwayService:
         image_url: Optional[str] = None,
         reference_image_urls: Optional[List[str]] = None,
         reference_images: Optional[List[bytes]] = None,
+        character_id: Optional[str] = None,
         seed: Optional[int] = None,
         webhook_url: Optional[str] = None,
     ) -> Optional[Dict]:
@@ -73,6 +185,17 @@ class RunwayService:
         # Runway Gen-4.5 only accepts a single initial image, so we prefer the
         # explicit start image, then fall back to the first reference image.
         refs_combined: List[Any] = []
+
+        # If a saved character_id is provided, prefer its stored refs first
+        if character_id:
+            try:
+                saved = self._load_character_refs(character_id)
+                if saved:
+                    refs_combined.extend(saved)
+            except Exception:
+                logger.exception(f"Failed to load character refs for {character_id}")
+
+        # then include any explicitly provided images/urls
         if reference_images:
             refs_combined.extend(reference_images)
         if reference_image_urls:
@@ -173,8 +296,17 @@ class RunwayService:
                 # without associated output and makes behavior consistent when
                 # reference images cause the model to process synchronously.
                 if prediction.status in ["succeeded", "failed", "canceled"]:
+                    # The prediction finished synchronously. Include the
+                    # original prediction id so callers can record the
+                    # task and/or correlate webhooks. Keep the parsed
+                    # status and generated URLs provided by get_task_status.
                     parsed = await self.get_task_status(prediction.id)
+                    if isinstance(parsed, dict):
+                        parsed["task_id"] = prediction.id
                     return parsed
+
+                # Normal async case: return task id and current status so
+                # callers can store the task and wait for a webhook.
                 return {"task_id": prediction.id, "status": prediction.status}
 
             except asyncio.TimeoutError as te:
