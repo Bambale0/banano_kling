@@ -1,10 +1,13 @@
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+import aiosqlite
 from yookassa import Configuration, Payment
 
+from bot import database as db
 from bot.config import config
+from bot.database import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,8 @@ class YooKassaService:
             return {
                 "id": payment.id,
                 "status": payment.status,
-                "paid": payment.paid,
+                "paid": getattr(payment, "paid", False)
+                or getattr(payment, "paid_at", False),
                 "metadata": getattr(payment, "metadata", {}) or {},
                 "amount": getattr(payment, "amount", None),
                 "Raw": payment,
@@ -82,6 +86,112 @@ class YooKassaService:
         except Exception as exc:
             logger.exception("YooKassa payment lookup failed: %s", exc)
             return None
+
+    async def poll_pending_transactions(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Reconcile pending YooKassa transactions by querying YooKassa API.
+
+        This will look for transactions in the local DB with provider='yookassa' and
+        status='pending' and try to fetch their current state from YooKassa. If a
+        payment is confirmed/paid, the transaction will be marked 'completed' and
+        user credits will be credited. If the payment is failed/canceled, the
+        transaction will be marked 'failed'.
+
+        Returns list of results for diagnostics.
+        """
+        if not self.enabled:
+            logger.warning("YooKassa is not configured — skipping poll")
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        async with aiosqlite.connect(DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute(
+                "SELECT id, order_id, user_id, payment_id, credits FROM transactions WHERE provider = 'yookassa' AND status = 'pending' AND payment_id IS NOT NULL LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+
+        for row in rows:
+            order_id = row["order_id"]
+            payment_id = row["payment_id"]
+            user_id = row["user_id"]
+            credits = row["credits"]
+
+            try:
+                payment = await self.get_payment(payment_id)
+            except Exception as exc:
+                logger.exception("Error fetching payment %s: %s", payment_id, exc)
+                results.append(
+                    {"order_id": order_id, "payment_id": payment_id, "error": str(exc)}
+                )
+                continue
+
+            if not payment:
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "status": "not_found",
+                    }
+                )
+                continue
+
+            status = (payment.get("status") or "").lower()
+            paid = bool(payment.get("paid"))
+
+            # treat paid/succeeded as completed
+            if paid or status in ("succeeded", "paid", "captured"):
+                # credit user
+                telegram_id = await db.get_telegram_id_by_user_id(user_id)
+                if telegram_id:
+                    await db.add_credits(telegram_id, credits)
+                    await db.mark_user_paid(telegram_id)
+                await db.update_transaction_status(order_id, "completed")
+                logger.info(
+                    "Reconciled YooKassa payment %s -> completed (order=%s)",
+                    payment_id,
+                    order_id,
+                )
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "action": "completed",
+                    }
+                )
+                continue
+
+            # treat canceled/failed
+            if status in ("canceled", "failed", "rejected"):
+                await db.update_transaction_status(order_id, "failed")
+                logger.info(
+                    "Reconciled YooKassa payment %s -> failed (order=%s, status=%s)",
+                    payment_id,
+                    order_id,
+                    status,
+                )
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "action": "failed",
+                        "status": status,
+                    }
+                )
+                continue
+
+            # otherwise still pending
+            results.append(
+                {
+                    "order_id": order_id,
+                    "payment_id": payment_id,
+                    "action": "still_pending",
+                    "status": status,
+                }
+            )
+
+        return results
 
     @staticmethod
     def extract_order_id(payment: Any) -> Optional[str]:

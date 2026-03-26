@@ -95,9 +95,35 @@ async def cmd_start(message: types.Message):
                 )
                 return
             elif transaction.status == "pending":
-                # Проверяем статус в Т-Банке
-                result = await tbank_service.get_state(transaction.payment_id)
+                # Проверяем статус у провайдера — поддерживаем Т-Банк и YooKassa
+                try:
+                    # T-Bank проверка
+                    result = await tbank_service.get_state(transaction.payment_id)
+                except Exception:
+                    result = None
+
+                paid = False
+                # T-Bank: Status == CONFIRMED
                 if result and result.get("Status") == "CONFIRMED":
+                    paid = True
+
+                # Если не T-Bank или не подтверждён — попробуем YooKassa
+                if not paid:
+                    try:
+                        from bot.services.yookassa_service import yookassa_service
+
+                        yk = await yookassa_service.get_payment(transaction.payment_id)
+                        if yk and (
+                            yk.get("paid")
+                            or (yk.get("status") or "").lower()
+                            in ("succeeded", "paid", "captured")
+                        ):
+                            paid = True
+                    except Exception:
+                        # Не фатально — будем ожидать webhook
+                        pass
+
+                if paid:
                     # Начисляем кредиты
                     await add_credits(message.from_user.id, transaction.credits)
                     await update_transaction_status(order_id, "completed")
@@ -115,7 +141,7 @@ async def cmd_start(message: types.Message):
                     )
                     return
                 else:
-                    # Ожидаем подтверждения от банка
+                    # Ожидаем подтверждения от банка/провайдера
                     await message.answer(
                         "⏳ <b>Оплата в обработке...</b>\n\n"
                         "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
@@ -363,6 +389,88 @@ async def show_partner(callback: types.CallbackQuery):
     """Показывает партнёрскую программу."""
     await render_partner_program(callback.message, user_id=callback.from_user.id)
     await callback.answer()
+
+
+@router.callback_query(F.data == "partner_offer")
+async def show_partner_offer(callback: types.CallbackQuery):
+    """Показывает текст публичной оферты из static/ofert.md (локально)."""
+    import os
+
+    try:
+        ofert_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "static", "ofert.md")
+        )
+
+        # Попробуем сначала отправить файл как документ — это самый надёжный способ
+        try:
+            # Try to send the local file path directly. Avoid using InputFile
+            # class instantiation which may not be compatible with this aiogram
+            # version (causes "Can't instantiate abstract class InputFile").
+            await callback.message.answer_document(
+                document=ofert_path,
+                caption="📜 Публичная оферта",
+                reply_markup=get_partner_consent_keyboard(),
+            )
+            await callback.answer()
+            return
+        except Exception as e_doc:
+            logger.info(
+                "Sending offer as document failed, falling back to text: %s", e_doc
+            )
+
+        # Если отправка документа не удалась, попытаемся отправить текст по частям
+        with open(ofert_path, "r", encoding="utf-8") as f:
+            ofert_text = f.read()
+
+        # Telegram имеет ограничение на длину сообщения (~4096 символов). Разделим на части.
+        max_len = 4000
+        parts = [
+            ofert_text[i : i + max_len] for i in range(0, len(ofert_text), max_len)
+        ]
+
+        # Отправляем части: для первой части пробуем отредактировать сообщение,
+        # для промежуточных частей отправляем просто текст (без клавиатуры),
+        # а клавиатуру с возможностью "Назад" и акцепта показываем только в последней части.
+        for idx, part in enumerate(parts):
+            try:
+                is_last = idx == len(parts) - 1
+                if idx == 0:
+                    try:
+                        # Пытаемся отредактировать существующее сообщение и сразу добавить клавиатуру
+                        await callback.message.edit_text(
+                            part,
+                            reply_markup=(
+                                get_partner_consent_keyboard() if is_last else None
+                            ),
+                            parse_mode="HTML",
+                        )
+                        # Если отредактировали и это не последняя часть, продолжим к следующей
+                        if not is_last:
+                            continue
+                        else:
+                            # Если это была единственная/последняя часть — всё готово
+                            break
+                    except Exception:
+                        # Не удалось отредактировать — отправим новое сообщение ниже
+                        pass
+
+                # Для всех отправляемых сообщений: добавляем клавиатуру ТОЛЬКО для последней части
+                if is_last:
+                    await callback.message.answer(
+                        part,
+                        reply_markup=get_partner_consent_keyboard(),
+                        parse_mode="HTML",
+                    )
+                else:
+                    await callback.message.answer(part, parse_mode="HTML")
+            except Exception as e_part:
+                logger.exception("Failed to send part of offer: %s", e_part)
+
+        await callback.answer()
+
+    except Exception as e:
+        logger.exception("Failed to load partner offer: %s", e)
+        await callback.answer("Не удалось загрузить оферту.", show_alert=True)
 
 
 async def render_partner_program(target, user_id: int):

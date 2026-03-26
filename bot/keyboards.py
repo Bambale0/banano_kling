@@ -522,6 +522,8 @@ def get_referral_keyboard(referral_link: str):
 def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     """Клавиатура партнёрской программы."""
     builder = InlineKeyboardBuilder()
+    # Всегда предоставляем кнопку для просмотра публичной оферты
+    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     if not is_partner:
         builder.button(
             text="✔ Прочитал и согласен с условиями", callback_data="partner_accept"
@@ -542,10 +544,19 @@ def get_partner_consent_keyboard():
     from bot.config import config
 
     builder = InlineKeyboardBuilder()
-    offer_url = config.PARTNER_OFFER_URL or "https://example.com/offer"
-    rules_url = config.PARTNER_RULES_URL or "https://example.com/rules"
-    builder.button(text="📜 Публичная оферта", url=offer_url)
-    builder.button(text="📘 Правила", url=rules_url)
+    # If an external URL is configured, open it in browser; otherwise use an internal
+    # callback which will load the local static/ofert.md file and show it in-chat.
+    # Всегда показываем оферту через внутренний callback — чтобы оферта была
+    # доступна пользователю независимо от внешних настроек/хостинга.
+    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
+
+    # Правила могут вести на внешний URL, если он настроен; иначе используем
+    # внешний заглушечный URL (для правил внутреннего файла нет).
+    rules_url = config.PARTNER_RULES_URL
+    if rules_url:
+        builder.button(text="📘 Правила", url=rules_url)
+    else:
+        builder.button(text="📘 Правила", url="https://example.com/rules")
     builder.button(
         text="✔ Прочитал и согласен с условиями", callback_data="partner_accept"
     )

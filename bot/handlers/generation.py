@@ -1099,14 +1099,29 @@ async def _send_original_document(
 
     send_callable: coroutine function like message.answer_document
     """
+    # Normalize result which may be bytes, bytearray, or a list (e.g. Seedream
+    # sometimes returns List[bytes]). We try to extract a bytes-like object
+    # for BufferedInputFile; otherwise we fall back to saved_url or BytesIO.
+    result_bytes = None
     try:
+        if isinstance(result, (list, tuple)):
+            # prefer the first bytes-like element
+            for item in result:
+                if isinstance(item, (bytes, bytearray)):
+                    result_bytes = bytes(item)
+                    break
+        elif isinstance(result, (bytes, bytearray)):
+            result_bytes = bytes(result)
+
         logger.info("Sending original document via BufferedInputFile")
-        doc = types.BufferedInputFile(result, filename=filename)
-        await send_callable(
-            document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
-        )
-        logger.info("Original document sent (BufferedInputFile)")
-        return
+        if result_bytes is not None:
+            doc = types.BufferedInputFile(result_bytes, filename=filename)
+            await send_callable(
+                document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+            )
+            logger.info("Original document sent (BufferedInputFile)")
+            return
+        # If we don't have bytes to send, fall through to fallback logic below.
     except Exception:
         logger.exception(
             "Failed to send original document via BufferedInputFile, trying fallback"
@@ -1122,15 +1137,28 @@ async def _send_original_document(
             )
             logger.info("Original document sent via URL")
             return
+        # Prepare bytes for BytesIO fallback. Prefer result_bytes extracted above
+        bio_bytes = None
+        if result_bytes is not None:
+            bio_bytes = result_bytes
+        elif isinstance(result, (list, tuple)) and len(result) > 0:
+            first = result[0]
+            if isinstance(first, (bytes, bytearray)):
+                bio_bytes = bytes(first)
 
-        bio = io.BytesIO(result)
-        bio.name = filename
-        bio.seek(0)
-        logger.info("Sending original document via BytesIO fallback")
-        await send_callable(
-            document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
-        )
-        logger.info("Original document sent via BytesIO")
+        if bio_bytes is not None:
+            bio = io.BytesIO(bio_bytes)
+            bio.name = filename
+            bio.seek(0)
+            logger.info("Sending original document via BytesIO fallback")
+            await send_callable(
+                document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+            )
+            logger.info("Original document sent via BytesIO")
+            return
+        else:
+            logger.error("No bytes available to send as document fallback")
+            return
     except Exception:
         logger.exception("Fallback to send original document failed")
 
@@ -1151,6 +1179,35 @@ async def _send_download_link(send_callable, saved_url: str):
         logger.info("Sent download link to user")
     except Exception:
         logger.exception("Failed to send download link")
+
+
+def _as_bytes_like(data):
+    """Return a bytes object from data which may be bytes, bytearray or a list/tuple of bytes.
+
+    Returns None if no suitable bytes-like item found.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    if isinstance(data, (list, tuple)):
+        for item in data:
+            if isinstance(item, (bytes, bytearray)):
+                return bytes(item)
+    return None
+
+
+def make_buffered_file(data, filename: str):
+    """Create a types.BufferedInputFile when possible, otherwise return a URL string or None.
+
+    - If data contains bytes -> returns types.BufferedInputFile(bytes, filename=...)
+    - If data is a string (URL) -> returns the string (aiogram accepts URLs)
+    - Otherwise returns None
+    """
+    b = _as_bytes_like(data)
+    if b is not None:
+        return types.BufferedInputFile(b, filename=filename)
+    if isinstance(data, str):
+        return data
+    return None
 
 
 # =============================================================================
