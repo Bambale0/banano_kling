@@ -12,9 +12,18 @@ Docs: kling_api.md
 import asyncio
 import base64
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+
+# Optional Replicate SDK. We import lazily and tolerate its absence so the
+# service can continue using the legacy PiAPI flow when REPLICATE_API_TOKEN is
+# not provided or the package isn't installed in the environment.
+try:
+    import replicate
+except Exception:  # pragma: no cover - optional dependency
+    replicate = None
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +39,17 @@ class KlingService:
     DURATIONS = list(range(3, 16))
 
     def __init__(
-        self, api_key: Optional[str] = None, base_url: str = "https://api.piapi.ai"
+        self,
+        api_key: Optional[str] = None,
+        base_url: str = "https://api.piapi.ai",
+        replicate_token: Optional[str] = None,
     ):
+        """Initialize KlingService.
+
+        If replicate_token is provided and the replicate SDK is available the
+        service will prefer Replicate for supported task types. Otherwise it
+        will fall back to the legacy PiAPI HTTP flow.
+        """
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.headers = (
@@ -42,6 +60,29 @@ class KlingService:
             if api_key
             else None
         )
+
+        # Replicate configuration
+        self.replicate_token = replicate_token or os.environ.get("REPLICATE_API_TOKEN")
+        self.replicate_enabled = bool(self.replicate_token and replicate)
+        self.replicate_client = None
+        if self.replicate_enabled:
+            # Prefer Client API when available, otherwise rely on module-level
+            # functions which use the REPLICATE_API_TOKEN env var.
+            try:
+                if hasattr(replicate, "Client"):
+                    self.replicate_client = replicate.Client(
+                        api_token=self.replicate_token
+                    )
+                else:
+                    # replicate module will read token from env var
+                    os.environ.setdefault("REPLICATE_API_TOKEN", self.replicate_token)
+                    self.replicate_client = replicate
+            except Exception:
+                # If client creation failed, disable replicate usage
+                logger.exception(
+                    "Failed to initialize Replicate client, falling back to PiAPI"
+                )
+                self.replicate_enabled = False
 
     async def _post(self, url: str, payload: Dict) -> Optional[Dict]:
         if not self.headers:
@@ -95,6 +136,102 @@ class KlingService:
                     "status_code": 0,
                 }
 
+    # ----------------------------- Replicate helpers -----------------------------
+    async def _replicate_create_prediction(
+        self, model: str, input_data: Dict, webhook: Optional[str] = None
+    ) -> Optional[Dict]:
+        """Create a Replicate prediction in a thread-safe manner.
+
+        Returns a dict with at least 'task_id' and 'status'.
+        """
+        if not self.replicate_enabled:
+            logger.error("Replicate not configured")
+            return None
+
+        def _create():
+            client = self.replicate_client or replicate
+            kwargs = {"model": model, "input": input_data}
+            if webhook:
+                kwargs.update(
+                    {"webhook": webhook, "webhook_events_filter": ["completed"]}
+                )
+            pred = client.predictions.create(**kwargs)
+            return pred
+
+        try:
+            pred = await asyncio.to_thread(_create)
+        except Exception:
+            logger.exception("Replicate prediction creation failed")
+            return None
+
+        # prediction object can be dict-like or custom object; normalize
+        pred_id = getattr(pred, "id", None) or (
+            pred.get("id") if isinstance(pred, dict) else None
+        )
+        status = getattr(pred, "status", None) or (
+            pred.get("status") if isinstance(pred, dict) else None
+        )
+        return {"task_id": pred_id, "status": status, "raw": pred}
+
+    async def _replicate_get_prediction(self, prediction_id: str) -> Optional[Dict]:
+        if not self.replicate_enabled:
+            logger.error("Replicate not configured")
+            return None
+
+        def _get():
+            client = self.replicate_client or replicate
+            return client.predictions.get(prediction_id)
+
+        try:
+            pred = await asyncio.to_thread(_get)
+        except Exception:
+            logger.exception("Failed to fetch replicate prediction")
+            return None
+
+        # Normalize to structure similar to PiAPI get_task_status
+        pred_id = getattr(pred, "id", None) or (
+            pred.get("id") if isinstance(pred, dict) else None
+        )
+        status = getattr(pred, "status", None) or (
+            pred.get("status") if isinstance(pred, dict) else None
+        )
+        output = getattr(pred, "output", None) or (
+            pred.get("output") if isinstance(pred, dict) else None
+        )
+        return {
+            "data": {"task_id": pred_id, "status": status, "output": output},
+            "raw": pred,
+        }
+
+    async def _replicate_cancel(self, prediction_id: str) -> Optional[Dict]:
+        if not self.replicate_enabled:
+            logger.error("Replicate not configured")
+            return None
+
+        def _cancel():
+            client = self.replicate_client or replicate
+            # Try nice API first
+            try:
+                if hasattr(client.predictions, "cancel"):
+                    return client.predictions.cancel(prediction_id)
+            except Exception:
+                pass
+            # Fallback: fetch object and call cancel() if available
+            try:
+                pred = client.predictions.get(prediction_id)
+                if hasattr(pred, "cancel"):
+                    return pred.cancel()
+            except Exception:
+                pass
+            raise RuntimeError("Cancel not supported by replicate client")
+
+        try:
+            res = await asyncio.to_thread(_cancel)
+            return {"ok": True, "raw": res}
+        except Exception:
+            logger.exception("Failed to cancel replicate prediction")
+            return None
+
     async def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
         if not self.headers:
             logger.error("API key not configured")
@@ -143,6 +280,13 @@ class KlingService:
         return await self._post(url, payload)
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
+        # Prefer Replicate lookup when enabled (non-destructive). If it fails
+        # or returns no useful information, fall back to the legacy PiAPI HTTP
+        # endpoint so hybrid mode works during migration.
+        if self.replicate_enabled:
+            rep = await self._replicate_get_prediction(task_id)
+            if rep:
+                return rep
         url = f"{self.base_url}{self.ENDPOINTS['task']}/{task_id}"
         return await self._get(url)
 
@@ -218,7 +362,43 @@ class KlingService:
                 return f"data:image/png;base64,{base64.b64encode(v).decode('utf-8')}"
             return v
 
+        # If Replicate configured - use the official Replicate SDK and model
+        # kwaivgi/kling-v2.6-motion-control. Map PiAPI-style fields to the
+        # model input schema.
         input_data = {
+            # Replicate accepts 'image' and 'video' keys
+            "image": _maybe_data_uri(image_url) if image_url else None,
+            "video": video_url if video_url else None,
+            "mode": mode,
+            "prompt": prompt,
+            "keep_original_sound": keep_original_sound,
+            # character_orientation / motion_direction mapping
+            "character_orientation": motion_direction,
+        }
+
+        # Remove None entries
+        input_data = {k: v for k, v in input_data.items() if v is not None}
+
+        if self.replicate_enabled:
+            webhook = webhook_url or os.environ.get("REPLICATE_WEBHOOK_URL")
+            # Prefer service's configured webhook if none provided
+            if not webhook and hasattr(__import__("bot.config"), "config"):
+                try:
+                    from bot.config import config as _config
+
+                    webhook = webhook_url or _config.replicate_notification_url
+                except Exception:
+                    webhook = webhook_url
+
+            pred = await self._replicate_create_prediction(
+                model="kwaivgi/kling-v2.6-motion-control",
+                input_data=input_data,
+                webhook=webhook,
+            )
+            return pred
+
+        # Fallback to legacy PiAPI task creation for environments without Replicate
+        input_piapi = {
             "image_url": _maybe_data_uri(image_url) if image_url else None,
             "mode": mode,
             "motion_direction": motion_direction,
@@ -227,15 +407,15 @@ class KlingService:
             "prefer_http": True,
         }
         if video_url:
-            input_data["video_url"] = video_url
+            input_piapi["video_url"] = video_url
         if preset_motion:
-            input_data["preset_motion"] = preset_motion
+            input_piapi["preset_motion"] = preset_motion
         if prompt:
-            input_data["prompt"] = prompt
+            input_piapi["prompt"] = prompt
         config = {"service_mode": service_mode}
         if webhook_url:
             config["webhook_config"] = {"endpoint": webhook_url, "secret": ""}
-        return await self.create_task("motion_control", input_data, config)
+        return await self.create_task("motion_control", input_piapi, config)
 
     async def generate_omni_video_generation(
         self,

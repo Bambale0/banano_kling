@@ -24,3 +24,10 @@ novita-client>=0.7.1
 
 # YooKassa payments
 yookassa>=3.4.0
+
+# Optional (face detection for improved frontal crops)
+# Installing face_recognition requires dlib and system build deps (cmake, boost).
+# On Debian/Ubuntu you may need: apt install build-essential cmake libboost-all-dev
+# Then install the package:
+# pip install face_recognition
+# If you cannot build dlib, skip this — the service will fall back to center-crop.

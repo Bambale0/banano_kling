@@ -8,6 +8,7 @@ Docs: runway.md
 import asyncio
 import base64
 import hashlib
+import io as _io
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import replicate
 from dotenv import load_dotenv
+from PIL import Image
 
 from bot.config import config
 
@@ -66,6 +68,71 @@ def _save_character_db(db: Dict[str, Any]) -> None:
 
 def _bytes_to_data_uri(b: bytes) -> str:
     return f"data:image/png;base64,{base64.b64encode(b).decode('utf-8')}"
+
+
+def _center_crop_data_uri(b: bytes, frac: float = 0.6) -> Optional[str]:
+    """Return a data URI for a centered square crop of the image bytes.
+
+    This is a cheap heuristic to produce a "frontal" crop when no face
+    detector is available — many user photos are centered on the face.
+    frac controls the fraction of the smaller image dimension to keep.
+    """
+    try:
+        img = Image.open(_io.BytesIO(b)).convert("RGB")
+        w, h = img.size
+        side = int(min(w, h) * frac)
+        left = max(0, (w - side) // 2)
+        top = max(0, (h - side) // 2)
+        crop = img.crop((left, top, left + side, top + side))
+        # Optionally we can resize to a standard size — keep original for now
+        buf = _io.BytesIO()
+        crop.save(buf, format="PNG")
+        return (
+            f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+        )
+    except Exception:
+        logger.exception("Failed to create center-crop frontal image")
+        return None
+
+
+def _face_crop_data_uri(b: bytes, margin: float = 0.25) -> Optional[str]:
+    """Attempt to detect a face and return a cropped frontal data URI.
+
+    This function tries to import face_recognition (dlib-backed). If the
+    library is available it will attempt to detect the largest face and
+    crop around it with a margin. If detection fails or library is absent,
+    returns None.
+    """
+    try:
+        import face_recognition
+
+        img = face_recognition.load_image_file(_io.BytesIO(b))
+        faces = face_recognition.face_locations(img, model="hog")
+        if not faces:
+            return None
+        # Choose the largest face (by area)
+        best = max(faces, key=lambda f: (f[2] - f[0]) * (f[1] - f[3]))
+        top, right, bottom, left = best
+        h = bottom - top
+        w = right - left
+        # Expand box by margin (fraction of max dimension)
+        pad = int(max(w, h) * margin)
+        top = max(0, top - pad)
+        left = max(0, left - pad)
+        bottom = bottom + pad
+        right = right + pad
+
+        pil = Image.open(_io.BytesIO(b)).convert("RGB")
+        crop = pil.crop((left, top, right, bottom))
+        buf = _io.BytesIO()
+        crop.save(buf, format="PNG")
+        return (
+            f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+        )
+    except Exception:
+        # Do not spam logs for missing optional dependency; only log on detection errors
+        logger.debug("face_recognition not available or face detection failed")
+        return None
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -170,10 +237,42 @@ class RunwayService:
         character_id: Optional[str] = None,
         seed: Optional[int] = None,
         webhook_url: Optional[str] = None,
+        preserve_identity: bool = True,
+        strict_preserve_identity: bool = False,
     ) -> Optional[Dict]:
         """Генерация видео text-to-video или image-to-video"""
         duration = max(5, min(duration, 10))
         aspect_ratio = aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9"
+        # By default we attempt to preserve face identity when references are
+        # provided. We primarily rely on the elements/frontal_image_url to
+        # convey identity-preservation, but some models benefit if a short
+        # instruction is provided in the same language as the user's prompt.
+        # To avoid language mixing and duplication we add a one-line prefix
+        # only when preserve_identity is True and the prompt doesn't already
+        # include a preservation instruction.
+        # If strict_preserve_identity is requested, prefer that behavior
+        # (stronger signals to the API) but do not modify the user's prompt.
+        if preserve_identity and not strict_preserve_identity:
+            try:
+                low = prompt.lower() if prompt else ""
+                if (
+                    "preserve" not in low
+                    and "сохран" not in low
+                    and "использ" not in low
+                ):
+                    # Detect Cyrillic presence to keep instruction in user's language
+                    def _has_cyrillic(s: str) -> bool:
+                        return any("\u0400" <= ch <= "\u04FF" for ch in s)
+
+                    if _has_cyrillic(prompt or ""):
+                        instr = "Используйте предоставленные референсы как отправную точку и сохраните идентичность лица."
+                    else:
+                        instr = "Use the provided references as the starting point and preserve facial identity."
+                    prompt = f"{instr} {prompt}" if prompt else instr
+            except Exception:
+                logger.exception(
+                    "Failed to prepend identity-preservation instruction to prompt"
+                )
 
         input_data = {
             "prompt": prompt,
@@ -213,6 +312,71 @@ class RunwayService:
 
         if image_url:
             input_data["image"] = image_url
+            # Always mark the start image as the primary frontal reference (img1).
+            # Per request, we send img1 as the identity anchor with face_preservation=100
+            # so the API receives a clear, unambiguous instruction to preserve this face.
+            initial_frontal_candidate = image_url
+
+        # Try to derive a frontal crop from the provided start image URL
+        # (if it's a local static URL) or data URI. This helps provide a
+        # strong frontal_image_url for elements so Runway preserves faces
+        # better. frontal_from_image is a data URI or None.
+        frontal_from_image: Optional[str] = None
+        try:
+            if image_url and image_url.startswith("data:image/"):
+                # already a data URI — attempt to create a centered crop
+                # by decoding the base64 payload
+                header, payload = image_url.split(",", 1)
+                img_bytes = base64.b64decode(payload)
+                frontal_from_image = _face_crop_data_uri(
+                    img_bytes
+                ) or _center_crop_data_uri(img_bytes)
+            elif (
+                image_url
+                and config.static_base_url
+                and image_url.startswith(config.static_base_url)
+            ):
+                # map public URL back to local static path
+                local_path = image_url.replace(config.static_base_url, "static").lstrip(
+                    "/"
+                )
+                if os.path.exists(local_path):
+                    with open(local_path, "rb") as fh:
+                        img_bytes = fh.read()
+                    frontal_from_image = _face_crop_data_uri(
+                        img_bytes
+                    ) or _center_crop_data_uri(img_bytes)
+        except Exception:
+            logger.exception("Failed to derive frontal_from_image from image_url")
+
+        # If we have a frontal crop but no other refs, still add an elements
+        # entry so the model receives an explicit frontal reference by default.
+        # This ensures "preserve_identity=True" leads to maximal preservation
+        # even when the caller only provided a start image.
+        if frontal_from_image and not refs_combined:
+            elements = [
+                {
+                    "reference_image_urls": [image_url] if image_url else [],
+                    "frontal_image_url": frontal_from_image,
+                    # Strong signal to preserve this face exactly
+                    "face_preservation": 100,
+                }
+            ]
+            input_data["elements"] = elements
+
+            # Also provide a generic "references" array (ImageReference objects)
+            # as some Runway endpoints/models honor this field to treat images
+            # as style/content references. Include URIs only (strings).
+            try:
+                refs_for_api = []
+                for el in elements:
+                    for uri in el.get("reference_image_urls", []):
+                        if uri:
+                            refs_for_api.append({"type": "image", "uri": uri})
+                if refs_for_api:
+                    input_data["references"] = refs_for_api
+            except Exception:
+                logger.debug("Failed to build input_data['references']")
 
         # If reference images provided, build elements to help preserve
         # identity/face consistency. Convert any bytes to data URIs so the
@@ -226,11 +390,78 @@ class RunwayService:
                     )
                 return v
 
-            elements = []
-            for ref in refs_combined[:4]:
-                r = _maybe_data_uri(ref)
-                elements.append({"reference_image_urls": [r], "frontal_image_url": r})
+            # Build elements. Two modes:
+            # - strict_preserve_identity: set frontal_image_url == ref for
+            #   each provided reference (strong signal to preserve identity).
+            # - default: use a single frontal anchor (frontal_from_image if
+            #   available; otherwise the first ref) and add other refs as
+            #   normal reference_image_urls to give context without over-weighting.
+            seen = set()
+            if strict_preserve_identity:
+                for ref in refs_combined[:4]:
+                    r = _maybe_data_uri(ref)
+                    if r in seen:
+                        continue
+                    seen.add(r)
+                    elements.append(
+                        {"reference_image_urls": [r], "frontal_image_url": r}
+                    )
+                input_data["elements"] = elements
+            else:
+                # non-strict: single frontal anchor strategy
+                # Always prefer an explicit img1 anchor when available.
+                if initial_frontal_candidate and initial_frontal_candidate not in seen:
+                    elements.append(
+                        {
+                            "reference_image_urls": [initial_frontal_candidate],
+                            "frontal_image_url": initial_frontal_candidate,
+                            "face_preservation": 100,
+                        }
+                    )
+                    seen.add(initial_frontal_candidate)
+                elif frontal_from_image:
+                    elements.append(
+                        {
+                            "reference_image_urls": [image_url] if image_url else [],
+                            "frontal_image_url": frontal_from_image,
+                        }
+                    )
+                    if image_url:
+                        seen.add(image_url)
+                first_used = False
+                for ref in refs_combined[:4]:
+                    r = _maybe_data_uri(ref)
+                    if r in seen:
+                        continue
+                    seen.add(r)
+                    if (
+                        preserve_identity
+                        and not frontal_from_image
+                        and not first_used
+                        and not initial_frontal_candidate
+                    ):
+                        elements.append(
+                            {
+                                "reference_image_urls": [r],
+                                "frontal_image_url": r,
+                                "face_preservation": 100,
+                            }
+                        )
+                        first_used = True
+                    else:
+                        elements.append({"reference_image_urls": [r]})
+                input_data["elements"] = elements
+                if preserve_identity and not frontal_from_image and not first_used:
+                    elements.append(
+                        {"reference_image_urls": [r], "frontal_image_url": r}
+                    )
+                    first_used = True
+                else:
+                    elements.append({"reference_image_urls": [r]})
+
             input_data["elements"] = elements
+
+            # (elements already assigned above)
         if seed:
             input_data["seed"] = seed
 
