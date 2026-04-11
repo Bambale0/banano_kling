@@ -16,6 +16,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+import json
 
 # Optional Replicate SDK. We import lazily and tolerate its absence so the
 # service can continue using the legacy PiAPI flow when REPLICATE_API_TOKEN is
@@ -32,109 +33,148 @@ class KlingService:
     """Сервис для работы с PiAPI Kling 3.0 API"""
 
     ENDPOINTS = {
-        "task": "/api/v1/task",
+        "task": "/api/v1/jobs",
     }
+
+    KIE_BASE_URL = "https://api.kie.ai"
 
     ASPECT_RATIOS = ["16:9", "9:16", "1:1"]
     DURATIONS = list(range(3, 16))
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: str = "https://api.piapi.ai",
-        replicate_token: Optional[str] = None,
+        kie_key: Optional[str] = None,
     ):
-        """Initialize KlingService.
-
-        If replicate_token is provided and the replicate SDK is available the
-        service will prefer Replicate for supported task types. Otherwise it
-        will fall back to the legacy PiAPI HTTP flow.
-        """
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.headers = (
+        """Initialize KlingService with Kie.ai only."""
+        self.kie_key = kie_key or os.getenv("KIE_AI_API_KEY")
+        self.kie_headers = (
             {
-                "x-api-key": api_key,
+                "Authorization": f"Bearer {self.kie_key}",
                 "Content-Type": "application/json",
             }
-            if api_key
+            if self.kie_key
             else None
         )
 
-        # Replicate configuration
-        self.replicate_token = replicate_token or os.environ.get("REPLICATE_API_TOKEN")
-        self.replicate_enabled = bool(self.replicate_token and replicate)
-        self.replicate_client = None
-        if self.replicate_enabled:
-            # Prefer Client API when available, otherwise rely on module-level
-            # functions which use the REPLICATE_API_TOKEN env var.
-            try:
-                if hasattr(replicate, "Client"):
-                    self.replicate_client = replicate.Client(
-                        api_token=self.replicate_token
-                    )
-                else:
-                    # replicate module will read token from env var
-                    os.environ.setdefault("REPLICATE_API_TOKEN", self.replicate_token)
-                    self.replicate_client = replicate
-            except Exception:
-                # If client creation failed, disable replicate usage
-                logger.exception(
-                    "Failed to initialize Replicate client, falling back to PiAPI"
-                )
-                self.replicate_enabled = False
 
-    async def _post(self, url: str, payload: Dict) -> Optional[Dict]:
-        if not self.headers:
-            logger.error("API key not configured")
+    async def _kie_post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
+        """POST to Kie.ai API"""
+        if not self.kie_headers:
+            logger.error("Kie.ai API key not configured")
             return None
-        # Make the POST request
+        url = f"{self.KIE_BASE_URL}{endpoint}"
         async with aiohttp.ClientSession(trust_env=False) as session:
             try:
                 async with session.post(
                     url,
                     json=payload,
-                    headers=self.headers,
+                    headers=self.kie_headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        task_id = data.get("data", {}).get("task_id")
-                        logger.info(f"Task created: {task_id}")
+                    text = await resp.text()
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Kie.ai JSON decode error: {e}. Response text: {text[:300]}...")
+                        return {"error": "invalid_json", "message": f"JSON decode error: {str(e)}"}
+                    if not isinstance(data, dict):
+                        logger.error(f"Kie.ai non-dict response: type={type(data)}, content={data}. Text: {text[:300]}...")
+                        return {"error": "invalid_response_type", "message": f"Expected dict, got {type(data)}"}
+                    code = data.get("code")
+                    if code != 200:
+                        error_msg = data.get("msg", "Unknown error")
+                        logger.error(f"Kie.ai API error code {code}: {error_msg}")
                         return {
-                            "task_id": task_id,
-                            "status": data.get("data", {}).get("status", "pending"),
+                            "error": "api_error",
+                            "message": error_msg,
+                            "status_code": code,
                         }
-                    else:
-                        data = await resp.json()
-                        logger.error(f"API error {resp.status}: {data}")
-
-                        # Handle specific error codes
-                        if resp.status == 429:
-                            return {
-                                "error": "rate_limit",
-                                "message": "Достигнут дневной лимит использования Kling API. Попробуйте завтра или выберите другую модель.",
-                                "status_code": 429,
-                            }
-                        elif resp.status == 402:
-                            return {
-                                "error": "insufficient_credits",
-                                "message": "Недостаточно кредитов на аккаунте Kling API.",
-                                "status_code": 402,
-                            }
-                        else:
-                            return {
-                                "error": "api_error",
-                                "message": f"Ошибка API Kling: {data.get('message', 'Неизвестная ошибка')}",
-                                "status_code": resp.status,
-                            }
+                    inner_data = data.get("data")
+                    if not isinstance(inner_data, dict):
+                        logger.error(f"Kie.ai 'data' field not dict: type={type(inner_data)}, data={data}. Text: {text[:300]}...")
+                        return {"error": "invalid_data_structure", "message": f"data field not dict"}
+                    task_id = inner_data.get("taskId")
+                    if task_id is None:
+                        logger.error(f"No taskId in Kie.ai response. Full data: {data}")
+                        return {"error": "no_task_id", "message": "Task ID missing from response"}
+                    logger.info(f"Kie.ai task created: {task_id}")
+                    return {
+                        "task_id": task_id,
+                        "status": "pending",
+                    }
             except Exception as e:
-                logger.exception(f"Request error: {e}")
+                logger.exception(f"Kie.ai request error: {e}")
                 return {
                     "error": "network_error",
-                    "message": f"Ошибка сети: {str(e)}",
+                    "message": f"Network error: {str(e)}",
                     "status_code": 0,
                 }
+
+    async def _kie_get(
+        self, endpoint: str, params: Optional[Dict] = None
+    ) -> Optional[Dict]:
+        """GET from Kie.ai API"""
+        if not self.kie_headers:
+            logger.error("Kie.ai API key not configured")
+            return None
+        url = f"{self.KIE_BASE_URL}{endpoint}"
+        headers = {k: v for k, v in self.kie_headers.items() if k != "Content-Type"}
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            try:
+                async with session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        logger.error(f"Kie.ai API error {resp.status}")
+                        return None
+            except Exception as e:
+                logger.exception(f"Kie.ai request error: {e}")
+                return None
+
+    async def create_kie_motion_task(
+        self, input_data: Dict, webhook: Optional[str] = None
+    ) -> Optional[Dict]:
+        """Create Kie.ai motion control task"""
+        payload = {
+            "model": "kling-2.6/motion-control",
+            "input": input_data,
+        }
+        if webhook:
+            payload["callBackUrl"] = webhook
+        return await self._kie_post("/api/v1/jobs/createTask", payload)
+
+    async def get_kie_task_status(self, task_id: str) -> Optional[Dict]:
+        """Get Kie.ai task status"""
+        endpoint = f"/api/v1/jobs/{task_id}"
+        data = await self._kie_get(endpoint)
+        if data:
+            status = data.get("data", {}).get("status", "unknown").lower()
+            # Parse resultJson for output URLs
+            result_json_str = data.get("data", {}).get("resultJson", "{}")
+            try:
+                import json
+
+                result_json = json.loads(result_json_str)
+                result_urls = result_json.get("resultUrls", [])
+                output = result_urls[0] if result_urls else None
+            except (json.JSONDecodeError, KeyError):
+                output = None
+            return {
+                "data": {
+                    "task_id": task_id,
+                    "status": status,
+                    "output": output,
+                },
+                "raw": data,
+            }
+        return None
+
+
 
     # ----------------------------- Replicate helpers -----------------------------
     async def _replicate_create_prediction(
@@ -253,6 +293,33 @@ class KlingService:
                 logger.exception(f"Request error: {e}")
                 return None
 
+    async def get_task_status(self, task_id: str) -> Optional[Dict]:
+        """Get Kie.ai task status"""
+        endpoint = f"/api/v1/jobs/{task_id}"
+        data = await self._kie_get(endpoint)
+        if data:
+            status = data.get("data", {}).get("status", "unknown").lower()
+            # Parse resultJson for output URLs
+            result_json_str = data.get("data", {}).get("resultJson", "{}")
+            try:
+                import json
+
+                result_json = json.loads(result_json_str)
+                result_urls = result_json.get("resultUrls", [])
+                output = result_urls[0] if result_urls else None
+            except (json.JSONDecodeError, KeyError):
+                output = None
+            return {
+                "data": {
+                    "task_id": task_id,
+                    "status": status,
+                    "output": output,
+                },
+                "raw": data,
+            }
+        return None
+
+
     async def create_task(
         self, task_type: str, input_data: Dict, config: Optional[Dict] = None
     ) -> Optional[Dict]:
@@ -278,17 +345,6 @@ class KlingService:
         if config:
             payload["config"] = config
         return await self._post(url, payload)
-
-    async def get_task_status(self, task_id: str) -> Optional[Dict]:
-        # Prefer Replicate lookup when enabled (non-destructive). If it fails
-        # or returns no useful information, fall back to the legacy PiAPI HTTP
-        # endpoint so hybrid mode works during migration.
-        if self.replicate_enabled:
-            rep = await self._replicate_get_prediction(task_id)
-            if rep:
-                return rep
-        url = f"{self.base_url}{self.ENDPOINTS['task']}/{task_id}"
-        return await self._get(url)
 
     async def list_tasks(self, page: int = 1, page_size: int = 20) -> Optional[Dict]:
         url = f"{self.base_url}{self.ENDPOINTS['task']}"
@@ -362,9 +418,28 @@ class KlingService:
                 return f"data:image/png;base64,{base64.b64encode(v).decode('utf-8')}"
             return v
 
-        # If Replicate configured - use the official Replicate SDK and model
-        # kwaivgi/kling-v2.6-motion-control. Map PiAPI-style fields to the
-        # model input schema.
+        # Kie.ai primary (new migration target)
+        if self.kie_key:
+            kie_input = {
+                "prompt": prompt or "",
+                "input_urls": [_maybe_data_uri(image_url)],
+                "video_urls": [video_url] if video_url else [],
+                "character_orientation": motion_direction,
+                "mode": "720p" if mode == "std" else "1080p",
+            }
+            if not kie_input["video_urls"]:
+                return {
+                    "error": "video_url_required",
+                    "message": "Video URL is required for Kie.ai motion control",
+                }
+            webhook = (
+                webhook_url or "https://your-domain.com/api/callback"
+            )  # use config if available
+            pred = await self.create_kie_motion_task(kie_input, webhook)
+            if pred:
+                return pred
+
+        # Fallback: Replicate (existing)
         input_data = {
             # Replicate accepts 'image' and 'video' keys
             "image": _maybe_data_uri(image_url) if image_url else None,
@@ -397,7 +472,8 @@ class KlingService:
             )
             return pred
 
-        # Fallback to legacy PiAPI task creation for environments without Replicate
+        # Legacy PiAPI fallback (deprecated)
+        logger.warning("Using legacy PiAPI motion control - migrate to Kie.ai")
         input_piapi = {
             "image_url": _maybe_data_uri(image_url) if image_url else None,
             "mode": mode,
@@ -455,6 +531,48 @@ class KlingService:
             config["webhook_config"] = {"endpoint": webhook_url, "secret": ""}
         return await self.create_task("omni_video_generation", input_data, config)
 
+    async def generate_kling_3_video(
+        self,
+        prompt: str,
+        mode: str = "std",
+        duration: int = 5,
+        aspect_ratio: str = "16:9",
+        image_urls: Optional[List[str]] = None,
+        sound: bool = False,
+        multi_shots: bool = False,
+        multi_prompt: Optional[List[Dict[str, Any]]] = None,
+        kling_elements: Optional[List[Dict[str, Any]]] = None,
+        webhook: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Generate video using Kie.ai Kling 3.0 API"""
+        if not self.kie_key:
+            logger.error("Kie.ai API key not configured for Kling 3.0")
+            return None
+
+        input_data = {
+            "prompt": prompt,
+            "sound": sound,
+            "duration": str(duration),
+            "aspect_ratio": aspect_ratio,
+            "mode": mode,
+            "multi_shots": multi_shots,
+        }
+        if image_urls:
+            input_data["image_urls"] = image_urls
+        if kling_elements:
+            input_data["kling_elements"] = kling_elements
+        if multi_shots and multi_prompt:
+            input_data["multi_prompt"] = multi_prompt
+
+        payload = {
+            "model": "kling-3.0/video",
+            "input": input_data,
+        }
+        if webhook:
+            payload["callBackUrl"] = webhook
+
+        return await self._kie_post("/api/v1/jobs/createTask", payload)
+
     async def generate_video(
         self,
         prompt: str,
@@ -469,62 +587,85 @@ class KlingService:
         negative_prompt: Optional[str] = None,
         cfg_scale: float = 0.5,
         generate_audio: bool = True,
+        multi_shots: Optional[List[Dict[str, Any]]] = None,
+        image_input: Optional[List[str]] = None,
     ) -> Optional[Dict]:
-        # Collect reference images
-        images = None
-        if image_url:
-            images = [image_url]
-        if elements:
-            elem_images = []
-            for el in elements:
-                elem_images.extend(el.get("reference_image_urls", []))
-                frontal = el.get("frontal_image_url")
-                if frontal:
-                    elem_images.append(frontal)
-            if images is None:
-                images = elem_images
-            else:
-                images.extend(elem_images)
-        # Deduplicate images
-        if images:
-            seen = set()
-            images = [img for img in images if img not in seen and not seen.add(img)]
-        # Enhance prompt for consistency if images provided
-        if images:
-            if "omni" in model.lower():
-                # For Kling 3.0 Omni, use @image_1 reference as per API docs
-                prompt = f"Use @image_1 as first frame. {prompt}"
-            else:
-                # For Kling 3.0 std/pro, explicitly reference the image in prompt for better control
-                prompt = f"Use the provided reference image as the starting point and main subject. {prompt}"
-        # Map legacy models to PiAPI task_types/mode
-        if model in ["v3_std", "v3_pro"]:
-            # Use Omni API for Pro models and when images are provided for better prompt following
-            if "pro" in model or images:
-                # Determine resolution based on model quality
-                resolution = "1080p" if "pro" in model.lower() else "720p"
-                return await self.generate_omni_video_generation(
-                    prompt=prompt,
-                    duration=duration,
-                    aspect_ratio=aspect_ratio,
-                    enable_audio=generate_audio,
-                    images=images,
-                    webhook_url=webhook_url,
-                    resolution=resolution,
-                )
-            else:
-                # Use standard API for Std model without images
-                mode = "std"
-                return await self.generate_video_generation(
-                    prompt=prompt,
-                    mode=mode,
-                    duration=duration,
-                    aspect_ratio=aspect_ratio,
-                    image_url=image_url,
-                    image_tail_url=end_image_url,
-                    enable_audio=generate_audio,
-                    webhook_url=webhook_url,
-                )
+        if model == "seedance2":
+            input_data = {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "duration": duration,
+                "generate_audio": generate_audio,
+                "resolution": "720p",
+                "nsfw_checker": False,
+                "web_search": False,
+            }
+            if image_url:
+                input_data["first_frame_url"] = image_url
+            if end_image_url:
+                input_data["last_frame_url"] = end_image_url
+            if image_input:
+                input_data["reference_image_urls"] = image_input[:9]
+            if video_url:
+                input_data["reference_video_urls"] = [video_url]
+            payload = {
+                "model": "bytedance/seedance-2",
+                "input": input_data,
+            }
+            if webhook_url:
+                payload["callBackUrl"] = webhook_url
+            return await self._kie_post("/api/v1/jobs/createTask", payload)
+
+        # Kling 3.0 migration: prefer Kie.ai API
+        if "v3" in model or "omni" in model:
+            # Map model to mode
+            mode = "pro" if "pro" in model else "std"
+
+            # Prepare image_urls including references (first/last + image_input)
+            image_urls = image_input[:] if image_input else []
+            if image_url and image_url not in image_urls:
+                image_urls.insert(0, image_url)
+            if end_image_url and end_image_url not in image_urls:
+                image_urls.append(end_image_url)
+
+            # Map elements to kling_elements
+            kling_elements = []
+            if elements:
+                for i, el in enumerate(elements[:3]):  # max 3 elements
+                    urls = el.get("reference_image_urls", [])
+                    frontal = el.get("frontal_image_url")
+                    if frontal:
+                        urls.append(frontal)
+                    if len(urls) >= 1:
+                        kling_elements.append(
+                            {
+                                "name": f"element_{i}",
+                                "description": el.get(
+                                    "description", f"reference element {i+1}"
+                                ),
+                                "element_input_urls": urls[:4],
+                            }
+                        )
+                        # Enhance prompt to reference the element
+                        prompt += f" use @{kling_elements[-1]['name']} as reference"
+
+            # Multi-shot support
+            kling_multi_shots = bool(multi_shots)
+            kling_multi_prompt = multi_shots
+
+            return await self.generate_kling_3_video(
+                prompt=prompt,
+                mode=mode,
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                image_urls=image_urls,
+                sound=generate_audio,
+                multi_shots=kling_multi_shots,
+                multi_prompt=kling_multi_prompt,
+                kling_elements=kling_elements,
+                webhook=webhook_url,
+            )
+
         elif "motion" in model.lower():
             return await self.generate_motion_control(
                 image_url=image_url,
@@ -533,25 +674,28 @@ class KlingService:
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
             )
-        elif "omni" in model.lower():
-            # Determine resolution based on model quality
-            resolution = "1080p" if "pro" in model.lower() else "720p"
-            return await self.generate_omni_video_generation(
-                prompt=prompt,
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                enable_audio=generate_audio,
-                images=images,
-                webhook_url=webhook_url,
-                resolution=resolution,
-            )
+        elif model == "kling-2.6/motion-control":
+            return await self.create_kie_motion_task({
+                "prompt": prompt,
+                "input_urls": [image_url],
+                "video_urls": [video_url],
+                "character_orientation": "video",  # default
+                "mode": "720p",  # default
+            }, webhook_url)
         else:
-            logger.error(f"Unknown model: {model}. Defaulting to video_generation std.")
-            return await self.generate_video_generation(
+            if model == "grok_imagine":
+                logger.error("Direct call to kling_service.generate_video with 'grok_imagine' not supported. Use generation handler.")
+                return {"error": "model_not_supported_direct", "message": "Grok Imagine via handler only"}
+            logger.warning(
+                f"Unknown Kling model '{model}', falling back to std Kling 3.0"
+            )
+            return await self.generate_kling_3_video(
                 prompt=prompt,
+                mode="std",
                 duration=duration,
                 aspect_ratio=aspect_ratio,
-                webhook_url=webhook_url,
+                sound=generate_audio,
+                webhook=webhook_url,
             )
 
     async def wait_for_completion(
@@ -578,6 +722,6 @@ class KlingService:
 from bot.config import config
 
 kling_service = KlingService(
-    api_key=config.PIAPI_API_KEY,
-    base_url=config.PIAPI_BASE_URL or "https://api.piapi.ai",
+    kie_key=config.KIE_AI_API_KEY,
 )
+

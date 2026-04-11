@@ -16,11 +16,6 @@ python-dotenv>=1.0.0
 
 # Type hints
 typing-extensions>=4.0.0
-# Replicate API (for Seedream and other models)
-replicate>=0.20.0
-
-# Novita AI Python SDK
-novita-client>=0.7.1
 
 # YooKassa payments
 yookassa>=3.4.0

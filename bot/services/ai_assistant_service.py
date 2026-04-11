@@ -51,13 +51,9 @@ FALLBACK_VIDEO_COSTS = {
 
 
 class AIAssistantService:
-    """Сервис ИИ-ассистента для помощи пользователям с генерацией"""
+    """Сервис ИИ-ассистента для помощи пользователям с генерацией (Kie.ai Gemini 3 Flash)"""
 
-    # Модели для ассистента (приоритет - быстрые и дешевые)
-    MODELS = {
-        "primary": "deepseek/deepseek-chat",  # Быстрый и умный
-        "fallback": "google/gemini-2.5-flash",  # Fallback
-    }
+    ENDPOINT = "/gemini-3-flash/v1/chat/completions"
 
     def __init__(self):
         self._session = None
@@ -65,7 +61,7 @@ class AIAssistantService:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Получение HTTP сессии"""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=60)  # 1 минута для ответов
+            timeout = aiohttp.ClientTimeout(total=60)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -75,7 +71,7 @@ class AIAssistantService:
         context: dict = None,
     ) -> Optional[str]:
         """
-        Получить ответ от ИИ-ассистента
+        Получить ответ от ИИ-ассистента (Kie.ai Gemini 3 Flash)
 
         Args:
             user_message: Сообщение пользователя
@@ -84,6 +80,10 @@ class AIAssistantService:
         Returns:
             Ответ ассистента или None при ошибке
         """
+        if not config.KIE_AI_API_KEY:
+            logger.error("Kie.ai API key not configured for AI Assistant")
+            return None
+
         # Загружаем системную инструкцию
         system_prompt = self._get_system_prompt()
 
@@ -103,74 +103,45 @@ class AIAssistantService:
 
 Вопрос пользователя: {user_message}"""
 
-        # Пробуем через OpenRouter (DeepSeek)
-        if config.OPENROUTER_API_KEY:
-            result = await self._call_openrouter(
-                system_prompt=system_prompt,
-                user_message=full_message,
-                model=self.MODELS["primary"],
-            )
-            if result:
-                return result
-            logger.info("DeepSeek failed, trying Gemini fallback...")
-
-        # Fallback на Gemini через OpenRouter
-        if config.OPENROUTER_API_KEY:
-            result = await self._call_openrouter(
-                system_prompt=system_prompt,
-                user_message=full_message,
-                model=self.MODELS["fallback"],
-            )
-            if result:
-                return result
-
-        logger.error("All AI assistant methods failed")
-        return None
-
-    async def _call_openrouter(
-        self,
-        system_prompt: str,
-        user_message: str,
-        model: str = "deepseek/deepseek-chat",
-    ) -> Optional[str]:
-        """Вызов OpenRouter API"""
         try:
             session = await self._get_session()
 
             headers = {
-                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/your_bot",
             }
 
             payload = {
-                "model": model,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": system_prompt}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": full_message}],
+                    },
                 ],
-                "max_tokens": 1024,
-                "temperature": 0.7,
+                "stream": False,  # Non-streaming for simplicity
+                "include_thoughts": True,
+                "reasoning_effort": "high",
             }
 
             async with session.post(
-                f"{config.OPENROUTER_BASE_URL}/chat/completions",
+                f"{config.KIE_BASE_URL}{self.ENDPOINT}",
                 headers=headers,
                 json=payload,
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-
-                    if "choices" in data and len(data["choices"]) > 0:
+                    if "choices" in data and data["choices"]:
                         return data["choices"][0]["message"]["content"]
-
                 error_text = await response.text()
-                logger.error(f"OpenRouter API error: {response.status} - {error_text}")
-
+                logger.error(f"Kie.ai Gemini error {response.status}: {error_text}")
             return None
 
         except Exception as e:
-            logger.exception(f"OpenRouter call failed: {e}")
+            logger.exception(f"Kie.ai Gemini call failed: {e}")
             return None
 
     def _get_system_prompt(self) -> str:
@@ -336,10 +307,10 @@ class AIAssistantService:
         return f"""## АКТУАЛЬНЫЕ ЦЕНЫ (автоматически загружены из data/price.json)
 
 🖼 Генерация изображений:
-- FLUX.2 Pro (Novita): {novita_cost}🍌
 - Nano Banana Flash: {flash_cost}🍌
 - Nano Banana Pro: {pro_cost}🍌
-- Seedream: {seedream_cost}🍌
+- Banana 2: 7🍌
+
 
 🎬 Генерация видео (текст → видео):
 │ Модель              │ 5 сек │ 10 сек │ 15 сек │

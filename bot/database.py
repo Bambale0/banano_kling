@@ -51,11 +51,14 @@ class GenerationTask:
     task_id: str
     type: str
     preset_id: str
-    prompt: Optional[str]
-    cost: Optional[int]
-    status: str
-    result_url: Optional[str]
-    created_at: datetime
+    model: Optional[str] = None
+    duration: Optional[int] = None
+    aspect_ratio: Optional[str] = None
+    prompt: Optional[str] = None
+    cost: Optional[int] = None
+    status: str = "pending"
+    result_url: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 async def init_db():
@@ -149,6 +152,9 @@ async def init_db():
                 task_id TEXT UNIQUE NOT NULL,
                 type TEXT NOT NULL,
                 preset_id TEXT NOT NULL,
+                model TEXT,
+                duration INTEGER,
+                aspect_ratio TEXT,
                 prompt TEXT,
                 cost INTEGER,
                 status TEXT DEFAULT 'pending',
@@ -160,7 +166,19 @@ async def init_db():
         """
         )
 
-        # Migration: add prompt column if not exists
+        # Migration: add columns if not exists
+        try:
+            await db.execute("ALTER TABLE generation_tasks ADD COLUMN model TEXT")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE generation_tasks ADD COLUMN duration INTEGER")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE generation_tasks ADD COLUMN aspect_ratio TEXT")
+        except aiosqlite.OperationalError:
+            pass
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN prompt TEXT")
         except aiosqlite.OperationalError:
@@ -988,23 +1006,28 @@ async def add_generation_task(
     task_id: str,
     type: str,
     preset_id: str,
+    model: Optional[str] = None,
+    duration: Optional[int] = None,
+    aspect_ratio: Optional[str] = None,
     prompt: Optional[str] = None,
     cost: Optional[int] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        try:
-            await db.execute(
-                """INSERT INTO generation_tasks 
-                   (user_id, task_id, type, preset_id, prompt, cost, status) 
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
-                (user_id, task_id, type, preset_id, prompt, cost),
-            )
-            await db.commit()
+        result = await db.execute(
+            """INSERT OR IGNORE INTO generation_tasks 
+               (user_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, status) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+            (user_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost),
+        )
+        await db.commit()
+        if result.rowcount > 0:
+            logger.info(f"Added new generation task: {task_id}")
             return True
-        except aiosqlite.IntegrityError:
-            logger.warning(f"Task already exists: {task_id}")
+        else:
+            logger.debug(f"Generation task already exists: {task_id}")
             return False
+
 
 
 async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
@@ -1026,8 +1049,11 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             task_id=row["task_id"],
             type=row["type"],
             preset_id=row["preset_id"],
+            model=row["model"],
+            duration=row["duration"],
+            aspect_ratio=row["aspect_ratio"],
             prompt=row["prompt"],
-            cost=row["cost"] if "cost" in row.keys() else None,
+            cost=row["cost"],
             status=row["status"],
             result_url=row["result_url"],
             created_at=datetime.fromisoformat(row["created_at"]),

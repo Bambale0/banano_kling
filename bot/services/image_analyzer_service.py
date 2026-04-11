@@ -58,10 +58,10 @@ PIXEL-BY-PIXEL DISSECTION - MAXIMUM DETAIL:
 
 class ImageAnalyzerService:
     def __init__(self):
-        self.api_key = config.OPENROUTER_API_KEY
-        self.url = "https://openrouter.ai/api/v1/chat/completions"
+        self.api_key = config.KIE_AI_API_KEY
+        self.url = "https://api.kie.ai/gemini-3-flash/v1/chat/completions"
         if not self.api_key:
-            logger.warning("OPENROUTER_API_KEY not set")
+            logger.warning("KIE_AI_API_KEY not set")
 
     def analyze_image(
         self, image_bytes: bytes, model: str = "google/gemini-3-pro-image-preview"

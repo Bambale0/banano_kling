@@ -25,14 +25,16 @@ class Config:
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
 
     # AI Services API Keys
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
+
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
     REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
     # Optional secret used to verify incoming Replicate webhooks (HMAC SHA256).
     # If set, the webhook handler will validate signatures to prevent spoofing.
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
+    KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
+    KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -52,8 +54,8 @@ class Config:
     )
 
     # API Endpoints
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     NANOBANANA_BASE_URL: str = "https://api.nanobanana.com/v1"
+
     FREEPIK_BASE_URL: str = "https://api.freepik.com/v1"
     KLING_BASE_URL: str = "https://api.freepik.com/v1"  # Legacy alias
     PIAPI_BASE_URL: str = "https://api.piapi.ai"
@@ -137,17 +139,18 @@ class Config:
     def replicate_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/replicate"
 
-    @property
-    def seedream_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/seedream"
 
-    @property
-    def novita_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/novita"
 
     @property
     def z_image_turbo_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/z-image-turbo"
+
+    @property
+    def kie_notification_url(self) -> str:
+        path = self.KIE_AI_WEBHOOK_PATH
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
     @property
     def wanx_notification_url(self) -> str:

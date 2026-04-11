@@ -198,10 +198,13 @@ class PresetManager:
             "flash": "gemini_2_5_flash",
             "pro": "gemini_3_pro",
             "banana_2": "banana_2",
+            "banana_pro": "nano-banana-pro",
+            "nano_banana_pro": "nano-banana-pro",
             "z_image_turbo": "z_image_turbo",
             "z-image-turbo": "z_image_turbo",
             "seedream": "seedream",
             "flux_pro": "flux_pro",
+            "seedream_lite": "seedream_lite",
         }
 
         mapped_key = model_map.get(model_lower)
@@ -246,38 +249,15 @@ class PresetManager:
 
         # Map модельных имён к ключам video_models
         model_map = {
-            # Kling 2.6
-            "v26_pro": "v26_pro",
-            "v26_motion_pro": "v26_motion_pro",
-            "v26_motion_std": "v26_motion_std",
-            "kling-v2-6-pro": "v26_pro",
-            "kling-v2-6-motion-control-pro": "v26_motion_pro",
-            "kling-v2-6-motion-control-std": "v26_motion_std",
-            "kling_2_6_pro": "v26_pro",
-            "kling_2_6_motion_pro": "v26_motion_pro",
-            "kling_2_6_motion_std": "v26_motion_std",
             # Kling 3
             "v3_std": "v3_std",
             "v3_pro": "v3_pro",
-            "v3_omni_std": "v3_omni_std",
-            "v3_omni_pro": "v3_omni_pro",
-            "v3_omni_std_r2v": "v3_omni_std_r2v",
-            "v3_omni_pro_r2v": "v3_omni_pro_r2v",
             "kling-v3-std": "v3_std",
             "kling-v3-pro": "v3_pro",
-            "kling-v3-omni-std": "v3_omni_std",
-            "kling-v3-omni-pro": "v3_omni_pro",
-            "kling-v3-std-r2v": "v3_omni_std_r2v",
-            "kling-v3-pro-r2v": "v3_omni_pro_r2v",
             "kling_v3_std": "v3_std",
             "kling_v3_pro": "v3_pro",
-            "kling_v3_omni": "v3_omni_pro",
-            "kling_v3_omni_std": "v3_omni_std",
-            "kling_v3_omni_pro": "v3_omni_pro",
-            "wanx": "wanx_lora",
-            "wanx_lora": "wanx_lora",
-            "wanx_txt2video_lora": "wanx_lora",
         }
+
 
         mapped_model = model_map.get(model_lower, model_lower)
 

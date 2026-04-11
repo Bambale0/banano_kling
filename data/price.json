@@ -49,99 +49,61 @@
   ],
   "costs_reference": {
     "image_models": {
-      "gemini_2_5_flash": 4,
+      "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
       "banana_2": 7,
-      "z_image_turbo": 4,
-      "seedream": 4,
-      "flux_pro": 4
+      "z_image_turbo": 5,
+      "seedream": 5,
+      "seedream_45": 5,
+      "flux_pro": 5,
+      "nano-banana-pro": 5,
+      "seedream_lite": 6,
+      "seedream_5_lite": 6,
+      "seedream_edit": 7
     },
-    "video_models": {
-      "runway_gen45": {
-        "base": 15,
-        "duration_costs": { "5": 15, "10": 20 }
-      },
-      "v26_pro": {
-        "base": 8,
-        "duration_costs": { "5": 8, "10": 14 }
-      },
-      "v26_motion_pro": {
-        "base": 10,
-        "duration_costs": {
-          "5": 10,
-          "10": 18
-        }
-      },
-      "v26_motion_std": {
-        "base": 8,
-        "duration_costs": {
-          "5": 8,
-          "10": 14
-        }
-      },
-      "v3_std": {
-        "base": 6,
-        "duration_costs": {
-          "3": 4,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "v3_pro": {
-        "base": 8,
-        "duration_costs": {
-          "3": 6,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "v3_omni_std": {
-        "base": 8,
-        "duration_costs": {
-          "3": 6,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "v3_omni_pro": {
-        "base": 8,
-        "duration_costs": {
-          "3": 6,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "v3_omni_std_r2v": {
-        "base": 8,
-        "duration_costs": {
-          "3": 6,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "v3_omni_pro_r2v": {
-        "base": 8,
-        "duration_costs": {
-          "3": 6,
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
-      "wanx_lora": {
-        "base": 15,
-        "duration_costs": {
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
+  "video_models": {
+    "v3_std": {
+      "base": 6,
+      "duration_costs": {
+        "3": 4,
+        "5": 15,
+        "10": 30,
+        "15": 45
       }
     },
+    "v3_pro": {
+      "base": 8,
+      "duration_costs": {
+        "3": 6,
+        "5": 15,
+        "10": 30,
+        "15": 45
+      }
+    },
+    "v26_motion_pro": {
+      "base": 10,
+      "duration_costs": {
+        "5": 10,
+        "10": 18
+      }
+    },
+    "grok_imagine": {
+      "base": 15,
+      "duration_costs": {
+        "6": 15,
+        "10": 22,
+        "20": 35,
+        "30": 50
+      }
+    },
+    "runway": {
+      "base": 15,
+      "duration_costs": {
+        "5": 15,
+        "10": 25
+      }
+    }
+  },
     "video_duration_costs": {
       "3": 4,
       "5": 6,
@@ -180,6 +142,6 @@
       "4K": 10
     }
   },
-  "admin_ids": [939259764,339795159],
+  "admin_ids": [939259764, 339795159],
   "support_contact": "@S_k7222"
 }

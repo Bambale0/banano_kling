@@ -59,15 +59,12 @@ PRICES = load_prices()
 IMAGE_COSTS = PRICES.get("costs_reference", {}).get(
     "image_models",
     {
-        "novita": 3,
         "nanobanana": 3,
         "banana_pro": 5,
-        "seedream": 3,
-        "z_image_turbo_lora": 3,
-        "gemini_2_5_flash": 3,
-        "gemini_3_pro": 5,
+        "banana_2": 7,
     },
 )
+
 
 VIDEO_COSTS = PRICES.get("costs_reference", {}).get(
     "video_models",
@@ -80,6 +77,7 @@ VIDEO_COSTS = PRICES.get("costs_reference", {}).get(
         "v26_motion_pro": {"base": 10, "duration_costs": {"5": 10, "10": 18}},
         "v26_motion_std": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
         "z_image_turbo_lora": {"base": 3, "duration_costs": {"5": 3, "10": 6, "15": 9}},
+        "grok_imagine": {"base": 15, "duration_costs": {"6": 15, "20": 40, "30": 60}},
     },
 )
 
@@ -96,8 +94,9 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
-    builder.button(text="🎬 Motion Control", callback_data="menu_motion_control")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="🎯 Motion Control", callback_data="motion_control")
+
     builder.button(text="📸 Фото=Промпт", callback_data="photo_to_prompt")
     builder.button(text="💼 Партнёрам", callback_data="menu_partner")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
@@ -106,6 +105,17 @@ def get_main_menu_keyboard(user_credits: int = 0):
 
     builder.adjust(2, 2, 2, 2)
 
+    return builder.as_markup()
+
+
+def get_admin_keyboard():
+    """Админ-панель"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
+    builder.button(text="📊 Статистика", callback_data="admin_stats")
+    builder.button(text="👥 Пользователи", callback_data="admin_users")
+    builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -119,7 +129,12 @@ def get_create_video_keyboard(
     current_model: str = "v3_std",
     current_ratio: str = "16:9",
     current_duration: int = 5,
+    current_mode: str = "720p",
+    current_orientation: str = "video",
     current_video_model: str = None,  # Алиас для обратной совместимости
+    current_grok_mode: str = "normal",
+    current_grok_res: str = "720p",  # Default to max quality
+    current_grok_nsfw: bool = False,
 ):
     """Меню создания видео - всё на одном экране"""
     # Если передан current_video_model, используем его
@@ -138,7 +153,8 @@ def get_create_video_keyboard(
         text=f"{imgtxt_check}🖼 Фото + Текст → Видео", callback_data="v_type_imgtxt"
     )
     builder.button(
-        text=f"{video_check}🎬 Видео + Текст → Видео", callback_data="v_type_video"
+        text=f"{video_check}🎬 Видео + Текст → Видео (Motion Control)",
+        callback_data="v_type_video",
     )
 
     # Модели - из price.json
@@ -152,6 +168,9 @@ def get_create_video_keyboard(
     v26_motion_data = VIDEO_COSTS.get(
         "v26_motion_pro", {"base": 10, "duration_costs": {"5": 10}}
     )
+
+    grok_data = VIDEO_COSTS.get("grok_imagine", {"base": 15, "duration_costs": {"6": 15}})
+    grok_cost = grok_data.get("duration_costs", {}).get(str(current_duration), grok_data.get("base", 15))
 
     v26_cost = v26_data.get("duration_costs", {}).get(
         str(current_duration), v26_data.get("base", 8)
@@ -176,49 +195,37 @@ def get_create_video_keyboard(
         str(current_duration), v3_omni_pro_data.get("base", 8)
     )
 
+    seedance_data = VIDEO_COSTS.get("seedance2", {"duration_costs": {"5": 8}})
+    seedance_cost = seedance_data.get("duration_costs", {}).get(str(current_duration), 8)
+
+    runway_data = VIDEO_COSTS.get("runway", {"base": 15, "duration_costs": {"5": 15, "10": 25}})
+    runway_cost = runway_data.get("duration_costs", {}).get(str(current_duration), runway_data.get("base", 15))
+
+
     if current_v_type == "video":
-        models = [
-            {
-                "key": "v3_omni_std_r2v",
-                "label": "⚡ Kling 3 Omni Std",
-                "cost": v3_omni_std_cost,
-            },
-            {
-                "key": "v3_omni_pro_r2v",
-                "label": "💎 Kling 3 Omni Pro",
-                "cost": v3_omni_pro_cost,
-            },
-        ]
+        models = []
+
     else:
-        wanx_data = VIDEO_COSTS.get(
-            "wanx_lora", {"base": 15, "duration_costs": {"5": 15, "10": 30, "15": 45}}
-        )
-        wanx_cost = wanx_data.get("duration_costs", {}).get(
-            str(current_duration), wanx_data.get("base", 15)
-        )
-        runway_data = VIDEO_COSTS.get(
-            "runway_gen45", {"base": 12, "duration_costs": {"5": 12, "10": 20}}
-        )
-        runway_cost = runway_data.get("duration_costs", {}).get(
-            str(current_duration), runway_data.get("base", 12)
-        )
         models = [
-            {"key": "v26_pro", "label": "⚡ Kling 2.6", "cost": v26_cost},
             {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
             {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
             {
-                "key": "v3_omni_std",
-                "label": "🔄 Kling 3 Omni Std",
-                "cost": v3_omni_std_cost,
+                "key": "seedance2",
+                "label": "🌱 Seedance 2.0",
+                "cost": seedance_cost,
             },
             {
-                "key": "v3_omni_pro",
-                "label": "🔄 Kling 3 Omni Pro",
-                "cost": v3_omni_pro_cost,
+                "key": "runway",
+                "label": "🎥 Runway AI",
+                "cost": runway_cost,
             },
-            {"key": "wanx_lora", "label": "🧩 WanX LoRA", "cost": wanx_cost},
-            {"key": "runway_gen45", "label": "🎬 Runway Gen-4.5", "cost": runway_cost},
+            {
+                "key": "grok_imagine",
+                "label": "🧠 Grok Imagine",
+                "cost": grok_cost,
+            },
         ]
+
 
     for model_info in models:
         check = "✅ " if current_model == model_info["key"] else ""
@@ -254,6 +261,28 @@ def get_create_video_keyboard(
         check = "✅ " if current_duration == dur else ""
         builder.button(text=f"{check}{dur} сек", callback_data=f"video_dur_{dur}")
 
+    if current_v_type == "video":
+        # Motion Control options
+        mode_check_720p = "✅ " if current_mode == "720p" else ""
+        mode_check_1080p = "✅ " if current_mode == "1080p" else ""
+        orient_check_image = "✅ " if current_orientation == "image" else ""
+        orient_check_video = "✅ " if current_orientation == "video" else ""
+
+        builder.button(
+            text=f"{mode_check_720p}📱 720p (std)", callback_data="v_mode_720p"
+        )
+        builder.button(
+            text=f"{mode_check_1080p}🖥 1080p (pro)", callback_data="v_mode_1080p"
+        )
+        builder.button(
+            text=f"{orient_check_image}🖼 Image orient",
+            callback_data="v_orientation_image",
+        )
+        builder.button(
+            text=f"{orient_check_video}🎬 Video orient",
+            callback_data="v_orientation_video",
+        )
+
     # Рассчитываем цену
     model_data = VIDEO_COSTS.get(current_model, {"base": 6, "duration_costs": {"5": 6}})
     total_cost = model_data.get("duration_costs", {}).get(
@@ -265,7 +294,9 @@ def get_create_video_keyboard(
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     num_models = len(models)
-    widths = [3] + [1] * num_models + [5, 3, 2]
+    widths = [3] + [1] * num_models + [5, len(available_durations), 2]
+    if current_v_type == "video":
+        widths += [4, 2]
     builder.adjust(*widths)
     return builder.as_markup()
 
@@ -276,79 +307,67 @@ def get_create_video_keyboard(
 
 
 def get_create_image_keyboard(
-    current_service: str = "flux_pro", current_ratio: str = "1:1"
+    current_service: str = "banana_pro", current_ratio: str = "1:1", num_refs: int = 0
 ):
     """Меню создания фото - всё на одном экране"""
     builder = InlineKeyboardBuilder()
 
-    # Модели - из price.json
-    novita_cost = IMAGE_COSTS.get("flux_pro", 3)
-    nano_cost = IMAGE_COSTS.get("nanobanana", 3)
+    # Модели - Kei.ai only
     pro_cost = IMAGE_COSTS.get("banana_pro", 5)
-    seedream_cost = IMAGE_COSTS.get("seedream", 3)
-    z5_cost = IMAGE_COSTS.get("z_image_turbo_lora", 3)
+    banana2_cost = IMAGE_COSTS.get("banana_2", 7)
+    seedream_5_lite_cost = IMAGE_COSTS.get("seedream_5_lite", 6)
+    seedream_edit_cost = IMAGE_COSTS.get("seedream_edit", 7)
 
-    novita_check = "✅ " if current_service == "flux_pro" else ""
-    nano_check = "✅ " if current_service == "nanobanana" else ""
     pro_check = "✅ " if current_service == "banana_pro" else ""
-    seedream_check = "✅ " if current_service == "seedream" else ""
-    seedream45_check = "✅ " if current_service == "seedream_45" else ""
-    z5_check = "✅ " if current_service == "z_image_turbo_lora" else ""
+    banana2_check = "✅ " if current_service == "banana_2" else ""
+    seedream_5_lite_check = "✅ " if current_service == "seedream_5_lite" else ""
+    seedream_edit_check = "✅ " if current_service == "seedream_edit" else ""
 
-    builder.button(
-        text=f"{novita_check}✨ FLUX.2 Pro • {novita_cost}🍌",
-        callback_data="model_flux_pro",
-    )
-    builder.button(
-        text=f"{nano_check}🍌 Nano Banana • {nano_cost}🍌",
-        callback_data="model_nanobanana",
-    )
+    # Models - each on new line (vertical list)
     builder.button(
         text=f"{pro_check}💎 Banana Pro • {pro_cost}🍌",
         callback_data="model_banana_pro",
     )
     builder.button(
-        text=f"{seedream_check}🎨 Seedream 5.0 • {seedream_cost}🍌",
-        callback_data="model_seedream",
-    )
-    builder.button(
-        text=f"{seedream45_check}🌟 Seedream 4.5 • {seedream_cost}🍌",
-        callback_data="model_seedream_45",
-    )
-    builder.button(
-        text=f"{z5_check}🚀 Z5 Lora • {z5_cost}🍌",
-        callback_data="model_z_image_turbo_lora",
-    )
-
-    banana2_check = "✅ " if current_service == "banana_2" else ""
-
-    banana2_cost = IMAGE_COSTS.get("banana_2", 7)
-    builder.button(
-        text=f"{banana2_check}⚡ Banana 2 • {banana2_cost}🍌",
+        text=f"{banana2_check}🍌 Banana 2 • {banana2_cost}🍌",
         callback_data="model_banana_2",
     )
+    builder.button(
+        text=f"{seedream_5_lite_check}🔥 Seedream 5.0 Lite • {seedream_5_lite_cost}🍌",
+        callback_data="model_seedream_5_lite",
+    )
+    if num_refs > 0:
+        builder.button(
+            text=f"{seedream_edit_check}🖌 Seedream 4.5 • {seedream_edit_cost}🍌",
+            callback_data="model_seedream_edit",
+        )
 
-    # Размер - под моделями
+    # Размер - под моделями (two rows)
     r1_1 = "✅ " if current_ratio == "1:1" else ""
     r16_9 = "✅ " if current_ratio == "16:9" else ""
     r9_16 = "✅ " if current_ratio == "9:16" else ""
     r4_3 = "✅ " if current_ratio == "4:3" else ""
     r3_2 = "✅ " if current_ratio == "3:2" else ""
 
-    builder.button(text=f"{r1_1}1:1", callback_data="img_ratio_1_1")
-    builder.button(text=f"{r16_9}16:9", callback_data="img_ratio_16_9")
-    builder.button(text=f"{r9_16}9:16", callback_data="img_ratio_9_16")
-    builder.button(text=f"{r4_3}4:3", callback_data="img_ratio_4_3")
-    builder.button(text=f"{r3_2}3:2", callback_data="img_ratio_3_2")
+    builder.row(
+        InlineKeyboardButton(text=f"{r1_1}1:1", callback_data="img_ratio_1_1"),
+        InlineKeyboardButton(text=f"{r16_9}16:9", callback_data="img_ratio_16_9"),
+        InlineKeyboardButton(text=f"{r9_16}9:16", callback_data="img_ratio_9_16"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=f"{r4_3}4:3", callback_data="img_ratio_4_3"),
+        InlineKeyboardButton(text=f"{r3_2}3:2", callback_data="img_ratio_3_2"),
+    )
 
-    # Цена
-    cost = IMAGE_COSTS.get(current_service, 3)
+    # Main menu button
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
 
-    # Кнопка запуска - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"🏠 Главное меню", callback_data="back_main")
+    # Adjust: 4 model buttons (1 each), aspect row1 (3), row2 (2), menu (1)
+    # If no edit model: 3 models + aspects + menu
+    builder.adjust(1, 1, 1, 1, 3, 2, 1)
 
-    builder.adjust(1, 1, 1, 1, 1, 1, 1, 5, 1)
     return builder.as_markup()
+
 
 
 # =============================================================================
@@ -462,17 +481,6 @@ def get_payment_confirmation_keyboard(payment_url: str, order_id: str):
     builder.button(text="💳 Перейти к оплате", url=payment_url)
     builder.button(text="🔙 Назад", callback_data="menu_topup")
     builder.adjust(1)
-    return builder.as_markup()
-
-
-def get_admin_keyboard():
-    """Админ-панель"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
-    builder.button(text="📊 Статистика", callback_data="admin_stats")
-    builder.button(text="👥 Пользователи", callback_data="admin_users")
-    builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
-    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -817,25 +825,6 @@ def get_image_models_inline_keyboard(current_service: str = "flux_pro"):
     return builder.as_markup()
 
 
-def get_video_models_inline_keyboard(current_model: str = "v3_std"):
-    """Выбор модели для видео"""
-    builder = InlineKeyboardBuilder()
-    for model, label in [
-        ("v26_pro", "⚡ Kling 2.6"),
-        ("v3_std", "⚡ Kling 3 Std"),
-        ("v3_pro", "💎 Kling 3 Pro"),
-        ("omni", "🔄 Kling 3 Omni"),
-        ("wanx_lora", "🧩 WanX LoRA"),
-    ]:
-        model_data = VIDEO_COSTS.get(model, {"base": 8})
-        cost = model_data.get("base", 15 if model == "wanx_lora" else 8)
-        check = "✅ " if model in current_model or model == current_model else ""
-        builder.button(
-            text=f"{check}{label} • {cost}🍌", callback_data=f"video_model_{model}"
-        )
-    builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1)
-    return builder.as_markup()
 
 
 def get_aspect_ratio_inline_keyboard(current_ratio: str = "1:1"):
@@ -1107,36 +1096,12 @@ def get_image_editing_options_keyboard(preset_id: str = None):
 def get_video_effects_model_keyboard(current_model: str = "v3_omni_std"):
     """Клавиатура выбора модели для видео-эффектов"""
     builder = InlineKeyboardBuilder()
-    for model, label, cost in [
-        ("v3_omni_std", "⚡ Kling 3 Omni Std", 8),
-        ("v3_omni_pro", "💎 Kling 3 Omni Pro", 8),
-    ]:
-        check = "✅ " if model == current_model else ""
-        builder.button(
-            text=f"{check}{label} • {cost}🍌", callback_data=f"effects_model_{model}"
-        )
     builder.button(text="🔙 Назад", callback_data="edit_video")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def get_video_generation_model_keyboard(current_model: str = "v3_std"):
-    """Клавиатура выбора модели для генерации видео"""
-    builder = InlineKeyboardBuilder()
-    for model, label, cost in [
-        ("v3_std", "⚡ Kling 3 Std", 6),
-        ("v3_pro", "💎 Kling 3 Pro", 8),
-        ("v26_pro", "⚡ Kling 2.6", 8),
-        ("wanx_lora", "🧩 WanX LoRA", 15),
-    ]:
-        check = "✅ " if model == current_model else ""
-        builder.button(
-            text=f"{check}{label} • {cost}🍌/5сек",
-            callback_data=f"video_gen_model_{model}",
-        )
-    builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1)
-    return builder.as_markup()
+
 
 
 def get_image_generation_model_keyboard(current_service: str = "flux_pro"):
@@ -1284,10 +1249,6 @@ def get_video_options_keyboard(
     v26_motion_check = "✅ " if current_model == "v26_motion_pro" else ""
 
     builder.button(
-        text=f"{v26_check}⚡ Kling 2.6 • {v26_cost}🍌",
-        callback_data="opt_v_model_v26_pro",
-    )
-    builder.button(
         text=f"{v3_std_check}⚡ Kling 3 Std • {v3_std_cost}🍌",
         callback_data="opt_v_model_v3_std",
     )
@@ -1295,14 +1256,7 @@ def get_video_options_keyboard(
         text=f"{v3_pro_check}💎 Kling 3 Pro • {v3_pro_cost}🍌",
         callback_data="opt_v_model_v3_pro",
     )
-    builder.button(
-        text=f"{omni_check}🔄 Kling 3 Omni • {omni_cost}🍌",
-        callback_data="opt_v_model_omni",
-    )
-    builder.button(
-        text=f"{v26_motion_check}🎬 Kling 2.6 Motion • {v26_motion_cost}🍌",
-        callback_data="opt_v_model_v26_motion_pro",
-    )
+
 
     # Размер
     r1_1 = "✅ " if current_ratio == "1:1" else ""
@@ -1335,35 +1289,47 @@ def get_video_options_keyboard(
 def get_image_to_video_model_keyboard(current_model: str = "v3_omni_std"):
     """Клавиатура выбора модели для создания видео из фото"""
     builder = InlineKeyboardBuilder()
-    for model, label, cost in [
-        ("v3_omni_std", "⚡ Kling 3 Omni Std", 8),
-        ("v3_omni_pro", "💎 Kling 3 Omni Pro", 8),
-    ]:
-        check = "✅ " if model == current_model else ""
-        builder.button(
-            text=f"{check}{label} • {cost}🍌/5сек", callback_data=f"i2v_model_{model}"
-        )
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def get_motion_control_keyboard(preset_id: str = None):
-    """Клавиатура управления движением"""
+
+def get_motion_control_keyboard(current_mode: str = "1080p", current_orientation: str = "video"):
+    """Клавиатура опций Motion Control"""
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="⚡ Motion Control Standard • 8🍌",
-        callback_data="motion_control_std",
-    )
-    builder.button(
-        text="💎 Motion Control Pro • 10🍌",
-        callback_data="motion_control_pro",
-    )
-    builder.button(
-        text="🔙 Назад",
-        callback_data=f"preset_{preset_id}" if preset_id else "back_main",
-    )
-    builder.adjust(1, 1, 1)
+
+    # Mode
+    mode_720p = "✅ " if current_mode == "720p" else ""
+    mode_1080p = "✅ " if current_mode == "1080p" else ""
+    builder.button(text=f"{mode_720p}📱 720p (std)", callback_data="motion_mode_720p")
+    builder.button(text=f"{mode_1080p}🖥 1080p (pro)", callback_data="motion_mode_1080p")
+
+    # Orientation
+    orient_image = "✅ " if current_orientation == "image" else ""
+    orient_video = "✅ " if current_orientation == "video" else ""
+    builder.button(text=f"{orient_image}🖼 Image orient", callback_data="motion_orientation_image")
+    builder.button(text=f"{orient_video}🎬 Video orient", callback_data="motion_orientation_video")
+
+    # Buttons
+    builder.button(text="🚀 Создать видео", callback_data="run_motion_control")
+    builder.button(text="🔙 Главное меню", callback_data="back_main")
+
+    builder.adjust(2, 2, 2)
+    return builder.as_markup()
+
+
+def get_motion_upload_keyboard(step: str):
+    """Клавиатура для загрузки файлов Motion Control"""
+    builder = InlineKeyboardBuilder()
+    if step == "image":
+        builder.button(text="🖼 Загрузить изображение персонажа", callback_data="motion_upload_image")
+        builder.button(text="⏭ Пропустить (позже)", callback_data="motion_skip_image")
+    elif step == "video":
+        builder.button(text="🎬 Загрузить видео движения", callback_data="motion_upload_video")
+        builder.button(text="⏭ Пропустить (позже)", callback_data="motion_skip_video")
+    builder.button(text="🔙 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 

@@ -6,7 +6,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 
-class SeedreamLiteService:
+class NanoBananaProService:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.kie.ai"
@@ -33,11 +33,11 @@ class SeedreamLiteService:
                 else:
                     error = await resp.text()
                     logger.error(
-                        f"Seedream Lite POST {endpoint} failed: {resp.status} - {error}"
+                        f"Nano Banana Pro POST {endpoint} failed: {resp.status} - {error}"
                     )
                     return None
         except Exception as e:
-            logger.exception(f"Seedream Lite POST error: {e}")
+            logger.exception(f"Nano Banana Pro POST error: {e}")
             return None
 
     async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
@@ -51,32 +51,36 @@ class SeedreamLiteService:
                     return await resp.json()
                 else:
                     error = await resp.text()
-                    logger.error(
-                        f"Seedream Lite GET {endpoint} failed: {resp.status} - {error}"
-                    )
+                    if resp.status != 404:
+                        logger.warning(
+                            f"Nano Banana Pro GET {endpoint} failed: {resp.status} - {error}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Nano Banana Pro GET {endpoint} 404 (expected for non-existent task)"
+                        )
                     return None
         except Exception as e:
-            logger.exception(f"Seedream Lite GET error: {e}")
+            logger.exception(f"Nano Banana Pro GET error: {e}")
             return None
 
     async def create_task(
         self,
-        model: str,
         prompt: str,
-        image_urls: List[str] = None,
+        image_input: List[str] = None,
         aspect_ratio: str = "1:1",
-        quality: str = "basic",
-        nsfw_checker: bool = False,
+        resolution: str = "4K",
+        output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
         payload = {
-            "model": model,
+            "model": "nano-banana-pro",
             "input": {
                 "prompt": prompt,
-                "image_urls": image_urls or [],
+                "image_input": image_input or [],
                 "aspect_ratio": aspect_ratio,
-                "quality": quality,
-                "nsfw_checker": nsfw_checker,
+                "resolution": resolution,
+                "output_format": output_format,
             },
         }
         if callback_url:
@@ -84,11 +88,11 @@ class SeedreamLiteService:
 
         resp = await self._post("/api/v1/jobs/createTask", payload)
         if not resp or not isinstance(resp, dict):
-            logger.error(f"Seedream Lite create_task failed, resp: {resp}")
+            logger.error(f"Nano Banana Pro create_task failed, resp: {resp}")
             return None
         data = resp.get("data")
         if not isinstance(data, dict):
-            logger.error(f"Seedream Lite invalid data: {data} (full resp: {resp})")
+            logger.error(f"Nano Banana Pro invalid data: {data} (full resp: {resp})")
             return None
         task_id = data.get("taskId")
         if not task_id:
@@ -96,27 +100,26 @@ class SeedreamLiteService:
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
-        resp = await self._get(f"/api/v1/jobs/{task_id}")
+        resp = await self._get("/api/v1/common/getTaskDetail", params={"taskId": task_id})
         if not resp or not isinstance(resp, dict):
             return None
         data = resp.get("data")
         if not isinstance(data, dict):
-            logger.warning(f"Seedream Lite status invalid data: {data}")
+            logger.warning(f"Nano Banana Pro status invalid data: {data}")
             return None
         return data
 
     async def generate_image(
         self,
         prompt: str,
-        model: str = "seedream/5-lite-image-to-image",
-        image_urls: List[str] = None,
         aspect_ratio: str = "1:1",
-        quality: str = "basic",
-        nsfw_checker: bool = False,
+        resolution: str = "4K",
+        image_input: List[str] = None,
+        output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[Dict]:
         task_id = await self.create_task(
-            model, prompt, image_urls, aspect_ratio, quality, nsfw_checker, callback_url
+            prompt, image_input, aspect_ratio, resolution, output_format, callback_url
         )
         if task_id:
             return {"task_id": task_id}
@@ -159,6 +162,6 @@ class SeedreamLiteService:
 
 from bot.config import config
 
-seedream_lite_service = SeedreamLiteService(
-    api_key=config.KIE_AI_API_KEY
+nano_banana_pro_service = NanoBananaProService(
+    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY
 )

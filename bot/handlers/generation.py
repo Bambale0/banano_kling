@@ -4,14 +4,12 @@ import io
 import logging
 import os
 import random
-import re
 import time
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -41,6 +39,8 @@ from bot.keyboards import (
     get_image_editing_options_keyboard,
     get_main_menu_keyboard,
     get_model_selection_keyboard,
+    get_motion_control_keyboard,
+    get_motion_upload_keyboard,
     get_multiturn_keyboard,
     get_prompt_tips_keyboard,
     get_reference_images_confirmation_keyboard,
@@ -55,9 +55,10 @@ from bot.keyboards import (
 )
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
-from bot.services.runway_service import runway_service
-from bot.services.seedream_service import seedream_service
-from bot.services.wanx_service import wanx_service
+from bot.services.seedream_service import seedream_lite_service as seedream_service
+from bot.services.nano_banana_pro_service import nano_banana_pro_service
+from bot.services.nano_banana_2_service import nano_banana_2_service
+from bot.services.grok_service import grok_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
@@ -76,31 +77,6 @@ from bot.utils.help_texts import (
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-
-async def safe_callback_answer(callback: types.CallbackQuery, *args, **kwargs):
-    """Call callback.answer safely — ignore expired/too old query errors.
-
-    Many Telegram callback queries may arrive after the client-side timeout
-    and raise TelegramBadRequest: "query is too old and response timeout
-    expired or query ID is invalid". We want to ignore these silently and
-    just log at debug level to avoid crashing global handlers.
-    """
-    try:
-        await callback.answer(*args, **kwargs)
-    except TelegramBadRequest as e:
-        msg = str(e).lower()
-        if (
-            "query is too old" in msg
-            or "query id is invalid" in msg
-            or "response timeout" in msg
-        ):
-            logger.debug(f"Ignored stale callback.answer error: {e}")
-            return
-        # For other TelegramBadRequest errors, log a warning
-        logger.warning(f"TelegramBadRequest in callback.answer: {e}")
-    except Exception:
-        logger.exception("Unexpected error in safe_callback_answer")
 
 
 # =============================================================================
@@ -129,7 +105,7 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
 
     # СРАЗУ показываем экран с параметрами видео и полем для промпта (без загрузки референсов)
     await _show_video_creation_screen(callback.message, state)
-    await safe_callback_answer(callback)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "create_image_refs_new")
@@ -171,8 +147,43 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
             reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
             parse_mode="HTML",
         )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "motion_control")
+async def start_motion_control(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    """Запуск Motion Control Kling 2.6"""
+    from bot.database import get_user_credits
+
+    user_credits = await get_user_credits(callback.from_user.id)
+
+    await state.update_data(
+        generation_type="motion_control",
+        motion_mode="720p",
+        motion_orientation="video",
+        motion_image_url=None,
+        motion_video_url=None,
+        motion_prompt="",
+    )
+
+    text = (
+        f"🎯 <b>Kling 2.6 Motion Control</b>\n\n"
+        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        f"<b>Шаг 1: Reference Image</b>\n\n"
+        f"Загрузите четкое фото субъекта:\n"
+        f"• Голова, плечи, торс (JPEG/PNG, макс 10MB)\n\n"
+        f"<i>Фото станет персонажем с движением из видео</i>"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_back_keyboard("back_main"),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_motion_character_image)
+
 
 
 @router.callback_query(F.data == "photo_prompt")
@@ -188,16 +199,20 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
         img_ratio="1:1",
     )
 
+    current_service = "flux_pro"
+    current_ratio = "1:1"
+
     await callback.message.edit_text(
-        f"📸 <b>Фото по промпту</b>\n\n"
-        f"🍌 Баланс: <code>{user_credits}</code>🍌\n\n"
-        f"<b>Введите промпт:</b>\n\n"
-        f"Опишите фото (FLUX Pro, 1:1):",
-        reply_markup=get_back_keyboard("back_main"),
+        f"🖼 <b>Создание фото</b>\n\n"
+        f"✨ Модель: <code>{current_service}</code>\n"
+        f"📐 Формат: <code>{current_ratio}</code>\n\n"
+        f"Введите промпт для генерации:",
+        reply_markup=get_create_image_keyboard(current_service, current_ratio, num_refs=0),
         parse_mode="HTML",
     )
-    await safe_callback_answer(callback)
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "img_ref_upload_new")
@@ -215,7 +230,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
@@ -238,7 +253,6 @@ async def _show_video_creation_screen(
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
-    current_duration = data.get("v_duration", 5)
     reference_images = data.get("reference_images", [])
     user_prompt = data.get("user_prompt", "")
     v_image_url = data.get("v_image_url")
@@ -353,9 +367,10 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
             f"✨ Модель: <code>{current_service}</code>\n"
             f"📐 Формат: <code>{current_ratio}</code>\n\n"
             f"Введите промпт для генерации:",
-            reply_markup=get_create_image_keyboard(current_service, current_ratio),
+            reply_markup=get_create_image_keyboard(current_service, current_ratio, num_refs=0),
             parse_mode="HTML",
         )
+
         await callback.answer()
         await state.set_state(GenerationStates.waiting_for_input)
 
@@ -392,9 +407,10 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
             f"📐 Формат: <code>{current_ratio}</code>\n\n"
             f"<b>Введите промпт для генерации:</b>\n\n"
             f"Опишите что хотите создать:",
-            reply_markup=get_create_image_keyboard(current_service, current_ratio),
+            reply_markup=get_create_image_keyboard(current_service, current_ratio, num_refs=len(current_refs)),
             parse_mode="HTML",
         )
+
         await callback.answer()
         await state.set_state(GenerationStates.waiting_for_input)
 
@@ -418,7 +434,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
         reply_markup=get_reference_images_upload_keyboard(0, 14, preset_id),
         parse_mode="HTML",
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
@@ -447,7 +463,7 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
         reply_markup=get_create_image_keyboard(current_service, current_ratio),
         parse_mode="HTML",
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
@@ -470,7 +486,7 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -514,7 +530,7 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
         ),
         parse_mode="HTML",
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     # Не меняем состояние - оставляем waiting_for_input для приёма и фото, и текста
     # State will be waiting_for_input from previous handler
 
@@ -563,7 +579,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(GenerationStates.waiting_for_video_prompt)
     else:
         await state.set_state(GenerationStates.waiting_for_reference_video)
-    await safe_callback_answer(callback)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("v_model_"))
@@ -596,6 +612,8 @@ async def handle_video_options_model_legacy(
     """Legacy handler for opt_v_model_* callbacks"""
     model = callback.data.replace("opt_v_model_", "")
     await _apply_video_model_selection(callback, state, model)
+
+
 
 
 async def _apply_video_model_selection(
@@ -642,7 +660,7 @@ async def _apply_video_model_selection(
                 current_ratio=current_ratio,
             )
         )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
@@ -665,7 +683,7 @@ async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContex
             current_ratio="1:1",
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -687,7 +705,7 @@ async def handle_video_ratio_16_9(callback: types.CallbackQuery, state: FSMConte
             current_ratio="16:9",
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -709,7 +727,7 @@ async def handle_video_ratio_9_16(callback: types.CallbackQuery, state: FSMConte
             current_ratio="9:16",
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -731,7 +749,7 @@ async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContex
             current_ratio="4:3",
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -753,7 +771,7 @@ async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContex
             current_ratio="3:2",
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -776,10 +794,8 @@ async def handle_video_dur_5(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа, чтобы избежать
-    # гонок состояний при быстром вводе пользователем.
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "video_dur_10")
@@ -800,9 +816,8 @@ async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа — согласовано с 5сек
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "video_dur_15")
@@ -823,9 +838,74 @@ async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
             current_ratio=current_ratio,
         )
     )
-    # Устанавливаем состояние ожидания промпта для видео до ответа — согласовано с 5/10 сек
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data == "video_dur_6")
+async def handle_video_dur_6(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор длительности 6 сек (Grok Imagine)"""
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v26_pro")
+    current_ratio = data.get("v_ratio", "16:9")
+
+    await state.update_data(v_duration=6)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_video_keyboard(
+            current_v_type=current_v_type,
+            current_model=current_model,
+            current_duration=6,
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data == "video_dur_20")
+async def handle_video_dur_20(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор длительности 20 сек (Grok Imagine)"""
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v26_pro")
+    current_ratio = data.get("v_ratio", "16:9")
+
+    await state.update_data(v_duration=20)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_video_keyboard(
+            current_v_type=current_v_type,
+            current_model=current_model,
+            current_duration=20,
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data == "video_dur_30")
+async def handle_video_dur_30(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор длительности 30 сек (Grok Imagine)"""
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v26_pro")
+    current_ratio = data.get("v_ratio", "16:9")
+
+    await state.update_data(v_duration=30)
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_video_keyboard(
+            current_v_type=current_v_type,
+            current_model=current_model,
+            current_duration=30,
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # =============================================================================
@@ -847,7 +927,7 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
             current_ratio=current_ratio,
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -865,7 +945,7 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
             current_ratio=current_ratio,
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -883,7 +963,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
             current_ratio=current_ratio,
         )
     )
-    await safe_callback_answer(callback)
+    await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -959,6 +1039,44 @@ async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext
     )
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "model_seedream_5_lite")
+async def handle_model_seedream_5_lite(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор модели Seedream 5.0 Lite Image-to-Image"""
+    data = await state.get_data()
+    current_ratio = data.get("img_ratio", "1:1")
+
+    await state.update_data(img_service="seedream_5_lite")
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_image_keyboard(
+            current_service="seedream_5_lite",
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "model_seedream_edit")
+async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор модели Seedream 4.5"""
+    data = await state.get_data()
+    current_ratio = data.get("img_ratio", "1:1")
+
+    await state.update_data(img_service="seedream_edit")
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_image_keyboard(
+            current_service="seedream_edit",
+            current_ratio=current_ratio,
+        )
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
 
 
 # Обработчики формата изображения
@@ -1099,29 +1217,14 @@ async def _send_original_document(
 
     send_callable: coroutine function like message.answer_document
     """
-    # Normalize result which may be bytes, bytearray, or a list (e.g. Seedream
-    # sometimes returns List[bytes]). We try to extract a bytes-like object
-    # for BufferedInputFile; otherwise we fall back to saved_url or BytesIO.
-    result_bytes = None
     try:
-        if isinstance(result, (list, tuple)):
-            # prefer the first bytes-like element
-            for item in result:
-                if isinstance(item, (bytes, bytearray)):
-                    result_bytes = bytes(item)
-                    break
-        elif isinstance(result, (bytes, bytearray)):
-            result_bytes = bytes(result)
-
         logger.info("Sending original document via BufferedInputFile")
-        if result_bytes is not None:
-            doc = types.BufferedInputFile(result_bytes, filename=filename)
-            await send_callable(
-                document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
-            )
-            logger.info("Original document sent (BufferedInputFile)")
-            return
-        # If we don't have bytes to send, fall through to fallback logic below.
+        doc = types.BufferedInputFile(result, filename=filename)
+        await send_callable(
+            document=doc, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+        )
+        logger.info("Original document sent (BufferedInputFile)")
+        return
     except Exception:
         logger.exception(
             "Failed to send original document via BufferedInputFile, trying fallback"
@@ -1137,28 +1240,15 @@ async def _send_original_document(
             )
             logger.info("Original document sent via URL")
             return
-        # Prepare bytes for BytesIO fallback. Prefer result_bytes extracted above
-        bio_bytes = None
-        if result_bytes is not None:
-            bio_bytes = result_bytes
-        elif isinstance(result, (list, tuple)) and len(result) > 0:
-            first = result[0]
-            if isinstance(first, (bytes, bytearray)):
-                bio_bytes = bytes(first)
 
-        if bio_bytes is not None:
-            bio = io.BytesIO(bio_bytes)
-            bio.name = filename
-            bio.seek(0)
-            logger.info("Sending original document via BytesIO fallback")
-            await send_callable(
-                document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
-            )
-            logger.info("Original document sent via BytesIO")
-            return
-        else:
-            logger.error("No bytes available to send as document fallback")
-            return
+        bio = io.BytesIO(result)
+        bio.name = filename
+        bio.seek(0)
+        logger.info("Sending original document via BytesIO fallback")
+        await send_callable(
+            document=bio, caption="📥 Исходный файл (оригинал)", parse_mode="HTML"
+        )
+        logger.info("Original document sent via BytesIO")
     except Exception:
         logger.exception("Fallback to send original document failed")
 
@@ -1179,35 +1269,6 @@ async def _send_download_link(send_callable, saved_url: str):
         logger.info("Sent download link to user")
     except Exception:
         logger.exception("Failed to send download link")
-
-
-def _as_bytes_like(data):
-    """Return a bytes object from data which may be bytes, bytearray or a list/tuple of bytes.
-
-    Returns None if no suitable bytes-like item found.
-    """
-    if isinstance(data, (bytes, bytearray)):
-        return bytes(data)
-    if isinstance(data, (list, tuple)):
-        for item in data:
-            if isinstance(item, (bytes, bytearray)):
-                return bytes(item)
-    return None
-
-
-def make_buffered_file(data, filename: str):
-    """Create a types.BufferedInputFile when possible, otherwise return a URL string or None.
-
-    - If data contains bytes -> returns types.BufferedInputFile(bytes, filename=...)
-    - If data is a string (URL) -> returns the string (aiogram accepts URLs)
-    - Otherwise returns None
-    """
-    b = _as_bytes_like(data)
-    if b is not None:
-        return types.BufferedInputFile(b, filename=filename)
-    if isinstance(data, str):
-        return data
-    return None
 
 
 # =============================================================================
@@ -1902,9 +1963,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 f"✨ Модель: <code>{current_service}</code>\n"
                 f"📐 Формат: <code>{current_ratio}</code>\n\n"
                 f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
+                reply_markup=get_create_image_keyboard(current_service, current_ratio, num_refs=len(current_refs)),
                 parse_mode="HTML",
             )
+            await callback.answer()
             await state.set_state(GenerationStates.waiting_for_input)
         else:
             # Для пресетов - сразу переходим к экрану пресета (пропускаем экран подтверждения)
@@ -2122,6 +2184,32 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
         image_bytes = await message.bot.download_file(file.file_path)
         image_data = image_bytes.read()
 
+        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
+        try:
+            from PIL import Image
+            import io
+
+            img = Image.open(io.BytesIO(image_data))
+            width, height = img.size
+            if width < 300 or height < 300:
+                await message.answer(
+                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
+                    f"Размер: {width}×{height} px\\n\\n"
+                    "Kie.ai API требует минимум 300×300 px.\\n"
+                    "Загрузите фото большего размера.",
+                    parse_mode="HTML",
+                    reply_markup=get_create_video_keyboard(
+                        current_v_type=data.get("v_type", "imgtxt"),
+                        current_model=data.get("v_model", "v26_pro"),
+                        current_duration=data.get("v_duration", 5),
+                        current_ratio=data.get("v_ratio", "16:9"),
+                    ),
+                )
+                return
+            logger.info(f"Image validated for Kling: {width}×{height}")
+        except Exception as e:
+            logger.error(f"Image validation failed: {e}")
+
         # Сохраняем изображение и получаем URL
         image_url = save_uploaded_file(image_data, "png")
 
@@ -2202,6 +2290,32 @@ async def process_photo_for_video_prompt_state(
         file = await message.bot.get_file(photo.file_id)
         image_bytes = await message.bot.download_file(file.file_path)
         image_data = image_bytes.read()
+
+        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
+        try:
+            from PIL import Image
+            import io
+
+            img = Image.open(io.BytesIO(image_data))
+            width, height = img.size
+            if width < 300 or height < 300:
+                await message.answer(
+                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
+                    f"Размер: {width}×{height} px\\n\\n"
+                    "Kie.ai API требует минимум 300×300 px.\\n"
+                    "Загрузите фото большего размера.",
+                    parse_mode="HTML",
+                    reply_markup=get_create_video_keyboard(
+                        current_v_type=data.get("v_type", "imgtxt"),
+                        current_model=data.get("v_model", "v26_pro"),
+                        current_duration=data.get("v_duration", 5),
+                        current_ratio=data.get("v_ratio", "16:9"),
+                    ),
+                )
+                return
+            logger.info(f"Image validated for Kling: {width}×{height}")
+        except Exception as e:
+            logger.error(f"Image validation failed: {e}")
 
         # Сохраняем изображение и получаем URL
         image_url = save_uploaded_file(image_data, "png")
@@ -2506,7 +2620,14 @@ async def start_no_preset_generation(
 
                     user = await get_or_create_user(message.from_user.id)
                     task_id = f"img_{uuid.uuid4().hex[:12]}"
-                    await add_generation_task(user.id, task_id, "image", "no_preset")
+                    data = await state.get_data()
+                    img_service = data.get("img_service", "nanobanana")
+                    aspect_ratio = data.get("img_ratio", "1:1")
+                    cost = preset_manager.get_generation_cost(img_service)
+                    await add_generation_task(
+                        user.id, task_id, "image", "no_preset", 
+                        model=img_service, aspect_ratio=aspect_ratio, cost=cost
+                    )
                     await complete_video_task(task_id, saved_url)
 
                 # Отправляем превью (photo) и оригинал как документ
@@ -2566,8 +2687,14 @@ async def start_no_preset_generation(
                 from bot.database import add_generation_task
 
                 user = await get_or_create_user(message.from_user.id)
+                data = await state.get_data()
+                v_model = data.get("v_model", "v3_std")
+                v_duration = data.get("v_duration", 5)
+                v_ratio = data.get("v_ratio", "16:9")
+                cost = preset_manager.get_video_cost(v_model, v_duration)
                 await add_generation_task(
-                    user.id, result["task_id"], "video", "no_preset"
+                    user.id, result["task_id"], "video", "no_preset",
+                    model=v_model, duration=v_duration, aspect_ratio=v_ratio, cost=cost
                 )
 
                 await message.answer(
@@ -2596,6 +2723,45 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
     preset_id = data.get("preset_id")
     generation_type = data.get("generation_type")
 
+    # Скачиваем изображение
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+
+    # Читаем байты
+    image_data = image_bytes.read()
+
+    # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
+    try:
+        from PIL import Image
+        import io
+
+        img = Image.open(io.BytesIO(image_data))
+        width, height = img.size
+        if width < 300 or height < 300:
+            kb = get_back_keyboard("back_main")
+            if generation_type == "motion_control":
+                kb = get_back_keyboard("motion_control")
+            elif "video" in generation_type:
+                kb = get_create_video_keyboard(
+                    current_v_type=data.get("v_type", "text"),
+                    current_model=data.get("v_model", "v26_pro"),
+                    current_duration=data.get("v_duration", 5),
+                    current_ratio=data.get("v_ratio", "16:9"),
+                )
+            await message.answer(
+                f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
+                f"Размер: {width}×{height} px\\n\\n"
+                "Kie.ai API требует минимум 300×300 px.\\n"
+                "Загрузите фото большего размера.",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            return
+        logger.info(f"Image validated for Kling ({generation_type}): {width}×{height}")
+    except Exception as e:
+        logger.error(f"Image validation failed: {e}")
+
     # Если это режим без пресета (редактирование)
     if generation_type in [
         "motion_control",
@@ -2604,14 +2770,6 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
         "image_to_video",
         "video_edit_image",
     ]:
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-
-        # Читаем байты
-        image_data = image_bytes.read()
-
         # Для image_edit: проверяем, есть ли уже главное фото
         if generation_type == "image_edit":
             uploaded_image = data.get("uploaded_image")
@@ -2717,7 +2875,14 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
             )
         elif generation_type == "motion_control":
             # Motion Control: после загрузки изображения персонажа,
-            # запрашиваем видео-референс для движения
+            # сохраняем URL и запрашиваем видео-референс для движения
+            image_url = save_uploaded_file(image_data, "png")
+            if image_url:
+                await state.update_data(motion_image_url=image_url)
+                logger.info(f"Saved motion character image: {image_url}")
+            else:
+                await message.answer("❌ Не удалось сохранить изображение персонажа.")
+                return
             await state.set_state(GenerationStates.waiting_for_video)
             await message.answer(
                 f"✅ <b>Изображение персонажа получено!</b>\n\n"
@@ -2730,6 +2895,7 @@ async def process_uploaded_image(message: types.Message, state: FSMContext):
                 reply_markup=get_back_keyboard("back_main"),
             )
             return
+
         else:
             edit_type = "видео"
             prompt_text = (
@@ -2831,8 +2997,8 @@ async def process_reference_images_upload(message: types.Message, state: FSMCont
     # Проверяем лимит
     if len(current_refs) >= max_refs:
         await message.answer(
-            f"⚠️ <b>Достигнут лимит референсов</b>\n\n"
-            f"Загружено максимальное количество: <code>{max_refs}/{max_refs}</code>\n"
+            f"⚠️ <b>Достигнут лимит референсов</b>\\n\\n"
+            f"Загружено максимальное количество: <code>{max_refs}/{max_refs}</code>\\n"
             f"Нажмите ▶️ Продолжить для перехода к генерации.",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -2846,6 +3012,29 @@ async def process_reference_images_upload(message: types.Message, state: FSMCont
     file = await message.bot.get_file(photo.file_id)
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
+
+    # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
+    try:
+        from PIL import Image
+        import io
+
+        img = Image.open(io.BytesIO(image_data))
+        width, height = img.size
+        if width < 300 or height < 300:
+            await message.answer(
+                f"❌ <b>Референсное изображение слишком маленькое!</b>\\n\\n"
+                f"Размер: {width}×{height} px\\n\\n"
+                "Kie.ai API требует минимум 300×300 px для референсов.\\n"
+                "Загрузите фото большего размера.",
+                parse_mode="HTML",
+                reply_markup=get_reference_images_upload_keyboard(
+                    len(current_refs), max_refs, preset_id
+                ),
+            )
+            return
+        logger.info(f"Reference image validated for Kling: {width}×{height}")
+    except Exception as e:
+        logger.error(f"Reference image validation failed: {e}")
 
     # Добавляем к списку референсов
     current_refs.append(image_data)
@@ -3012,16 +3201,24 @@ async def generate_image(
                 logger.exception("Failed to update state with last_generated_image")
 
             # Создаём задачу в БД для возможности скачивания
-            if saved_url:
-                from bot.database import add_generation_task
+                if saved_url:
+                    from bot.database import add_generation_task, complete_video_task
 
-                user = await get_or_create_user(callback.from_user.id)
-                await add_generation_task(
-                    user_id=user.id,
-                    task_id=task_id,
-                    type="image",
-                    preset_id=preset.id,
-                )
+                    user = await get_or_create_user(callback.from_user.id)
+                    data = await state.get_data()
+                    img_service = data.get("img_service", "nanobanana")
+                    aspect_ratio = data.get("img_ratio", "1:1")
+                    cost = preset_manager.get_generation_cost(img_service)
+                    task_id = f"img_{uuid.uuid4().hex[:12]}"
+                    await add_generation_task(
+                        user.id,
+                        task_id,
+                        "image",
+                        getattr(preset, 'id', 'generation'),
+                        model=img_service,
+                        aspect_ratio=aspect_ratio,
+                        cost=cost
+                    )
                 # Обновляем URL результата
                 from bot.database import complete_video_task
 
@@ -3120,11 +3317,16 @@ async def generate_video(
         )
 
         # Switch to omni model if image reference provided for better consistency support
+        # Preserve "pro" quality if original model was pro
         if (v_type == "imgtxt" or ref_urls) and "omni" not in v_model.lower():
+            if "pro" in v_model.lower():
+                target_model = "v3_omni_pro"
+            else:
+                target_model = "v3_omni_std"
             logger.info(
-                f"Switching model from {v_model} to v3_omni_std for image reference support"
+                f"Switching model from {v_model} to {target_model} for image reference support"
             )
-            v_model = "v3_omni_std"
+            v_model = target_model
 
         # v_type="video" в меню создания видео: Kling Motion Pro с video_url
         if v_type == "video" and v_video_url:
@@ -3812,58 +4014,119 @@ async def run_no_preset_image_generation(
     user_id: int = None,
 ):
     """Запускает генерацию изображения без пресета с указанным форматом"""
+    from bot.config import config
+
+    webhook_url = config.kling_notification_url if config.WEBHOOK_HOST else None
+
     # Получаем предпочитаемую модель и сервис из настроек
     data = await state.get_data()
     image_service = data.get("img_service", "nanobanana")
     # Получаем загруженные референсные изображения
     raw_reference_images = data.get("reference_images", [])
 
+    # Convert raw_reference_images to URLs for URL-expecting services and separate bytes for Gemini
+    reference_image_urls = []
+    reference_images_bytes = []
+    for img_data in raw_reference_images:
+        if isinstance(img_data, bytes):
+            img_url = save_uploaded_file(img_data, "png")
+            if img_url:
+                reference_image_urls.append(img_url)
+            reference_images_bytes.append(img_data)
+        elif isinstance(img_data, str):
+            reference_image_urls.append(img_data)
+
     # Определяем пользователя (для callback message.from_user это бот)
     if user_id is None:
         user_id = message.from_user.id
 
     # Определяем сервис и стоимость через preset_manager
-    model_override = None
-    if image_service in ("novita", "flux_pro"):
-        from bot.services.novita_service import novita_service
+    service = None
+    model_name = ""
+    cost = 0
+    model_to_use = ""
 
-        service = novita_service
-        model_name = "✨ FLUX.2 Pro"
-        cost = preset_manager.get_generation_cost("z_image_turbo")
+    if image_service == "flux_pro":
+        service = nano_banana_pro_service
+        model_name = "✨ FLUX.2 Pro (Banana Pro)"
+        cost = preset_manager.get_generation_cost("banana_pro")
     elif image_service == "seedream":
-        from bot.services.novita_service import novita_service
-
-        service = novita_service
+        service = seedream_service
         model_name = "🎨 Seedream"
         cost = preset_manager.get_generation_cost("seedream")
+    elif image_service == "banana_pro":
+        service = nano_banana_pro_service
+        model_name = "💎 Banana Pro"
+        cost = preset_manager.get_generation_cost("banana_pro")
+    elif image_service == "banana_2":
+        service = nano_banana_2_service
+        model_name = "🍌 Banana 2"
+        cost = preset_manager.get_generation_cost("banana_2")
     elif image_service == "seedream_45":
         service = seedream_service
         model_name = "🌟 Seedream 4.5"
         cost = preset_manager.get_generation_cost("seedream")
     elif image_service == "z_image_turbo":
-        from bot.services.novita_service import novita_service
-
-        service = novita_service
-        model_name = "🚀 Z-Image Turbo LoRA"
+        # TODO: Implement or disable Z-Image Turbo LoRA (requires novita_service.py)
+        service = None
+        model_name = "🚀 Z-Image Turbo LoRA (disabled)"
         cost = preset_manager.get_generation_cost("z_image_turbo")
-    elif image_service == "banana_2":
+    elif image_service == "seedream_edit":
+        service = seedream_service
+        model_name = "🖌 Seedream 4.5 Edit"
+        cost = preset_manager.get_generation_cost("seedream_edit")
+        quality = data.get("quality", "basic")
+        nsfw_checker = data.get("nsfw_checker", False)
+        if not reference_image_urls:
+            await processing.delete()
+            await message.answer("❌ Для Seedream 4.5 Edit требуется хотя бы одно входное изображение (референс). Загрузите фото и повторите генерацию.")
+            await add_credits(user_id, cost)
+            return
+        task_response = await service.generate_image(
+            prompt=prompt,
+            model="seedream/4.5-edit",
+            image_urls=reference_image_urls,
+            aspect_ratio=aspect_ratio,
+            quality=quality,
+            nsfw_checker=nsfw_checker,
+            callback_url=webhook_url,
+        )
+        if task_response and task_response.get("task_id"):
+            task_id = task_response["task_id"]
+            user = await get_or_create_user(user_id)
+            await add_generation_task(user.id, task_id, "image", "seedream_edit")
+            await processing.delete()
+            await message.answer(
+                f"✅ <b>Задача создана!</b>\n\n"
+                f"🤖 Модель: <code>{model_name}</code>\n"
+                f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                f"<code>{cost}</code>🍌 списано\n\n"
+                f"<i>Изображение будет готово через 10-30 секунд.</i>",
+                parse_mode="HTML",
+                reply_markup=get_main_menu_keyboard(),
+            )
+                # Polling removed - webhook will handle
+            await state.clear()
+            return
+        else:
+            await add_credits(user_id, cost)
+            await processing.delete()
+            await message.answer("❌ Не удалось создать задачу редактирования. Бананы возвращены.")
+            return
+    else:  # nanobanana or gemini fallback
         from bot.services.gemini_service import gemini_service
-
         service = gemini_service
-        model_name = "⚡ Banana 2"
-        cost = preset_manager.get_generation_cost("gemini-3.1-flash-image-preview")
-        model_override = "google/gemini-3.1-flash-image-preview"
-    else:
-        from bot.services.gemini_service import gemini_service
-
-        service = gemini_service
+        if image_service == "nanobanana":
+            model_to_use = "gemini-2.5-flash-image"
+        else:
+            model_to_use = "gemini-2.5-flash-image"
         model_name = "🍌 Nano Banana"
-        cost = preset_manager.get_generation_cost("gemini-2.5-flash-image")
+        cost = preset_manager.get_generation_cost(model_to_use)
 
     # Проверяем баланс
     if not await check_can_afford(user_id, cost):
         await message.answer(
-            f"❌ Недостаточно бананов!\n" f"Нужно: {cost}🍌\n" f"Пополните баланс.",
+            f"❌ Недостаточно бананов!\nНужно: {cost}🍌\nПополните баланс.",
             reply_markup=get_main_menu_keyboard(),
         )
         await state.clear()
@@ -3881,253 +4144,83 @@ async def run_no_preset_image_generation(
         parse_mode="HTML",
     )
 
+    result = None
     try:
-        # Different services have different parameter names
-        # gemini: aspect_ratio, novita: size (async API with task_id)
-        if image_service == "novita" or image_service == "flux_pro":
-            # FLUX.2 Pro через Novita - async API, returns task_id
+        if image_service in ("novita", "flux_pro"):
             size = f"{aspect_ratio}_hq"
-            # Конвертируем байты референсов в URL для Novita
-            reference_images = []
-            for img_data in raw_reference_images:
-                if isinstance(img_data, bytes):
-                    img_url = save_uploaded_file(img_data, "png")
-                    if img_url:
-                        reference_images.append(img_url)
-                elif isinstance(img_data, str):
-                    reference_images.append(img_data)
+            reference_images = reference_image_urls
             task_response = await service.generate_image(
                 prompt=prompt,
                 size=size,
-                webhook_url=config.novita_notification_url
-                if config.WEBHOOK_HOST
-                else None,
+                webhook_url=config.novita_notification_url if config.WEBHOOK_HOST else None,
                 reference_images=reference_images,
             )
-
-            # Check for input sensitive content error
-            if (
-                task_response
-                and task_response.get("error") == "INPUT_SENSITIVE_CONTENT"
-            ):
-                await processing.delete()
-                await message.answer(
-                    "❌ <b>Изображение содержит чувствительный контент</b>\n\n"
-                    "Ваше изображение было отклонено системой модерации контента.\n"
-                    "Пожалуйста, используйте другое изображение без чувствительного контента.\n\n"
-                    "🍌 Бананы возвращены на счёт.",
-                    reply_markup=get_main_menu_keyboard(),
-                    parse_mode="HTML",
-                )
-                await add_credits(message.from_user.id, cost)
-                await state.clear()
-                return
-            # Check for API error response (when task_response is None due to HTTP error)
-            elif task_response is None:
-                # Check if this was due to sensitive content by examining the last error
-                # The service may have logged the error, but we need to handle it here
-                await processing.delete()
-                await message.answer(
-                    "❌ <b>Ошибка генерации изображения</b>\n\n"
-                    "Возможно, изображение содержит чувствительный контент.\n"
-                    "Пожалуйста, используйте другое изображение без чувствительного контента.\n\n"
-                    "🍌 Бананы возвращены на счёт.",
-                    reply_markup=get_main_menu_keyboard(),
-                    parse_mode="HTML",
-                )
-                await add_credits(message.from_user.id, cost)
-                await state.clear()
-                return
-
-            if task_response and task_response.get("task_id"):
-                task_id = task_response["task_id"]
-
-                # Сохраняем задачу в БД
-                from bot.database import add_generation_task
-
-                user = await get_or_create_user(message.from_user.id)
-                await add_generation_task(user.id, task_id, "image", "no_preset")
-
-                await processing.delete()
-                await message.answer(
-                    f"✅ <b>Задача создана!</b>\n\n"
-                    f"🤖 Модель: <code>{model_name}</code>\n"
-                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
-                    f"<code>{cost}</code>🍌 списано\n\n"
-                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
-                    parse_mode="HTML",
-                    reply_markup=get_main_menu_keyboard(),
-                )
-
-                # Запускаем фоновый опрос статуса
-                asyncio.create_task(
-                    poll_novita_task_status(
-                        task_id=task_id,
-                        user_id=user_id,
-                        bot=message.bot,
-                        cost=cost,
-                        model_name=model_name,
-                    )
-                )
-
-                await state.clear()
-                return
-            return
+            # Handle task_response logic here if needed, but for sync assume result
+            if task_response and 'image_url' in task_response:
+                result = task_response['image_url']  # Assume sync for simplicity
+            return  # Early return for async services
         elif image_service == "seedream":
-            # Seedream через Novita - может возвращать как task_id, так и сразу изображение
-            size = "2048x2048"  # Default 2K for Seedream
-            # Конвертируем байты референсов в URL для Novita
-            reference_images = []
-            for img_data in raw_reference_images:
-                if isinstance(img_data, bytes):
-                    img_url = save_uploaded_file(img_data, "png")
-                    if img_url:
-                        reference_images.append(img_url)
-                elif isinstance(img_data, str):
-                    reference_images.append(img_data)
-
-            task_response = await service.generate_seedream_image(
+            size = "2048x2048"
+            reference_images = reference_image_urls
+            result = await service.generate_image(
                 prompt=prompt,
                 size=size,
+                images=reference_images,
                 watermark=False,
-                webhook_url=(
-                    config.seedream_notification_url if config.WEBHOOK_HOST else None
-                ),
-                image=reference_images,
             )
-
-            if task_response:
-                # Seedream может вернуть изображение сразу в ответе
-                if "images" in task_response and task_response["images"]:
-                    # Изображение уже готово
-                    image_url = task_response["images"][0]
-
-                    # Сохраняем задачу в БД
-                    from bot.database import add_generation_task, complete_video_task
-
-                    user = await get_or_create_user(user_id)
-                    task_id = f"seedream_{uuid.uuid4().hex[:12]}"
-                    await add_generation_task(user.id, task_id, "image", "no_preset")
-                    await complete_video_task(task_id, image_url)
-
-                    await processing.delete()
-
-                    # Отправляем изображение пользователю
-                    try:
-                        await message.answer_photo(
-                            photo=image_url,
-                            caption=f"✅ <b>Готово!</b>\n\n"
-                            f"🤖 Модель: <code>{model_name}</code>\n"
-                            f"📐 Размер: <code>2048x2048</code>\n"
-                            f"<code>{cost}</code>🍌 списано",
-                            parse_mode="HTML",
-                            reply_markup=get_multiturn_keyboard("no_preset"),
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send photo: {e}")
-                        await message.answer(
-                            f"✅ <b>Готово!</b>\n\n"
-                            f"🤖 Модель: <code>{model_name}</code>\n"
-                            f"📐 Размер: <code>2048x2048</code>\n"
-                            f"<code>{cost}</code>🍌 списано\n\n"
-                            f"<a href='{image_url}'>Скачать изображение</a>",
-                            parse_mode="HTML",
-                            reply_markup=get_multiturn_keyboard("no_preset"),
-                        )
-                    await state.clear()
-                    return
-                elif task_response.get("task_id"):
-                    # Асинхронная задача
-                    task_id = task_response["task_id"]
-
-                    # Сохраняем задачу в БД
-                    from bot.database import add_generation_task
-
-                    user = await get_or_create_user(user_id)
-                    await add_generation_task(user.id, task_id, "image", "no_preset")
-
-                    await processing.delete()
-                    await message.answer(
-                        f"✅ <b>Задача создана!</b>\n\n"
-                        f"🤖 Модель: <code>{model_name}</code>\n"
-                        f"📐 Размер: <code>2048x2048</code>\n"
-                        f"<code>{cost}</code>🍌 списано\n\n"
-                        f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
-                        parse_mode="HTML",
-                        reply_markup=get_main_menu_keyboard(),
-                    )
-
-                    # Запускаем фоновый опрос статуса
-                    asyncio.create_task(
-                        poll_novita_task_status(
-                            task_id=task_id,
-                            user_id=user_id,
-                            bot=message.bot,
-                            cost=cost,
-                            model_name=model_name,
-                        )
-                    )
-
-                    await state.clear()
-                    return
-            return
-        elif image_service == "z_image_turbo":
-            # Z-Image Turbo LoRA через Novita
-            size = f"{aspect_ratio}_hq"
-            task_response = await service.generate_image_turbo_lora(
+        elif image_service == "banana_pro":
+            resolution = "1K"
+            task_response = await service.generate_image(
                 prompt=prompt,
-                size=size,
-                webhook_url=(
-                    config.novita_notification_url if config.WEBHOOK_HOST else None
-                ),
-                reference_images=reference_images,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                image_input=reference_image_urls,
+                callback_url=webhook_url,
             )
-
             if task_response and task_response.get("task_id"):
                 task_id = task_response["task_id"]
-
-                # Сохраняем задачу в БД
-                from bot.database import add_generation_task
-
-                user = await get_or_create_user(message.from_user.id)
+                user = await get_or_create_user(user_id)
                 await add_generation_task(user.id, task_id, "image", "no_preset")
-
                 await processing.delete()
                 await message.answer(
                     f"✅ <b>Задача создана!</b>\n\n"
                     f"🤖 Модель: <code>{model_name}</code>\n"
                     f"📐 Формат: <code>{aspect_ratio}</code>\n"
                     f"<code>{cost}</code>🍌 списано\n\n"
-                    f"<i>Изображение будет готово через 10-30 секунд. Я пришлю результат автоматически.</i>",
+                    f"<i>Изображение будет готово через 10-30 секунд (webhook).</i>",
                     parse_mode="HTML",
                     reply_markup=get_main_menu_keyboard(),
                 )
-
-                # Запускаем фоновый опрос статуса
-                asyncio.create_task(
-                    poll_novita_task_status(
-                        task_id=task_id,
-                        user_id=user_id,
-                        bot=message.bot,
-                        cost=cost,
-                        model_name=model_name,
-                    )
-                )
-            else:
+                # Polling removed - using webhook
+                await state.clear()
+                return
+        elif image_service == "banana_2":
+            resolution = "1K"
+            task_response = await service.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                image_input=reference_image_urls,
+                callback_url=webhook_url,
+            )
+            if task_response and task_response.get("task_id"):
+                task_id = task_response["task_id"]
+                user = await get_or_create_user(user_id)
+                await add_generation_task(user.id, task_id, "image", "no_preset")
                 await processing.delete()
-                await add_credits(user_id, cost)
                 await message.answer(
-                    "❌ Не удалось создать задачу. Бананы возвращены.",
+                    f"✅ <b>Задача создана!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд.</i>",
+                    parse_mode="HTML",
                     reply_markup=get_main_menu_keyboard(),
                 )
-            await state.clear()
-            return
-
+                # Polling removed - webhook will handle via handle_kie_ai_webhook
+                await state.clear()
+                return
         elif image_service == "seedream_45":
-            service = seedream_service
-            model_name = "🌟 Seedream 4.5"
-            cost = preset_manager.get_generation_cost("seedream")
-
             aspect_to_size = {
                 "1:1": "2048x2048",
                 "16:9": "2560x1440",
@@ -4138,150 +4231,144 @@ async def run_no_preset_image_generation(
                 "2:3": "1707x2560",
             }
             size = aspect_to_size.get(aspect_ratio, "2048x2048")
-
-            # Convert reference images to URLs (API expects URLs, not base64)
-            reference_images = []
-            for img_data in raw_reference_images:
-                if isinstance(img_data, bytes):
-                    img_url = save_uploaded_file(img_data, "png")
-                    if img_url:
-                        reference_images.append(img_url)
-                elif isinstance(img_data, str):
-                    reference_images.append(img_data)
-
+            reference_images = reference_image_urls
             result = await service.generate_image(
                 prompt=prompt,
                 size=size,
                 images=reference_images,
-                watermark=False,  # Match successful Seedream 5.0 config
+                watermark=False,
             )
-            await processing.delete()
-            if result:
-                # Seedream returns List[bytes], take first image
-                image_bytes = result[0] if isinstance(result, list) else result
-                saved_url = save_uploaded_file(image_bytes, "png")
-
-                # Сохраняем оригинальные байты и URL в состоянии для кнопки скачивания
-                try:
-                    await state.update_data(
-                        last_generated_image_bytes=result,
-                        last_generated_image_url=saved_url,
-                    )
-                except Exception:
-                    logger.exception("Failed to update state with last_generated_image")
-
-                if saved_url:
-                    from bot.database import add_generation_task, complete_video_task
-
-                    user = await get_or_create_user(user_id)
-                    task_id = f"seedream_45_{uuid.uuid4().hex[:12]}"
-                    await add_generation_task(user.id, task_id, "image", "no_preset")
-                    await complete_video_task(task_id, saved_url)
-
-                photo = types.BufferedInputFile(image_bytes, filename="generated.png")
-                await message.answer_photo(
-                    photo=photo,
-                    caption=f"✅ <b>Готово!</b>\n\n"
+        elif image_service == "z_image_turbo":
+            size = f"{aspect_ratio}_hq"
+            task_response = await service.generate_image_turbo_lora(
+                prompt=prompt,
+                size=size,
+                webhook_url=config.novita_notification_url if config.WEBHOOK_HOST else None,
+                reference_images=reference_image_urls,
+            )
+            if task_response and task_response.get("task_id"):
+                # Similar handling as banana_pro
+                task_id = task_response["task_id"]
+                user = await get_or_create_user(user_id)
+                await add_generation_task(user.id, task_id, "image", "no_preset")
+                await processing.delete()
+                await message.answer(
+                    f"✅ <b>Задача создана!</b>\n\n"
                     f"🤖 Модель: <code>{model_name}</code>\n"
-                    f"📐 Размер: <code>{size}</code>\n"
-                    f"<code>{cost}</code>🍌 списано",
+                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд.</i>",
                     parse_mode="HTML",
-                    reply_markup=get_multiturn_keyboard("no_preset"),
+                    reply_markup=get_main_menu_keyboard(),
                 )
-
-                await _send_original_document(
-                    message.answer_document, result, saved_url
+                # Polling removed - using webhook
+                await state.clear()
+                return
+        elif image_service == "seedream_5_lite":
+            service = seedream_service
+            model_name = "🔥 Seedream 5.0 Lite"
+            cost = preset_manager.get_generation_cost("seedream_5_lite")
+            quality = data.get("quality", "basic")
+            nsfw_checker = data.get("nsfw_checker", False)
+            if not reference_image_urls:
+                await processing.delete()
+                await message.answer("❌ Для Seedream 5.0 Lite требуется хотя бы одно входное изображение (референс). Загрузите фото и повторите генерацию.")
+                await add_credits(user_id, cost)
+                return
+            task_response = await service.generate_image(
+                prompt=prompt,
+                model="seedream/5-lite-image-to-image",
+                image_urls=reference_image_urls,
+                aspect_ratio=aspect_ratio,
+                quality=quality,
+                nsfw_checker=nsfw_checker,
+                callback_url=webhook_url,
+            )
+            if task_response and task_response.get("task_id"):
+                task_id = task_response["task_id"]
+                user = await get_or_create_user(user_id)
+                await add_generation_task(user.id, task_id, "image", "seedream_5_lite")
+                await processing.delete()
+                await message.answer(
+                    f"✅ <b>Задача создана!</b>\n\n"
+                    f"🤖 Модель: <code>{model_name}</code>\n"
+                    f"📐 Формат: <code>{aspect_ratio}</code>\n"
+                    f"<code>{cost}</code>🍌 списано\n\n"
+                    f"<i>Изображение будет готово через 10-30 секунд (webhook).</i>",
+                    parse_mode="HTML",
+                    reply_markup=get_main_menu_keyboard(),
                 )
-                if saved_url:
-                    await _send_download_link(message.answer, saved_url)
+                # Polling removed - using webhook
+                await state.clear()
+                return
             else:
                 await add_credits(user_id, cost)
-                await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
-
-            await state.clear()
-            return
-        else:
-            # Nano Banana / Gemini
-            # Map service to correct model
-            if image_service == "nanobanana":
-                model_to_use = "gemini-2.5-flash-image"
-            elif image_service == "banana_pro":
-                model_to_use = "gemini-3-pro-image-preview"
-            elif image_service == "banana_2":
-                model_to_use = "gemini-3.1-flash-image-preview"
-            else:
-                model_to_use = "gemini-2.5-flash-image"
-
-            # Calculate cost for Gemini models
-            cost = preset_manager.get_generation_cost(model_to_use)
-
-            # Prepare reference images for Gemini: separate bytes and URLs
-            reference_images_bytes = []
-            reference_image_urls = []
-            for ref in raw_reference_images:
-                if isinstance(ref, bytes):
-                    reference_images_bytes.append(ref)
-                elif isinstance(ref, str):
-                    reference_image_urls.append(ref)
-
+                await processing.delete()
+                await message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
+                return
+        else:  # Gemini/Nano Banana
             result = await service.generate_image(
                 prompt=prompt,
                 model=model_to_use,
                 aspect_ratio=aspect_ratio,
                 image_input=None,
-                reference_images=reference_images_bytes
-                if reference_images_bytes
-                else None,
-                reference_image_urls=reference_image_urls
-                if reference_image_urls
-                else None,
-                preserve_faces=True
-                if (reference_images_bytes or reference_image_urls)
-                else False,
+                reference_images=reference_images_bytes if reference_images_bytes else None,
+                reference_image_urls=reference_image_urls if reference_image_urls else None,
+                preserve_faces=True if (reference_images_bytes or reference_image_urls) else False,
             )
+
 
         await processing.delete()
 
         if result:
-            saved_url = save_uploaded_file(result, "png")
+            if isinstance(result, str):  # URL
+                saved_url = result
+                image_bytes = None
+            else:  # bytes
+                image_bytes = result if isinstance(result, bytes) else result[0]
+                saved_url = save_uploaded_file(image_bytes, "png")
 
-            # Сохраняем оригинальные байты и URL в состоянии
+            # Сохраняем в state
             try:
                 await state.update_data(
-                    last_generated_image_bytes=result,
+                    last_generated_image_bytes=image_bytes or result,
                     last_generated_image_url=saved_url,
                 )
-            except Exception:
-                logger.exception("Failed to update state with last_generated_image")
+            except:
+                pass
 
             if saved_url:
-                from bot.database import add_generation_task, complete_video_task
-
-                user = await get_or_create_user(message.from_user.id)
+                user = await get_or_create_user(user_id)
                 task_id = f"img_{uuid.uuid4().hex[:12]}"
                 await add_generation_task(user.id, task_id, "image", "no_preset")
                 await complete_video_task(task_id, saved_url)
 
-            photo = types.BufferedInputFile(result, filename="generated.png")
+            if image_bytes:
+                photo = types.BufferedInputFile(image_bytes, filename="generated.png")
+            else:
+                photo = saved_url
             await message.answer_photo(
                 photo=photo,
                 caption=f"✅ <b>Готово!</b>\n\n"
+                f"🤖 Модель: <code>{model_name}</code>\n"
                 f"📐 Формат: <code>{aspect_ratio}</code>\n"
                 f"<code>{cost}</code>🍌 списано",
                 parse_mode="HTML",
                 reply_markup=get_multiturn_keyboard("no_preset"),
             )
-            await _send_original_document(message.answer_document, result, saved_url)
+            if image_bytes:
+                await _send_original_document(message.answer_document, image_bytes, saved_url)
             if saved_url:
                 await _send_download_link(message.answer, saved_url)
         else:
-            await add_credits(message.from_user.id, cost)
+            await add_credits(user_id, cost)
             await message.answer("❌ Не удалось сгенерировать. Бананы возвращены.")
 
     except Exception as e:
-        logger.exception(f"Error: {e}")
-        await add_credits(message.from_user.id, cost)
-        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
+        logger.exception(f"Error in run_no_preset_image_generation: {e}")
+        await add_credits(user_id, cost)
+        await processing.delete()
+        await message.answer(f"❌ Ошибка генерации: {str(e)[:100]}", reply_markup=get_main_menu_keyboard())
 
     await state.clear()
 
@@ -4630,16 +4717,14 @@ async def execute_video_edit_image(
         from bot.config import config
         from bot.services.kling_service import kling_service
 
-        # Для I2V передаём image (может быть bytes или URL) и elements для сохранения лица
-        # KlingService теперь поддерживает bytes (будут автоматически закодированы в data URI)
-        image_input = image_bytes if image_bytes else image_url
+        # Для I2V передаём image_url и elements для сохранения лица
         result = await kling_service.generate_video(
             prompt=prompt,
             model=model,
             duration=duration,
             aspect_ratio=aspect_ratio,
             webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_input,
+            image_url=image_url,
             elements=elements,
         )
 
@@ -5081,15 +5166,14 @@ async def run_image_to_video(message: types.Message, state: FSMContext, prompt: 
         ]
 
         # Создаём задачу на генерацию видео с Omni моделью
-        # Для I2V используем image (bytes или URL) и elements для сохранения лица
-        image_input = uploaded_image if uploaded_image else image_url
+        # Для I2V используем image_url (станет start_image_url) и elements для сохранения лица
         result = await kling_service.generate_video(
             prompt=prompt,
             model=preferred_i2v_model,
             duration=duration,
             aspect_ratio=aspect_ratio,
             webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_input,
+            image_url=image_url,
             elements=elements,
         )
 
@@ -5146,25 +5230,38 @@ async def run_image_to_video(message: types.Message, state: FSMContext, prompt: 
 async def run_motion_control(message: types.Message, state: FSMContext, prompt: str):
     """Запускает генерацию Motion Control - перенос движения с видео на изображение"""
     data = await state.get_data()
-    uploaded_image = data.get("uploaded_image")
-    uploaded_image_url = data.get("uploaded_image_url")
+    motion_image_url = data.get("motion_image_url")
     motion_video_url = data.get("motion_video_url")
     motion_video_url_data = data.get("motion_video_url_data")
+    motion_mode = data.get("motion_mode", "720p")
+    motion_orientation = data.get("motion_orientation", "video")
     video_options = data.get("video_options", {})
 
-    if not uploaded_image:
+
+    if not motion_image_url:
         await message.answer(
             "❌ Ошибка: изображение персонажа не найдено. Начните заново."
         )
         await state.clear()
         return
 
-    if not motion_video_url and not motion_video_url_data:
+    video_ref_url = motion_video_url
+    if not video_ref_url and motion_video_url_data:
+        video_ref_url = save_uploaded_file(motion_video_url_data, "mp4")
+        if video_ref_url:
+            await state.update_data(motion_video_url=video_ref_url)
+        else:
+            await message.answer("❌ Не удалось сохранить видео-референс.")
+            await state.clear()
+            return
+
+    if not video_ref_url:
         await message.answer(
-            "❌ Ошибка: видео-референс движения не найден. Начните заново."
+            "❌ Ошибка: видео-референс движения не найдено. Начните заново."
         )
         await state.clear()
         return
+
 
     # Для Motion Control используем модель v26_motion_pro
     motion_model = "v26_motion_pro"
@@ -5236,16 +5333,16 @@ async def run_motion_control(message: types.Message, state: FSMContext, prompt: 
             f"run_motion_control: generating with model={motion_model}, image_url={image_url[:80] if image_url else 'None'}..., video_ref_url={video_ref_url[:80] if video_ref_url else 'None'}..., prompt={prompt[:50]}..."
         )
 
-        # Для Motion Control используем video_url параметр
-        result = await kling_service.generate_video(
-            prompt=prompt,
-            model=motion_model,
-            duration=duration,
-            aspect_ratio=aspect_ratio,
-            webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
-            image_url=image_url,
+        # Для Motion Control используем Kie.ai motion-control
+        result = await kling_service.generate_motion_control(
+            image_url=motion_image_url,
             video_url=video_ref_url,
+            prompt=prompt,
+            motion_direction=motion_orientation,
+            mode=motion_mode,
+            webhook_url=config.kie_notification_url if config.WEBHOOK_HOST else None,
         )
+
 
         if result:
             logger.info(
@@ -5309,7 +5406,7 @@ async def poll_novita_task_status(
 ):
     """Фоновый опрос статуса задачи изображения от Novita"""
     from bot.database import add_credits, complete_video_task
-    from bot.services.novita_service import novita_service
+    # from bot.services.novita_service import novita_service  # Disabled - file missing
 
     logger.info(f"Starting Novita poll for task {task_id}, user {user_id}")
 
@@ -5512,6 +5609,80 @@ async def poll_video_task_status(
     )
 
 
+async def poll_kie_image_task_status(
+    task_id: str,
+    user_id: int,
+    bot: Bot,
+    cost: int,
+    model_name: str,
+    max_attempts: int = 60,
+    delay: int = 5,
+):
+    """Фоновый опрос статуса Kie.ai image task"""
+    from bot.services.nano_banana_2_service import nano_banana_2_service
+    from bot.database import complete_video_task, add_credits
+    from bot.keyboards import get_multiturn_keyboard, get_main_menu_keyboard
+    import asyncio
+
+    logger.info(f"Starting Kie.ai image poll for task {task_id}, user {user_id}")
+
+    for attempt in range(max_attempts):
+        status_data = await nano_banana_2_service.get_task_status(task_id)
+        if not status_data:
+            await asyncio.sleep(delay)
+            continue
+
+        task_data = status_data.get("data", {})
+        status = task_data.get("state", "").lower()
+
+        logger.debug(f"Image task {task_id}: status={status}, attempt {attempt+1}")
+
+        if status == "success":
+            output_url = task_data.get("output", {}).get("urls", [None])[0]
+            if output_url:
+                await complete_video_task(task_id, output_url)
+                try:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=output_url,
+                        caption=f"✅ <b>Готово!</b>\n\n🤖 Модель: <code>{model_name}</code>\n<code>{cost}</code>🍌 списано",
+                        parse_mode="HTML",
+                        reply_markup=get_multiturn_keyboard("no_preset"),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send photo: {e}")
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ <b>Готово!</b>\n\n🤖 Модель: <code>{model_name}</code>\n<code>{cost}</code>🍌 списано\n\n<a href='{output_url}'>Скачать изображение</a>",
+                        parse_mode="HTML",
+                        reply_markup=get_multiturn_keyboard("no_preset"),
+                    )
+                return
+
+        elif status in ["fail", "failed"]:
+            error_msg = task_data.get("failMsg", "Unknown error")
+            logger.error(f"Image task {task_id} failed: {error_msg}")
+            await add_credits(user_id, cost)
+            await bot.send_message(
+                chat_id=user_id,
+                text=f"❌ <b>Ошибка генерации изображения</b>\n\n{error_msg}\n\n🍌 Бананы возвращены.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+
+        await asyncio.sleep(delay)
+
+    logger.warning(f"Image task {task_id} timeout")
+    await add_credits(user_id, cost)
+    await bot.send_message(
+        chat_id=user_id,
+        text="❌ <b>Таймаут генерации изображения</b>\n\n🍌 Бананы возвращены.",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 # =============================================================================
 # ОБРАБОТЧИКИ ОПЦИЙ ВИДЕО БЕЗ ПРЕСЕТА
 # =============================================================================
@@ -5619,16 +5790,6 @@ async def run_no_preset_image_from_message(
     )
 
 
-# Backwards-compatible alias expected by tests
-def process_generation():
-    """Compatibility shim used by tests to verify handler mapping.
-
-    Historically tests import `process_generation` from this module.
-    Provide a no-op function to keep imports working.
-    """
-    return None
-
-
 @router.callback_query(F.data == "run_no_preset_video")
 async def run_no_preset_video_from_message(
     message: types.Message, state: FSMContext, user_prompt: str
@@ -5733,169 +5894,77 @@ async def start_no_preset_video_from_message(
             elif isinstance(ref, str):
                 ref_urls.append(ref)
 
+        # Ensure image_url for Kling elements/role refs
+        if ref_urls and not image_url:
+            image_url = ref_urls[0]  # Use first ref as start frame when no explicit start image
+            logger.info(f"Using first ref {image_url} as start image for Kling elements")
+
         # Формируем elements для сохранения персонажей/стиля
         # Kling поддерживает elements для консистентности
         if ref_urls:
             elements = []
-            for ref_url in ref_urls[:4]:  # Максимум 4 персонажа
+            for i, ref_url in enumerate(ref_urls[:3]):  # max 3 per spec
                 elements.append(
-                    {"reference_image_urls": [ref_url], "frontal_image_url": ref_url}
+                    {
+                        "name": f"element_{i}",
+                        "description": f"reference {i+1}",
+                        "element_input_urls": [ref_url],
+                    }
                 )
 
-        # Если imgtxt + есть референсы, объединяем
-        if v_type == "imgtxt" and image_url and elements:
-            # Добавляем стартовое изображение как основной референс
-            elements.insert(
-                0, {"reference_image_urls": [image_url], "frontal_image_url": image_url}
-            )
-        elif v_type == "imgtxt" and image_url and not elements:
-            # Только стартовое изображение
-            elements = [
-                {"reference_image_urls": [image_url], "frontal_image_url": image_url}
-            ]
+        # Если imgtxt + есть референсы, объединяем start image
+        if v_type == "imgtxt" and image_url:
+            # image_url already set as start frame
+            pass
 
-        # DEBUG: Add logging for image_url and elements
-        logger.info(
-            f"DEBUG v_type={v_type}, v_image_url={v_image_url}, image_url={image_url}, elements={elements}"
-        )
+        webhook_url = config.kling_notification_url if config.WEBHOOK_HOST else None
 
-        # WanX txt2video + LoRA или img2video + LoRA
-        if v_model.startswith("wanx"):
-            wanx_loras = data.get("wanx_lora_settings") or [
-                {"lora_type": "nsfw-general", "lora_strength": 1.0}
-            ]
-            # Если есть загруженное изображение для режима imgtxt, используем img2video
-            if v_type == "imgtxt" and v_image_url:
-                # Загружаем изображение из URL или файла
-                try:
-                    import aiohttp
+        if v_model == "grok_imagine":
+            image_urls = []
+            if image_url:
+                image_urls.append(image_url)
+            # Add from reference images if available
+            for ref in reference_images[:6]:
+                if isinstance(ref, bytes):
+                    ref_url = save_uploaded_file(ref, "png")
+                    if ref_url:
+                        image_urls.append(ref_url)
+                elif isinstance(ref, str):
+                    image_urls.append(ref)
+            image_urls = image_urls[:7]
 
-                    async with aiohttp.ClientSession(trust_env=False) as session:
-                        async with session.get(v_image_url) as resp:
-                            if resp.status == 200:
-                                image_bytes = await resp.read()
-                            else:
-                                # Пытаемся прочитать локальный файл
-                                import os
-
-                                if os.path.exists(
-                                    v_image_url.replace(
-                                        config.static_base_url, "static"
-                                    ).lstrip("/")
-                                ):
-                                    with open(
-                                        v_image_url.replace(
-                                            config.static_base_url, "static"
-                                        ).lstrip("/"),
-                                        "rb",
-                                    ) as f:
-                                        image_bytes = f.read()
-                                else:
-                                    # Если не удалось получить изображение, fallback на txt2video
-                                    logger.warning(
-                                        f"Failed to load image for WanX img2video, falling back to txt2video"
-                                    )
-                                    result = await wanx_service.generate_txt2video_lora(
-                                        prompt=prompt,
-                                        aspect_ratio=v_ratio,
-                                        lora_settings=wanx_loras,
-                                        webhook_url=config.wanx_notification_url
-                                        if config.WEBHOOK_HOST
-                                        else None,
-                                    )
-                except Exception as e:
-                    logger.error(f"Error loading image for WanX img2video: {e}")
-                    # Fallback на txt2video
-                    result = await wanx_service.generate_txt2video_lora(
-                        prompt=prompt,
-                        aspect_ratio=v_ratio,
-                        lora_settings=wanx_loras,
-                        webhook_url=config.wanx_notification_url
-                        if config.WEBHOOK_HOST
-                        else None,
-                    )
-                else:
-                    # Используем img2video с изображением
-                    result = await wanx_service.generate_img2video_lora(
-                        image_bytes=image_bytes,
-                        prompt=prompt,
-                        aspect_ratio=v_ratio,
-                        lora_settings=wanx_loras,
-                        webhook_url=config.wanx_notification_url
-                        if config.WEBHOOK_HOST
-                        else None,
-                    )
-            else:
-                # Стандартный txt2video
-                result = await wanx_service.generate_txt2video_lora(
-                    prompt=prompt,
-                    aspect_ratio=v_ratio,
-                    lora_settings=wanx_loras,
-                    webhook_url=config.wanx_notification_url
-                    if config.WEBHOOK_HOST
-                    else None,
+            if not image_urls:
+                await add_credits(message.from_user.id, cost)
+                await processing.delete()
+                await message.answer(
+                    "❌ <b>Grok Imagine 🧠</b>\n\n"
+                    "Требуется хотя бы одно входное изображение!\n\n"
+                    "📷 Загрузите фото и отправьте промпт повторно.",
+                    reply_markup=get_create_video_keyboard(
+                        current_v_type=data.get("v_type", "text"),
+                        current_model=v_model,
+                        current_duration=data.get("v_duration", 5),
+                        current_ratio=data.get("v_ratio", "16:9"),
+                    ),
+                    parse_mode="HTML",
                 )
-        elif v_model == "runway_gen45":
-            from bot.services.runway_service import runway_service as _runway_service
+                return
 
-            image_url_runway = image_url if v_type == "imgtxt" else None
-            # Use the dedicated Replicate webhook endpoint so Runway/Replicate
-            # callbacks arrive at /webhook/replicate rather than the Kling
-            # webhook. Previously we reused the Kling webhook which caused
-            # Runway tasks to be delivered to the Kling handler.
-            webhook_url_runway = (
-                config.replicate_notification_url if config.WEBHOOK_HOST else None
-            )
-            # Pass both bytes references and URL references when available.
-            raw_refs = data.get("reference_images", [])
-            # Simplify prompt before sending to Runway to avoid overly long
-            # or noisy inputs (collapse whitespace, remove parentheses/HTML,
-            # strip mentions/hashtags and truncate).
-            def _simplify_prompt_for_runway(p: str, max_chars: int = 800) -> str:
-                if not p:
-                    return p
-                s = p
-                # Collapse whitespace/newlines
-                s = re.sub(r"\s+", " ", s).strip()
-                # Remove parenthetical content which often contains meta notes
-                s = re.sub(r"\([^\)]*\)", "", s)
-                # Strip simple HTML tags if present
-                s = re.sub(r"<[^>]+>", "", s)
-                # Remove @mentions and #hashtags
-                s = re.sub(r"[@#]\S+", "", s)
-                # Collapse extra spaces again
-                s = re.sub(r"\s+", " ", s).strip()
-                # Truncate to last full word under max_chars
-                if len(s) > max_chars:
-                    s = s[:max_chars]
-                    # avoid cutting in middle of word
-                    if " " in s:
-                        s = s.rsplit(" ", 1)[0]
-                return s
+            mode = data.get("current_grok_mode", "normal")
+            grok_duration = max(6, min(30, v_duration))
+            resolution = "480p"
+            nsfw_checker = data.get("current_grok_nsfw", False)
 
-            simplified_prompt = _simplify_prompt_for_runway(prompt)
-            logger.info(
-                "Runway: sending simplified prompt (len %d -> %d)",
-                len(prompt or ""),
-                len(simplified_prompt or ""),
-            )
-
-            # Do not auto-save characters. Use the freshly uploaded/attached
-            # reference images for this single generation request — users
-            # explicitly upload new photos/refs for each generation.
-            result = await _runway_service.generate_video(
-                prompt=simplified_prompt,
-                duration=v_duration,
+            result = await grok_service.generate_image_to_video(
+                image_urls=image_urls,
+                prompt=prompt,
+                mode=mode,
+                duration=grok_duration,
+                resolution=resolution,
                 aspect_ratio=v_ratio,
-                image_url=image_url_runway,
-                reference_image_urls=ref_urls if ref_urls else None,
-                reference_images=[
-                    r for r in raw_refs if isinstance(r, (bytes, bytearray))
-                ]
-                or None,
-                webhook_url=webhook_url_runway,
+                nsfw_checker=nsfw_checker,
+                callBackUrl=webhook_url,
             )
-        # Для v_type="video" используем motion_control с video_url
         elif v_type == "video" and v_video_url:
             if not v_image_url:
                 await message.answer("Для видео-референса нужно изображение персонажа!")
@@ -5905,9 +5974,7 @@ async def start_no_preset_video_from_message(
                 model="v26_motion_pro",
                 duration=v_duration,
                 aspect_ratio=v_ratio,
-                webhook_url=config.kling_notification_url
-                if config.WEBHOOK_HOST
-                else None,
+                webhook_url=webhook_url,
                 image_url=v_image_url,
                 video_url=v_video_url,
             )
@@ -5918,9 +5985,7 @@ async def start_no_preset_video_from_message(
                 model=v_model,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
-                webhook_url=config.kling_notification_url
-                if config.WEBHOOK_HOST
-                else None,
+                webhook_url=webhook_url,
                 image_url=image_url,
                 elements=elements,
             )

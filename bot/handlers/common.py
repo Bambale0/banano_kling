@@ -778,9 +778,9 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
         return
 
     # Сохраняем тип генерации
-    await state.set_state(GenerationStates.waiting_for_image)
+    await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
-        generation_type="motion_control", video_model="v26_motion_std", cost=cost
+        generation_type="motion_control", video_model="v26_motion_std", cost=cost, mode="std"
     )
 
     await callback.message.edit_text(
@@ -814,9 +814,9 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
         return
 
     # Сохраняем тип генерации
-    await state.set_state(GenerationStates.waiting_for_image)
+    await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
-        generation_type="motion_control", video_model="v26_motion_pro", cost=cost
+        generation_type="motion_control", video_model="v26_motion_pro", cost=cost, mode="pro"
     )
 
     await callback.message.edit_text(
@@ -1217,6 +1217,116 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         welcome_ai, reply_markup=get_back_keyboard("menu_settings"), parse_mode="HTML"
     )
     await callback.answer()
+
+
+@router.message(GenerationStates.waiting_for_motion_character_image, F.photo)
+async def handle_motion_character_upload(message: types.Message, state: FSMContext):
+    """Загрузка фото персонажа для motion control"""
+    from bot.config import config
+    import uuid
+    import os
+
+    data = await state.get_data()
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+    image_data = image_bytes.read()
+
+    os.makedirs("static/uploads", exist_ok=True)
+    host = config.WEBHOOK_HOST.rstrip('/')
+    fname = f"{uuid.uuid4().hex}.jpg"
+    fpath = f"static/uploads/{fname}"
+    with open(fpath, "wb") as f:
+        f.write(image_data)
+    v_image_url = f"{host}/uploads/{fname}"
+
+    await state.update_data(v_image_url=v_image_url)
+    await message.answer(
+        "✅ <b>Фото персонажа загружено!</b>\n\n"
+        "📹 <b>Шаг 2:</b> Загрузите видео с движением\n"
+        "(3-10 секунд, четкое движение)",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_motion_video)
+
+
+@router.message(GenerationStates.waiting_for_motion_video, F.video)
+async def handle_motion_video_upload(message: types.Message, state: FSMContext):
+    """Загрузка видео движения для motion control"""
+    from bot.config import config
+    from bot.database import deduct_credits, add_credits, get_or_create_user, add_generation_task
+    from bot.services.kling_service import kling_service
+    import uuid
+    import os
+
+    data = await state.get_data()
+    v_image_url = data.get("v_image_url")
+    if not v_image_url:
+        await message.answer("❌ Сначала загрузите фото персонажа!", parse_mode="HTML")
+        return
+
+    video = message.video
+    file = await message.bot.get_file(video.file_id)
+    video_bytes = await message.bot.download_file(file.file_path)
+    video_data = video_bytes.read()
+
+    os.makedirs("static/uploads", exist_ok=True)
+    host = config.WEBHOOK_HOST.rstrip('/')
+    fname = f"{uuid.uuid4().hex}.mp4"
+    fpath = f"static/uploads/{fname}"
+    with open(fpath, "wb") as f:
+        f.write(video_data)
+    v_video_url = f"{host}/uploads/{fname}"
+
+    telegram_id = message.from_user.id
+    user = await get_or_create_user(telegram_id)
+    cost = data.get("cost")
+    video_model = data.get("video_model")
+    mode = data.get("mode", "std")
+
+    await deduct_credits(telegram_id, cost)
+
+    task_result = await kling_service.generate_motion_control(
+        image_url=v_image_url,
+        video_url=v_video_url,
+        mode=mode,
+        webhook_url=config.kie_notification_url,
+    )
+
+    if task_result and "task_id" in task_result:
+        task_id = task_result["task_id"]
+        await add_generation_task(
+            user_id=user.id,
+            task_id=task_id,
+            type="video",
+            preset_id=video_model,
+            prompt="motion control",
+            cost=cost,
+        )
+        await message.answer(
+            f"🚀 <b>Motion Control запущен!</b>\n\n"
+            f"💰 <code>{cost}</code>🍌\n"
+            f"🤖 <code>{mode.upper()}</code>\n"
+            f"🆔 <code>{task_id}</code>\n\n"
+            f"Ожидайте результат (1-5 мин)...",
+            parse_mode="HTML",
+        )
+        await state.clear()
+    else:
+        await add_credits(telegram_id, cost)
+        await message.answer("❌ Ошибка запуска. Бананы возвращены.", parse_mode="HTML")
+
+
+@router.message(GenerationStates.waiting_for_motion_character_image)
+async def invalid_motion_character_upload(message: types.Message, state: FSMContext):
+    """Невалидный ввод при загрузке фото персонажа"""
+    await message.answer("⚠️ <b>Пожалуйста, отправьте фото персонажа</b>", parse_mode="HTML")
+
+
+@router.message(GenerationStates.waiting_for_motion_video)
+async def invalid_motion_video_upload(message: types.Message, state: FSMContext):
+    """Невалидный ввод при загрузке видео движения"""
+    await message.answer("⚠️ <b>Пожалуйста, отправьте видео (3-10 сек)</b>", parse_mode="HTML")
 
 
 @router.message(StateFilter(AIAssistantStates.waiting_for_message))
