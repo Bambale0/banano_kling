@@ -1160,7 +1160,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         else:
                             sources.append(str(val))
                 if sources:
-                    source_links = "\n\n🖼 Исходники:\n" + "\n".join([f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>" for u in sources[:3]])
+                    source_links = f"\n🖼 <b>Исходники:</b>\n" + "\n".join([f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>" for u in sources[:3]])
             except:
                 pass
 
@@ -1172,45 +1172,51 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     is_video = True
                 elif 'video' in model_lower:
                     is_video = True
-            base_caption = f"✅ <b>Ваше {'видео' if is_video else 'изображение'} ({service_name}) готово!</b>"
-            if task.preset_id == "no_preset" and task.prompt:
-                caption = f"{base_caption}\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>{source_links}"
-            else:
-                caption = f"{base_caption}\n\n🎯 Пресет: {task.preset_id}{source_links}"
 
-            # ALWAYS send direct link first (reliable)
-            link_msg = f"{caption}\n\n🔗 <b>Прямая ссылка:</b> <a href='{result_url}'>{result_url}</a>"
-            kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            # Build ultra-compact caption with minimal line breaks
+            info_lines = []
+            if task.cost:
+                info_lines.append(f"💰{task.cost}🍌")
+            if task.duration:
+                info_lines.append(f"⏱{task.duration}с")
+            if task.aspect_ratio:
+                info_lines.append(f"📐{task.aspect_ratio}")
+            info_str = " | ".join(info_lines) if info_lines else ""
+
+            prompt_or_preset = f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>" if task.preset_id == "no_preset" and task.prompt else task.preset_id
+            label = "Промпт" if task.preset_id == "no_preset" else "Пресет"
+
+            full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
+\n🎯 {label}: {prompt_or_preset}{source_links}
+\n🔗 <a href='{result_url}'>📥 Ссылка</a>"""
+
+
+
+
+            kb_link = types.InlineKeyboardMarkup(inline_keyboard=[
                 [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=result_url)]
             ])
 
-            # Send result reliably
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:
-                await bot_instance.send_message(
-                    chat_id=telegram_id,
-                    text=link_msg,
-                    reply_markup=kb,
-                    parse_mode="HTML",
-                    disable_web_page_preview=False,
-                )
-                logger.info(f"{service_name} link message sent to user {telegram_id}")
-
+                sent_media = False
                 if is_video:
-                    # Try send_video first
+                    video_kb = get_video_result_keyboard(result_url)
+                    # Try URL first
                     try:
                         await bot_instance.send_video(
                             chat_id=telegram_id,
                             video=result_url,
-                            caption=caption,
+                            caption=full_caption,
                             parse_mode="HTML",
                             supports_streaming=True,
-                            reply_markup=get_video_result_keyboard(result_url),
+                            reply_markup=video_kb,
                         )
-                        logger.info(f"{service_name} video sent as video to user {telegram_id}")
+                        logger.info(f"{service_name} video sent via URL to user {telegram_id}")
+                        sent_media = True
                     except Exception as e:
-                        logger.error(f"Failed to send video via URL: {e}")
-                        # Fallback: download and send as file
+                        logger.warning(f"Video URL send failed ({e}), trying file upload")
+                        tmp_file = None
                         try:
                             import os
                             import tempfile
@@ -1230,18 +1236,23 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
                                 video=video_file,
-                                caption=caption,
+                                caption=full_caption,
                                 parse_mode="HTML",
                                 supports_streaming=True,
-                                reply_markup=get_video_result_keyboard(result_url),
+                                reply_markup=video_kb,
                             )
-                            os.unlink(tmp_file)
                             logger.info(f"{service_name} video sent as file to user {telegram_id}")
-                        except Exception as fallback_e:
-                            logger.error(f"Fallback video send failed: {fallback_e}")
-                            logger.info(f"{service_name} fallback to link only for {telegram_id}")
+                            sent_media = True
+                        except Exception as dl_e:
+                            logger.error(f"Video file upload failed: {dl_e}")
+                        finally:
+                            if tmp_file and os.path.exists(tmp_file):
+                                try:
+                                    os.remove(tmp_file)
+                                except:
+                                    pass
                 else:
-                    # Image: try photo, then document, always with link
+                    # Image
                     image_bytes = None
                     try:
                         import aiohttp
@@ -1255,33 +1266,48 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         logger.error(f"Failed to download image {result_url}: {download_e}")
 
                     if image_bytes:
-                        max_photo_size = 10 * 1024 * 1024  # 10MB
+                        max_photo_size = 10 * 1024 * 1024
                         if len(image_bytes) <= max_photo_size:
                             photo = types.BufferedInputFile(image_bytes, filename="generated.png")
                             await bot_instance.send_photo(
                                 chat_id=telegram_id,
                                 photo=photo,
-                                caption=caption,
+                                caption=full_caption,
                                 parse_mode="HTML",
-                                reply_markup=kb,  # Link button
+                                reply_markup=kb_link,
                             )
-                            logger.info(f"{service_name} image sent as photo + link to user {telegram_id}")
+                            logger.info(f"{service_name} image sent as photo to user {telegram_id}")
+                            sent_media = True
                         else:
+                            doc_caption = f"{full_caption}\\n\\n📎 Файл (более 10MB)"
                             document = types.BufferedInputFile(image_bytes, filename="generated.png")
                             await bot_instance.send_document(
                                 chat_id=telegram_id,
                                 document=document,
-                                caption=f"{caption}\n\n📎 Файл (более 10MB)",
+                                caption=doc_caption,
                                 parse_mode="HTML",
-                                reply_markup=kb,  # Link button
+                                reply_markup=kb_link,
                             )
-                            logger.info(f"{service_name} image sent as document + link to user {telegram_id}")
+                            logger.info(f"{service_name} image sent as document to user {telegram_id}")
+                            sent_media = True
                     else:
-                        logger.info(f"{service_name} image download failed, link only for {telegram_id}")
-                await complete_video_task(task_id, result_url)
+                        logger.warning(f"No image bytes for {service_name}")
+
+                if sent_media:
+                    await complete_video_task(task_id, result_url)
+                else:
+                    # Fallback text
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=full_caption,
+                        reply_markup=kb_link,
+                        parse_mode="HTML",
+                        disable_web_page_preview=False,
+                    )
+                    await complete_video_task(task_id, result_url)
+                    logger.info(f"{service_name} fallback text sent to user {telegram_id}")
             except Exception as send_e:
-                logger.error(f"Failed to send result even link: {send_e}")
-                logger.info(f"{service_name} CRITICAL: could not notify user {telegram_id} about {task_id}")
+                logger.error(f"Failed to send {service_name} result to {telegram_id}: {send_e}")
             finally:
                 await bot_instance.session.close()
         else:

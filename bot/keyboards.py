@@ -370,10 +370,10 @@ def get_create_image_keyboard(
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     # Adjust: 4 model buttons (1 each), aspect row1 (3), row2 (2), menu (1)
-    # If no edit model: 3 models + aspects + menu
     builder.adjust(1, 1, 1, 1, 3, 2, 1)
 
     return builder.as_markup()
+
 
 
 # =============================================================================
