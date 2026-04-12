@@ -2739,7 +2739,6 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
 
         if img_service == "banana_2":
-            from bot.services.nano_banana_2_service import nano_banana_2_service
             result = await nano_banana_2_service.generate_image(
                 prompt=prompt,
                 aspect_ratio=img_ratio,
@@ -2747,24 +2746,13 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 callback_url=callback_url
             )
         elif img_service == "banana_pro" or img_service == "nanobanana":
-            from bot.services.nano_banana_pro_service import nano_banana_pro_service
             result = await nano_banana_pro_service.generate_image(
                 prompt=prompt,
                 aspect_ratio=img_ratio,
                 image_input=reference_images,
                 callback_url=callback_url
             )
-        elif img_service == "flux_pro":
-            # Assuming novita or flux service - fallback to seedream
-            from bot.services.seedream_service import seedream_service
-            result = await seedream_service.generate_image(
-                prompt=prompt,
-                aspect_ratio=img_ratio,
-                image_urls=reference_images,
-                callback_url=callback_url
-            )
-        elif img_service == "seedream":
-            from bot.services.seedream_service import seedream_service
+        elif img_service in ["flux_pro", "seedream", "seedream_45", "seedream_edit", "seedream_5_lite"]:
             result = await seedream_service.generate_image(
                 prompt=prompt,
                 aspect_ratio=img_ratio,
@@ -2773,14 +2761,12 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             )
         else:
             # Fallback
-            from bot.services.nano_banana_pro_service import nano_banana_pro_service
             result = await nano_banana_pro_service.generate_image(
                 prompt=prompt,
                 aspect_ratio=img_ratio,
                 image_input=reference_images,
                 callback_url=callback_url
             )
-
         
         await processing_msg.delete()
         
