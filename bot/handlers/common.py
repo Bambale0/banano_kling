@@ -780,7 +780,10 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
-        generation_type="motion_control", video_model="v26_motion_std", cost=cost, mode="std"
+        generation_type="motion_control",
+        video_model="v26_motion_std",
+        cost=cost,
+        mode="std",
     )
 
     await callback.message.edit_text(
@@ -816,7 +819,10 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
-        generation_type="motion_control", video_model="v26_motion_pro", cost=cost, mode="pro"
+        generation_type="motion_control",
+        video_model="v26_motion_pro",
+        cost=cost,
+        mode="pro",
     )
 
     await callback.message.edit_text(
@@ -1222,9 +1228,10 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 @router.message(GenerationStates.waiting_for_motion_character_image, F.photo)
 async def handle_motion_character_upload(message: types.Message, state: FSMContext):
     """Загрузка фото персонажа для motion control"""
-    from bot.config import config
-    import uuid
     import os
+    import uuid
+
+    from bot.config import config
 
     data = await state.get_data()
     photo = message.photo[-1]
@@ -1233,7 +1240,7 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
     image_data = image_bytes.read()
 
     os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip('/')
+    host = config.WEBHOOK_HOST.rstrip("/")
     fname = f"{uuid.uuid4().hex}.jpg"
     fpath = f"static/uploads/{fname}"
     with open(fpath, "wb") as f:
@@ -1253,11 +1260,17 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
 @router.message(GenerationStates.waiting_for_motion_video, F.video)
 async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     """Загрузка видео движения для motion control"""
-    from bot.config import config
-    from bot.database import deduct_credits, add_credits, get_or_create_user, add_generation_task
-    from bot.services.kling_service import kling_service
-    import uuid
     import os
+    import uuid
+
+    from bot.config import config
+    from bot.database import (
+        add_credits,
+        add_generation_task,
+        deduct_credits,
+        get_or_create_user,
+    )
+    from bot.services.kling_service import kling_service
 
     data = await state.get_data()
     v_image_url = data.get("v_image_url")
@@ -1271,7 +1284,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     video_data = video_bytes.read()
 
     os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip('/')
+    host = config.WEBHOOK_HOST.rstrip("/")
     fname = f"{uuid.uuid4().hex}.mp4"
     fpath = f"static/uploads/{fname}"
     with open(fpath, "wb") as f:
@@ -1297,6 +1310,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         task_id = task_result["task_id"]
         await add_generation_task(
             user_id=user.id,
+            telegram_id=user.telegram_id,
             task_id=task_id,
             type="video",
             preset_id=video_model,
@@ -1320,13 +1334,17 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 @router.message(GenerationStates.waiting_for_motion_character_image)
 async def invalid_motion_character_upload(message: types.Message, state: FSMContext):
     """Невалидный ввод при загрузке фото персонажа"""
-    await message.answer("⚠️ <b>Пожалуйста, отправьте фото персонажа</b>", parse_mode="HTML")
+    await message.answer(
+        "⚠️ <b>Пожалуйста, отправьте фото персонажа</b>", parse_mode="HTML"
+    )
 
 
 @router.message(GenerationStates.waiting_for_motion_video)
 async def invalid_motion_video_upload(message: types.Message, state: FSMContext):
     """Невалидный ввод при загрузке видео движения"""
-    await message.answer("⚠️ <b>Пожалуйста, отправьте видео (3-10 сек)</b>", parse_mode="HTML")
+    await message.answer(
+        "⚠️ <b>Пожалуйста, отправьте видео (3-10 сек)</b>", parse_mode="HTML"
+    )
 
 
 @router.message(StateFilter(AIAssistantStates.waiting_for_message))

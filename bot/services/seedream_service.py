@@ -159,6 +159,4 @@ class SeedreamLiteService:
 
 from bot.config import config
 
-seedream_lite_service = SeedreamLiteService(
-    api_key=config.KIE_AI_API_KEY
-)
+seedream_lite_service = SeedreamLiteService(api_key=config.KIE_AI_API_KEY)

@@ -26,5 +26,6 @@ async def main():
     )
     print(f"Std result: {result_std}")
 
+
 if __name__ == "__main__":
     asyncio.run(main())

@@ -11,12 +11,12 @@ Docs: kling_api.md
 
 import asyncio
 import base64
+import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-import json
 
 # Optional Replicate SDK. We import lazily and tolerate its absence so the
 # service can continue using the legacy PiAPI flow when REPLICATE_API_TOKEN is
@@ -56,7 +56,6 @@ class KlingService:
             else None
         )
 
-
     async def _kie_post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
         """POST to Kie.ai API"""
         if not self.kie_headers:
@@ -75,11 +74,21 @@ class KlingService:
                     try:
                         data = json.loads(text)
                     except json.JSONDecodeError as e:
-                        logger.error(f"Kie.ai JSON decode error: {e}. Response text: {text[:300]}...")
-                        return {"error": "invalid_json", "message": f"JSON decode error: {str(e)}"}
+                        logger.error(
+                            f"Kie.ai JSON decode error: {e}. Response text: {text[:300]}..."
+                        )
+                        return {
+                            "error": "invalid_json",
+                            "message": f"JSON decode error: {str(e)}",
+                        }
                     if not isinstance(data, dict):
-                        logger.error(f"Kie.ai non-dict response: type={type(data)}, content={data}. Text: {text[:300]}...")
-                        return {"error": "invalid_response_type", "message": f"Expected dict, got {type(data)}"}
+                        logger.error(
+                            f"Kie.ai non-dict response: type={type(data)}, content={data}. Text: {text[:300]}..."
+                        )
+                        return {
+                            "error": "invalid_response_type",
+                            "message": f"Expected dict, got {type(data)}",
+                        }
                     code = data.get("code")
                     if code != 200:
                         error_msg = data.get("msg", "Unknown error")
@@ -91,12 +100,20 @@ class KlingService:
                         }
                     inner_data = data.get("data")
                     if not isinstance(inner_data, dict):
-                        logger.error(f"Kie.ai 'data' field not dict: type={type(inner_data)}, data={data}. Text: {text[:300]}...")
-                        return {"error": "invalid_data_structure", "message": f"data field not dict"}
+                        logger.error(
+                            f"Kie.ai 'data' field not dict: type={type(inner_data)}, data={data}. Text: {text[:300]}..."
+                        )
+                        return {
+                            "error": "invalid_data_structure",
+                            "message": f"data field not dict",
+                        }
                     task_id = inner_data.get("taskId")
                     if task_id is None:
                         logger.error(f"No taskId in Kie.ai response. Full data: {data}")
-                        return {"error": "no_task_id", "message": "Task ID missing from response"}
+                        return {
+                            "error": "no_task_id",
+                            "message": "Task ID missing from response",
+                        }
                     logger.info(f"Kie.ai task created: {task_id}")
                     return {
                         "task_id": task_id,
@@ -173,8 +190,6 @@ class KlingService:
                 "raw": data,
             }
         return None
-
-
 
     # ----------------------------- Replicate helpers -----------------------------
     async def _replicate_create_prediction(
@@ -318,7 +333,6 @@ class KlingService:
                 "raw": data,
             }
         return None
-
 
     async def create_task(
         self, task_type: str, input_data: Dict, config: Optional[Dict] = None
@@ -675,17 +689,25 @@ class KlingService:
                 webhook_url=webhook_url,
             )
         elif model == "kling-2.6/motion-control":
-            return await self.create_kie_motion_task({
-                "prompt": prompt,
-                "input_urls": [image_url],
-                "video_urls": [video_url],
-                "character_orientation": "video",  # default
-                "mode": "720p",  # default
-            }, webhook_url)
+            return await self.create_kie_motion_task(
+                {
+                    "prompt": prompt,
+                    "input_urls": [image_url],
+                    "video_urls": [video_url],
+                    "character_orientation": "video",  # default
+                    "mode": "720p",  # default
+                },
+                webhook_url,
+            )
         else:
             if model == "grok_imagine":
-                logger.error("Direct call to kling_service.generate_video with 'grok_imagine' not supported. Use generation handler.")
-                return {"error": "model_not_supported_direct", "message": "Grok Imagine via handler only"}
+                logger.error(
+                    "Direct call to kling_service.generate_video with 'grok_imagine' not supported. Use generation handler."
+                )
+                return {
+                    "error": "model_not_supported_direct",
+                    "message": "Grok Imagine via handler only",
+                }
             logger.warning(
                 f"Unknown Kling model '{model}', falling back to std Kling 3.0"
             )
@@ -724,4 +746,3 @@ from bot.config import config
 kling_service = KlingService(
     kie_key=config.KIE_AI_API_KEY,
 )
-

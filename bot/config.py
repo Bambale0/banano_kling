@@ -139,8 +139,6 @@ class Config:
     def replicate_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/replicate"
 
-
-
     @property
     def z_image_turbo_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/z-image-turbo"

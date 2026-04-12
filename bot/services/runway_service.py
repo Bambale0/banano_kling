@@ -146,6 +146,7 @@ class RunwayService:
         self, task_id: str, max_attempts: int = 60, delay: float = 5.0
     ) -> Optional[Dict]:
         import asyncio
+
         consecutive_failures = 0
         for attempt in range(max_attempts):
             status = await self.get_task_status(task_id)

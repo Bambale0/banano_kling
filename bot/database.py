@@ -57,6 +57,7 @@ class GenerationTask:
     prompt: Optional[str] = None
     cost: Optional[int] = None
     status: str = "pending"
+    telegram_id: Optional[int] = None
     result_url: Optional[str] = None
     created_at: Optional[datetime] = None
 
@@ -76,6 +77,14 @@ async def init_db():
             )
         """
         )
+
+        # Migration for generation_tasks telegram_id
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER"
+            )
+        except aiosqlite.OperationalError:
+            pass  # Column already exists
 
         # Referral system migrations for existing databases
         try:
@@ -176,7 +185,9 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
         try:
-            await db.execute("ALTER TABLE generation_tasks ADD COLUMN aspect_ratio TEXT")
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN aspect_ratio TEXT"
+            )
         except aiosqlite.OperationalError:
             pass
         try:
@@ -348,30 +359,30 @@ async def get_or_create_user(telegram_id: int) -> User:
                 if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
                 else None
             )
-            return User(
-                id=row["id"],
-                telegram_id=row["telegram_id"],
-                credits=row["credits"],
-                created_at=datetime.fromisoformat(row["created_at"]),
-                updated_at=datetime.fromisoformat(row["updated_at"]),
-                referral_code=referral_code,
-                referred_by=referred_by,
-                referral_earned=referral_earned or 0,
-                has_paid=has_paid,
-                partner_agreed_at=partner_agreed_at,
-                partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-                if "partner_total_revenue_rub" in row.keys()
-                else 0.0,
-                partner_balance_rub=float(row["partner_balance_rub"] or 0)
-                if "partner_balance_rub" in row.keys()
-                else 0.0,
-                partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-                if "partner_withdrawn_rub" in row.keys()
-                else 0.0,
-                partner_tier=row["partner_tier"]
-                if "partner_tier" in row.keys() and row["partner_tier"]
-                else "basic",
-            )
+        return User(
+            id=row["id"],
+            telegram_id=row["telegram_id"],
+            credits=int(row["credits"] or 0),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            referral_code=referral_code,
+            referred_by=referred_by,
+            referral_earned=referral_earned or 0,
+            has_paid=has_paid,
+            partner_agreed_at=partner_agreed_at,
+            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
+            if "partner_total_revenue_rub" in row.keys()
+            else 0.0,
+            partner_balance_rub=float(row["partner_balance_rub"] or 0)
+            if "partner_balance_rub" in row.keys()
+            else 0.0,
+            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
+            if "partner_withdrawn_rub" in row.keys()
+            else 0.0,
+            partner_tier=row["partner_tier"]
+            if "partner_tier" in row.keys() and row["partner_tier"]
+            else "basic",
+        )
 
         # Создаём нового пользователя с бонусными кредитами
         # Используем INSERT OR IGNORE для защиты от race condition
@@ -396,7 +407,7 @@ async def get_or_create_user(telegram_id: int) -> User:
         return User(
             id=row["id"],
             telegram_id=row["telegram_id"],
-            credits=row["credits"],
+            credits=int(row["credits"] or 0),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             referral_code=row["referral_code"]
@@ -1003,6 +1014,7 @@ async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
 
 async def add_generation_task(
     user_id: int,
+    telegram_id: int,
     task_id: str,
     type: str,
     preset_id: str,
@@ -1016,18 +1028,30 @@ async def add_generation_task(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         result = await db.execute(
             """INSERT OR IGNORE INTO generation_tasks 
-               (user_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, status) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-            (user_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost),
+               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, status) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+            (
+                user_id,
+                telegram_id,
+                task_id,
+                type,
+                preset_id,
+                model,
+                duration,
+                aspect_ratio,
+                prompt,
+                cost,
+            ),
         )
         await db.commit()
         if result.rowcount > 0:
-            logger.info(f"Added new generation task: {task_id}")
+            logger.info(
+                f"Added new generation task: {task_id} for telegram_id {telegram_id}"
+            )
             return True
         else:
             logger.debug(f"Generation task already exists: {task_id}")
             return False
-
 
 
 async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
@@ -1055,6 +1079,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             prompt=row["prompt"],
             cost=row["cost"],
             status=row["status"],
+            telegram_id=row["telegram_id"],
             result_url=row["result_url"],
             created_at=datetime.fromisoformat(row["created_at"]),
         )

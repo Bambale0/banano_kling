@@ -2,13 +2,15 @@
 import logging
 from typing import Dict, List, Optional
 
-from bot.services.kling_service import KlingService
 from bot.config import config
+from bot.services.kling_service import KlingService
 
 logger = logging.getLogger(__name__)
 
+
 class GrokService(KlingService):
     """Wrapper for Grok Imagine via Kie.ai"""
+
     async def generate_image_to_video(
         self,
         image_urls: List[str],
@@ -37,5 +39,6 @@ class GrokService(KlingService):
         if callBackUrl:
             payload["callBackUrl"] = callBackUrl
         return await self._kie_post("/api/v1/jobs/createTask", payload)
+
 
 grok_service = GrokService(kie_key=config.KIE_AI_API_KEY)

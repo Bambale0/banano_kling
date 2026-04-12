@@ -258,7 +258,6 @@ class PresetManager:
             "kling_v3_pro": "v3_pro",
         }
 
-
         mapped_model = model_map.get(model_lower, model_lower)
 
         # Check if model exists in video_models

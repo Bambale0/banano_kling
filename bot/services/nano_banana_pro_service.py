@@ -100,7 +100,9 @@ class NanoBananaProService:
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
-        resp = await self._get("/api/v1/common/getTaskDetail", params={"taskId": task_id})
+        resp = await self._get(
+            "/api/v1/common/getTaskDetail", params={"taskId": task_id}
+        )
         if not resp or not isinstance(resp, dict):
             return None
         data = resp.get("data")

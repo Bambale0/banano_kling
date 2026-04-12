@@ -169,8 +169,12 @@ def get_create_video_keyboard(
         "v26_motion_pro", {"base": 10, "duration_costs": {"5": 10}}
     )
 
-    grok_data = VIDEO_COSTS.get("grok_imagine", {"base": 15, "duration_costs": {"6": 15}})
-    grok_cost = grok_data.get("duration_costs", {}).get(str(current_duration), grok_data.get("base", 15))
+    grok_data = VIDEO_COSTS.get(
+        "grok_imagine", {"base": 15, "duration_costs": {"6": 15}}
+    )
+    grok_cost = grok_data.get("duration_costs", {}).get(
+        str(current_duration), grok_data.get("base", 15)
+    )
 
     v26_cost = v26_data.get("duration_costs", {}).get(
         str(current_duration), v26_data.get("base", 8)
@@ -196,11 +200,16 @@ def get_create_video_keyboard(
     )
 
     seedance_data = VIDEO_COSTS.get("seedance2", {"duration_costs": {"5": 8}})
-    seedance_cost = seedance_data.get("duration_costs", {}).get(str(current_duration), 8)
+    seedance_cost = seedance_data.get("duration_costs", {}).get(
+        str(current_duration), 8
+    )
 
-    runway_data = VIDEO_COSTS.get("runway", {"base": 15, "duration_costs": {"5": 15, "10": 25}})
-    runway_cost = runway_data.get("duration_costs", {}).get(str(current_duration), runway_data.get("base", 15))
-
+    runway_data = VIDEO_COSTS.get(
+        "runway", {"base": 15, "duration_costs": {"5": 15, "10": 25}}
+    )
+    runway_cost = runway_data.get("duration_costs", {}).get(
+        str(current_duration), runway_data.get("base", 15)
+    )
 
     if current_v_type == "video":
         models = []
@@ -225,7 +234,6 @@ def get_create_video_keyboard(
                 "cost": grok_cost,
             },
         ]
-
 
     for model_info in models:
         check = "✅ " if current_model == model_info["key"] else ""
@@ -367,7 +375,6 @@ def get_create_image_keyboard(
     builder.adjust(1, 1, 1, 1, 3, 2, 1)
 
     return builder.as_markup()
-
 
 
 # =============================================================================
@@ -825,8 +832,6 @@ def get_image_models_inline_keyboard(current_service: str = "flux_pro"):
     return builder.as_markup()
 
 
-
-
 def get_aspect_ratio_inline_keyboard(current_ratio: str = "1:1"):
     """Выбор формата"""
     builder = InlineKeyboardBuilder()
@@ -1101,9 +1106,6 @@ def get_video_effects_model_keyboard(current_model: str = "v3_omni_std"):
     return builder.as_markup()
 
 
-
-
-
 def get_image_generation_model_keyboard(current_service: str = "flux_pro"):
     """Клавиатура выбора модели для генерации изображений"""
     builder = InlineKeyboardBuilder()
@@ -1257,7 +1259,6 @@ def get_video_options_keyboard(
         callback_data="opt_v_model_v3_pro",
     )
 
-
     # Размер
     r1_1 = "✅ " if current_ratio == "1:1" else ""
     r16_9 = "✅ " if current_ratio == "16:9" else ""
@@ -1294,8 +1295,9 @@ def get_image_to_video_model_keyboard(current_model: str = "v3_omni_std"):
     return builder.as_markup()
 
 
-
-def get_motion_control_keyboard(current_mode: str = "1080p", current_orientation: str = "video"):
+def get_motion_control_keyboard(
+    current_mode: str = "1080p", current_orientation: str = "video"
+):
     """Клавиатура опций Motion Control"""
     builder = InlineKeyboardBuilder()
 
@@ -1308,8 +1310,12 @@ def get_motion_control_keyboard(current_mode: str = "1080p", current_orientation
     # Orientation
     orient_image = "✅ " if current_orientation == "image" else ""
     orient_video = "✅ " if current_orientation == "video" else ""
-    builder.button(text=f"{orient_image}🖼 Image orient", callback_data="motion_orientation_image")
-    builder.button(text=f"{orient_video}🎬 Video orient", callback_data="motion_orientation_video")
+    builder.button(
+        text=f"{orient_image}🖼 Image orient", callback_data="motion_orientation_image"
+    )
+    builder.button(
+        text=f"{orient_video}🎬 Video orient", callback_data="motion_orientation_video"
+    )
 
     # Buttons
     builder.button(text="🚀 Создать видео", callback_data="run_motion_control")
@@ -1323,10 +1329,15 @@ def get_motion_upload_keyboard(step: str):
     """Клавиатура для загрузки файлов Motion Control"""
     builder = InlineKeyboardBuilder()
     if step == "image":
-        builder.button(text="🖼 Загрузить изображение персонажа", callback_data="motion_upload_image")
+        builder.button(
+            text="🖼 Загрузить изображение персонажа",
+            callback_data="motion_upload_image",
+        )
         builder.button(text="⏭ Пропустить (позже)", callback_data="motion_skip_image")
     elif step == "video":
-        builder.button(text="🎬 Загрузить видео движения", callback_data="motion_upload_video")
+        builder.button(
+            text="🎬 Загрузить видео движения", callback_data="motion_upload_video"
+        )
         builder.button(text="⏭ Пропустить (позже)", callback_data="motion_skip_video")
     builder.button(text="🔙 Главное меню", callback_data="back_main")
     builder.adjust(1, 1)
