@@ -1178,9 +1178,24 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             else:
                 caption = f"{base_caption}\n\n🎯 Пресет: {task.preset_id}{source_links}"
 
+            # ALWAYS send direct link first (reliable)
+            link_msg = f"{caption}\n\n🔗 <b>Прямая ссылка:</b> <a href='{result_url}'>{result_url}</a>"
+            kb = types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=result_url)]
+            ])
+
             # Send result reliably
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:
+                await bot_instance.send_message(
+                    chat_id=telegram_id,
+                    text=link_msg,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=False,
+                )
+                logger.info(f"{service_name} link message sent to user {telegram_id}")
+
                 if is_video:
                     # Try send_video first
                     try:
@@ -1199,9 +1214,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         try:
                             import os
                             import tempfile
-
                             import aiohttp
-
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(result_url, timeout=60) as resp:
                                     if resp.status != 200:
@@ -1223,21 +1236,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 reply_markup=get_video_result_keyboard(result_url),
                             )
                             os.unlink(tmp_file)
-                            os.unlink(tmp_file)
                             logger.info(f"{service_name} video sent as file to user {telegram_id}")
                         except Exception as fallback_e:
                             logger.error(f"Fallback video send failed: {fallback_e}")
-                            # Ultimate fallback: link
-                            await bot_instance.send_message(
-                                chat_id=telegram_id,
-                                text=f"{caption}\n\n🎬 <a href='{result_url}'>Скачать видео</a>",
-                                parse_mode="HTML",
-                                reply_markup=get_video_result_keyboard(result_url),
-                                disable_web_page_preview=False,
-                            )
-                            logger.info(f"{service_name} video link sent to user {telegram_id}")
+                            logger.info(f"{service_name} fallback to link only for {telegram_id}")
                 else:
-                    # Image logic (existing)
+                    # Image: try photo, then document, always with link
                     image_bytes = None
                     try:
                         import aiohttp
@@ -1259,8 +1263,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 photo=photo,
                                 caption=caption,
                                 parse_mode="HTML",
+                                reply_markup=kb,  # Link button
                             )
-                            logger.info(f"{service_name} image sent as photo to user {telegram_id}")
+                            logger.info(f"{service_name} image sent as photo + link to user {telegram_id}")
                         else:
                             document = types.BufferedInputFile(image_bytes, filename="generated.png")
                             await bot_instance.send_document(
@@ -1268,19 +1273,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 document=document,
                                 caption=f"{caption}\n\n📎 Файл (более 10MB)",
                                 parse_mode="HTML",
+                                reply_markup=kb,  # Link button
                             )
-                            logger.info(f"{service_name} image sent as document to user {telegram_id}")
+                            logger.info(f"{service_name} image sent as document + link to user {telegram_id}")
                     else:
-                        await bot_instance.send_message(
-                            chat_id=telegram_id,
-                            text=f"{caption}\n\n🖼️ <a href='{result_url}'>Скачать изображение</a>",
-                            parse_mode="HTML",
-                            disable_web_page_preview=False,
-                        )
-                        logger.info(f"{service_name} image link sent to user {telegram_id}")
+                        logger.info(f"{service_name} image download failed, link only for {telegram_id}")
                 await complete_video_task(task_id, result_url)
             except Exception as send_e:
-                logger.error(f"Failed to send result: {send_e}")
+                logger.error(f"Failed to send result even link: {send_e}")
+                logger.info(f"{service_name} CRITICAL: could not notify user {telegram_id} about {task_id}")
             finally:
                 await bot_instance.session.close()
         else:

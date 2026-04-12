@@ -1,4 +1,6 @@
 import logging
+import uuid
+import aiosqlite
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -7,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.database import (
+    DATABASE_PATH,
     accept_partner_agreement,
     create_partner_withdrawal,
     get_or_create_user,
@@ -1048,7 +1051,7 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 
 # =============================================================================
 # ИИ-ассистент: обработка сообщений без FSM
-# Позволяет отправлять вопросы ИИ напрямую из главного меню или настроек
+# Позволяет отправлять вопросы ИИ напрямую из главного меню или настройках
 # =============================================================================
 
 
@@ -1178,7 +1181,7 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
 
 @router.callback_query(F.data == "menu_ai_settings")
 async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMContext):
-    """Открытие ИИ-ассистента из меню настроек"""
+    """Открытие ИИ-ассистента из меню настройки"""
     await state.set_state(AIAssistantStates.waiting_for_message)
     await state.update_data(ai_mode="settings")
 
@@ -1187,7 +1190,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 
     # Формируем контекст для ИИ
     context = {
-        "menu_location": "меню настроек",
+        "menu_location": "меню настройки",
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
@@ -1299,6 +1302,18 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     await deduct_credits(telegram_id, cost)
 
+    local_task_id = f"motion_{uuid.uuid4().hex[:12]}"
+    await add_generation_task(
+        user_id=user.id,
+        telegram_id=telegram_id,
+        task_id=local_task_id,
+        type="motion_control",
+        preset_id="motion_control",
+        model=video_model,
+        prompt="motion control",
+        cost=cost,
+    )
+
     task_result = await kling_service.generate_motion_control(
         image_url=v_image_url,
         video_url=v_video_url,
@@ -1307,21 +1322,18 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     )
 
     if task_result and "task_id" in task_result:
-        task_id = task_result["task_id"]
-        await add_generation_task(
-            user_id=user.id,
-            telegram_id=user.telegram_id,
-            task_id=task_id,
-            type="video",
-            preset_id=video_model,
-            prompt="motion control",
-            cost=cost,
-        )
+        api_task_id = task_result["task_id"]
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
+                (api_task_id, local_task_id, user.id)
+            )
+            await db.commit()
         await message.answer(
             f"🚀 <b>Motion Control запущен!</b>\n\n"
             f"💰 <code>{cost}</code>🍌\n"
             f"🤖 <code>{mode.upper()}</code>\n"
-            f"🆔 <code>{task_id}</code>\n\n"
+            f"🆔 <code>{api_task_id}</code>\n\n"
             f"Ожидайте результат (1-5 мин)...",
             parse_mode="HTML",
         )

@@ -344,11 +344,10 @@ def get_create_image_keyboard(
         text=f"{seedream_5_lite_check}🔥 Seedream 5.0 Lite • {seedream_5_lite_cost}🍌",
         callback_data="model_seedream_5_lite",
     )
-    if num_refs > 0:
-        builder.button(
-            text=f"{seedream_edit_check}🖌 Seedream 4.5 • {seedream_edit_cost}🍌",
-            callback_data="model_seedream_edit",
-        )
+    builder.button(
+        text=f"{seedream_edit_check}🖌 Seedream 4.5 • {seedream_edit_cost}🍌",
+        callback_data="model_seedream_edit",
+    )
 
     # Размер - под моделями (two rows)
     r1_1 = "✅ " if current_ratio == "1:1" else ""

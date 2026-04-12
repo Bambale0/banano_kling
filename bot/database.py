@@ -78,14 +78,6 @@ async def init_db():
         """
         )
 
-        # Migration for generation_tasks telegram_id
-        try:
-            await db.execute(
-                "ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER"
-            )
-        except aiosqlite.OperationalError:
-            pass  # Column already exists
-
         # Referral system migrations for existing databases
         try:
             await db.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
@@ -158,6 +150,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS generation_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
+                telegram_id INTEGER,
                 task_id TEXT UNIQUE NOT NULL,
                 type TEXT NOT NULL,
                 preset_id TEXT NOT NULL,
@@ -176,6 +169,10 @@ async def init_db():
         )
 
         # Migration: add columns if not exists
+        try:
+            await db.execute("ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER")
+        except aiosqlite.OperationalError:
+            pass
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN model TEXT")
         except aiosqlite.OperationalError:
@@ -359,30 +356,30 @@ async def get_or_create_user(telegram_id: int) -> User:
                 if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
                 else None
             )
-        return User(
-            id=row["id"],
-            telegram_id=row["telegram_id"],
-            credits=int(row["credits"] or 0),
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            referral_code=referral_code,
-            referred_by=referred_by,
-            referral_earned=referral_earned or 0,
-            has_paid=has_paid,
-            partner_agreed_at=partner_agreed_at,
-            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-            if "partner_total_revenue_rub" in row.keys()
-            else 0.0,
-            partner_balance_rub=float(row["partner_balance_rub"] or 0)
-            if "partner_balance_rub" in row.keys()
-            else 0.0,
-            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-            if "partner_withdrawn_rub" in row.keys()
-            else 0.0,
-            partner_tier=row["partner_tier"]
-            if "partner_tier" in row.keys() and row["partner_tier"]
-            else "basic",
-        )
+            return User(
+                id=row["id"],
+                telegram_id=row["telegram_id"],
+                credits=int(row["credits"] or 0),
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                referral_code=referral_code,
+                referred_by=referred_by,
+                referral_earned=referral_earned or 0,
+                has_paid=has_paid,
+                partner_agreed_at=partner_agreed_at,
+                partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
+                if "partner_total_revenue_rub" in row.keys()
+                else 0.0,
+                partner_balance_rub=float(row["partner_balance_rub"] or 0)
+                if "partner_balance_rub" in row.keys()
+                else 0.0,
+                partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
+                if "partner_withdrawn_rub" in row.keys()
+                else 0.0,
+                partner_tier=row["partner_tier"]
+                if "partner_tier" in row.keys() and row["partner_tier"]
+                else "basic",
+            )
 
         # Создаём нового пользователя с бонусными кредитами
         # Используем INSERT OR IGNORE для защиты от race condition
@@ -403,26 +400,34 @@ async def get_or_create_user(telegram_id: int) -> User:
             "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
         )
         row = await cursor.fetchone()
+        if not row:
+            logger.error(f"Failed to fetch newly created user {telegram_id}")
+            raise ValueError(f"User {telegram_id} not found after creation")
 
+        referral_code = (
+            row["referral_code"] if "referral_code" in row.keys() else None
+        )
+        referred_by = row["referred_by"] if "referred_by" in row.keys() else None
+        referral_earned = (
+            row["referral_earned"] if "referral_earned" in row.keys() else 0
+        )
+        has_paid = bool(row["has_paid"]) if "has_paid" in row.keys() else False
+        partner_agreed_at = (
+            datetime.fromisoformat(row["partner_agreed_at"])
+            if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
+            else None
+        )
         return User(
             id=row["id"],
             telegram_id=row["telegram_id"],
             credits=int(row["credits"] or 0),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
-            referral_code=row["referral_code"]
-            if "referral_code" in row.keys()
-            else None,
-            referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
-            referral_earned=row["referral_earned"]
-            if "referral_earned" in row.keys()
-            else 0,
-            has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
-            partner_agreed_at=(
-                datetime.fromisoformat(row["partner_agreed_at"])
-                if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
-                else None
-            ),
+            referral_code=referral_code,
+            referred_by=referred_by,
+            referral_earned=referral_earned or 0,
+            has_paid=has_paid,
+            partner_agreed_at=partner_agreed_at,
             partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
             if "partner_total_revenue_rub" in row.keys()
             else 0.0,
