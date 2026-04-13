@@ -3,6 +3,7 @@ Validators for user input and data
 """
 
 import re
+from html import escape
 from typing import Optional, Tuple
 
 
@@ -86,7 +87,7 @@ def sanitize_input(text: str, max_length: int = 500) -> str:
     text = text[:max_length]
 
     # Экранируем HTML-теги
-    text = text.replace("<", "<").replace(">", ">")
+    text = escape(text)
 
     return text
 
@@ -118,7 +119,7 @@ def validate_aspect_ratio(ratio: str) -> bool:
     """
     Валидирует соотношение сторон
     """
-    valid_ratios = ["1:1", "16:9", "9:16", "3:4", "4:3", "21:9", "9:21"]
+    valid_ratios = ["1:1", "16:9", "9:16", "3:4", "4:3", "21:9", "9:21", "3:2"]
     return ratio in valid_ratios
 
 

@@ -66,8 +66,7 @@ async def init_db():
     """Инициализация базы данных"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # Таблица пользователей
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE NOT NULL,
@@ -75,8 +74,7 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
+        """)
 
         # Referral system migrations for existing databases
         try:
@@ -127,8 +125,7 @@ async def init_db():
             pass
 
         # Таблица транзакций (платежи)
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id TEXT UNIQUE NOT NULL,
@@ -141,12 +138,10 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица задач генерации
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS generation_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -165,8 +160,7 @@ async def init_db():
                 completed_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Migration: add columns if not exists
         try:
@@ -207,8 +201,7 @@ async def init_db():
             pass
 
         # Таблица истории генераций
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS generation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -218,12 +211,10 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица настроек пользователя
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER UNIQUE NOT NULL,
@@ -235,8 +226,7 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # Referral system tables and migrations
         # Add columns to users if not exist
@@ -271,8 +261,7 @@ async def init_db():
             pass
 
         # Referrals table
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 referrer_id INTEGER NOT NULL,
@@ -283,8 +272,7 @@ async def init_db():
                 FOREIGN KEY (referred_id) REFERENCES users(id),
                 UNIQUE(referrer_id, referred_id)
             )
-        """
-        )
+        """)
 
         # Backfill missing referral codes for existing users later in get_or_create_user
 
@@ -296,8 +284,7 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
 
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS partner_withdrawals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -309,12 +296,10 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица batch_jobs
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS batch_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT UNIQUE NOT NULL,
@@ -326,8 +311,7 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         await db.commit()
         logger.info("Database initialized successfully")
@@ -369,18 +353,26 @@ async def get_or_create_user(telegram_id: int) -> User:
                 referral_earned=referral_earned or 0,
                 has_paid=has_paid,
                 partner_agreed_at=partner_agreed_at,
-                partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-                if "partner_total_revenue_rub" in row.keys()
-                else 0.0,
-                partner_balance_rub=float(row["partner_balance_rub"] or 0)
-                if "partner_balance_rub" in row.keys()
-                else 0.0,
-                partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-                if "partner_withdrawn_rub" in row.keys()
-                else 0.0,
-                partner_tier=row["partner_tier"]
-                if "partner_tier" in row.keys() and row["partner_tier"]
-                else "basic",
+                partner_total_revenue_rub=(
+                    float(row["partner_total_revenue_rub"] or 0)
+                    if "partner_total_revenue_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_balance_rub=(
+                    float(row["partner_balance_rub"] or 0)
+                    if "partner_balance_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_withdrawn_rub=(
+                    float(row["partner_withdrawn_rub"] or 0)
+                    if "partner_withdrawn_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_tier=(
+                    row["partner_tier"]
+                    if "partner_tier" in row.keys() and row["partner_tier"]
+                    else "basic"
+                ),
             )
 
         # Создаём нового пользователя с бонусными кредитами
@@ -428,18 +420,26 @@ async def get_or_create_user(telegram_id: int) -> User:
             referral_earned=referral_earned or 0,
             has_paid=has_paid,
             partner_agreed_at=partner_agreed_at,
-            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-            if "partner_total_revenue_rub" in row.keys()
-            else 0.0,
-            partner_balance_rub=float(row["partner_balance_rub"] or 0)
-            if "partner_balance_rub" in row.keys()
-            else 0.0,
-            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-            if "partner_withdrawn_rub" in row.keys()
-            else 0.0,
-            partner_tier=row["partner_tier"]
-            if "partner_tier" in row.keys() and row["partner_tier"]
-            else "basic",
+            partner_total_revenue_rub=(
+                float(row["partner_total_revenue_rub"] or 0)
+                if "partner_total_revenue_rub" in row.keys()
+                else 0.0
+            ),
+            partner_balance_rub=(
+                float(row["partner_balance_rub"] or 0)
+                if "partner_balance_rub" in row.keys()
+                else 0.0
+            ),
+            partner_withdrawn_rub=(
+                float(row["partner_withdrawn_rub"] or 0)
+                if "partner_withdrawn_rub" in row.keys()
+                else 0.0
+            ),
+            partner_tier=(
+                row["partner_tier"]
+                if "partner_tier" in row.keys() and row["partner_tier"]
+                else "basic"
+            ),
         )
 
 
@@ -495,31 +495,39 @@ async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
             credits=row["credits"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
-            referral_code=row["referral_code"]
-            if "referral_code" in row.keys()
-            else None,
+            referral_code=(
+                row["referral_code"] if "referral_code" in row.keys() else None
+            ),
             referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
-            referral_earned=row["referral_earned"]
-            if "referral_earned" in row.keys()
-            else 0,
+            referral_earned=(
+                row["referral_earned"] if "referral_earned" in row.keys() else 0
+            ),
             has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
             partner_agreed_at=(
                 datetime.fromisoformat(row["partner_agreed_at"])
                 if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
                 else None
             ),
-            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-            if "partner_total_revenue_rub" in row.keys()
-            else 0.0,
-            partner_balance_rub=float(row["partner_balance_rub"] or 0)
-            if "partner_balance_rub" in row.keys()
-            else 0.0,
-            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-            if "partner_withdrawn_rub" in row.keys()
-            else 0.0,
-            partner_tier=row["partner_tier"]
-            if "partner_tier" in row.keys() and row["partner_tier"]
-            else "basic",
+            partner_total_revenue_rub=(
+                float(row["partner_total_revenue_rub"] or 0)
+                if "partner_total_revenue_rub" in row.keys()
+                else 0.0
+            ),
+            partner_balance_rub=(
+                float(row["partner_balance_rub"] or 0)
+                if "partner_balance_rub" in row.keys()
+                else 0.0
+            ),
+            partner_withdrawn_rub=(
+                float(row["partner_withdrawn_rub"] or 0)
+                if "partner_withdrawn_rub" in row.keys()
+                else 0.0
+            ),
+            partner_tier=(
+                row["partner_tier"]
+                if "partner_tier" in row.keys() and row["partner_tier"]
+                else "basic"
+            ),
         )
 
 
@@ -817,9 +825,11 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
         return {
             "is_partner": bool(target_user.partner_agreed_at),
-            "partner_agreed_at": target_user.partner_agreed_at.isoformat()
-            if target_user.partner_agreed_at
-            else None,
+            "partner_agreed_at": (
+                target_user.partner_agreed_at.isoformat()
+                if target_user.partner_agreed_at
+                else None
+            ),
             "referrals_count": referrals_row["count"] or 0,
             "total_revenue_rub": round(target_user.partner_total_revenue_rub or 0, 2),
             "balance_rub": round(target_user.partner_balance_rub or 0, 2),
@@ -984,9 +994,11 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
         return Transaction(
             id=row["id"],
             order_id=row["order_id"],
-            provider=row["provider"]
-            if "provider" in row.keys() and row["provider"]
-            else "tbank",
+            provider=(
+                row["provider"]
+                if "provider" in row.keys() and row["provider"]
+                else "tbank"
+            ),
             user_id=row["user_id"],
             payment_id=row["payment_id"],
             credits=row["credits"],
@@ -1201,8 +1213,7 @@ async def save_batch_job(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             # Создаём таблицу если не существует
-            await db.execute(
-                """
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS batch_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT UNIQUE NOT NULL,
@@ -1214,8 +1225,7 @@ async def save_batch_job(
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 )
-            """
-            )
+            """)
 
             await db.execute(
                 """INSERT INTO batch_jobs 
@@ -1305,8 +1315,7 @@ async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dic
 
 async def _ensure_user_settings_table(db):
     """Создает таблицу user_settings если она не существует (миграция)"""
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER UNIQUE NOT NULL,
@@ -1318,8 +1327,7 @@ async def _ensure_user_settings_table(db):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
-    """
-    )
+    """)
     # Миграция: добавляем колонку image_service если её нет
     try:
         await db.execute(

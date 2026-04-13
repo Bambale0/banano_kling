@@ -1,4 +1,5 @@
 """Grok Imagine Image-to-Video Service - Kie.ai API"""
+
 import logging
 from typing import Dict, List, Optional
 

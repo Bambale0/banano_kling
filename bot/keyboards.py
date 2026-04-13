@@ -242,6 +242,9 @@ def get_create_video_keyboard(
             callback_data=f"v_model_{model_info['key']}",
         )
 
+    if current_v_type == "imgtxt":
+        builder.button(text="📎 Реф. фото", callback_data="v_imgtxt_refs")
+
     # Размер - все доступные форматы
     r1_1 = "✅ " if current_ratio == "1:1" else ""
     r16_9 = "✅ " if current_ratio == "16:9" else ""
@@ -306,6 +309,27 @@ def get_create_video_keyboard(
     if current_v_type == "video":
         widths += [4, 2]
     builder.adjust(*widths)
+    return builder.as_markup()
+
+
+def get_reference_videos_upload_keyboard(
+    current_count: int = 0, max_count: int = 5, preset_id: str = None
+):
+    """Клавиатура загрузки референсных видео"""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
+    )
+    if preset_id == "video_new":
+        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip_new")
+        builder.button(text="✅ Продолжить", callback_data="vid_ref_continue_new")
+    else:
+        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
+        builder.button(
+            text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
+        )
+    builder.button(text="🔙 Назад", callback_data="back_main")
+    builder.adjust(1, 2, 1)
     return builder.as_markup()
 
 
@@ -686,7 +710,9 @@ def get_image_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "1:1"):
 def get_model_selection_keyboard(preset_id: str, current_model: str = None):
     """Клавиатура выбора модели"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⚡ Nano Banana Flash", callback_data=f"model_{preset_id}_flash")
+    builder.button(
+        text="⚡ Nano Banana Flash", callback_data=f"model_{preset_id}_flash"
+    )
     builder.button(text="💎 Nano Banana Pro", callback_data=f"model_{preset_id}_pro")
     builder.button(text="🔙 Назад", callback_data=f"preset_{preset_id}")
     builder.adjust(1)
@@ -1024,6 +1050,27 @@ def get_reference_images_confirmation_keyboard(preset_id: str = None):
         ),
     )
     builder.adjust(2, 1)
+    return builder.as_markup()
+
+
+def get_reference_videos_upload_keyboard(
+    current_count: int = 0, max_count: int = 5, preset_id: str = None
+):
+    """Клавиатура загрузки референсных видео"""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"Загружено видео: {current_count}/{max_count}", callback_data="back_main"
+    )
+    if preset_id == "video_new":
+        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip_new")
+        builder.button(text="✅ Продолжить", callback_data="vid_ref_continue_new")
+    else:
+        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
+        builder.button(
+            text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
+        )
+    builder.button(text="🔙 Назад", callback_data="back_main")
+    builder.adjust(1, 2, 1)
     return builder.as_markup()
 
 

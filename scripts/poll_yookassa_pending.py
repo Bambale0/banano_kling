@@ -3,6 +3,7 @@
 
 Usage: python3 scripts/poll_yookassa_pending.py
 """
+
 import asyncio
 import logging
 

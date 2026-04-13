@@ -98,9 +98,8 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
         v_model="v3_std",  # модель видео
         v_duration=5,
         v_ratio="16:9",
-        reference_images=[],  # Для референсов изображений (до 14)
-        v_reference_videos=[],  # Для референсов видео в video+text mode
-        v_image_url=None,  # Для imgtxt режима - стартовое изображение
+        reference_images=[],  # Реф. изображения для всех режимов (до 14)
+        v_reference_videos=[],  # Реф. видео для video+text (до 5)
         user_prompt="",  # Инициализируем пустой промпт
     )
 
@@ -292,13 +291,12 @@ async def _show_video_creation_screen(
 
     # Получаем текущие параметры
     current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
+    current_model = data.get("v_model", "v3_std")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
     reference_images = data.get("reference_images", [])
     v_reference_videos = data.get("v_reference_videos", [])
     user_prompt = data.get("user_prompt", "")
-    v_image_url = data.get("v_image_url")
 
     # Формируем текст о референсах
     ref_text = ""
@@ -316,7 +314,9 @@ async def _show_video_creation_screen(
             media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
     elif current_v_type == "video":
         if v_reference_videos:
-            media_status = f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
+            media_status = (
+                f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
+            )
         else:
             media_status = "📹 <b>Загрузите референсные видео (до 5)</b>\n"
 
@@ -329,9 +329,11 @@ async def _show_video_creation_screen(
     type_text = (
         "Текст → Видео"
         if current_v_type == "text"
-        else "Фото + Текст → Видео"
-        if current_v_type == "imgtxt"
-        else "Видео + Текст → Видео"
+        else (
+            "Фото + Текст → Видео"
+            if current_v_type == "imgtxt"
+            else "Видео + Текст → Видео"
+        )
     )
 
     text = (
@@ -538,6 +540,30 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(GenerationStates.waiting_for_input)
 
 
+@router.callback_query(F.data == "v_imgtxt_refs")
+async def handle_v_imgtxt_refs(callback: types.CallbackQuery, state: FSMContext):
+    """Загрузка реф. фото для imgtxt режима"""
+    data = await state.get_data()
+    current_refs = data.get("reference_images", [])
+    text = (
+        f"📎 <b>Реф. фото для Фото+Текст → Видео</b>\n\n"
+        f"Загружено: <code>{len(current_refs)}/14</code>\n\n"
+        f"• До 10 объектов\n"
+        f"• До 4 персонажей\n"
+        f"• Макс 14 фото\n\n"
+        f"После загрузки: ▶️ Продолжить"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_reference_images_upload_keyboard(
+            len(current_refs), 14, "imgtxt"
+        ),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.uploading_reference_images)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "v_type_imgtxt")
 async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: фото+текст - запрашиваем изображение на том же экране"""
@@ -586,44 +612,44 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
 @router.callback_query(F.data == "v_type_video")
 async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: видео+текст - запрашиваем несколько видео референсов"""
-    data = await state.get_data()
-    current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
-    v_reference_videos = data.get("v_reference_videos", [])
+    from bot.database import get_user_credits
+
+    user_credits = await get_user_credits(callback.from_user.id)
 
     await state.update_data(v_type="video")
 
-    # Показываем экран загрузки видео референсов (аналогично изображениям)
-    video_status = ""
-    if v_reference_videos:
-        video_status = f"✅ <b>{len(v_reference_videos)} видео загружено!</b>\n"
-
     text = (
-        f"🎬 <b>Создание видео</b>\n\n"
-        f"⚙️ <b>Текущие настройки:</b>\n"
-        f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
-        f"   🤖 Модель: <code>{current_model}</code>\n"
-        f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-        f"   📐 Формат: <code>{current_ratio}</code>\n"
-        f"{video_status}\n"
-        f"<b>📹 Загрузите референсные видео (до 5 шт)</b>\n\n"
-        f"Отправьте короткие видео (3-10 сек) для стиля/движения.\n"
-        f"После загрузки нажмите ▶️ Продолжить.\n\n"
-        f"<i>Пример: несколько клипов с похожим движением</i>"
+        f"🎬 <b>Видео + Текст → Видео</b>\n\n"
+        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        f"<b>Шаг 1: Загрузка референсов видео (опционально, до 5 шт)</b>\n\n"
+        f"Загрузите короткие видео (3-10 сек) для:\n"
+        f"• Стиля движения\n"
+        f"• Камеры\n"
+        f"• Атмосферы\n\n"
+        f"После загрузки нажмите ▶️ Продолжить\n"
+        f"Или ⏭ Пропустить"
     )
-
     await callback.message.edit_text(
         text,
-        reply_markup=get_create_video_keyboard(
-            current_v_type="video",
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        ),
+        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
         parse_mode="HTML",
     )
     await state.set_state(GenerationStates.uploading_reference_videos)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "vid_ref_skip_new")
+async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает загрузку видео референсов для video+text"""
+    await state.update_data(v_reference_videos=[])
+    await _show_video_creation_screen(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "vid_ref_continue_new")
+async def handle_vid_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
+    """Продолжает после загрузки видео референсов"""
+    await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
 
@@ -1564,7 +1590,11 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
                         text="⚙️ Изменить опции", callback_data="video_options_change"
                     )
                 ],
-                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")],
+                [
+                    types.InlineKeyboardButton(
+                        text="🔙 Назад", callback_data="back_main"
+                    )
+                ],
             ]
         ),
         parse_mode="HTML",
@@ -2879,8 +2909,9 @@ async def run_no_preset_video_from_message(
     v_image_url = data.get("v_image_url")
     v_video_url = data.get("v_video_url")
 
-    image_url = v_image_url if v_type == "imgtxt" else None
-    video_url = v_video_url if v_type == "video" else None
+    image_url = data.get("v_image_url")
+    video_urls = data.get("v_reference_videos", []) if v_type == "video" else None
+    image_refs = data.get("reference_images", [])
 
     cost = preset_manager.get_video_cost(v_model, v_duration)
 
@@ -2937,9 +2968,9 @@ async def run_no_preset_video_from_message(
                 prompt=prompt,
                 duration=grok_duration,
                 aspect_ratio=v_ratio,
-                callBackUrl=config.kling_notification_url
-                if config.WEBHOOK_HOST
-                else None,
+                callBackUrl=(
+                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                ),
             )
         else:
             result = await kling_service.generate_video(
@@ -2948,10 +2979,11 @@ async def run_no_preset_video_from_message(
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 image_url=image_url,
-                video_url=video_url,
-                webhook_url=config.kling_notification_url
-                if config.WEBHOOK_HOST
-                else None,
+                video_urls=video_urls,
+                image_input=image_refs,
+                webhook_url=(
+                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                ),
             )
 
         await processing_msg.delete()

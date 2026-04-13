@@ -278,7 +278,9 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
 
     user_prompt = message.text.strip()
     if not user_prompt:
-        await message.answer("❌ Пожалуйста, введите описание того, что хотите сделать.")
+        await message.answer(
+            "❌ Пожалуйста, введите описание того, что хотите сделать."
+        )
         return
 
     # Получаем изображения из состояния (FSM state), а не из глобального словаря
@@ -539,7 +541,9 @@ async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
 
     # Клавиатура для этого изображения
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔍 Апскейл", callback_data=f"upscalemenu_{job_id}_{item_index}")
+    builder.button(
+        text="🔍 Апскейл", callback_data=f"upscalemenu_{job_id}_{item_index}"
+    )
     builder.button(text="📥 Скачать", callback_data=f"download_{job_id}_{item_index}")
     builder.button(text="🔙 К галерее", callback_data=f"batchback_{job_id}")
 

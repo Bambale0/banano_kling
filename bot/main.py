@@ -371,7 +371,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                             )
                                             tmp_file = tmp.name
                                             with open(tmp_file, "wb") as f:
-                                                async for chunk in resp.content.iter_chunked(
+                                                async for (
+                                                    chunk
+                                                ) in resp.content.iter_chunked(
                                                     1024 * 64
                                                 ):
                                                     if chunk:
@@ -639,6 +641,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 await bot_instance.session.close()
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
+
             # Check for sensitive content error
             # webhook_data['error'] or webhook_data['logs'] may be dicts (or other types)
             # so convert them to strings safely before concatenation to avoid TypeError
