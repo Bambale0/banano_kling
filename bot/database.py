@@ -170,7 +170,9 @@ async def init_db():
 
         # Migration: add columns if not exists
         try:
-            await db.execute("ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER")
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER"
+            )
         except aiosqlite.OperationalError:
             pass
         try:
@@ -404,9 +406,7 @@ async def get_or_create_user(telegram_id: int) -> User:
             logger.error(f"Failed to fetch newly created user {telegram_id}")
             raise ValueError(f"User {telegram_id} not found after creation")
 
-        referral_code = (
-            row["referral_code"] if "referral_code" in row.keys() else None
-        )
+        referral_code = row["referral_code"] if "referral_code" in row.keys() else None
         referred_by = row["referred_by"] if "referred_by" in row.keys() else None
         referral_earned = (
             row["referral_earned"] if "referral_earned" in row.keys() else 0

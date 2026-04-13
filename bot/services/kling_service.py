@@ -417,7 +417,7 @@ class KlingService:
     async def generate_motion_control(
         self,
         image_url: str,
-        video_url: Optional[str] = None,
+        video_urls: Optional[List[str]] = None,
         preset_motion: Optional[str] = None,
         prompt: Optional[str] = None,
         motion_direction: str = "video",
@@ -437,7 +437,7 @@ class KlingService:
             kie_input = {
                 "prompt": prompt or "",
                 "input_urls": [_maybe_data_uri(image_url)],
-                "video_urls": [video_url] if video_url else [],
+                "video_urls": [_maybe_data_uri(v) for v in (video_urls or [])],
                 "character_orientation": motion_direction,
                 "mode": "720p" if mode == "std" else "1080p",
             }
@@ -457,7 +457,7 @@ class KlingService:
         input_data = {
             # Replicate accepts 'image' and 'video' keys
             "image": _maybe_data_uri(image_url) if image_url else None,
-            "video": video_url if video_url else None,
+            "video": _maybe_data_uri(video_urls[0]) if video_urls else None,
             "mode": mode,
             "prompt": prompt,
             "keep_original_sound": keep_original_sound,
@@ -496,8 +496,8 @@ class KlingService:
             # Ask Kling to prefer direct HTTP fetch for the image
             "prefer_http": True,
         }
-        if video_url:
-            input_piapi["video_url"] = video_url
+        if video_urls:
+            input_piapi["video_url"] = video_urls[0]
         if preset_motion:
             input_piapi["preset_motion"] = preset_motion
         if prompt:
@@ -595,7 +595,7 @@ class KlingService:
         aspect_ratio: str = "16:9",
         webhook_url: Optional[str] = None,
         image_url: Optional[str] = None,
-        video_url: Optional[str] = None,
+        video_urls: Optional[List[str]] = None,
         end_image_url: Optional[str] = None,
         elements: Optional[List[Dict]] = None,
         negative_prompt: Optional[str] = None,
@@ -683,7 +683,7 @@ class KlingService:
         elif "motion" in model.lower():
             return await self.generate_motion_control(
                 image_url=image_url,
-                video_url=video_url,
+                video_url=video_urls[0] if video_urls else None,
                 prompt=prompt if negative_prompt is None else prompt,
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
@@ -693,7 +693,7 @@ class KlingService:
                 {
                     "prompt": prompt,
                     "input_urls": [image_url],
-                    "video_urls": [video_url],
+                    "video_urls": video_urls or [],
                     "character_orientation": "video",  # default
                     "mode": "720p",  # default
                 },

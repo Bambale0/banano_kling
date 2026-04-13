@@ -24,9 +24,14 @@ from aiohttp import web
 
 from bot.config import config
 from bot.database import init_db
-from bot.handlers import (admin_router, batch_generation_router, common_router,
-                          generation_router, image_analyzer_router,
-                          payments_router)
+from bot.handlers import (
+    admin_router,
+    batch_generation_router,
+    common_router,
+    generation_router,
+    image_analyzer_router,
+    payments_router,
+)
 from bot.handlers.payments import handle_tbank_webhook, handle_yookassa_webhook
 from bot.services.preset_manager import preset_manager
 
@@ -309,8 +314,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 logger.info(
                     f"Kie.ai webhook: task {task_id}, status {status}, video {video_url[:50] if video_url else None}..., fail: {fail_code}/{fail_msg[:50]}..."
                 )
-                from bot.database import (add_credits, complete_video_task, get_task_by_id,
-                          get_telegram_id_by_user_id)
+                from bot.database import (
+                    add_credits,
+                    complete_video_task,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
 
                 task = await get_task_by_id(task_id)
                 if task:
@@ -331,23 +340,90 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
                                 else:
                                     caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
-                                from bot.keyboards import \
-                                    get_video_result_keyboard
+                                import os
 
-                                await bot_instance.send_video(
-                                    chat_id=telegram_id,
-                                    video=video_url,
-                                    caption=caption,
-                                    parse_mode="HTML",
-                                    supports_streaming=True,
-                                    reply_markup=get_video_result_keyboard(video_url),
-                                )
+                                # Отправляем видео - всегда скачиваем для Kie.ai
+                                import tempfile
+
+                                import aiohttp
+                                from aiogram.types import FSInputFile
+
+                                from bot.keyboards import get_video_result_keyboard
+
+                                tmp_file = None
+                                try:
+                                    async with aiohttp.ClientSession() as sess:
+                                        headers = {
+                                            "User-Agent": "Mozilla/5.0 (compatible; Telegram Bot SDK/1.0)",
+                                            "Accept": "*/*",
+                                        }
+                                        async with sess.get(
+                                            video_url,
+                                            headers=headers,
+                                            timeout=aiohttp.ClientTimeout(total=120),
+                                        ) as resp:
+                                            if resp.status != 200:
+                                                raise RuntimeError(
+                                                    f"Download failed: status {resp.status}"
+                                                )
+                                            tmp = tempfile.NamedTemporaryFile(
+                                                delete=False, suffix=".mp4"
+                                            )
+                                            tmp_file = tmp.name
+                                            with open(tmp_file, "wb") as f:
+                                                async for chunk in resp.content.iter_chunked(
+                                                    1024 * 64
+                                                ):
+                                                    if chunk:
+                                                        f.write(chunk)
+                                    video_file = FSInputFile(tmp_file)
+                                    await bot_instance.send_video(
+                                        chat_id=telegram_id,
+                                        video=video_file,
+                                        caption=caption,
+                                        parse_mode="HTML",
+                                        supports_streaming=True,
+                                        reply_markup=get_video_result_keyboard(
+                                            video_url
+                                        ),
+                                    )
+                                    logger.info(
+                                        f"Kie.ai video downloaded and sent to {telegram_id}"
+                                    )
+                                except Exception as dl_e:
+                                    logger.error(
+                                        f"Kie.ai video download failed: {dl_e}"
+                                    )
+                                    # Fallback to URL
+                                    await bot_instance.send_video(
+                                        chat_id=telegram_id,
+                                        video=video_url,
+                                        caption=caption,
+                                        parse_mode="HTML",
+                                        supports_streaming=True,
+                                        reply_markup=get_video_result_keyboard(
+                                            video_url
+                                        ),
+                                    )
+                                    logger.info(
+                                        f"Kie.ai video sent via URL to {telegram_id}"
+                                    )
+                                finally:
+                                    if tmp_file and os.path.exists(tmp_file):
+                                        try:
+                                            os.remove(tmp_file)
+                                        except:
+                                            pass
                                 await complete_video_task(task_id, video_url)
                                 logger.info(f"Kie.ai result sent to {telegram_id}")
                             else:
                                 # Fail case
                                 policy_violation = "Prohibited Use policy" in fail_msg
-                                error_msg = "Ваш запрос был отклонён из-за нарушения политики Google (чувствительный контент)." if policy_violation else f"Ошибка API: {fail_msg[:100]}"
+                                error_msg = (
+                                    "Ваш запрос был отклонён из-за нарушения политики Google (чувствительный контент)."
+                                    if policy_violation
+                                    else f"Ошибка API: {fail_msg[:100]}"
+                                )
                                 await add_credits(telegram_id, task.cost or 0)
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
@@ -355,7 +431,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     parse_mode="HTML",
                                 )
                                 await complete_video_task(task_id, None)
-                                logger.info(f"Kie.ai fail notified to {telegram_id}, credits returned")
+                                logger.info(
+                                    f"Kie.ai fail notified to {telegram_id}, credits returned"
+                                )
                         except Exception as e:
                             logger.error(f"Failed to notify user {telegram_id}: {e}")
                         finally:
@@ -424,8 +502,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             logger.info(f"Extracted video URL: {video_url[:50]}...")
 
             # Находим задачу в БД
-            from bot.database import (complete_video_task, get_task_by_id,
-                                      get_telegram_id_by_user_id)
+            from bot.database import (
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
 
             task = await get_task_by_id(task_id)
 
@@ -517,6 +598,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             from aiogram.types import FSInputFile
 
                             from bot.keyboards import get_video_result_keyboard
+
                             video_file = FSInputFile(tmp_file)
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
@@ -577,8 +659,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 + _to_str(webhook_data.get("logs"))
             ).lower()
             if "sensitive" in error_msg or "e005" in error_msg:
-                from bot.database import (add_credits, get_task_by_id,
-                                          get_telegram_id_by_user_id)
+                from bot.database import (
+                    add_credits,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
 
                 task = await get_task_by_id(task_id)
                 if task:
@@ -965,8 +1050,11 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 logger.error(f"No video URL in WanX completed task: {webhook_data}")
                 return web.Response(status=200)
 
-            from bot.database import (complete_video_task, get_task_by_id,
-                                      get_telegram_id_by_user_id)
+            from bot.database import (
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
 
             task = await get_task_by_id(task_id)
             if not task:
@@ -1043,8 +1131,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         logger.info(f"Kie.ai webhook parsed data: {data}")
 
-        from bot.database import (add_credits, complete_video_task,
-                                  get_task_by_id, get_telegram_id_by_user_id)
+        from bot.database import (
+            add_credits,
+            complete_video_task,
+            get_task_by_id,
+            get_telegram_id_by_user_id,
+        )
         from bot.keyboards import get_video_result_keyboard
 
         # Flexible extraction for task_id, status, image_url
@@ -1074,22 +1166,22 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         status = webhook_data.get("state") or webhook_data.get("status")
         normalized_status = str(status).lower() if status else ""
 
-        model = webhook_data.get('model', '')
+        model = webhook_data.get("model", "")
         model_lower = model.lower()
-        if 'seedream' in model_lower:
-            service_name = 'Seedream'
-            if '4.5-edit' in model_lower:
-                service_name += ' 4.5 Edit'
-            elif 'lite' in model_lower:
-                service_name += ' Lite'
-        elif 'nano-banana' in model_lower or 'nano_banana' in model_lower:
-            service_name = 'Nano Banana'
-            if 'pro' in model_lower:
-                service_name += ' Pro'
+        if "seedream" in model_lower:
+            service_name = "Seedream"
+            if "4.5-edit" in model_lower:
+                service_name += " 4.5 Edit"
+            elif "lite" in model_lower:
+                service_name += " Lite"
+        elif "nano-banana" in model_lower or "nano_banana" in model_lower:
+            service_name = "Nano Banana"
+            if "pro" in model_lower:
+                service_name += " Pro"
             else:
-                service_name += ' 2'
+                service_name += " 2"
         else:
-            service_name = 'Kie.ai'
+            service_name = "Kie.ai"
 
         logger.info(
             f"Processing {service_name} task {task_id} with status {status} (normalized: {normalized_status})"
@@ -1117,7 +1209,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.warning(f"Failed to parse Kie.ai resultJson: {result_json_str}")
 
             if result_url:
-                logger.info(f"Extracted {service_name} result URL: {result_url[:50]}...")
+                logger.info(
+                    f"Extracted {service_name} result URL: {result_url[:50]}..."
+                )
             else:
                 logger.error(
                     f"No result URL found in {service_name} result: {webhook_data.get('resultJson', 'N/A')}"
@@ -1152,7 +1246,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 input_str = param_json.get("input", "{}")
                 input_json = json.loads(input_str)
                 sources = []
-                for key in ["image_urls", "image_input", "input_urls", "first_frame_url", "image_url"]:
+                for key in [
+                    "image_urls",
+                    "image_input",
+                    "input_urls",
+                    "first_frame_url",
+                    "image_url",
+                ]:
                     val = input_json.get(key)
                     if val:
                         if isinstance(val, list):
@@ -1160,17 +1260,22 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         else:
                             sources.append(str(val))
                 if sources:
-                    source_links = f"\n🖼 <b>Исходники:</b>\n" + "\n".join([f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>" for u in sources[:3]])
+                    source_links = f"\n🖼 <b>Исходники:</b>\n" + "\n".join(
+                        [
+                            f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>"
+                            for u in sources[:3]
+                        ]
+                    )
             except:
                 pass
 
             is_video = False
             if result_url:
                 url_lower = result_url.lower()
-                video_exts = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.3gp', '.flv']
+                video_exts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".flv"]
                 if any(url_lower.endswith(ext) for ext in video_exts):
                     is_video = True
-                elif 'video' in model_lower:
+                elif "video" in model_lower:
                     is_video = True
 
             # Build ultra-compact caption with minimal line breaks
@@ -1183,19 +1288,26 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 info_lines.append(f"📐{task.aspect_ratio}")
             info_str = " | ".join(info_lines) if info_lines else ""
 
-            prompt_or_preset = f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>" if task.preset_id == "no_preset" and task.prompt else task.preset_id
+            prompt_or_preset = (
+                f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                if task.preset_id == "no_preset" and task.prompt
+                else task.preset_id
+            )
             label = "Промпт" if task.preset_id == "no_preset" else "Пресет"
 
             full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
 \n🎯 {label}: {prompt_or_preset}{source_links}
 \n🔗 <a href='{result_url}'>📥 Ссылка</a>"""
 
-
-
-
-            kb_link = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=result_url)]
-            ])
+            kb_link = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text="📥 Скачать оригинал", url=result_url
+                        )
+                    ]
+                ]
+            )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:
@@ -1212,26 +1324,39 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             supports_streaming=True,
                             reply_markup=video_kb,
                         )
-                        logger.info(f"{service_name} video sent via URL to user {telegram_id}")
+                        logger.info(
+                            f"{service_name} video sent via URL to user {telegram_id}"
+                        )
                         sent_media = True
                     except Exception as e:
-                        logger.warning(f"Video URL send failed ({e}), trying file upload")
+                        logger.warning(
+                            f"Video URL send failed ({e}), trying file upload"
+                        )
                         tmp_file = None
                         try:
                             import os
                             import tempfile
+
                             import aiohttp
+
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(result_url, timeout=60) as resp:
                                     if resp.status != 200:
-                                        raise RuntimeError(f"Download failed: {resp.status}")
-                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                                        raise RuntimeError(
+                                            f"Download failed: {resp.status}"
+                                        )
+                                    tmp = tempfile.NamedTemporaryFile(
+                                        delete=False, suffix=".mp4"
+                                    )
                                     tmp_file = tmp.name
                                     with open(tmp_file, "wb") as f:
-                                        async for chunk in resp.content.iter_chunked(1024 * 64):
+                                        async for chunk in resp.content.iter_chunked(
+                                            1024 * 64
+                                        ):
                                             if chunk:
                                                 f.write(chunk)
                             from aiogram.types import FSInputFile
+
                             video_file = FSInputFile(tmp_file)
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
@@ -1241,7 +1366,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 supports_streaming=True,
                                 reply_markup=video_kb,
                             )
-                            logger.info(f"{service_name} video sent as file to user {telegram_id}")
+                            logger.info(
+                                f"{service_name} video sent as file to user {telegram_id}"
+                            )
                             sent_media = True
                         except Exception as dl_e:
                             logger.error(f"Video file upload failed: {dl_e}")
@@ -1256,6 +1383,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     image_bytes = None
                     try:
                         import aiohttp
+
                         async with aiohttp.ClientSession() as session:
                             async with session.get(result_url, timeout=30) as resp:
                                 if resp.status == 200:
@@ -1263,12 +1391,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 else:
                                     raise Exception(f"Download failed: {resp.status}")
                     except Exception as download_e:
-                        logger.error(f"Failed to download image {result_url}: {download_e}")
+                        logger.error(
+                            f"Failed to download image {result_url}: {download_e}"
+                        )
 
                     if image_bytes:
                         max_photo_size = 10 * 1024 * 1024
                         if len(image_bytes) <= max_photo_size:
-                            photo = types.BufferedInputFile(image_bytes, filename="generated.png")
+                            photo = types.BufferedInputFile(
+                                image_bytes, filename="generated.png"
+                            )
                             await bot_instance.send_photo(
                                 chat_id=telegram_id,
                                 photo=photo,
@@ -1276,11 +1408,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 parse_mode="HTML",
                                 reply_markup=kb_link,
                             )
-                            logger.info(f"{service_name} image sent as photo to user {telegram_id}")
+                            logger.info(
+                                f"{service_name} image sent as photo to user {telegram_id}"
+                            )
                             sent_media = True
                         else:
                             doc_caption = f"{full_caption}\\n\\n📎 Файл (более 10MB)"
-                            document = types.BufferedInputFile(image_bytes, filename="generated.png")
+                            document = types.BufferedInputFile(
+                                image_bytes, filename="generated.png"
+                            )
                             await bot_instance.send_document(
                                 chat_id=telegram_id,
                                 document=document,
@@ -1288,7 +1424,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 parse_mode="HTML",
                                 reply_markup=kb_link,
                             )
-                            logger.info(f"{service_name} image sent as document to user {telegram_id}")
+                            logger.info(
+                                f"{service_name} image sent as document to user {telegram_id}"
+                            )
                             sent_media = True
                     else:
                         logger.warning(f"No image bytes for {service_name}")
@@ -1305,9 +1443,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         disable_web_page_preview=False,
                     )
                     await complete_video_task(task_id, result_url)
-                    logger.info(f"{service_name} fallback text sent to user {telegram_id}")
+                    logger.info(
+                        f"{service_name} fallback text sent to user {telegram_id}"
+                    )
             except Exception as send_e:
-                logger.error(f"Failed to send {service_name} result to {telegram_id}: {send_e}")
+                logger.error(
+                    f"Failed to send {service_name} result to {telegram_id}: {send_e}"
+                )
             finally:
                 await bot_instance.session.close()
         else:
@@ -1373,8 +1515,6 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
-
-
 
     # Вебхук Kie.ai (Nano Banana 2)
     app.router.add_post(config.KIE_AI_WEBHOOK_PATH, handle_kie_ai_webhook)

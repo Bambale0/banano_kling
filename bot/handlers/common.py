@@ -1,7 +1,7 @@
 import logging
 import uuid
-import aiosqlite
 
+import aiosqlite
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
@@ -1326,7 +1326,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         async with aiosqlite.connect(DATABASE_PATH) as db:
             await db.execute(
                 "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
-                (api_task_id, local_task_id, user.id)
+                (api_task_id, local_task_id, user.id),
             )
             await db.commit()
         await message.answer(
