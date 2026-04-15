@@ -1316,7 +1316,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     task_result = await kling_service.generate_motion_control(
         image_url=v_image_url,
-        video_url=v_video_url,
+        video_urls=[v_video_url],
         mode=mode,
         webhook_url=config.kie_notification_url,
     )

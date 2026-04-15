@@ -699,6 +699,29 @@ class KlingService:
                 },
                 webhook_url,
             )
+        elif model == "runway":
+            logger.info("Runway model handled as std Kling 3.0 fallback")
+            return await self.generate_kling_3_video(
+                prompt=prompt,
+                mode="std",
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                sound=generate_audio,
+                webhook=webhook_url,
+            )
+        elif model == "glow":
+            logger.info("Using Kling Glow preset_motion")
+            return await self.generate_motion_control(
+                image_url=image_url or "",
+                video_urls=video_urls or [],
+                preset_motion="glow",
+                prompt=prompt,
+                motion_direction="video",
+                keep_original_sound=True,
+                mode="std",
+                aspect_ratio=aspect_ratio,
+                webhook_url=webhook_url,
+            )
         else:
             if model == "grok_imagine":
                 logger.error(

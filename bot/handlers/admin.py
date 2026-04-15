@@ -5,12 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (
-    add_credits,
-    get_admin_stats,
-    get_or_create_user,
-    get_user_stats,
-)
+from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
 from bot.keyboards import get_admin_keyboard, get_back_keyboard
 from bot.states import AdminStates
 
@@ -117,7 +112,8 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
     # Получаем статистику пользователя
     try:
         stats = await get_user_stats(user_id)
-    except:
+    except Exception as e:
+        logger.warning(f"User {user_id} not found: {e}")
         await message.answer(f"❌ Пользователь с ID {user_id} не найден.")
         return
 

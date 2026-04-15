@@ -11,6 +11,7 @@ from bot.config import config
 from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
+from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
 
@@ -167,7 +168,8 @@ async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
         )
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to edit batch message: {e}")
         await callback.message.answer(
             text,
             reply_markup=get_batch_upload_keyboard(),
@@ -397,7 +399,6 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
     )
 
     try:
-        from bot.services.gemini_service import gemini_service
 
         # Генерируем с учётом референсов
         result = await gemini_service.generate_image(
@@ -413,13 +414,11 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         # Удаляем сообщение прогресса
         try:
             await progress_msg.delete()
-        except:
+        except Exception as e:
             pass
 
         if result:
             # Сохраняем результат
-            from bot.handlers.generation import save_uploaded_file
-
             saved_url = save_uploaded_file(result, "png")
 
             # Отправляем результат

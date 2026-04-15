@@ -2,13 +2,8 @@
 
 import pytest
 
-from bot.states import (
-    AdminStates,
-    BatchGenerationStates,
-    GenerationStates,
-    ImageAnalyzerStates,
-    PaymentStates,
-)
+from bot.states import (AdminStates, BatchGenerationStates, GenerationStates,
+                        ImageAnalyzerStates, PaymentStates)
 
 
 def test_generation_states():

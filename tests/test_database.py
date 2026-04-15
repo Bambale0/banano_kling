@@ -9,27 +9,14 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from bot.database import (
-    MASTER_PARTNER_TELEGRAM_ID,
-    GenerationTask,
-    Transaction,
-    User,
-    add_credits,
-    add_generation_task,
-    check_can_afford,
-    complete_video_task,
-    create_transaction,
-    deduct_credits,
-    get_admin_stats,
-    get_master_partner_user,
-    get_or_create_user,
-    get_task_by_id,
-    get_transaction_by_order,
-    get_user_credits,
-    get_user_stats,
-    init_db,
-    update_transaction_status,
-)
+from bot.database import (MASTER_PARTNER_TELEGRAM_ID, GenerationTask,
+                          Transaction, User, add_credits, add_generation_task,
+                          check_can_afford, complete_video_task,
+                          create_transaction, deduct_credits, get_admin_stats,
+                          get_master_partner_user, get_or_create_user,
+                          get_task_by_id, get_transaction_by_order,
+                          get_user_credits, get_user_stats, init_db,
+                          update_transaction_status)
 
 
 @pytest_asyncio.fixture(scope="function")

@@ -72,7 +72,7 @@ async def _remove_old_files(
                 if not os.listdir(root):
                     os.rmdir(root)
                     logger.info(f"Removed empty dir: {root}")
-            except Exception:
+            except Exception as e:
                 # Игнорируем ошибки удаления каталогов
                 pass
     except Exception:
@@ -263,7 +263,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     ).hexdigest()
                     if hmac.compare_digest(computed_hex, sig_val):
                         return True
-                except Exception:
+                except Exception as e:
                     pass
 
             return False
@@ -296,6 +296,57 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         logger.info(f"Kling webhook parsed data: {data}")
 
+        # Kling specific format: {'code': 200, 'data': {'result_video_url': '...'}, 'msg': '...', 'taskId': '...'}
+        if "code" in data and data.get("code") == 200 and "taskId" in data:
+            task_id = data["taskId"]
+            video_url = data["data"].get("result_video_url")
+            if task_id and video_url:
+                logger.info(
+                    f"Kling success webhook: task {task_id}, video {video_url[:50]}..."
+                )
+                from bot.database import (
+                    complete_video_task,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
+                from bot.keyboards import get_video_result_keyboard
+
+                task = await get_task_by_id(task_id)
+                if task:
+                    telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                    if telegram_id:
+                        bot_instance = Bot(token=config.BOT_TOKEN)
+                        try:
+                            caption = f"✅ <b>Видео (Kling) готово!</b>\\n\\nID: <code>{task_id}</code>"
+                            if task.duration:
+                                caption += f"\\n⏱ <code>{task.duration}с</code>"
+                            if task.aspect_ratio:
+                                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
+                            if task.cost:
+                                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                            if task.preset_id == "no_preset" and task.prompt:
+                                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                            else:
+                                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+
+                            await bot_instance.send_video(
+                                chat_id=telegram_id,
+                                video=video_url,
+                                caption=caption,
+                                parse_mode="HTML",
+                                supports_streaming=True,
+                                reply_markup=get_video_result_keyboard(video_url),
+                            )
+                            await complete_video_task(task_id, video_url)
+                            logger.info(f"Kling video sent to {telegram_id}")
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to notify Kling user {telegram_id}: {e}"
+                            )
+                        finally:
+                            await bot_instance.session.close()
+                return web.Response(status=200)
+
         # Detect Kie.ai format (code:200/501, data.taskId, data.resultJson or failMsg)
         if "code" in data and "data" in data:
             kie_data = data["data"]
@@ -312,7 +363,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
             if task_id:
                 logger.info(
-                    f"Kie.ai webhook: task {task_id}, status {status}, video {video_url[:50] if video_url else None}..., fail: {fail_code}/{fail_msg[:50]}..."
+                    f"Kie.ai webhook: task {task_id}, status {status}, "
+                    + f"video {video_url[:50] if video_url else None}..., "
+                    + f"fail: {fail_code}/{fail_msg[:50]}..."
                 )
                 from bot.database import (
                     add_credits,
@@ -414,7 +467,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     if tmp_file and os.path.exists(tmp_file):
                                         try:
                                             os.remove(tmp_file)
-                                        except:
+                                        except Exception as e:
                                             pass
                                 await complete_video_task(task_id, video_url)
                                 logger.info(f"Kie.ai result sent to {telegram_id}")
@@ -429,7 +482,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 await add_credits(telegram_id, task.cost or 0)
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
-                                    text=f"❌ <b>Генерация не удалась</b>\n\nID: <code>{task_id}</code>\n\n{error_msg}\n\n🍌 Кредиты возвращены.",
+                                    text=f"❌ <b>Генерация не удалась</b>\n\n"
+                                    + f"ID: <code>{task_id}</code>\n\n"
+                                    + f"{error_msg}\n\n"
+                                    + f"🍌 Кредиты возвращены.",
                                     parse_mode="HTML",
                                 )
                                 await complete_video_task(task_id, None)
@@ -470,7 +526,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         if not task_id:
             logger.error(
-                f"Kling webhook missing task id. Top-level keys: {list(data.keys())}, payload: {webhook_data}"
+                f"Kling webhook missing task id. Top-level keys: {list(data.keys())}, "
+                + f"payload: {webhook_data}"
             )
             return web.Response(status=200)
 
@@ -527,7 +584,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 return web.Response(status=200)
 
             logger.info(
-                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
+                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, "
+                + f"preset: {task.preset_id}"
             )
 
             model_display = task.model or task.preset_id or "Kling"
@@ -619,7 +677,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             if tmp_file and os.path.exists(tmp_file):
                                 try:
                                     os.remove(tmp_file)
-                                except Exception:
+                                except Exception as e:
                                     logger.exception(
                                         "Failed to remove temporary video file"
                                     )

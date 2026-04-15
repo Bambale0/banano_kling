@@ -2,15 +2,10 @@
 
 import pytest
 
-from bot.utils.validators import (
-    sanitize_input,
-    validate_aspect_ratio,
-    validate_credits_amount,
-    validate_duration,
-    validate_image_size,
-    validate_prompt,
-    validate_telegram_id,
-)
+from bot.utils.validators import (sanitize_input, validate_aspect_ratio,
+                                  validate_credits_amount, validate_duration,
+                                  validate_image_size, validate_prompt,
+                                  validate_telegram_id)
 
 
 class TestValidators:

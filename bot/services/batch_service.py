@@ -309,7 +309,7 @@ class BatchEditingService:
                     font = ImageFont.truetype(
                         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20
                     )
-                except:
+                except Exception:
                     font = ImageFont.load_default()
 
                 draw.text((x + 5, y + 5), str(idx + 1), fill=(255, 255, 255), font=font)
@@ -365,7 +365,7 @@ class BatchEditingService:
             with open(presets_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data.get("batch_edit_modes", {})
-        except:
+        except Exception:
             return {}
 
     async def cleanup_old_jobs(self, max_age_hours: int = 24):

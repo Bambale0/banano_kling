@@ -124,6 +124,19 @@ def get_admin_keyboard():
 # =============================================================================
 
 
+SUPPORTED_RATIOS = {
+    "v3_std": ["16:9", "9:16", "1:1"],
+    "v3_pro": ["16:9", "9:16", "1:1"],
+    "v3_omni_std": ["16:9", "9:16", "1:1"],
+    "v3_omni_pro": ["16:9", "9:16", "1:1"],
+    "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
+    "aleph": ["16:9", "9:16", "1:1"],
+    "runway": ["16:9", "9:16", "1:1"],
+    "glow": ["16:9", "9:16", "1:1"],
+    "seedance2": ["16:9", "9:16", "1:1"],
+}
+
+
 def get_create_video_keyboard(
     current_v_type: str = "text",
     current_model: str = "v3_std",
@@ -211,29 +224,60 @@ def get_create_video_keyboard(
         str(current_duration), runway_data.get("base", 15)
     )
 
-    if current_v_type == "video":
-        models = []
-
-    else:
-        models = [
-            {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
-            {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
+    models = [
+        {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
+        {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
+    ]
+    if current_v_type != "text":
+        models.append(
             {
                 "key": "seedance2",
                 "label": "🌱 Seedance 2.0",
                 "cost": seedance_cost,
-            },
+            }
+        )
+    if current_v_type == "video":
+        aleph_data = VIDEO_COSTS.get(
+            "aleph", {"base": 15, "duration_costs": {"5": 15, "10": 25}}
+        )
+        aleph_cost = aleph_data.get("duration_costs", {}).get(
+            str(current_duration), aleph_data.get("base", 15)
+        )
+        glow_data = VIDEO_COSTS.get(
+            "glow", {"base": 25, "duration_costs": {"5": 25, "10": 40}}
+        )
+        glow_cost = glow_data.get("duration_costs", {}).get(
+            str(current_duration), glow_data.get("base", 25)
+        )
+        models.append(
+            {
+                "key": "aleph",
+                "label": "🔮 Aleph Video (требует видео реф.)",
+                "cost": aleph_cost,
+            }
+        )
+        models.append(
+            {
+                "key": "glow",
+                "label": "✨ Kling Glow (требует видео реф.)",
+                "cost": glow_cost,
+            }
+        )
+    else:
+        models.append(
             {
                 "key": "runway",
                 "label": "🎥 Runway AI",
                 "cost": runway_cost,
-            },
+            }
+        )
+        models.append(
             {
                 "key": "grok_imagine",
                 "label": "🧠 Grok Imagine",
                 "cost": grok_cost,
-            },
-        ]
+            }
+        )
 
     for model_info in models:
         check = "✅ " if current_model == model_info["key"] else ""
@@ -242,21 +286,18 @@ def get_create_video_keyboard(
             callback_data=f"v_model_{model_info['key']}",
         )
 
-    if current_v_type == "imgtxt":
-        builder.button(text="📎 Реф. фото", callback_data="v_imgtxt_refs")
-
-    # Размер - все доступные форматы
-    r1_1 = "✅ " if current_ratio == "1:1" else ""
-    r16_9 = "✅ " if current_ratio == "16:9" else ""
-    r9_16 = "✅ " if current_ratio == "9:16" else ""
-    r4_3 = "✅ " if current_ratio == "4:3" else ""
-    r3_2 = "✅ " if current_ratio == "3:2" else ""
-
-    builder.button(text=f"{r1_1}1:1", callback_data="ratio_1_1")
-    builder.button(text=f"{r16_9}16:9", callback_data="ratio_16_9")
-    builder.button(text=f"{r9_16}9:16", callback_data="ratio_9_16")
-    builder.button(text=f"{r4_3}4:3", callback_data="ratio_4_3")
-    builder.button(text=f"{r3_2}3:2", callback_data="ratio_3_2")
+    # Размер - только поддерживаемые моделью
+    supported_ratios = SUPPORTED_RATIOS.get(current_model, ["16:9", "9:16", "1:1"])
+    ratio_buttons = []
+    for ratio in supported_ratios:
+        check = "✅ " if current_ratio == ratio else ""
+        label = ratio.replace(":", "∶")  # визуально лучше
+        ratio_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{label}", callback_data=f"ratio_{ratio.replace(':', '_')}"
+            )
+        )
+    builder.row(*ratio_buttons)
 
     # Длительности: показываем только поддерживаемые моделью значения
     model_data_for_durations = VIDEO_COSTS.get(current_model, {})
@@ -605,16 +646,6 @@ def get_partner_consent_keyboard():
 # =============================================================================
 # ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ (для совместимости)
 # =============================================================================
-
-
-def get_upload_menu_keyboard():
-    """Меню загрузки медиа"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🖼 Загрузить фото", callback_data="upload_photo")
-    builder.button(text="🎬 Загрузить видео", callback_data="upload_video")
-    builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1, 1, 1)
-    return builder.as_markup()
 
 
 def get_settings_keyboard(

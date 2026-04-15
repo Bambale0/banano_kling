@@ -2,23 +2,15 @@
 
 import pytest
 
-from bot.utils.help_texts import (
-    UserHints,
-    format_generation_options,
-    format_preset_info,
-    get_aspect_ratio_help,
-    get_editing_help,
-    get_error_handling,
-    get_image_generation_intro,
-    get_model_selection_help,
-    get_multiturn_help,
-    get_prompt_tips,
-    get_reference_images_help,
-    get_resolution_help,
-    get_search_grounding_help,
-    get_success_message,
-    get_welcome_message,
-)
+from bot.utils.help_texts import (UserHints, format_generation_options,
+                                  format_preset_info, get_aspect_ratio_help,
+                                  get_editing_help, get_error_handling,
+                                  get_image_generation_intro,
+                                  get_model_selection_help, get_multiturn_help,
+                                  get_prompt_tips, get_reference_images_help,
+                                  get_resolution_help,
+                                  get_search_grounding_help,
+                                  get_success_message, get_welcome_message)
 
 
 class TestHelpTexts:

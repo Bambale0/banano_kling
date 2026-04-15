@@ -108,7 +108,7 @@ class SeedreamLiteService:
     async def generate_image(
         self,
         prompt: str,
-        model: str = "seedream/5-lite-image-to-image",
+        model: str = "seedream/4.5",
         image_urls: List[str] = None,
         aspect_ratio: str = "1:1",
         quality: str = "basic",

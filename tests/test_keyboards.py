@@ -5,18 +5,12 @@ from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
-from bot.keyboards import (
-    get_admin_keyboard,
-    get_balance_keyboard,
-    get_create_video_keyboard,
-    get_help_keyboard,
-    get_main_menu_keyboard,
-    get_payment_packages_keyboard,
-    get_payment_provider_keyboard,
-    get_support_keyboard,
-    get_topup_keyboard,
-    load_prices,
-)
+from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
+                           get_create_video_keyboard, get_help_keyboard,
+                           get_main_menu_keyboard,
+                           get_payment_packages_keyboard,
+                           get_payment_provider_keyboard, get_support_keyboard,
+                           get_topup_keyboard, load_prices)
 
 
 @pytest.fixture
