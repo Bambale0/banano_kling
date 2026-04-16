@@ -13,51 +13,69 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import (add_credits, add_generation_history,
-                          add_generation_task, check_can_afford,
-                          complete_video_task, deduct_credits,
-                          get_or_create_user, get_task_by_id, get_user_credits,
-                          get_user_settings)
-from bot.keyboards import (get_advanced_options_keyboard,
-                           get_aspect_ratio_keyboard, get_back_keyboard,
-                           get_category_keyboard, get_create_image_keyboard,
-                           get_create_video_keyboard, get_duration_keyboard,
-                           get_image_aspect_ratio_keyboard,
-                           get_image_aspect_ratio_no_preset_edit_keyboard,
-                           get_image_aspect_ratio_no_preset_keyboard,
-                           get_image_editing_options_keyboard,
-                           get_main_menu_keyboard,
-                           get_model_selection_keyboard,
-                           get_motion_control_keyboard,
-                           get_motion_upload_keyboard, get_multiturn_keyboard,
-                           get_prompt_tips_keyboard,
-                           get_reference_images_confirmation_keyboard,
-                           get_reference_images_keyboard,
-                           get_reference_images_upload_keyboard,
-                           get_reference_videos_upload_keyboard,
-                           get_resolution_keyboard,
-                           get_search_grounding_keyboard,
-                           get_video_edit_confirm_keyboard,
-                           get_video_edit_input_type_keyboard,
-                           get_video_edit_keyboard,
-                           get_video_options_no_preset_keyboard)
+from bot.database import (
+    add_credits,
+    add_generation_history,
+    add_generation_task,
+    check_can_afford,
+    complete_video_task,
+    deduct_credits,
+    get_or_create_user,
+    get_task_by_id,
+    get_user_credits,
+    get_user_settings,
+)
+from bot.keyboards import (
+    get_advanced_options_keyboard,
+    get_aspect_ratio_keyboard,
+    get_back_keyboard,
+    get_category_keyboard,
+    get_create_image_keyboard,
+    get_create_video_keyboard,
+    get_duration_keyboard,
+    get_image_aspect_ratio_keyboard,
+    get_image_aspect_ratio_no_preset_edit_keyboard,
+    get_image_aspect_ratio_no_preset_keyboard,
+    get_image_editing_options_keyboard,
+    get_main_menu_keyboard,
+    get_model_selection_keyboard,
+    get_motion_control_keyboard,
+    get_motion_upload_keyboard,
+    get_multiturn_keyboard,
+    get_prompt_tips_keyboard,
+    get_reference_images_confirmation_keyboard,
+    get_reference_images_keyboard,
+    get_reference_images_upload_keyboard,
+    get_reference_videos_upload_keyboard,
+    get_resolution_keyboard,
+    get_search_grounding_keyboard,
+    get_video_edit_confirm_keyboard,
+    get_video_edit_input_type_keyboard,
+    get_video_edit_keyboard,
+    get_video_options_no_preset_keyboard,
+)
 from bot.services.aleph_service import aleph_service
 from bot.services.gemini_service import gemini_service
 from bot.services.grok_service import grok_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
-from bot.services.seedream_service import \
-    seedream_lite_service as seedream_service
+from bot.services.seedream_service import seedream_lite_service as seedream_service
 from bot.states import GenerationStates
-from bot.utils.help_texts import (UserHints, format_generation_options,
-                                  get_aspect_ratio_help, get_editing_help,
-                                  get_error_handling, get_model_selection_help,
-                                  get_multiturn_help, get_prompt_tips,
-                                  get_reference_images_help,
-                                  get_resolution_help,
-                                  get_search_grounding_help,
-                                  get_success_message)
+from bot.utils.help_texts import (
+    UserHints,
+    format_generation_options,
+    get_aspect_ratio_help,
+    get_editing_help,
+    get_error_handling,
+    get_model_selection_help,
+    get_multiturn_help,
+    get_prompt_tips,
+    get_reference_images_help,
+    get_resolution_help,
+    get_search_grounding_help,
+    get_success_message,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -883,12 +901,12 @@ async def handle_video_dur_6(callback: types.CallbackQuery, state: FSMContext):
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
 
-    await state.update_data(v_duration=6)
+    await state.update_data(v_duration=6, v_model="grok_imagine")
 
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
-            current_model=current_model,
+            current_model="grok_imagine",
             current_duration=6,
             current_ratio=current_ratio,
         )
@@ -905,12 +923,12 @@ async def handle_video_dur_20(callback: types.CallbackQuery, state: FSMContext):
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
 
-    await state.update_data(v_duration=20)
+    await state.update_data(v_duration=20, v_model="grok_imagine")
 
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
-            current_model=current_model,
+            current_model="grok_imagine",
             current_duration=20,
             current_ratio=current_ratio,
         )
@@ -927,12 +945,12 @@ async def handle_video_dur_30(callback: types.CallbackQuery, state: FSMContext):
     current_model = data.get("v_model", "v26_pro")
     current_ratio = data.get("v_ratio", "16:9")
 
-    await state.update_data(v_duration=30)
+    await state.update_data(v_duration=30, v_model="grok_imagine")
 
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
-            current_model=current_model,
+            current_model="grok_imagine",
             current_duration=30,
             current_ratio=current_ratio,
         )
@@ -2843,11 +2861,14 @@ async def run_no_preset_video_from_message(
 
     elements_list = None
     if v_type == "imgtxt" and image_refs:
-        elements_list = [{
-            "description": "reference photos for video generation consistency and style",
-            "reference_image_urls": image_refs[:12],  # Kling elements support up to 3x4=12 refs
-        }]
-------- REPLACE
+        elements_list = [
+            {
+                "description": "reference photos for video generation consistency and style",
+                "reference_image_urls": image_refs[
+                    :12
+                ],  # Kling elements support up to 3x4=12 refs
+            }
+        ]
 
     cost = preset_manager.get_video_cost(v_model, v_duration)
 
@@ -2965,7 +2986,6 @@ async def run_no_preset_video_from_message(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
-------- REPLACE
 
         await processing_msg.delete()
 
