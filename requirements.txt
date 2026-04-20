@@ -19,6 +19,8 @@ typing-extensions>=4.0.0
 
 # YooKassa payments
 yookassa>=3.4.0
+pandas>=2.2.2
+openpyxl>=3.1.2
 
 # Optional (face detection for improved frontal crops)
 # Installing face_recognition requires dlib and system build deps (cmake, boost).

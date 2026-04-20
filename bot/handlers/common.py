@@ -10,23 +10,15 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.database import (
     DATABASE_PATH,
-    accept_partner_agreement,
-    create_partner_withdrawal,
     get_or_create_user,
-    get_partner_overview,
-    get_referral_stats,
     get_user_settings,
     get_user_stats,
-    process_referral,
     save_user_settings,
 )
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
     get_main_menu_keyboard,
-    get_partner_consent_keyboard,
-    get_partner_program_keyboard,
-    get_referral_keyboard,
 )
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates, GenerationStates, PaymentStates
@@ -83,7 +75,7 @@ async def cmd_start(message: types.Message):
             get_transaction_by_order,
             update_transaction_status,
         )
-        from bot.services.tbank_service import tbank_service
+        from bot.services.yookassa_service import yookassa_service
 
         transaction = await get_transaction_by_order(order_id)
 
@@ -92,39 +84,24 @@ async def cmd_start(message: types.Message):
                 # Кредиты уже были начислены
                 await message.answer(
                     f"✅ <b>Оплата уже обработана!</b>\n\n"
-                    f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
+                    f"💎 Ваш баланс: <code>{user.credits}</code> GOEов",
                     reply_markup=get_main_menu_keyboard(user.credits),
                     parse_mode="HTML",
                 )
                 return
             elif transaction.status == "pending":
-                # Проверяем статус у провайдера — поддерживаем Т-Банк и YooKassa
                 try:
-                    # T-Bank проверка
-                    result = await tbank_service.get_state(transaction.payment_id)
-                except Exception:
-                    result = None
-
-                paid = False
-                # T-Bank: Status == CONFIRMED
-                if result and result.get("Status") == "CONFIRMED":
-                    paid = True
-
-                # Если не T-Bank или не подтверждён — попробуем YooKassa
-                if not paid:
-                    try:
-                        from bot.services.yookassa_service import yookassa_service
-
-                        yk = await yookassa_service.get_payment(transaction.payment_id)
-                        if yk and (
+                    yk = await yookassa_service.get_payment(transaction.payment_id)
+                    paid = bool(
+                        yk
+                        and (
                             yk.get("paid")
                             or (yk.get("status") or "").lower()
                             in ("succeeded", "paid", "captured")
-                        ):
-                            paid = True
-                    except Exception:
-                        # Не фатально — будем ожидать webhook
-                        pass
+                        )
+                    )
+                except Exception:
+                    paid = False
 
                 if paid:
                     # Начисляем кредиты
@@ -136,9 +113,9 @@ async def cmd_start(message: types.Message):
 
                     await message.answer(
                         f"🎉 <b>Оплата успешно обработана!</b>\n\n"
-                        f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+                        f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
-                        f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
+                        f"💎 Ваш баланс: <code>{user.credits}</code> GOEов",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
                     )
@@ -170,35 +147,30 @@ async def cmd_start(message: types.Message):
         )
         return
 
-    referral_bonus_text = ""
-    if args and args[0].startswith("ref_"):
-        referral_code = args[0].replace("ref_", "", 1)
-        processed = await process_referral(message.from_user.id, referral_code)
-        if processed:
-            referral_bonus_text = (
-                "\n🎁 <b>Реферальный бонус активирован!</b>\n"
-                "Вы получили бонус за регистрацию по приглашению."
-            )
-
     # Приветственное сообщение
     welcome_text = f"""
-Хватит просто смотреть — создавай с AI! 🔥
+💎 2Loop × AI — Создавай магию льда!
+Твои идеи + наш ИИ = уникальный контент для фигурного катания
 
-✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.
-✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.
-✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.
-✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.
+🎨 Генерация артов
+Опиши образ — получи уникальный арт в стиле фигурного катания. Концепты костюмов, постеры, визуалы для соцсетей.
 
-🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов
+📸 Фото-магия
+Стилизация снимков: добавь эффекты льда, зимнюю атмосферу, смени фон на каток. Замена объектов в один клик.
 
-{referral_bonus_text}
+🎬 Видео-продакшн
+Ролики из текста и фото — идеально для отчётов о соревнованиях, промо тренировок, благодарностей тренерам.
 
-📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>
+✨ FX-эффекты
+Блёстки, следы на льду, динамичные переходы. Твои видео будут сиять как победные выступления.
 
-<i>Попробуй прямо сейчас! 👇</i>
+💎 Баланс: <code>{user.credits}</code> GOE
 
-⚠️ <b><u>ВАЖНО:</u></b>
-Запрещено создавать порнографические материалы. Нарушители блокируются без возврата потраченных бананов. Администрация не несет ответственности за действия пользователей.
+📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
+
+Попробуй прямо сейчас! 👇
+⚠️ ВАЖНО:
+Запрещён контент 18+, оскорбления, нарушение прав третьих лиц. Администрация оставляет за собой право блокировать нарушителей без возврата GOE. Ответственность за сгенерированный контент несёт пользователь.
 """
 
     try:
@@ -239,8 +211,8 @@ async def cmd_help(message: types.Message):
 
 <b>💎 Nano Banana (Генерация изображений)</b>
 Бот использует передовые модели Google Gemini:
-• <b>Nano Banana Flash</b> — быстрая генерация (1🍌)
-• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3🍌)
+• <b>Nano Banana Flash</b> — быстрая генерация (1💎)
+• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3💎)
 
 <b>📝 Как составлять промпты:</b>
 • Опишите сцену подробно, а не просто ключевые слова
@@ -256,13 +228,13 @@ async def cmd_help(message: types.Message):
 Опишите сцену для видео или загрузите изображение.
 Видео будет готово через 1-3 минуты.
 
-<b>🍌 Стоимость операций:</b>
-• FLUX.2 Pro / Nano Banana / Seedream: 3🍌
-• Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
-• Kling Standard: 6🍌 | Kling Pro: 8-10🍌
+<b>💎 Стоимость операций:</b>
+• FLUX.2 Pro / Nano Banana / Seedream: 3💎
+• Редактирование по референсам: 3💎 (до 14 референсов, 4K)
+• Kling Standard: 6💎 | Kling Pro: 8-10💎
 
 <b>❓ Нужна помощь?</b>
-Обратитесь в поддержку: <a href="https://t.me/S_k7222">@S_k7222</a>
+Обратитесь в поддержку: <a href="https://t.me/S_k7222">@design_2Loop7222</a>
 """
 
     await message.answer(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
@@ -299,7 +271,7 @@ async def show_help(callback: types.CallbackQuery):
 • Какие есть скидки?
 
 📝 <b>Просто напиши свой вопрос!</b>
-Например: "как сделать крутой логотип?" или "помоги с промптом для космоса"
+Например: "как сделать крутой логотип?" или "помоги с промпт для космоса"
 
 <b>❓ Или выбери "Тех. поддержка" для связи с нами</b>
 """
@@ -326,18 +298,30 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     # Запоминаем, что пользователь в главном меню
     _set_user_menu(callback.from_user.id, "main_menu")
 
-    # Полный текст главного меню как в cmd_start
-    welcome_text = (
-        f"🏠 <b>Главное меню</b>\n\n"
-        f"Хватит просто смотреть — создавай с AI! 🔥\n\n"
-        f"✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.\n"
-        f"✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.\n"
-        f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
-        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.\n\n"
-        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов\n\n"
-        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>\n\n'
-        f"<i>Попробуй прямо сейчас! 👇</i>"
-    )
+    welcome_text = f"""
+💎 2Loop & AI 
+Создавай магию льда!
+Твои идеи + наш ИИ = уникальный контент для фигурного катания
+
+🎨 Генерация артов
+Опиши образ — получи уникальный арт в стиле фигурного катания. Концепты костюмов, постеры, визуалы для соцсетей.
+
+📸 Фото-магия
+Стилизация снимков: добавь эффекты льда, зимнюю атмосферу, смени фон на каток. Замена объектов в один клик.
+🎬 Видео-продакшн
+Ролики из текста и фото — идеально для отчётов о соревнованиях, промо тренировок, благодарностей тренерам.
+
+✨ FX-эффекты
+Блёстки, следы на льду, динамичные переходы. Твои видео будут сиять как победные выступления.
+
+💎 Баланс: <code>{user.credits}</code> GOE
+
+📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
+Попробуй прямо сейчас! 👇
+
+⚠️ ВАЖНО:
+Запрещён контент 18+, оскорбления, нарушение прав третьих лиц. Администрация оставляет за собой право блокировать нарушителей без возврата GOE. Ответственность за сгенерированный контент несёт пользователь.
+"""
 
     try:
         await callback.message.edit_text(
@@ -365,12 +349,10 @@ async def show_balance(callback: types.CallbackQuery):
     balance_text = f"""
 💎 <b>Ваш баланс</b>
 
-🍌 Доступно бананов: <code>{stats['credits']}</code>
+💎 Доступно GOEов: <code>{stats['credits']}</code>
 📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
+💸 Потрачено GOEов: <code>{stats['total_spent']}</code>
 📅 Дата регистрации: <code>{stats['member_since']}</code>
-🎁 Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>
-💰 Заработано на рефералах: <code>{stats.get('referral_earned', 0)}</code>
 """
 
     await callback.message.edit_text(
@@ -378,248 +360,6 @@ async def show_balance(callback: types.CallbackQuery):
         reply_markup=get_main_menu_keyboard(user.credits),
         parse_mode="HTML",
     )
-
-
-@router.message(Command("ref"), StateFilter(None))
-@router.message(Command("earn"), StateFilter(None))
-async def cmd_partner(message: types.Message):
-    """Показывает партнёрскую программу."""
-    await render_partner_program(message, user_id=message.from_user.id)
-
-
-@router.callback_query(F.data.in_({"menu_referrals", "menu_partner"}))
-async def show_partner(callback: types.CallbackQuery):
-    """Показывает партнёрскую программу."""
-    await render_partner_program(callback.message, user_id=callback.from_user.id)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "partner_offer")
-async def show_partner_offer(callback: types.CallbackQuery):
-    """Показывает текст публичной оферты из static/ofert.md (локально)."""
-    import os
-
-    try:
-        ofert_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "static", "ofert.md")
-        )
-
-        # Попробуем сначала отправить файл как документ — это самый надёжный способ
-        try:
-            # Try to send the local file path directly. Avoid using InputFile
-            # class instantiation which may not be compatible with this aiogram
-            # version (causes "Can't instantiate abstract class InputFile").
-            await callback.message.answer_document(
-                document=ofert_path,
-                caption="📜 Публичная оферта",
-                reply_markup=get_partner_consent_keyboard(),
-            )
-            await callback.answer()
-            return
-        except Exception as e_doc:
-            logger.info(
-                "Sending offer as document failed, falling back to text: %s", e_doc
-            )
-
-        # Если отправка документа не удалась, попытаемся отправить текст по частям
-        with open(ofert_path, "r", encoding="utf-8") as f:
-            ofert_text = f.read()
-
-        # Telegram имеет ограничение на длину сообщения (~4096 символов). Разделим на части.
-        max_len = 4000
-        parts = [
-            ofert_text[i : i + max_len] for i in range(0, len(ofert_text), max_len)
-        ]
-
-        # Отправляем части: для первой части пробуем отредактировать сообщение,
-        # для промежуточных частей отправляем просто текст (без клавиатуры),
-        # а клавиатуру с возможностью "Назад" и акцепта показываем только в последней части.
-        for idx, part in enumerate(parts):
-            try:
-                is_last = idx == len(parts) - 1
-                if idx == 0:
-                    try:
-                        # Пытаемся отредактировать существующее сообщение и сразу добавить клавиатуру
-                        await callback.message.edit_text(
-                            part,
-                            reply_markup=(
-                                get_partner_consent_keyboard() if is_last else None
-                            ),
-                            parse_mode="HTML",
-                        )
-                        # Если отредактировали и это не последняя часть, продолжим к следующей
-                        if not is_last:
-                            continue
-                        else:
-                            # Если это была единственная/последняя часть — всё готово
-                            break
-                    except Exception:
-                        # Не удалось отредактировать — отправим новое сообщение ниже
-                        pass
-
-                # Для всех отправляемых сообщений: добавляем клавиатуру ТОЛЬКО для последней части
-                if is_last:
-                    await callback.message.answer(
-                        part,
-                        reply_markup=get_partner_consent_keyboard(),
-                        parse_mode="HTML",
-                    )
-                else:
-                    await callback.message.answer(part, parse_mode="HTML")
-            except Exception as e_part:
-                logger.exception("Failed to send part of offer: %s", e_part)
-
-        await callback.answer()
-
-    except Exception as e:
-        logger.exception("Failed to load partner offer: %s", e)
-        await callback.answer("Не удалось загрузить оферту.", show_alert=True)
-
-
-async def render_partner_program(target, user_id: int):
-    """Рендерит экран партнёрской программы."""
-    user = await get_or_create_user(user_id)
-    stats = await get_partner_overview(user_id)
-
-    bot = target.bot
-    me = await bot.get_me()
-    referral_code = user.referral_code or ""
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
-    )
-
-    tier = stats.get("tier", "basic")
-    percent = stats.get("percent", 30)
-    offer_url = "https://example.com/offer"
-    rules_url = "https://example.com/rules"
-    if hasattr(bot, "offer_url"):
-        offer_url = bot.offer_url
-
-    text = (
-        "💼 <b>Партнёрам</b>\n\n"
-        "Это практическое руководство по участию в партнёрской программе.\n"
-        "Юридически значимые условия содержатся в Публичной оферте.\n\n"
-        f"🔗 Ваша личная ссылка: <code>{referral_link or 'Ссылка появится после активации'} </code>\n"
-        f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
-        f"💰 Заработано: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
-        f"🧮 Текущий баланс: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>\n\n"
-        "<b>Уровни вознаграждения:</b>\n"
-        "• 30% — базовый уровень\n"
-        "• 35% — от 100 000 ₽ оборота рефералов\n"
-        "• 50% — от 1 000 000 ₽ оборота рефералов\n\n"
-        "<b>Как это работает:</b>\n"
-        "• Пользователь переходит по вашей ссылке\n"
-        "• Регистрируется и закрепляется за вами навсегда\n"
-        "• После оплат рефералов начисляется денежное вознаграждение\n"
-        "• Вывод доступен после достижения минимальной суммы\n"
-    )
-
-    markup = (
-        get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        )
-        if referral_link
-        else get_partner_consent_keyboard()
-    )
-
-    if isinstance(target, types.Message):
-        await target.answer(text, reply_markup=markup, parse_mode="HTML")
-    else:
-        await target.edit_text(text, reply_markup=markup, parse_mode="HTML")
-
-
-@router.callback_query(F.data == "partner_accept")
-async def accept_partner(callback: types.CallbackQuery):
-    """Подтверждение участия в партнёрской программе."""
-    from bot.database import generate_referral_code, update_user_referral_code
-
-    await accept_partner_agreement(callback.from_user.id)
-
-    # Ensure user has a referral code after activation — some older users may lack it
-    user = await get_or_create_user(callback.from_user.id)
-    try:
-        if not user.referral_code:
-            new_code = await generate_referral_code()
-            await update_user_referral_code(callback.from_user.id, new_code)
-            # refresh user object
-            user = await get_or_create_user(callback.from_user.id)
-    except Exception:
-        # Non-fatal: if generation/update fails, continue without blocking the flow
-        logger.exception("Failed to ensure referral code on partner accept")
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
-    )
-
-    await callback.message.edit_text(
-        "✅ <b>Партнёрский статус активирован</b>\n\n"
-        "Теперь вы получаете денежное вознаграждение за оплату рефералов.\n"
-        "Ваш процент зависит от оборота рефералов и обновляется автоматически.",
-        reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
-        parse_mode="HTML",
-    )
-    await callback.answer("Партнёрская программа активирована")
-
-
-@router.callback_query(F.data == "partner_stats")
-async def partner_stats(callback: types.CallbackQuery):
-    """Показывает детальную статистику партнёра."""
-    stats = await get_partner_overview(callback.from_user.id)
-    text = (
-        "📈 <b>Детальная статистика</b>\n\n"
-        f"• Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
-        f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
-        f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
-        f"• Доход за месяц: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
-        f"• Новые за сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
-        f"• Доход за сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
-    )
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    user = await get_or_create_user(callback.from_user.id)
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "partner_withdraw")
-async def partner_withdraw(callback: types.CallbackQuery):
-    """Показывает меню вывода."""
-    stats = await get_partner_overview(callback.from_user.id)
-    min_withdraw = 2000
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    user = await get_or_create_user(callback.from_user.id)
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
-    )
-
-    await callback.message.edit_text(
-        "🎟️ <b>Вывод заработка</b>\n\n"
-        f"Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽\n\n"
-        "Для оформления вывода напишите реквизиты и сумму в поддержку или добавим форму следующим шагом.",
-        reply_markup=get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "menu_settings")
@@ -646,13 +386,13 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
 
 🖼 Изображения:
 • FLUX.2 Pro / Nano Banana / Seedream
-• Все модели: 3🍌
+• Все модели: 3💎
 
 🎬 Текст→Видео:
-• Kling 2.6 (8🍌) / Std (6🍌) / Pro (8🍌) / Omni / V2V
+• Kling 2.6 (8💎) / Std (6💎) / Pro (8💎) / Omni / V2V
 
 🖼→🎬 Фото→Видео:
-• Std (6🍌) / Pro (8🍌) / Omni
+• Std (6💎) / Pro (8💎) / Omni
 """
 
     await callback.message.edit_text(
@@ -685,7 +425,7 @@ async def show_motion_control_menu(callback: types.CallbackQuery):
 2. Загрузи видео с движением
 3. Получи анимированное фото!
 
-💰 Баланс: {user_credits}🍌
+💎 Баланс: {user_credits} GOE
 
 Выбери качество:
 """
@@ -714,7 +454,7 @@ async def show_support(callback: types.CallbackQuery):
 • Любыми другими вопросами
 
 📱 <b>Или свяжись с нами:</b>
-@s_k7222
+@design_2Loop7222
 
 Мы ответим вам в ближайшее время!
 """
@@ -725,6 +465,79 @@ async def show_support(callback: types.CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "menu_faq")
+async def show_faq(callback: types.CallbackQuery):
+    """Показывает FAQ с доставкой и офертой"""
+    from bot.keyboards import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📦 Доставка и возврат", callback_data="faq_dostavka")
+    builder.button(text="📋 Публичная оферта", callback_data="faq_ofert")
+    builder.button(text="🔙 Главное меню", callback_data="back_main")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "📚 <b>FAQ</b>\n\n" "Политика доставки и возврат\n" "Публичная оферта",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+async def send_file_content_as_text(
+    callback: types.CallbackQuery, filename: str, title: str
+):
+    """Отправляет содержимое файла как текст в чат, разбивая длинный текст на части"""
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            content = f.read()
+        chat_id = callback.message.chat.id
+        from bot.keyboards import InlineKeyboardBuilder
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 FAQ", callback_data="menu_faq")
+        markup = kb.as_markup()
+        max_len = 4096
+        if len(content) <= max_len:
+            await callback.bot.send_message(
+                chat_id, f"{title}\n\n{content}", reply_markup=markup
+            )
+        else:
+            pos = 0
+            while pos < len(content):
+                end = min(pos + max_len - 100, len(content))
+                last_nl = content.rfind("\n\n", pos, end)
+                if last_nl == -1:
+                    last_nl = content.rfind("\n", pos, end)
+                if last_nl > pos:
+                    end = last_nl + 1
+                part = content[pos:end]
+                part_markup = markup if end >= len(content) else None
+                await callback.bot.send_message(chat_id, part, reply_markup=part_markup)
+                pos = end
+        await callback.answer()
+    except FileNotFoundError:
+        await callback.message.answer("❌ Файл не найден.")
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка отправки {filename}: {e}")
+        await callback.message.answer("❌ Ошибка отправки документа.")
+        await callback.answer()
+
+
+@router.callback_query(F.data == "faq_dostavka")
+async def show_dostavka(callback: types.CallbackQuery):
+    await send_file_content_as_text(
+        callback, "static/uploads/dostavka.md", "📦 ПОЛИТИКА ДОСТАВКИ И ВОЗВРАТА"
+    )
+
+
+@router.callback_query(F.data == "faq_ofert")
+async def show_ofert(callback: types.CallbackQuery):
+    await send_file_content_as_text(
+        callback, "static/uploads/ofert.md", "📋 ПУБЛИЧНАЯ ОФЕРТА"
+    )
 
 
 @router.callback_query(F.data == "menu_history")
@@ -740,8 +553,8 @@ async def show_history(callback: types.CallbackQuery):
 📋 <b>История</b>
 
 📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
-💎 Текущий баланс: <code>{user.credits}</code>🍌
+💸 Потрачено GOEов: <code>{stats['total_spent']}</code>
+💎 Текущий баланс: <code>{user.credits}</code>💎
 📅 Дата регистрации: <code>{stats['member_since']}</code>
 
 <i>Детальная история скоро будет доступна!</i>
@@ -775,9 +588,7 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
     cost = preset_manager.get_video_cost("v26_motion_std", 5)
 
     if user_credits < cost:
-        await callback.answer(
-            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
-        )
+        await callback.answer("❌ Недостаточно GOEов! Пополни баланс.", show_alert=True)
         return
 
     # Сохраняем тип генерации
@@ -791,7 +602,7 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
 
     await callback.message.edit_text(
         f"🎬 <b>Motion Control Standard</b>\n\n"
-        f"Стоимость: {cost}🍌\n\n"
+        f"Стоимость: {cost}💎\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
@@ -814,9 +625,7 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
     cost = preset_manager.get_video_cost("v26_motion_pro", 5)
 
     if user_credits < cost:
-        await callback.answer(
-            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
-        )
+        await callback.answer("❌ Недостаточно GOEов! Пополни баланс.", show_alert=True)
         return
 
     # Сохраняем тип генерации
@@ -830,7 +639,7 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
 
     await callback.message.edit_text(
         f"💎 <b>Motion Control Pro</b>\n\n"
-        f"Стоимость: {cost}🍌\n\n"
+        f"Стоимость: {cost}💎\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
@@ -979,7 +788,7 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
 
     # Названия сервисов
     service_names = {
-        "nanobanana": "🍌 Nano Banana",
+        "nanobanana": "💎 Nano Banana",
         "novita": "✨ FLUX.2 Pro (Novita)",
         "banana_pro": "💎 Banana Pro",
         "seedream": "🎨 Seedream (Novita)",
@@ -1042,7 +851,7 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"📂 <b>{categories[category]['name']}</b>\n"
         f"📝 {categories[category].get('description', '')}\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"💎 Ваш баланс: <code>{user_credits}</code> GOEов\n\n"
         f"Выберите пресет:",
         reply_markup=get_category_keyboard(category, presets, user_credits),
         parse_mode="HTML",
@@ -1057,23 +866,19 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(StateFilter(None), F.text)
 async def handle_message_in_menu(message: types.Message, state: FSMContext):
-    """Обработка текстовых сообщений в главном меню или настройках - перенаправление к ИИ"""
-    from bot.keyboards import get_ai_assistant_keyboard, get_back_keyboard
+    """Обработка текстовых сообщений в главном меню - перенаправление к ИИ с историей"""
+    from bot.keyboards import get_ai_assistant_keyboard
     from bot.services.ai_assistant_service import ai_assistant_service
 
     user_id = message.from_user.id
     last_menu = _get_user_menu(user_id)
 
-    # Проверяем, находится ли пользователь в главном меню или настройках
     if last_menu not in ("main_menu", "settings"):
-        # Если пользователь не в главном меню или настройках, не обрабатываем
         return
 
-    # Устанавливаем состояние ожидания сообщения
     await state.set_state(AIAssistantStates.waiting_for_message)
-    await state.update_data(ai_mode=last_menu)
+    await state.update_data(ai_mode=last_menu, history=[])
 
-    # Загружаем контекст пользователя
     user = await get_or_create_user(message.from_user.id)
     db_settings = await get_user_settings(message.from_user.id)
 
@@ -1085,34 +890,34 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         "menu_location": "главное меню" if last_menu == "main_menu" else "настройки",
     }
 
-    # Отправляем "печатает" статус
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        # Получаем ответ от ИИ
         response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text, context=context
+            user_message=message.text, context=context, history=[]
         )
 
+        history = [{"role": "user", "content": message.text}]
         if response:
-            # Отправляем ответ пользователю с клавиатурой ИИ
+            history.append({"role": "assistant", "content": response})
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                f"🤖 2Loop AI:\n\n{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
         else:
-            # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                "😕 Временно недоступен. Попробуй позже или @design_2Loop7222",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
 
+        await state.update_data(history=history)
+
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            "😕 Ошибка. Попробуй снова или обратись в поддержку.",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )
@@ -1125,6 +930,14 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
 
 # Для диагностики оставляем только callback_query обработчики
 # Все message хэндлеры должны быть в generation_router с явными StateFilter
+
+
+@router.callback_query(F.data == "check_subscription")
+async def check_subscription(callback: types.CallbackQuery):
+    """Обработчик кнопки проверки подписки"""
+    await callback.answer(
+        "✅ Подписка проверена! Теперь вы можете использовать бота.", show_alert=True
+    )
 
 
 @router.callback_query(F.data.startswith("ignore_"))
@@ -1151,11 +964,11 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
     context = {
         "user_credits": user.credits,
         "menu_location": "главное меню",
-        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni",
+        "available_models": "Flash (1💎), Pro (2💎), видео Std/Pro/Omni",
     }
 
     # Приветственное сообщение от ИИ
-    welcome_ai = """🍌 Привет! Я Banana Boom AI - твой ИИ-ассистент!
+    welcome_ai = """💎 Привет! Я 2loop AI - твой ИИ-ассистент!
 
 Я здесь, чтобы помочь тебе с ЛЮБЫМ вопросом! Ты можешь спросить меня абсолютно обо всём:
 
@@ -1197,18 +1010,18 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         "available_models": "Nano Banana (Flash/Pro), FLUX.2 Pro (Novita), Seedream (Novita), Kling 3 (Std/Pro/Omni)",
     }
 
-    welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
+    welcome_ai = """💎 Я здесь, чтобы помочь с настройками!
 
 Ты находишься в меню настройки моделей.
 Я могу объяснить:
 
-🍌 Какая модель изображений лучше:
-   - Flash (1🍌) - быстро и дёшево
-   - Pro (2🍌) - высокое качество, 4K
+💎 Какая модель изображений лучше:
+   - Flash (1💎) - быстро и дёшево
+   - Pro (2💎) - высокое качество, 4K
 
 🎬 Какая модель видео подойдёт:
-   - Std (4🍌) - стандарт
-   - Pro (5🍌) - лучше качество
+   - Std (4💎) - стандарт
+   - Pro (5💎) - лучше качество
    - Omni - продвинутая
 
 🖼 Чем отличаются сервисы:
@@ -1331,7 +1144,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
             await db.commit()
         await message.answer(
             f"🚀 <b>Motion Control запущен!</b>\n\n"
-            f"💰 <code>{cost}</code>🍌\n"
+            f"💰 <code>{cost}</code>💎\n"
             f"🤖 <code>{mode.upper()}</code>\n"
             f"🆔 <code>{api_task_id}</code>\n\n"
             f"Ожидайте результат (1-5 мин)...",
@@ -1340,7 +1153,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         await state.clear()
     else:
         await add_credits(telegram_id, cost)
-        await message.answer("❌ Ошибка запуска. Бананы возвращены.", parse_mode="HTML")
+        await message.answer("❌ Ошибка запуска. GOE возвращены.", parse_mode="HTML")
 
 
 @router.message(GenerationStates.waiting_for_motion_character_image)
@@ -1361,16 +1174,15 @@ async def invalid_motion_video_upload(message: types.Message, state: FSMContext)
 
 @router.message(StateFilter(AIAssistantStates.waiting_for_message))
 async def handle_ai_assistant_message(message: types.Message, state: FSMContext):
-    """Обработка сообщения пользователя ИИ-ассистентом"""
-    from bot.database import get_user_credits, get_user_settings
+    """Обработка сообщений ИИ-ассистента с историей (до 7 сообщений)"""
+    from bot.database import get_user_settings
     from bot.keyboards import get_ai_assistant_keyboard
     from bot.services.ai_assistant_service import ai_assistant_service
 
-    # Получаем текущий режим
     data = await state.get_data()
+    history = data.get("history", [])
     ai_mode = data.get("ai_mode", "main_menu")
 
-    # Загружаем контекст пользователя
     user = await get_or_create_user(message.from_user.id)
     db_settings = await get_user_settings(message.from_user.id)
 
@@ -1382,26 +1194,31 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки",
     }
 
-    # Отправляем "печатает" статус
+    # Добавляем новое сообщение пользователя в историю
+    history.append({"role": "user", "content": message.text})
+
     await message.bot.send_chat_action(message.chat.id, "typing")
 
     try:
-        # Получаем ответ от ИИ
         response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text, context=context
+            user_message=message.text, context=context, history=history
         )
 
         if response:
-            # Отправляем ответ пользователю
+            history.append({"role": "assistant", "content": response})
+            # Ограничиваем историю 7 сообщениями (последние)
+            if len(history) > 7:
+                history = history[-7:]
+            await state.update_data(history=history)
+
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                f"🤖 2Loop AI:\n\n{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
         else:
-            # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                "😕 Не удалось получить ответ. Попробуй перефразировать или @design_2Loop7222",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1409,7 +1226,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            "😕 Ошибка связи с ИИ. Попробуй позже.",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )

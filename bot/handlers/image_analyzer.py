@@ -24,7 +24,7 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             f"📸 <b>Анализ фото → Промпт</b>\n\n"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌\n\n"
+            f"💎 Баланс: <code>{user.credits}</code>💎\n\n"
             f"Отправьте фото для анализа.\n"
             f"🤖 ИИ создаст точный промпт для повторения:\n"
             f"• Лица и люди\n"
@@ -38,7 +38,7 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         logger.warning(f"Cannot edit message in photo_to_prompt_handler: {e}")
         await callback.message.answer(
             f"📸 <b>Анализ фото → Промпт</b>\n\n"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌\n\n"
+            f"💎 Баланс: <code>{user.credits}</code>💎\n\n"
             f"Отправьте фото для анализа.\n"
             f"🤖 ИИ создаст точный промпт для повторения:\n"
             f"• Лица и люди\n"
@@ -67,7 +67,7 @@ async def analyze_photo(message: Message, state: FSMContext):
         user = await get_or_create_user(message.from_user.id)
 
         short_caption = (
-            f"✅ <b>Готовый промпт!</b>\n\n🍌 Баланс: <code>{user.credits}</code>🍌"
+            f"✅ <b>Готовый промпт!</b>\n\n💎 Баланс: <code>{user.credits}</code>💎"
         )
         await message.answer_photo(
             photo=photo.file_id,

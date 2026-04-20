@@ -27,12 +27,17 @@ from bot.database import init_db
 from bot.handlers import (
     admin_router,
     batch_generation_router,
+    catalog_router,
     common_router,
     generation_router,
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_tbank_webhook, handle_yookassa_webhook
+from bot.handlers.payments import (
+    handle_robokassa_result,
+    handle_robokassa_success,
+    handle_yookassa_webhook,
+)
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -154,6 +159,12 @@ def setup_dispatcher() -> Dispatcher:
     """Настройка диспетчера с роутерами"""
     dp = Dispatcher()
 
+    # Middleware для проверки подписки
+    from bot.middleware.subscription import SubscriptionCheckMiddleware
+
+    dp.message.middleware(SubscriptionCheckMiddleware())
+    dp.callback_query.middleware(SubscriptionCheckMiddleware())
+
     # Регистрируем глобальный обработчик ошибок
     dp.errors.register(errors_handler)
 
@@ -174,7 +185,8 @@ def setup_dispatcher() -> Dispatcher:
     dp.include_router(admin_router)  # Админ-команды
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация
-    dp.include_router(common_router)  # Общие команды - ПОСЛЕДНИЙ!
+    dp.include_router(common_router)  # Общие команды
+    dp.include_router(catalog_router)  # Каталог товаров
 
     return dp
 
@@ -323,7 +335,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             if task.aspect_ratio:
                                 caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
                             if task.cost:
-                                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                                caption += f"\\n💰 <code>{task.cost}💎</code>"
                             if task.preset_id == "no_preset" and task.prompt:
                                 caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
                             else:
@@ -388,7 +400,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 if task.aspect_ratio:
                                     caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
                                 if task.cost:
-                                    caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                                    caption += f"\\n💰 <code>{task.cost}💎</code>"
                                 if task.preset_id == "no_preset" and task.prompt:
                                     caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
                                 else:
@@ -485,7 +497,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     text=f"❌ <b>Генерация не удалась</b>\n\n"
                                     + f"ID: <code>{task_id}</code>\n\n"
                                     + f"{error_msg}\n\n"
-                                    + f"🍌 Кредиты возвращены.",
+                                    + f"💎 Кредиты возвращены.",
                                     parse_mode="HTML",
                                 )
                                 await complete_video_task(task_id, None)
@@ -595,7 +607,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             if task.aspect_ratio:
                 caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
             if task.cost:
-                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                caption += f"\\n💰 <code>{task.cost}💎</code>"
             if task.preset_id == "no_preset" and task.prompt:
                 caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
             else:
@@ -741,7 +753,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 text=(
                                     "❌ <b>Ваш промпт был помечен как чувствительный контент</b>\n\n"
                                     "Пожалуйста, попробуйте другой промпт без чувствительного контента.\n\n"
-                                    "🍌 Кредиты возвращены на счёт."
+                                    "💎 Кредиты возвращены на счёт."
                                 ),
                                 parse_mode="HTML",
                             )
@@ -869,7 +881,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             if task.aspect_ratio:
                 caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
             if task.cost:
-                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                caption += f"\\n💰 <code>{task.cost}💎</code>"
             if task.preset_id == "no_preset" and task.prompt:
                 caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
             else:
@@ -1342,7 +1354,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             # Build ultra-compact caption with minimal line breaks
             info_lines = []
             if task.cost:
-                info_lines.append(f"💰{task.cost}🍌")
+                info_lines.append(f"💰{task.cost}💎")
             if task.duration:
                 info_lines.append(f"⏱{task.duration}с")
             if task.aspect_ratio:
@@ -1527,7 +1539,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)
                 try:
-                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nКод: <code>{fail_code}</code>\nСообщение: {fail_msg}\n\n{'🍌 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
+                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nКод: <code>{fail_code}</code>\nСообщение: {fail_msg}\n\n{'💎 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=error_msg,
@@ -1568,11 +1580,12 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     app.router.add_post(config.WEBHOOK_PATH, telegram_webhook_handler)
 
-    # Вебхук Т-Банка
-    app.router.add_post("/tbank/webhook", handle_tbank_webhook)
-
     # Вебхук YooKassa
     app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+
+    # Robokassa webhooks
+    app.router.add_post("/robokassa/result", handle_robokassa_result)
+    app.router.add_get("/robokassa/success", handle_robokassa_success)
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)

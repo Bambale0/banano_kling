@@ -24,9 +24,9 @@ async def check_balance(telegram_id: int):
 
         print(f"📊 Информация о пользователе {telegram_id}:")
         print(f"   Telegram ID: {user.telegram_id}")
-        print(f"   Баланс: {stats['credits']} бананов")
+        print(f"   Баланс: {stats['credits']} GOEов")
         print(f"   Всего генераций: {stats['generations']}")
-        print(f"   Потрачено бананов: {stats['total_spent']}")
+        print(f"   Потрачено GOEов: {stats['total_spent']}")
         print(f"   Дата регистрации: {stats['member_since']}")
 
         return True

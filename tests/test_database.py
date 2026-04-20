@@ -108,7 +108,7 @@ async def test_check_can_afford(temp_db):
 async def test_create_transaction(temp_db):
     """Test create_transaction"""
     user = await get_or_create_user(123456)
-    assert await create_transaction("order1", user.id, "pay1", "tbank", 10, 100.0)
+    assert await create_transaction("order1", user.id, "pay1", "yookassa", 10, 100.0)
     trans = await get_transaction_by_order("order1")
     assert trans is not None
     assert trans.credits == 10
@@ -119,7 +119,7 @@ async def test_create_transaction(temp_db):
 async def test_update_transaction_status(temp_db):
     """Test update_transaction_status"""
     user = await get_or_create_user(123456)
-    await create_transaction("order1", user.id, "pay1", "tbank", 10, 100.0)
+    await create_transaction("order1", user.id, "pay1", "yookassa", 10, 100.0)
     assert await update_transaction_status("order1", "completed")
     trans = await get_transaction_by_order("order1")
     assert trans.status == "completed"

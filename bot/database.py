@@ -24,6 +24,7 @@ class User:
     referred_by: Optional[int] = None
     referral_earned: int = 0
     has_paid: bool = False
+    used_2loop_promo: bool = False
     partner_agreed_at: Optional[datetime] = None
     partner_total_revenue_rub: float = 0.0
     partner_balance_rub: float = 0.0
@@ -124,6 +125,14 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        # Promo code migration
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN used_2loop_promo BOOLEAN DEFAULT FALSE"
+            )
+        except aiosqlite.OperationalError:
+            pass
+
         # Таблица транзакций (платежи)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
@@ -131,7 +140,7 @@ async def init_db():
                 order_id TEXT UNIQUE NOT NULL,
                 user_id INTEGER NOT NULL,
                 payment_id TEXT,
-                provider TEXT DEFAULT 'tbank',
+                provider TEXT DEFAULT 'yookassa',
                 credits INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
                 status TEXT DEFAULT 'pending',
@@ -195,7 +204,7 @@ async def init_db():
         # Миграция: добавляем provider в transactions
         try:
             await db.execute(
-                "ALTER TABLE transactions ADD COLUMN provider TEXT DEFAULT 'tbank'"
+                "ALTER TABLE transactions ADD COLUMN provider TEXT DEFAULT 'yookassa'"
             )
         except aiosqlite.OperationalError:
             pass
@@ -337,6 +346,11 @@ async def get_or_create_user(telegram_id: int) -> User:
                 row["referral_earned"] if "referral_earned" in row.keys() else 0
             )
             has_paid = bool(row["has_paid"]) if "has_paid" in row.keys() else False
+            used_2loop_promo = (
+                bool(row["used_2loop_promo"])
+                if "used_2loop_promo" in row.keys()
+                else False
+            )
             partner_agreed_at = (
                 datetime.fromisoformat(row["partner_agreed_at"])
                 if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
@@ -352,6 +366,7 @@ async def get_or_create_user(telegram_id: int) -> User:
                 referred_by=referred_by,
                 referral_earned=referral_earned or 0,
                 has_paid=has_paid,
+                used_2loop_promo=used_2loop_promo,
                 partner_agreed_at=partner_agreed_at,
                 partner_total_revenue_rub=(
                     float(row["partner_total_revenue_rub"] or 0)
@@ -404,6 +419,9 @@ async def get_or_create_user(telegram_id: int) -> User:
             row["referral_earned"] if "referral_earned" in row.keys() else 0
         )
         has_paid = bool(row["has_paid"]) if "has_paid" in row.keys() else False
+        used_2loop_promo = (
+            bool(row["used_2loop_promo"]) if "used_2loop_promo" in row.keys() else False
+        )
         partner_agreed_at = (
             datetime.fromisoformat(row["partner_agreed_at"])
             if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
@@ -419,6 +437,7 @@ async def get_or_create_user(telegram_id: int) -> User:
             referred_by=referred_by,
             referral_earned=referral_earned or 0,
             has_paid=has_paid,
+            used_2loop_promo=used_2loop_promo,
             partner_agreed_at=partner_agreed_at,
             partner_total_revenue_rub=(
                 float(row["partner_total_revenue_rub"] or 0)
@@ -651,7 +670,7 @@ async def credit_first_payment_referral_bonus(
 ) -> dict:
     """Начисляет бонус по приглашённому пользователю.
 
-    Для обычного реферера начисляет бананы за первую оплату.
+    Для обычного реферера начисляет GOE за первую оплату.
     Для партнёра начисляет денежное вознаграждение за оплату реферала.
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -997,7 +1016,7 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
             provider=(
                 row["provider"]
                 if "provider" in row.keys() and row["provider"]
-                else "tbank"
+                else "yookassa"
             ),
             user_id=row["user_id"],
             payment_id=row["payment_id"],
@@ -1443,4 +1462,22 @@ async def save_user_settings(
             await db.commit()
             logger.info(f"Created settings for user {telegram_id}")
 
+        return True
+
+
+async def check_2loop_promo_used(telegram_id: int) -> bool:
+    """Проверяет, использовал ли пользователь промокод 2LOOP"""
+    user = await get_or_create_user(telegram_id)
+    return user.used_2loop_promo
+
+
+async def mark_2loop_promo_used(telegram_id: int) -> bool:
+    """Отмечает промокод 2LOOP как использованный"""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET used_2loop_promo = TRUE, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        await db.commit()
+        logger.info(f"Marked 2LOOP promo as used for user {telegram_id}")
         return True

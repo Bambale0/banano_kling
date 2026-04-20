@@ -71,3 +71,13 @@ class ImageAnalyzerStates(StatesGroup):
     """Состояния для анализа изображения в промпт"""
 
     waiting_for_photo = State()
+
+
+class CatalogStates(StatesGroup):
+    """Состояния для каталога товаров"""
+
+    waiting_for_article = State()
+    waiting_for_size = State()
+    waiting_for_promo = State()
+    waiting_for_address = State()
+    confirming_order = State()

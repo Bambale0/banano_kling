@@ -17,7 +17,7 @@ class TestHelpTexts:
     def test_get_welcome_message(self):
         msg = get_welcome_message()
         assert "Добро пожаловать" in msg
-        assert "🍌" in msg
+        assert "⛸️" in msg
 
     def test_get_image_generation_intro_image_generation(self):
         msg = get_image_generation_intro("image_generation")
@@ -79,7 +79,7 @@ class TestHelpTexts:
         msg = get_success_message("test_preset", 5)
         assert "Готово!" in msg
         assert "test_preset" in msg
-        assert "5🍌" in msg
+        assert "5⛸️" in msg
 
     def test_user_hints_get_hint_for_stage(self):
         hints = UserHints()
@@ -110,7 +110,7 @@ class TestHelpTexts:
         info = format_preset_info(preset)
         assert "Test" in info
         assert "5" in info
-        assert "🍌" in info
+        assert "⛸️" in info
         assert "flux_pro" in info
 
     def test_format_generation_options(self):

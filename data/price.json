@@ -1,13 +1,13 @@
 {
   "currency": "RUB",
-  "credit_name": "банан",
-  "credit_name_plural": "бананов",
-  "credit_emoji": "🍌",
-  "credit_value": "11 генерация стандартного качества банан = ",
+  "credit_name": "GOE",
+  "credit_name_plural": "GOE",
+  "credit_emoji": "💎",
+  "credit_value": "1 генерация стандартного качества = 1 GOE",
   "packages": [
     {
       "id": "mini",
-      "name": "🍌 Мини",
+      "name": "Мини",
       "credits": 15,
       "price_rub": 150,
       "bonus_credits": 0,
@@ -15,7 +15,7 @@
     },
     {
       "id": "standard",
-      "name": "🍌🍌 Стандарт",
+      "name": "Стандарт",
       "credits": 30,
       "price_rub": 250,
       "bonus_credits": 0,
@@ -23,7 +23,7 @@
     },
     {
       "id": "optimal",
-      "name": "🍌🍌🍌 Оптимальный",
+      "name": "Оптимальный",
       "credits": 50,
       "price_rub": 400,
       "bonus_credits": 0,
@@ -32,7 +32,7 @@
     },
     {
       "id": "pro",
-      "name": "🍌🍌🍌🍌 Про",
+      "name": "Про",
       "credits": 100,
       "price_rub": 700,
       "bonus_credits": 0,
@@ -40,7 +40,7 @@
     },
     {
       "id": "studio",
-      "name": "🍌🍌🍌🍌🍌 Студия",
+      "name": "Студия",
       "credits": 200,
       "price_rub": 1400,
       "bonus_credits": 0,
@@ -49,14 +49,14 @@
   ],
   "costs_reference": {
     "image_models": {
-      "gemini_2_5_flash": 5,
+      "gemini_2_5_flash": 3,
       "gemini_3_pro": 5,
       "banana_2": 7,
       "z_image_turbo": 5,
       "seedream": 5,
       "seedream_45": 5,
       "flux_pro": 5,
-      "nano-banana-pro": 5,
+      "nano_banana_pro": 5,
       "seedream_lite": 6,
       "seedream_5_lite": 6,
       "seedream_edit": 7
@@ -165,5 +165,5 @@
     }
   },
   "admin_ids": [939259764, 339795159],
-  "support_contact": "@S_k7222"
+  "support_contact": "@design_2Loop7222"
 }

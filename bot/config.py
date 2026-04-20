@@ -11,18 +11,25 @@ class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
-    # T-Bank (эквайринг)
-    TBANK_TERMINAL_KEY: str = os.getenv("TBANK_TERMINAL_KEY", "")
-    TBANK_SECRET_KEY: str = os.getenv("TBANK_SECRET_KEY", "")
-    TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
-    TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
+    CHANNEL_USERNAME: str = "@FS_2Loop"
 
     # YooKassa
     YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
     YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
     YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
     YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "yookassa")
+
+    # Robokassa
+    ROBOKASSA_MERCHANT_LOGIN: str = os.getenv("ROBOKASSA_MERCHANT_LOGIN", "")
+    ROBOKASSA_PASSWORD1: str = os.getenv("ROBOKASSA_PASSWORD1", "")
+    ROBOKASSA_PASSWORD2: str = os.getenv("ROBOKASSA_PASSWORD2", "")
+    ROBOKASSA_TEST: bool = os.getenv("ROBOKASSA_TEST", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "")
 
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
@@ -35,6 +42,7 @@ class Config:
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
+    KIE_BASE_URL: str = os.getenv("KIE_BASE_URL", "https://api.kie.ai")
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -114,22 +122,34 @@ class Config:
         return f"{host}{path}"
 
     @property
-    def tbank_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/tbank/webhook"
-
-    @property
     def yookassa_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/yookassa/webhook"
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"yookassa", "tbank"}:
-            return self.PAYMENT_PROVIDER
-        return "tbank"
+        return self.PAYMENT_PROVIDER
 
     @property
     def has_yookassa(self) -> bool:
         return bool(self.YOOKASSA_SHOP_ID and self.YOOKASSA_SECRET_KEY)
+
+    @property
+    def has_robokassa(self) -> bool:
+        return bool(
+            self.ROBOKASSA_MERCHANT_LOGIN
+            and self.ROBOKASSA_PASSWORD1
+            and self.ROBOKASSA_PASSWORD2
+        )
+
+    @property
+    def robokassa_result_url(self) -> str:
+        host = self.WEBHOOK_HOST.rstrip("/")
+        return f"{host}/robokassa/result"
+
+    @property
+    def robokassa_success_url(self) -> str:
+        host = self.WEBHOOK_HOST.rstrip("/")
+        return f"{host}/robokassa/success"
 
     @property
     def kling_notification_url(self) -> str:

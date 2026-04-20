@@ -1,6 +1,5 @@
 """
-AI Assistant Service - ИИ-ассистент для помощи пользователям
-Использует OpenRouter (DeepSeek) как основной и Gemini/Kling как fallback
+AI Assistant Service - ИИ-ассистент для помощи пользователям (Kie.ai GPT 5.2)
 """
 
 import json
@@ -17,15 +16,57 @@ logger = logging.getLogger(__name__)
 PRICE_FILE = os.path.join("data", "price.json")
 
 
-def _load_price_data() -> dict:
-    """Загрузить данные о ценах из data/price.json.
-    Возвращает пустой словарь при ошибке - тогда будут использованы встроенные fallback-значения.
-    """
+def load_prices():
+    """Загружает цены из price.json (как в keyboards.py)"""
+    price_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data", "price.json"
+    )
     try:
-        with open(PRICE_FILE, "r", encoding="utf-8") as f:
+        with open(price_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {}
+        # Fallback как в keyboards.py
+        return {
+            "costs_reference": {
+                "image_models": {
+                    "flux_pro": 3,
+                    "nanobanana": 3,
+                    "banana_pro": 5,
+                    "seedream": 3,
+                },
+                "video_models": {
+                    "v26_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
+                    "v3_std": {
+                        "base": 6,
+                        "duration_costs": {"5": 6, "10": 8, "15": 10},
+                    },
+                    "v3_pro": {
+                        "base": 8,
+                        "duration_costs": {"5": 8, "10": 14, "15": 16},
+                    },
+                    "v3_omni_std": {
+                        "base": 8,
+                        "duration_costs": {"5": 8, "10": 14, "15": 16},
+                    },
+                    "v3_omni_pro": {
+                        "base": 8,
+                        "duration_costs": {"5": 8, "10": 14, "15": 16},
+                    },
+                },
+            },
+            "packages": [
+                {"id": "mini", "credits": 15, "price_rub": 150},
+                {"id": "standard", "credits": 30, "price_rub": 250},
+                {"id": "optimal", "credits": 50, "price_rub": 400, "popular": True},
+                {"id": "pro", "credits": 100, "price_rub": 700},
+            ],
+        }
+
+
+PRICES = load_prices()
+
+IMAGE_COSTS = PRICES.get("costs_reference", {}).get("image_models", {})
+VIDEO_COSTS = PRICES.get("costs_reference", {}).get("video_models", {})
 
 
 # Встроенные fallback-значения на случай отсутствия файла цен
@@ -51,9 +92,9 @@ FALLBACK_VIDEO_COSTS = {
 
 
 class AIAssistantService:
-    """Сервис ИИ-ассистента для помощи пользователям с генерацией (Kie.ai Gemini 3 Flash)"""
+    """Сервис ИИ-ассистента для помощи пользователям с генерацией (Kie.ai GPT 5.2)"""
 
-    ENDPOINT = "/gemini-3-flash/v1/chat/completions"
+    ENDPOINT = "/gpt-5-2/v1/chat/completions"
 
     def __init__(self):
         self._session = None
@@ -69,39 +110,55 @@ class AIAssistantService:
         self,
         user_message: str,
         context: dict = None,
+        history: list = None,
     ) -> Optional[str]:
         """
-        Получить ответ от ИИ-ассистента (Kie.ai Gemini 3 Flash)
+        Получить ответ от ИИ-ассистента с поддержкой истории (до 7 сообщений)
 
         Args:
             user_message: Сообщение пользователя
-            context: Дополнительный контекст (баланс, текущие настройки, история)
+            context: Дополнительный контекст
+            history: Список предыдущих сообщений [{"role": "user/assistant", "content": str}]
 
         Returns:
-            Ответ ассистента или None при ошибке
+            Ответ ассистента или None
         """
         if not config.KIE_AI_API_KEY:
             logger.error("Kie.ai API key not configured for AI Assistant")
             return None
 
-        # Загружаем системную инструкцию
         system_prompt = self._get_system_prompt()
 
-        # Формируем контекст пользователя
-        context_info = ""
-        if context:
-            context_info = self._format_context(context)
-
-        # Получаем актуальные цены
+        context_info = self._format_context(context) if context else ""
         pricing_info = self.get_pricing_info()
 
-        # Полное сообщение для модели
-        full_message = f"""Контекст пользователя:
-{context_info}
+        # Строим messages: system + history (max 6 prev) + current user
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]}
+        ]
 
-{pricing_info}
+        if history:
+            # Берем последние 6 сообщений (3 пары user-assistant)
+            recent_history = history[-6:]
+            messages.extend(
+                [
+                    {
+                        "role": msg["role"],
+                        "content": [{"type": "text", "text": msg["content"]}],
+                    }
+                    for msg in recent_history
+                ]
+            )
 
-Вопрос пользователя: {user_message}"""
+        # Текущий user message с контекстом и ценами
+        current_user = f"""Контекст: {context_info}
+
+Цены: {pricing_info}
+
+Сообщение: {user_message}"""
+        messages.append(
+            {"role": "user", "content": [{"type": "text", "text": current_user}]}
+        )
 
         try:
             session = await self._get_session()
@@ -112,18 +169,8 @@ class AIAssistantService:
             }
 
             payload = {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": system_prompt}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": full_message}],
-                    },
-                ],
-                "stream": False,  # Non-streaming for simplicity
-                "include_thoughts": True,
+                "messages": messages,
+                "tools": [{"type": "function", "function": {"name": "web_search"}}],
                 "reasoning_effort": "high",
             }
 
@@ -132,16 +179,28 @@ class AIAssistantService:
                 headers=headers,
                 json=payload,
             ) as response:
+                text = await response.text()
                 if response.status == 200:
-                    data = await response.json()
-                    if "choices" in data and data["choices"]:
-                        return data["choices"][0]["message"]["content"]
-                error_text = await response.text()
-                logger.error(f"Kie.ai Gemini error {response.status}: {error_text}")
+                    try:
+                        data = json.loads(text)
+                        if "choices" in data and data["choices"]:
+                            content = (
+                                data["choices"][0].get("message", {}).get("content")
+                            )
+                            if content:
+                                return content
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON decode error in Kie.ai response: {e}")
+                        logger.error(f"Response text (first 1000 chars): {text[:1000]}")
+                else:
+                    logger.error(f"Kie.ai GPT 5.2 HTTP {response.status}: {text[:500]}")
+                logger.error(
+                    f"Kie.ai GPT 5.2 call failed: status={response.status}, text preview: {text[:200]}"
+                )
             return None
 
         except Exception as e:
-            logger.exception(f"Kie.ai Gemini call failed: {e}")
+            logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
             return None
 
     def _get_system_prompt(self) -> str:
@@ -174,7 +233,7 @@ class AIAssistantService:
         lines = []
 
         if "user_credits" in context:
-            lines.append(f"- Баланс: {context['user_credits']} бананов")
+            lines.append(f"- Баланс: {context['user_credits']} GOEов")
 
         if "preferred_model" in context:
             lines.append(f"- Текущая модель изображений: {context['preferred_model']}")
@@ -197,140 +256,57 @@ class AIAssistantService:
         return "\n".join(lines) if lines else "Нет дополнительного контекста"
 
     def get_pricing_info(self) -> str:
-        """
-        Получение актуальной информации о ценах для AI ассистента.
-        Пытается загрузить цены из data/price.json и формирует читабельный блок с актуальными ценами.
-        Если файл недоступен - используются встроенные fallback-значения.
-        """
-        price_data = _load_price_data()
+        """Динамическая таблица цен из PRICES (как в keyboards.py)"""
+        image_costs = IMAGE_COSTS
+        video_costs = VIDEO_COSTS
 
-        costs_ref = price_data.get("costs_reference", {}) if price_data else {}
+        # Image models from keyboards.py and price.json
+        img_prices = {}
+        for model, cost in image_costs.items():
+            if isinstance(cost, (int, float)):
+                img_prices[model] = int(cost)
+            else:
+                img_prices[model] = list(cost.values())[0] if cost else 3
 
-        image_models = costs_ref.get("image_models", {}) or {}
-        legacy = costs_ref.get("legacy_keys", {}) or {}
+        # Key image models
+        banana_pro = img_prices.get("banana_pro", 5)
+        banana_2 = img_prices.get("banana_2", 7)
+        seedream_5_lite = img_prices.get("seedream_5_lite", 6)
+        seedream_edit = img_prices.get("seedream_edit", 7)
 
-        # Resolve image costs with fallbacks
-        def _img_cost(key, fallback_name=None):
-            # Try exact key in image_models, then legacy, then fallback hardcoded
-            if key in image_models:
-                return image_models.get(key)
-            if key in legacy:
-                return legacy.get(key)
-            # mapping for friendly names
-            fbmap = {
-                "novita": legacy.get("flux_pro") or image_models.get("flux_pro"),
-                "nanobanana": image_models.get("banana_2")
-                or legacy.get("gemini_2_5_flash"),
-                "banana_pro": image_models.get("gemini_3_pro")
-                or legacy.get("gemini_3_pro"),
-                "seedream": image_models.get("seedream") or legacy.get("seedream"),
-            }
-            if (
-                fallback_name
-                and fallback_name in fbmap
-                and fbmap[fallback_name] is not None
-            ):
-                return fbmap[fallback_name]
-            return FALLBACK_IMAGE_COSTS.get(fallback_name or key, 3)
-
-        novita_cost = _img_cost("flux_pro", "novita") or FALLBACK_IMAGE_COSTS["novita"]
-        flash_cost = (
-            _img_cost("banana_2", "nanobanana") or FALLBACK_IMAGE_COSTS["nanobanana"]
+        # Video costs for 5s
+        v3_std_5 = VIDEO_COSTS.get("v3_std", {}).get("duration_costs", {}).get("5", 15)
+        v3_pro_5 = VIDEO_COSTS.get("v3_pro", {}).get("duration_costs", {}).get("5", 15)
+        seedance2_5 = (
+            VIDEO_COSTS.get("seedance2", {}).get("duration_costs", {}).get("5", 15)
         )
-        pro_cost = (
-            _img_cost("gemini_3_pro", "banana_pro")
-            or FALLBACK_IMAGE_COSTS["banana_pro"]
+        runway_5 = VIDEO_COSTS.get("runway", {}).get("duration_costs", {}).get("5", 15)
+        grok_6 = (
+            VIDEO_COSTS.get("grok_imagine", {}).get("duration_costs", {}).get("6", 15)
         )
-        seedream_cost = (
-            _img_cost("seedream", "seedream") or FALLBACK_IMAGE_COSTS["seedream"]
-        )
+        aleph_5 = VIDEO_COSTS.get("aleph", {}).get("duration_costs", {}).get("5", 15)
+        glow_5 = VIDEO_COSTS.get("glow", {}).get("duration_costs", {}).get("5", 25)
 
-        # Video models
-        video_models = costs_ref.get("video_models", {}) or {}
-        duration_table = costs_ref.get("video_duration_costs", {}) or {}
+        return f"""💎 АКТУАЛЬНЫЕ ЦЕНЫ (из data/price.json)
 
-        def _video_cost(model_key, duration: int):
-            # If model has explicit duration_costs, use it. Else use base * multiplier from duration_table
-            model_info = video_models.get(model_key) or {}
-            if model_info:
-                dur_costs = model_info.get("duration_costs")
-                if dur_costs and str(duration) in dur_costs:
-                    return dur_costs[str(duration)]
-                base = model_info.get("base") or model_info.get("cost")
-                if base and str(duration) in duration_table:
-                    return int(base) + int(duration_table.get(str(duration), 0))
-                if base:
-                    # fallback: scale linearly by 1x per 5 seconds
-                    factor = max(1, duration // 5)
-                    return int(base) * factor
-            # last resort: try legacy keys
-            legacy_val = legacy.get(model_key)
-            if legacy_val:
-                factor = max(1, duration // 5)
-                return int(legacy_val) * factor
-            # fallback default
-            default_base = FALLBACK_VIDEO_COSTS.get(model_key, 8)
-            factor = max(1, duration // 5)
-            return int(default_base) * factor
+🖼️ ИЗОБРАЖЕНИЯ (1 шт):
+• Banana Pro: {banana_pro}💎
+• Banana 2: {banana_2}💎
+• Seedream 5.0 Lite: {seedream_5_lite}💎
+• Seedream Edit: {seedream_edit}💎
 
-        # Build common durations
-        video_std_5 = _video_cost("v3_std", 5)
-        video_std_10 = _video_cost("v3_std", 10)
-        video_std_15 = _video_cost("v3_std", 15)
+🎬 ВИДЕО (текст→видео, 5 сек):
+• Kling 3 Std: {v3_std_5}💎
+• Kling 3 Pro: {v3_pro_5}💎
+• Seedance 2.0: {seedance2_5}💎 (img+txt)
+• Runway AI: {runway_5}💎
+• Grok Imagine: {grok_6}💎 (6 сек)
+• Aleph/Glow (video ref): {aleph_5}/{glow_5}💎
 
-        video_pro_5 = _video_cost("v3_pro", 5)
-        video_pro_10 = _video_cost("v3_pro", 10)
-        # V2V (Video-to-Video)
-        v2v_std_5 = _video_cost("v3_omni_std_r2v", 5)
-        v2v_std_10 = _video_cost("v3_omni_std_r2v", 10)
-        v2v_pro_5 = _video_cost("v3_omni_pro_r2v", 5)
-        v2v_pro_10 = _video_cost("v3_omni_pro_r2v", 10)
+📱 Motion Control (5 сек): 15-25💎
+📸 Photo→Prompt: бесплатно
 
-        # Kling 2.6
-        v26_5 = _video_cost("v26_pro", 5)
-        v26_10 = _video_cost("v26_pro", 10)
-        motion_pro_5 = _video_cost("v26_motion_pro", 5)
-        motion_pro_10 = _video_cost("v26_motion_pro", 10)
-        motion_std_5 = _video_cost("v26_motion_std", 5)
-        motion_std_10 = _video_cost("v26_motion_std", 10)
-        # Дополнительные расчёты для таблицы (некоторые модели имеют значения для 15 сек)
-        video_pro_15 = _video_cost("v3_pro", 15)
-
-        omni_std_5 = _video_cost("v3_omni_std", 5)
-        omni_std_10 = _video_cost("v3_omni_std", 10)
-        omni_std_15 = _video_cost("v3_omni_std", 15)
-
-        omni_pro_5 = _video_cost("v3_omni_pro", 5)
-        omni_pro_10 = _video_cost("v3_omni_pro", 10)
-        omni_pro_15 = _video_cost("v3_omni_pro", 15)
-
-        return f"""## АКТУАЛЬНЫЕ ЦЕНЫ (автоматически загружены из data/price.json)
-
-🖼 Генерация изображений:
-- Nano Banana Flash: {flash_cost}🍌
-- Nano Banana Pro: {pro_cost}🍌
-- Banana 2: 7🍌
-
-
-🎬 Генерация видео (текст → видео):
-│ Модель              │ 5 сек │ 10 сек │ 15 сек │
-│ Kling 2.6           │ {v26_5}🍌   │ {v26_10}🍌  │  -     │
-│ Kling 3 Std         │ {video_std_5}🍌   │ {video_std_10}🍌  │ {video_std_15}🍌  │
-│ Kling 3 Pro         │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
-│ Kling 3 Omni Std    │ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
-│ Kling 3 Omni Pro    │ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
-
-🎬 Kling 2.6 Motion Control (движение с видео):
-│ Модель  │ 5 сек │ 10 сек │
-│ Pro     │ {motion_pro_5}🍌   │ {motion_pro_10}🍌  │
-│ Std     │ {motion_std_5}🍌   │ {motion_std_10}🍌  │
-
-✂️ Видео-эффекты (видео → видео):
-│ Модель  │ 5 сек │ 10 сек │
-│ V2V Std │ {v2v_std_5}🍌   │ {v2v_std_10}🍌  │
-│ V2V Pro │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌  │
-
-✏️ Редактирование: {pro_cost}🍌"""
+Пакеты: 15💎/150₽, 30/250₽, 50/400₽🔥, 100/700₽, 200/1400₽"""
 
     async def close(self):
         """Закрытие сессии"""

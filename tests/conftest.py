@@ -20,4 +20,4 @@ def mock_env(monkeypatch):
     monkeypatch.setenv("WEBHOOK_HOST", "https://test.example.com")
     monkeypatch.setenv("WEBHOOK_PATH", "/webhook")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-    monkeypatch.setenv("PAYMENT_PROVIDER", "tbank")
+    monkeypatch.setenv("PAYMENT_PROVIDER", "yookassa")

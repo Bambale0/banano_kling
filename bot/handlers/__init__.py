@@ -4,6 +4,7 @@ Handlers for the Telegram bot
 
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
+from .catalog import router as catalog_router
 from .common import router as common_router
 from .generation import router as generation_router
 from .image_analyzer import router as image_analyzer_router
@@ -16,4 +17,5 @@ __all__ = [
     "admin_router",
     "batch_generation_router",
     "image_analyzer_router",
+    "catalog_router",
 ]
