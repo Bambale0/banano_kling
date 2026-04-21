@@ -154,8 +154,11 @@ async def initiate_payment(callback: types.CallbackQuery):
         await callback.answer("Пакет не найден")
         return
 
-    # Генерируем уникальный order_id
-    order_id = f"{callback.from_user.id}_{int(time.time())}_{package_id}"
+    # Генерируем уникальный NUMERIC order_id для Robokassa (1..2^63-1)
+    import random
+
+    order_id = f"{callback.from_user.id}{int(time.time())}{random.randint(1000,9999)}"
+    order_id = str(int(order_id) % 9223372036854775807)  # ensure < 2^63-1
     amount_kop = package["price_rub"] * 100  # в копейках
 
     bot_info = await callback.bot.get_me()
@@ -181,8 +184,6 @@ async def initiate_payment(callback: types.CallbackQuery):
             amount_rub=package["price_rub"],
             order_id=order_id,
             description=f"Покупка {package['credits']} GOEов ({package['name']})",
-            success_url=config.robokassa_success_url,
-            result_url=config.robokassa_result_url,
         )
 
     if result and result.get("Success"):
@@ -281,11 +282,11 @@ async def check_payment_status(callback: types.CallbackQuery):
 
     if paid:
         # Начисляем GOE
-        user = await get_or_create_user(transaction.user_id)
-        await add_credits(user.telegram_id, transaction.credits)
+        telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+        await add_credits(telegram_id, transaction.credits)
         await update_transaction_status(order_id, "completed")
         referral_bonus = await credit_first_payment_referral_bonus(
-            user.telegram_id, transaction.credits, transaction.amount_rub
+            telegram_id, transaction.credits, transaction.amount_rub
         )
 
         bonus_text = ""
@@ -333,19 +334,28 @@ async def back_to_packages(callback: types.CallbackQuery):
 async def handle_robokassa_result(request):
     """Обработчик ResultURL от Robokassa (server-to-server)"""
     try:
-        query_str = request.query_string
-        logger.info(f"Robokassa ResultURL: {query_str}")
+        logger.info(
+            f"Robokassa ResultURL: method={request.method}, query={request.query_string}"
+        )
 
-        verification = robokassa_service.verify_result(query_str)
+        if request.method.upper() == "POST":
+            post_data = await request.post()
+            params = {k: post_data.get(k, "") for k in post_data.keys()}
+        else:
+            params = robokassa_service.parse_response(request.query_string)
+
+        logger.info(f"Robokassa ResultURL params: {params}")
+
+        verification = robokassa_service.verify_result(params)
         if verification["valid"]:
             order_id = verification["order_id"]
             transaction = await get_transaction_by_order(order_id)
             if transaction and transaction.status == "pending":
-                user = await get_or_create_user(transaction.user_id)
-                await add_credits(user.telegram_id, transaction.credits)
+                telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+                await add_credits(telegram_id, transaction.credits)
                 await update_transaction_status(order_id, "completed")
                 referral_bonus = await credit_first_payment_referral_bonus(
-                    user.telegram_id, transaction.credits, transaction.amount_rub
+                    telegram_id, transaction.credits, transaction.amount_rub
                 )
                 logger.info(f"Robokassa payment completed for order {order_id}")
 
@@ -361,7 +371,7 @@ async def handle_robokassa_result(request):
                 try:
                     await _notify_user(
                         request.app["bot"],
-                        user.telegram_id,
+                        telegram_id,
                         f"🎉 <b>Оплата успешна!</b>\n\n"
                         f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
@@ -370,9 +380,7 @@ async def handle_robokassa_result(request):
                         parse_mode="HTML",
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Failed to notify Robokassa user {user.telegram_id}: {e}"
-                    )
+                    logger.error(f"Failed to notify Robokassa user {telegram_id}: {e}")
 
             return web.Response(text=f"OK{order_id}")
         else:
@@ -391,9 +399,8 @@ async def handle_robokassa_success(request):
         query_str = request.query_string
         logger.info(f"Robokassa SuccessURL: {query_str}")
 
-        verification = robokassa_service.verify_result(
-            query_str, password=robokassa_service.password1
-        )
+        params = robokassa_service.parse_response(query_str)
+        verification = robokassa_service.verify_result(params)
         if verification["valid"]:
             order_id = verification["order_id"]
             # HTML with deeplink or success message
@@ -412,6 +419,9 @@ async def handle_robokassa_success(request):
             """
             return web.Response(text=html, content_type="text/html")
         else:
+            logger.warning(
+                f"Robokassa SuccessURL invalid: {verification.get('message')}"
+            )
             return web.Response(text="bad sign")
     except Exception as e:
         logger.exception("Robokassa SuccessURL error")
@@ -480,19 +490,19 @@ async def handle_yookassa_webhook(request):
 
         if status == "succeeded" or event == "payment.succeeded":
             try:
-                user = await get_or_create_user(transaction.user_id)
+                telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
                 logger.info(
                     "Crediting %s credits to user %s for order %s (payment %s)",
                     transaction.credits,
-                    user.telegram_id,
+                    telegram_id,
                     order_id,
                     payment.get("id"),
                 )
 
-                await add_credits(user.telegram_id, transaction.credits)
+                await add_credits(telegram_id, transaction.credits)
                 await update_transaction_status(order_id, "completed")
                 referral_bonus = await credit_first_payment_referral_bonus(
-                    user.telegram_id, transaction.credits, transaction.amount_rub
+                    telegram_id, transaction.credits, transaction.amount_rub
                 )
             except Exception as exc:
                 logger.exception(
@@ -515,7 +525,7 @@ async def handle_yookassa_webhook(request):
             try:
                 await _notify_user(
                     request.app["bot"],
-                    user.telegram_id,
+                    telegram_id,
                     f"🎉 <b>Оплата успешна!</b>\n\n"
                     f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
                     f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
@@ -527,7 +537,7 @@ async def handle_yookassa_webhook(request):
                 if _is_ignored_telegram_error(e):
                     logger.warning(
                         "Failed to notify YooKassa user %s (safe to ignore): %s",
-                        user.telegram_id,
+                        telegram_id,
                         e,
                     )
                 else:

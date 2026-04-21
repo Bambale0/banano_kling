@@ -1585,6 +1585,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Robokassa webhooks
     app.router.add_post("/robokassa/result", handle_robokassa_result)
+    app.router.add_get("/robokassa/result", handle_robokassa_result)
     app.router.add_get("/robokassa/success", handle_robokassa_success)
 
     # Вебхук Kling

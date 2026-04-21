@@ -28,3 +28,5 @@ openpyxl>=3.1.2
 # Then install the package:
 # pip install face_recognition
 # If you cannot build dlib, skip this — the service will fall back to center-crop.
+
+aiorobokassa
