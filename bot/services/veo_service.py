@@ -17,6 +17,7 @@ class VeoService(KlingService):
         self,
         prompt: str,
         model: str = "veo3_fast",
+        duration: int = 8,
         generation_type: Optional[str] = None,
         image_urls: Optional[List[str]] = None,
         aspect_ratio: str = "16:9",
@@ -29,6 +30,7 @@ class VeoService(KlingService):
         payload = {
             "prompt": prompt,
             "model": model,
+            "duration": max(2, min(int(duration), 10)),
             "aspect_ratio": aspect_ratio,
             "enableTranslation": enable_translation,
             "resolution": resolution,

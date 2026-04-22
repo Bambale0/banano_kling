@@ -150,7 +150,7 @@ async def cmd_start(message: types.Message):
             get_transaction_by_order,
             update_transaction_status,
         )
-        from bot.services.tbank_service import tbank_service
+        from bot.services.cryptobot_service import cryptobot_service
 
         transaction = await get_transaction_by_order(order_id)
 
@@ -165,33 +165,15 @@ async def cmd_start(message: types.Message):
                 )
                 return
             elif transaction.status == "pending":
-                # Проверяем статус у провайдера — поддерживаем Т-Банк и YooKassa
-                try:
-                    # T-Bank проверка
-                    result = await tbank_service.get_state(transaction.payment_id)
-                except Exception:
-                    result = None
-
                 paid = False
-                # T-Bank: Status == CONFIRMED
-                if result and result.get("Status") == "CONFIRMED":
-                    paid = True
-
-                # Если не T-Bank или не подтверждён — попробуем YooKassa
-                if not paid:
+                if transaction.provider == "cryptobot" and cryptobot_service.enabled:
                     try:
-                        from bot.services.yookassa_service import yookassa_service
-
-                        yk = await yookassa_service.get_payment(transaction.payment_id)
-                        if yk and (
-                            yk.get("paid")
-                            or (yk.get("status") or "").lower()
-                            in ("succeeded", "paid", "captured")
-                        ):
-                            paid = True
+                        invoice = await cryptobot_service.get_invoice(
+                            transaction.payment_id
+                        )
+                        paid = bool(invoice and (invoice.get("status") == "paid"))
                     except Exception:
-                        # Не фатально — будем ожидать webhook
-                        pass
+                        paid = False
 
                 if paid:
                     # Начисляем кредиты
@@ -211,7 +193,7 @@ async def cmd_start(message: types.Message):
                     )
                     return
                 else:
-                    # Ожидаем подтверждения от банка/провайдера
+                    # Ожидаем подтверждения от платёжного провайдера
                     await message.answer(
                         "⏳ <b>Оплата в обработке...</b>"
                         "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",

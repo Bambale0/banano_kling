@@ -29,7 +29,6 @@ from bot.keyboards import (
     get_back_keyboard,
     get_create_image_keyboard,
     get_create_video_keyboard,
-    get_grok_i2i_keyboard,
     get_image_model_label,
     get_main_menu_keyboard,
     get_reference_images_upload_keyboard,
@@ -42,7 +41,7 @@ from bot.services.grok_service import grok_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
-from bot.states import GenerationStates, GrokI2IStates
+from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
     format_generation_options,
@@ -890,92 +889,21 @@ async def handle_video_ratio_auto(callback: types.CallbackQuery, state: FSMConte
     await state.set_state(GenerationStates.waiting_for_input)
 
 
-# Обработчики длительности видео
-@router.callback_query(F.data == "video_dur_5")
-async def handle_video_dur_5(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 5 сек"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
+# Обработчик длительности видео
+@router.callback_query(F.data.startswith("video_dur_"))
+async def handle_video_duration(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор длительности видео для всех моделей."""
+    try:
+        duration = int(callback.data.replace("video_dur_", ""))
+    except ValueError:
+        await callback.answer()
+        return
 
-    await state.update_data(v_duration=5)
+    if duration < 2 or duration > 30:
+        await callback.answer()
+        return
 
-    await _show_video_creation_screen(callback, state)
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "video_dur_10")
-async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 10 сек"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=10)
-
-    await _show_video_creation_screen(callback, state)
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_15")
-async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 15 сек"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=15)
-
-    await _show_video_creation_screen(callback, state)
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_6")
-async def handle_video_dur_6(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 6 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=6, v_model="grok_imagine")
-
-    await _show_video_creation_screen(callback, state)
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_20")
-async def handle_video_dur_20(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 20 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=20, v_model="grok_imagine")
-
-    await _show_video_creation_screen(callback, state)
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_30")
-async def handle_video_dur_30(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 30 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=30, v_model="grok_imagine")
-
+    await state.update_data(v_duration=duration)
     await _show_video_creation_screen(callback, state)
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
@@ -2563,57 +2491,6 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
     )
 
 
-# =============================================================================
-# GROK IMAGINE I2I HANDLERS
-# =============================================================================
-
-
-@router.message(GrokI2IStates.waiting_for_start_image, F.photo)
-async def handle_grok_i2i_photo_upload(message: types.Message, state: FSMContext):
-    """Загрузка стартового фото для Grok i2i"""
-    data = await state.get_data()
-    reference_images = data.get("reference_images", [])
-
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    image_bytes = await message.bot.download_file(file.file_path)
-    image_data = image_bytes.read()
-
-    # Validate
-    try:
-        import io
-
-        from PIL import Image
-
-        img = Image.open(io.BytesIO(image_data))
-        width, height = img.size
-        if width < 512 or height < 512:
-            await message.answer("❌ Фото слишком маленькое (мин 512x512 px).")
-            return
-    except:
-        await message.answer("❌ Не удалось обработать фото.")
-        return
-
-    image_url = save_uploaded_file(image_data, "png")
-    if not image_url:
-        await message.answer("❌ Не удалось сохранить фото.")
-        return
-
-    await state.update_data(grok_start_image_url=image_url, nsfw_enabled=False)
-
-    grok_cost = preset_manager.get_generation_cost("grok_imagine_i2i")
-
-    await message.answer_photo(
-        photo=photo.file_id,
-        caption=f"✅ Фото загружено!\n💰 <code>{grok_cost}</code>🍌\n\nВыберите настройки:",
-        reply_markup=get_grok_i2i_keyboard(
-            nsfw_enabled=False, start_image_url=image_url
-        ),
-        parse_mode="HTML",
-    )
-    await state.set_state(GrokI2IStates.confirming_settings)
-
-
 @router.callback_query(F.data == "grok_i2i_nsfw_toggle")
 async def handle_grok_i2i_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
     """Переключение NSFW для Grok i2i на общем экране создания фото"""
@@ -2623,136 +2500,6 @@ async def handle_grok_i2i_nsfw_toggle(callback: types.CallbackQuery, state: FSMC
     await _show_image_creation_screen(callback, state)
     await callback.answer(f"NSFW: {'Вкл' if nsfw_enabled else 'Выкл'}")
     await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "grok_i2i_change_image")
-async def handle_grok_i2i_change_image(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Смена стартового фото"""
-    await state.update_data(grok_start_image_url=None, nsfw_enabled=False)
-    grok_cost = preset_manager.get_generation_cost("grok_imagine_i2i")
-    await callback.message.edit_text(
-        f"🖼 <b>Grok Imagine: Фото + Текст</b>\n💰 <code>{grok_cost}</code>🍌\n\n<b>📤 Загрузите новое референсное фото</b>",
-        reply_markup=get_back_keyboard("back_main"),
-        parse_mode="HTML",
-    )
-    await state.set_state(GrokI2IStates.waiting_for_start_image)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "grok_i2i_generate")
-async def handle_grok_i2i_generate(callback: types.CallbackQuery, state: FSMContext):
-    """Переход к вводу промпта для Grok i2i"""
-    data = await state.get_data()
-    start_image_url = data.get("grok_start_image_url")
-    nsfw_enabled = data.get("nsfw_enabled", False)
-    if not start_image_url:
-        await callback.answer("Сначала загрузите фото!", show_alert=True)
-        return
-
-    await state.update_data(
-        grok_start_image_url=start_image_url, nsfw_enabled=nsfw_enabled
-    )
-    grok_cost = preset_manager.get_generation_cost("grok_imagine_i2i")
-
-    await callback.message.edit_text(
-        f"🧠 <b>Grok Imagine i2i</b>\n💰 <code>{grok_cost}</code>🍌\n\n"
-        f"✅ Фото загружено\n"
-        f"🔓 NSFW: {'Вкл' if nsfw_enabled else 'Выкл'}\n\n"
-        f"<b>Введите промпт:</b>\n"
-        f"Опишите изменения для фото (фото+текст):",
-        reply_markup=get_back_keyboard("back_main"),
-        parse_mode="HTML",
-    )
-    await state.set_state(GrokI2IStates.waiting_for_prompt)
-    await callback.answer("Введите промпт!")
-
-
-@router.message(GrokI2IStates.waiting_for_prompt, F.text)
-async def handle_grok_i2i_prompt(message: types.Message, state: FSMContext):
-    """Запуск Grok i2i задачи по промпту"""
-    prompt = message.text.strip()
-    if not prompt:
-        await message.answer("Опишите, что именно нужно изменить на фото.")
-        return
-
-    data = await state.get_data()
-    start_image_url = data.get("grok_start_image_url")
-    nsfw_enabled = data.get("nsfw_enabled", False)
-    reference_images = data.get("reference_images", [])
-
-    if not start_image_url:
-        await message.answer(
-            "Не удалось найти загруженное фото. Давайте попробуем начать заново."
-        )
-        await state.clear()
-        return
-
-    user = await get_or_create_user(message.from_user.id)
-    cost = preset_manager.get_generation_cost("grok_imagine_i2i")
-
-    if not await check_can_afford(message.from_user.id, cost):
-        await message.answer(f"Нужно <code>{cost}</code>🍌", parse_mode="HTML")
-        return
-
-    await deduct_credits(message.from_user.id, cost)
-
-    task_id = f"grok_i2i_{uuid.uuid4().hex[:12]}"
-    await add_generation_task(
-        user.id,
-        message.from_user.id,
-        task_id,
-        "image",
-        "grok_imagine_i2i",
-        prompt=prompt,
-        cost=cost,
-    )
-
-    await message.answer(
-        "🖼 <b>Запускаю генерацию</b>\n"
-        "• Модель: <code>Grok Imagine i2i</code>\n"
-        f"• Референсы: <code>{len(reference_images) + 1}</code>\n"
-        f"• NSFW: <code>{'Вкл' if nsfw_enabled else 'Выкл'}</code>\n\n"
-        "Обычно результат приходит в течение 1-3 минут.",
-        parse_mode="HTML",
-    )
-
-    try:
-        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-        image_urls = [start_image_url] + reference_images[:4]  # max 5 total
-
-        result = await grok_service.generate_image_to_image(
-            image_urls=image_urls,
-            prompt=prompt,
-            nsfw_checker=nsfw_enabled,
-            callBackUrl=callback_url,
-        )
-
-        if result and "taskId" in result["data"]:
-            api_task_id = result["data"]["taskId"]
-            # Update DB with API task ID
-            await message.answer(
-                "🚀 <b>Генерация запущена</b>\n"
-                f"• ID: <code>{api_task_id}</code>\n"
-                f"• Списано: <code>{cost}</code>🍌",
-                parse_mode="HTML",
-            )
-        else:
-            await add_credits(message.from_user.id, cost)
-            await message.answer(
-                "Не получилось запустить задачу.\n"
-                "Бананы за эту попытку уже вернулись на баланс."
-            )
-    except Exception as e:
-        logger.exception("Grok i2i error")
-        await add_credits(message.from_user.id, cost)
-        await message.answer(
-            "Что-то пошло не так при запуске Grok.\n"
-            "Бананы за эту попытку уже возвращены."
-        )
-
-    await state.clear()
 
 
 @router.callback_query(F.data.startswith("v_mode_"))
@@ -3093,6 +2840,8 @@ async def run_no_preset_video_from_message(
     video_urls = data.get("v_reference_videos", [])
 
     v_duration = int(data.get("v_duration", 5))
+    if v_model.startswith("veo3"):
+        v_duration = max(2, min(v_duration, 10))
     # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
     if (
         v_type == "imgtxt"
@@ -3209,6 +2958,7 @@ async def run_no_preset_video_from_message(
             result = await veo_service.generate_video(
                 prompt=prompt,
                 model=v_model,
+                duration=v_duration,
                 generation_type=veo_generation_type,
                 image_urls=veo_image_urls or None,
                 aspect_ratio=v_ratio,

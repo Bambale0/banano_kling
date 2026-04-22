@@ -199,16 +199,18 @@ def get_create_video_keyboard(
         .get(current_model, {})
     )
     duration_costs = model_data_for_durations.get("duration_costs", {})
-    if duration_costs:
+    if current_model.startswith("veo3"):
+        # According to current Veo docs, duration is selectable in the 2..10s range.
+        available_durations = [2, 4, 6, 8, 10]
+    elif duration_costs:
         available_durations = sorted([int(k) for k in duration_costs.keys()])
     else:
         available_durations = [5, 10, 15]
 
-    show_durations = not current_model.startswith("veo3")
-    if show_durations:
-        for dur in available_durations:
-            check = "✅ " if current_duration == dur else ""
-            builder.button(text=f"{check}{dur} сек", callback_data=f"video_dur_{dur}")
+    show_durations = True
+    for dur in available_durations:
+        check = "✅ " if current_duration == dur else ""
+        builder.button(text=f"{check}{dur} сек", callback_data=f"video_dur_{dur}")
 
     # Grok Imagine modes
     if current_model == "grok_imagine":
@@ -446,19 +448,6 @@ def get_create_image_keyboard(
     return builder.as_markup()
 
 
-def get_grok_i2i_keyboard(nsfw_enabled: bool = False, start_image_url: str = None):
-    """Клавиатура для Grok i2i: NSFW toggle + generate"""
-    builder = InlineKeyboardBuilder()
-    nsfw_text = "🔓 NSFW Вкл" if nsfw_enabled else "🔒 NSFW Выкл"
-    builder.button(text=nsfw_text, callback_data="grok_i2i_nsfw_toggle")
-    if start_image_url:
-        builder.button(text="🖼 Изменить фото", callback_data="grok_i2i_change_image")
-    builder.button(text="🚀 Генерировать", callback_data="grok_i2i_generate")
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2)
-    return builder.as_markup()
-
-
 # =============================================================================
 # МЕНЮ ПОПОЛНЕНИЯ
 # =============================================================================
@@ -466,49 +455,21 @@ def get_grok_i2i_keyboard(nsfw_enabled: bool = False, start_image_url: str = Non
 
 def get_topup_keyboard():
     """Меню пополнения баланса"""
-    return get_payment_packages_keyboard(
-        preset_manager.get_packages(), provider=config.payment_provider
-    )
+    return get_payment_packages_keyboard(preset_manager.get_packages())
 
 
-def get_payment_provider_keyboard(current_provider: str = "tbank"):
-    """Выбор платёжного провайдера"""
+def get_payment_packages_keyboard(packages: list):
+    """Клавиатура выбора пакета бананов (CryptoBot)."""
     builder = InlineKeyboardBuilder()
-
-    tbank_check = "✅ " if current_provider == "tbank" else ""
-    yk_check = "✅ " if current_provider == "yookassa" else ""
-
-    builder.button(
-        text=f"{tbank_check}💳 Т-Банк",
-        callback_data="topup_provider_tbank",
-    )
-    builder.button(
-        text=f"{yk_check}💜 YooKassa",
-        callback_data="topup_provider_yookassa",
-    )
-    builder.adjust(2)
-    return builder.as_markup()
-
-
-def get_payment_packages_keyboard(packages: list, provider: str = None):
-    """Клавиатура выбора пакета бананов с выбором провайдера"""
-    provider = provider or config.payment_provider
-    if provider not in {"tbank", "yookassa"}:
-        provider = "tbank"
-
-    builder = InlineKeyboardBuilder()
-    provider_kb = get_payment_provider_keyboard(provider)
-    if provider_kb.inline_keyboard:
-        builder.row(*provider_kb.inline_keyboard[0])
 
     for pkg in packages:
         popular = " 🔥" if pkg.get("popular") else ""
         builder.button(
             text=f"{pkg['name']}: {pkg['credits']}🍌 за {pkg['price_rub']}₽{popular}",
-            callback_data=f"buy_{provider}_{pkg['id']}",
+            callback_data=f"buy_crypto_{pkg['id']}",
         )
 
-    builder.adjust(2, 1)
+    builder.adjust(1)
     return builder.as_markup()
 
 

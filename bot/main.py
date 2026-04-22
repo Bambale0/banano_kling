@@ -32,7 +32,7 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_tbank_webhook, handle_yookassa_webhook
+from bot.handlers.payments import handle_cryptobot_webhook
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -164,6 +164,12 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     """Действия при остановке"""
     logger.info("Bot shutting down...")
+    try:
+        from bot.services.cryptobot_service import cryptobot_service
+
+        await cryptobot_service.close()
+    except Exception:
+        logger.exception("Failed to close CryptoBot session")
     await bot.delete_webhook()
     await bot.session.close()
 
@@ -1678,6 +1684,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
+
+    def _normalize_path(path: str, fallback: str) -> str:
+        raw = (path or "").strip()
+        if not raw:
+            return fallback
+        return raw if raw.startswith("/") else f"/{raw}"
+
     app = web.Application()
     app["bot"] = bot
 
@@ -1690,19 +1703,25 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     async def telegram_webhook_handler(request: web.Request) -> web.Response:
         return await handle_telegram_webhook(request, bot, dp)
 
-    app.router.add_post(config.WEBHOOK_PATH, telegram_webhook_handler)
+    app.router.add_post(
+        _normalize_path(config.WEBHOOK_PATH, "/telegram/webhook"),
+        telegram_webhook_handler,
+    )
 
-    # Вебхук Т-Банка
-    app.router.add_post("/tbank/webhook", handle_tbank_webhook)
-
-    # Вебхук YooKassa
-    app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+    # Вебхук CryptoBot
+    app.router.add_post(
+        _normalize_path(config.CRYPTOBOT_WEBHOOK_PATH, "/cryptobot/webhook"),
+        handle_cryptobot_webhook,
+    )
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
 
     # Вебхук Kie.ai (Nano Banana 2)
-    app.router.add_post(config.KIE_AI_WEBHOOK_PATH, handle_kie_ai_webhook)
+    app.router.add_post(
+        _normalize_path(config.KIE_AI_WEBHOOK_PATH, "/webhook/kie_ai"),
+        handle_kie_ai_webhook,
+    )
 
     # Health check endpoint
     async def health_check(request: web.Request) -> web.Response:

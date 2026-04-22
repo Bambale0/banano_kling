@@ -76,14 +76,6 @@ class ImageAnalyzerStates(StatesGroup):
     waiting_for_photo = State()
 
 
-class GrokI2IStates(StatesGroup):
-    """Состояния для Grok Imagine Image-to-Image"""
-
-    waiting_for_start_image = State()
-    confirming_settings = State()
-    waiting_for_prompt = State()
-
-
 class SeedreamVideoStates(StatesGroup):
     """Состояния для генерации фото по видео референсам Seedream 5.0 Lite"""
 

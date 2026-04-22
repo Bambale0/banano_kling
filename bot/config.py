@@ -11,18 +11,30 @@ class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
 
-    # T-Bank (эквайринг)
+    # T-Bank (legacy)
     TBANK_TERMINAL_KEY: str = os.getenv("TBANK_TERMINAL_KEY", "")
     TBANK_SECRET_KEY: str = os.getenv("TBANK_SECRET_KEY", "")
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
-    # YooKassa
+    # YooKassa (legacy)
     YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
     YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
     YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
     YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "cryptobot").lower()
+
+    # CryptoBot / Crypto Pay
+    CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")
+    CRYPTOBOT_USE_TESTNET: bool = os.getenv("CRYPTOBOT_USE_TESTNET", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    CRYPTOBOT_WEBHOOK_PATH: str = os.getenv(
+        "CRYPTOBOT_WEBHOOK_PATH", "/cryptobot/webhook"
+    )
 
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
@@ -125,9 +137,16 @@ class Config:
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"yookassa", "tbank"}:
+        if self.PAYMENT_PROVIDER in {"cryptobot", "yookassa", "tbank"}:
             return self.PAYMENT_PROVIDER
-        return "tbank"
+        return "cryptobot"
+
+    @property
+    def cryptobot_notification_url(self) -> str:
+        path = self.CRYPTOBOT_WEBHOOK_PATH
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
     @property
     def has_yookassa(self) -> bool:

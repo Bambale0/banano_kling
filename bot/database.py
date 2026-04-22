@@ -131,7 +131,7 @@ async def init_db():
                 order_id TEXT UNIQUE NOT NULL,
                 user_id INTEGER NOT NULL,
                 payment_id TEXT,
-                provider TEXT DEFAULT 'tbank',
+                provider TEXT DEFAULT 'cryptobot',
                 credits INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
                 status TEXT DEFAULT 'pending',
@@ -195,7 +195,7 @@ async def init_db():
         # Миграция: добавляем provider в transactions
         try:
             await db.execute(
-                "ALTER TABLE transactions ADD COLUMN provider TEXT DEFAULT 'tbank'"
+                "ALTER TABLE transactions ADD COLUMN provider TEXT DEFAULT 'cryptobot'"
             )
         except aiosqlite.OperationalError:
             pass
@@ -997,7 +997,7 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
             provider=(
                 row["provider"]
                 if "provider" in row.keys() and row["provider"]
-                else "tbank"
+                else "cryptobot"
             ),
             user_id=row["user_id"],
             payment_id=row["payment_id"],
