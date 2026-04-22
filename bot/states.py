@@ -71,3 +71,10 @@ class ImageAnalyzerStates(StatesGroup):
     """Состояния для анализа изображения в промпт"""
 
     waiting_for_photo = State()
+
+
+class SeedreamVideoStates(StatesGroup):
+    """Состояния для генерации фото по видео референсам Seedream 5.0 Lite"""
+
+    waiting_for_video = State()
+    waiting_for_prompt = State()

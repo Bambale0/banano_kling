@@ -26,33 +26,12 @@ from bot.database import (
     get_user_settings,
 )
 from bot.keyboards import (
-    get_advanced_options_keyboard,
-    get_aspect_ratio_keyboard,
     get_back_keyboard,
-    get_category_keyboard,
     get_create_image_keyboard,
     get_create_video_keyboard,
-    get_duration_keyboard,
-    get_image_aspect_ratio_keyboard,
-    get_image_aspect_ratio_no_preset_edit_keyboard,
-    get_image_aspect_ratio_no_preset_keyboard,
-    get_image_editing_options_keyboard,
     get_main_menu_keyboard,
-    get_model_selection_keyboard,
-    get_motion_control_keyboard,
-    get_motion_upload_keyboard,
-    get_multiturn_keyboard,
-    get_prompt_tips_keyboard,
-    get_reference_images_confirmation_keyboard,
-    get_reference_images_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
-    get_resolution_keyboard,
-    get_search_grounding_keyboard,
-    get_video_edit_confirm_keyboard,
-    get_video_edit_input_type_keyboard,
-    get_video_edit_keyboard,
-    get_video_options_no_preset_keyboard,
 )
 from bot.services.aleph_service import aleph_service
 from bot.services.gemini_service import gemini_service
@@ -667,6 +646,28 @@ async def handle_video_options_model_legacy(
     await _apply_video_model_selection(callback, state, model)
 
 
+@router.callback_query(F.data.startswith("grok_mode_"))
+async def handle_grok_mode(callback: types.CallbackQuery, state: FSMContext):
+    """Handler for Grok Imagine mode selection (normal/fun/spicy)"""
+    mode = callback.data.replace("grok_mode_", "")
+    await state.update_data(grok_mode=mode)
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v3_std")
+    current_duration = data.get("v_duration", 5)
+    current_ratio = data.get("v_ratio", "16:9")
+    await callback.message.edit_reply_markup(
+        reply_markup=get_create_video_keyboard(
+            current_v_type=current_v_type,
+            current_model=current_model,
+            current_duration=current_duration,
+            current_ratio=current_ratio,
+            current_grok_mode=mode,
+        )
+    )
+    await callback.answer(f"Режим Grok: {mode.title()}")
+
+
 async def _apply_video_model_selection(
     callback: types.CallbackQuery, state: FSMContext, model: str
 ):
@@ -675,6 +676,10 @@ async def _apply_video_model_selection(
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
+
+    # Set default grok_mode for grok_imagine
+    if model == "grok_imagine":
+        await state.update_data(grok_mode="normal")
 
     # WanX LoRA is text-to-video only, so we force the UI into text mode
     # to expose aspect ratio and duration controls immediately.
@@ -2677,7 +2682,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 "seedream": "seedream/4.5",
                 "seedream_45": "seedream 4.5",
                 "seedream_edit": "seedream/4.5-edit",
-                "seedream_5_lite": "seedream 4.5",
+                "seedream_5_lite": "seedream/5-lite-image-to-image",
             }
             api_model = model_map.get(img_service, "seedream 4.5")
             result = await seedream_service.generate_image(
@@ -2921,9 +2926,11 @@ async def run_no_preset_video_from_message(
             # Pass start image + references (max 7 total for Grok)
             grok_image_urls = [image_url] + image_refs[:6]
             grok_duration = v_duration  # Supports 6,20,30 sec
+            grok_mode = data.get("grok_mode", "normal")
             result = await grok_service.generate_image_to_video(
                 image_urls=grok_image_urls,
                 prompt=prompt,
+                mode=grok_mode,
                 duration=grok_duration,
                 aspect_ratio=v_ratio,
                 callBackUrl=(
