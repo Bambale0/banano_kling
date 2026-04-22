@@ -57,10 +57,10 @@
       "seedream_45": 5,
       "flux_pro": 5,
       "nano-banana-pro": 5,
-      "seedream_lite": 6,
-      "seedream_5_lite": 6,
-      "seedream_edit": 7
+      "seedream_edit": 7,
+      "grok_imagine_i2i": 7
     },
+
     "video_models": {
       "v3_std": {
         "base": 15,
@@ -87,14 +87,6 @@
           "10": 30
         }
       },
-      "seedance2": {
-        "base": 15,
-        "duration_costs": {
-          "5": 15,
-          "10": 30,
-          "15": 45
-        }
-      },
       "grok_imagine": {
         "base": 15,
         "duration_costs": {
@@ -104,20 +96,16 @@
           "30": 50
         }
       },
-      "runway": {
-        "base": 15,
-        "duration_costs": {
-          "5": 15,
-          "10": 25
-        }
+      "veo3": {
+        "base": 22
       },
-      "aleph": {
-        "base": 15,
-        "duration_costs": {
-          "5": 15,
-          "10": 25
-        }
+      "veo3_fast": {
+        "base": 15
       },
+      "veo3_lite": {
+        "base": 10
+      },
+
       "glow": {
         "base": 25,
         "duration_costs": {
@@ -125,6 +113,7 @@
           "10": 40
         }
       }
+
     },
     "video_duration_costs": {
       "3": 9,
@@ -165,5 +154,5 @@
     }
   },
   "admin_ids": [939259764, 339795159],
-  "support_contact": "@S_k7222"
+  "support_contact": "@chillcreative"
 }

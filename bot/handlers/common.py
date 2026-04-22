@@ -64,6 +64,73 @@ def _get_user_menu(user_id: int) -> str:
     return _user_last_menu.get(user_id)
 
 
+def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
+    bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
+    return (
+        "🏠 <b>Главное меню</b>\n"
+        "Создавайте изображения, видео и эффекты в одном аккуратном потоке.\n\n"
+        "<b>Что можно сделать</b>\n"
+        "• Арты и иллюстрации по промпту\n"
+        "• Редактирование и стилизация фото\n"
+        "• Видео из текста, фото и референсов\n"
+        "• Motion Control и апгрейды результата\n\n"
+        f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
+        f"{bonus_block}"
+        "<i>Выберите, с чего начнём.</i>"
+    )
+
+
+def _build_balance_text(stats: dict) -> str:
+    return (
+        "💎 <b>Баланс и статистика</b>\n\n"
+        f"• Бананов доступно: <code>{stats['credits']}</code>\n"
+        f"• Всего генераций: <code>{stats['generations']}</code>\n"
+        f"• Потрачено бананов: <code>{stats['total_spent']}</code>\n"
+        f"• Дата регистрации: <code>{stats['member_since']}</code>\n"
+        f"• Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>\n"
+        f"• Заработано по рефералке: <code>{stats.get('referral_earned', 0)}</code>"
+    )
+
+
+def _build_settings_text() -> str:
+    return (
+        "⚙️ <b>Настройки</b>\n"
+        "Здесь можно выбрать модели по умолчанию для разных сценариев.\n\n"
+        "<b>Разделы</b>\n"
+        "• Изображения\n"
+        "• Текст -> Видео\n"
+        "• Фото -> Видео\n"
+        "• Сервис для изображений\n\n"
+        "<i>Текущий выбор всегда отмечен в клавиатуре ниже.</i>"
+    )
+
+
+def _build_motion_control_menu_text(user_credits: int) -> str:
+    return (
+        "🎬 <b>Motion Control</b>\n"
+        "Перенесите движение из референсного видео на персонажа или объект на фото.\n\n"
+        "<b>Как это работает</b>\n"
+        "1. Загрузите фото\n"
+        "2. Добавьте видео с движением\n"
+        "3. Получите анимированный результат\n\n"
+        f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов\n\n"
+        "<i>Выберите качество ниже.</i>"
+    )
+
+
+def _build_motion_control_step_text(title: str, cost: int) -> str:
+    return (
+        f"{title}\n"
+        f"🍌 <b>Стоимость:</b> <code>{cost}</code>\n\n"
+        "<b>Шаг 1. Фото персонажа</b>\n"
+        "Загрузите изображение, которое нужно анимировать.\n\n"
+        "Подойдёт:\n"
+        "• фото человека\n"
+        "• персонаж или иллюстрация\n"
+        "• любой объект, которому нужно передать движение"
+    )
+
+
 @router.message(CommandStart(), StateFilter(None))
 async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
@@ -179,26 +246,7 @@ async def cmd_start(message: types.Message):
                 "Вы получили бонус за регистрацию по приглашению."
             )
 
-    # Приветственное сообщение
-    welcome_text = f"""
-Хватит просто смотреть — создавай с AI! 🔥
-
-✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.
-✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.
-✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.
-✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.
-
-🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов
-
-{referral_bonus_text}
-
-📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>
-
-<i>Попробуй прямо сейчас! 👇</i>
-
-⚠️ <b><u>ВАЖНО:</u></b>
-Запрещено создавать порнографические материалы. Нарушители блокируются без возврата потраченных бананов. Администрация не несет ответственности за действия пользователей.
-"""
+    welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
 
     try:
         await message.answer(
@@ -221,48 +269,28 @@ async def cmd_start(message: types.Message):
 @router.message(Command("help"), StateFilter(None))
 async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
-    help_text = """
-📖 <b>Справка по использованию бота</b>
-
-<b>⚡ Редактирование по референсам</b>
-1. Нажмите "⚡ ПАКЕТНОЕ РЕДАКТИРОВАНИЕ"
-2. Загрузите <b>главное фото</b> для редактирования
-3. Добавьте до <b>14 референсных изображений</b> (стиль, объекты, персонажи)
-4. Введите промпт
-5. Получите результат с учётом всех референсов в 4K!
-
-<b>Возможности:</b>
-• До 10 объектов с высокой точностью
-• До 4 персонажей для консистентности
-• Перенос стиля, композиции, цветов
-
-<b>💎 Nano Banana (Генерация изображений)</b>
-Бот использует передовые модели Google Gemini:
-• <b>Nano Banana Flash</b> — быстрая генерация (1🍌)
-• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3🍌)
-
-<b>📝 Как составлять промпты:</b>
-• Опишите сцену подробно, а не просто ключевые слова
-• Укажите стиль: "фотореализм", "аниме", "масляная живопись"
-• Добавьте детали освещения: "золотой час", "неоновое освещение"
-• Укажите ракурс: "вид сверху", "портрет крупным планом"
-
-<b>✏️ Редактирование фото</b>
-Загрузите изображение, выберите эффект или стиль.
-Бот обработает ваше фото и вернёт результат.
-
-<b>🎬 Генерация видео</b>
-Опишите сцену для видео или загрузите изображение.
-Видео будет готово через 1-3 минуты.
-
-<b>🍌 Стоимость операций:</b>
-• FLUX.2 Pro / Nano Banana / Seedream: 3🍌
-• Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
-• Kling Standard: 6🍌 | Kling Pro: 8-10🍌
-
-<b>❓ Нужна помощь?</b>
-Обратитесь в поддержку: <a href="https://t.me/S_k7222">@S_k7222</a>
-"""
+    help_text = (
+        "📖 <b>Помощь</b>\n"
+        "Коротко о том, что сейчас умеет бот.\n\n"
+        "<b>Фото</b>\n"
+        "• Генерация и редактирование в одном меню\n"
+        "• Модели: Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i\n"
+        "• Можно добавлять референсы и менять формат кадра\n\n"
+        "<b>Видео</b>\n"
+        "• Генерация из текста, фото и видео-референсов\n"
+        "• Модели: Kling 3, Grok Imagine, Veo 3.1\n"
+        "• Для части моделей доступны расширенные настройки прямо в клавиатуре\n\n"
+        "<b>Дополнительно</b>\n"
+        "• Motion Control для переноса движения с видео на фото\n"
+        "• Анализ фото -> промпт\n"
+        "• Пополнение баланса внутри бота\n\n"
+        "<b>Как получить лучший результат</b>\n"
+        "• пишите промпт полными фразами\n"
+        "• добавляйте стиль, свет, ракурс и настроение\n"
+        "• используйте референсы, если важны персонажи, стиль или композиция\n\n"
+        "<b>Поддержка</b>\n"
+        "@chillcreative"
+    )
 
     await message.answer(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
 
@@ -270,38 +298,27 @@ async def cmd_help(message: types.Message):
 @router.callback_query(F.data == "menu_help")
 async def show_help(callback: types.CallbackQuery):
     """Показывает справку через inline-кнопку"""
-    help_text = """
-📖 <b>Помощь бота</b>
-
-<b>💡 Что ты можешь спросить у ИИ-ассистента:</b>
-
-Я — ИИ-ассистент в этом боте. Ты можешь написать мне ЛЮБОЙ вопрос, и я помогу!
-
-🖼 <b>Генерация изображений:</b>
-• Какую модель выбрать для фотореализма?
-• Как написать хороший промпт для аниме?
-• Чем отличается FLUX от Nano Banana?
-
-🎬 <b>Генерация видео:</b>
-• Какая модель лучше для коротких роликов?
-• Как сделать видео из фото?
-• Что такое Motion Control?
-
-✏️ <b>Редактирование:</b>
-• Как изменить стиль фото?
-• Как добавить объект на изображение?
-• Как использовать референсы?
-
-💰 <b>Оплата и баланс:</b>
-• Как пополнить баланс?
-• Сколько стоит генерация?
-• Какие есть скидки?
-
-📝 <b>Просто напиши свой вопрос!</b>
-Например: "как сделать крутой логотип?" или "помоги с промптом для космоса"
-
-<b>❓ Или выбери "Тех. поддержка" для связи с нами</b>
-"""
+    help_text = (
+        "📖 <b>Помощь</b>\n\n"
+        "<b>Что можно сделать в боте</b>\n"
+        "• создать фото по промпту\n"
+        "• отредактировать фото с референсами\n"
+        "• сгенерировать видео из текста, фото или видео\n"
+        "• запустить Motion Control\n"
+        "• разобрать фото в готовый промпт\n\n"
+        "<b>Актуальные модели</b>\n"
+        "• Фото: Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i\n"
+        "• Видео: Kling 3, Grok Imagine, Veo 3.1\n\n"
+        "<b>О чём можно спросить AI-ассистента</b>\n"
+        "• какую модель выбрать под задачу\n"
+        "• как написать сильный промпт\n"
+        "• какой формат лучше для Reels, TikTok, YouTube\n"
+        "• как использовать референсы\n"
+        "• как работает Motion Control\n"
+        "• сколько стоит нужный сценарий\n\n"
+        "<b>Поддержка</b>\n"
+        "@chillcreative"
+    )
 
     try:
         await callback.message.edit_text(
@@ -325,18 +342,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     # Запоминаем, что пользователь в главном меню
     _set_user_menu(callback.from_user.id, "main_menu")
 
-    # Полный текст главного меню как в cmd_start
-    welcome_text = (
-        f"🏠 <b>Главное меню</b>"
-        f"Хватит просто смотреть — создавай с AI! 🔥"
-        f"✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.\n"
-        f"✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.\n"
-        f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
-        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион."
-        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов"
-        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>'
-        f"<i>Попробуй прямо сейчас! 👇</i>"
-    )
+    welcome_text = _build_main_menu_text(user.credits)
 
     try:
         await callback.message.edit_text(
@@ -361,16 +367,7 @@ async def show_balance(callback: types.CallbackQuery):
     user = await get_or_create_user(callback.from_user.id)
     stats = await get_user_stats(callback.from_user.id)
 
-    balance_text = f"""
-💎 <b>Ваш баланс</b>
-
-🍌 Доступно бананов: <code>{stats['credits']}</code>
-📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
-📅 Дата регистрации: <code>{stats['member_since']}</code>
-🎁 Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>
-💰 Заработано на рефералах: <code>{stats.get('referral_earned', 0)}</code>
-"""
+    balance_text = _build_balance_text(stats)
 
     await callback.message.edit_text(
         balance_text,
@@ -640,19 +637,7 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
         image_service=db_settings.get("image_service", "nanobanana"),
     )
 
-    settings_text = """
-⚙️ <b>Настройки</b>
-
-🖼 Изображения:
-• FLUX.2 Pro / Nano Banana / Seedream
-• Все модели: 3🍌
-
-🎬 Текст→Видео:
-• Kling 2.6 (8🍌) / Std (6🍌) / Pro (8🍌) / Omni / V2V
-
-🖼→🎬 Фото→Видео:
-• Std (6🍌) / Pro (8🍌) / Omni
-"""
+    settings_text = _build_settings_text()
 
     await callback.message.edit_text(
         settings_text,
@@ -674,20 +659,7 @@ async def show_motion_control_menu(callback: types.CallbackQuery):
 
     user_credits = await get_user_credits(callback.from_user.id)
 
-    motion_text = f"""
-🎬 <b>Motion Control</b>
-
-Перенос движения с референсного видео на твоё фото!
-
-📝 <b>Как это работает:</b>
-1. Загрузи фото персонажа
-2. Загрузи видео с движением
-3. Получи анимированное фото!
-
-💰 Баланс: {user_credits}🍌
-
-Выбери качество:
-"""
+    motion_text = _build_motion_control_menu_text(user_credits)
 
     await callback.message.edit_text(
         motion_text,
@@ -702,21 +674,16 @@ async def show_support(callback: types.CallbackQuery):
     """Показывает меню тех. поддержки"""
     from bot.keyboards import get_support_keyboard
 
-    support_text = """
-🆘 <b>Техническая поддержка</b>
-
-💬 <b>Напиши свой вопрос ИИ-ассистенту</b>
-Он поможет с:
-• Генерацией изображений и видео
-• Настройками и моделями
-• Оплатой и балансом
-• Любыми другими вопросами
-
-📱 <b>Или свяжись с нами:</b>
-@s_k7222
-
-Мы ответим вам в ближайшее время!
-"""
+    support_text = (
+        "🆘 <b>Поддержка</b>\n\n"
+        "Можно написать прямо сюда — AI-ассистент поможет с:\n"
+        "• генерацией изображений и видео\n"
+        "• выбором модели и настроек\n"
+        "• оплатой и балансом\n"
+        "• любыми непонятными шагами в боте\n\n"
+        "<b>Если нужен человек:</b>\n"
+        "@chillcreative"
+    )
 
     await callback.message.edit_text(
         support_text,
@@ -735,16 +702,14 @@ async def show_history(callback: types.CallbackQuery):
     user = await get_or_create_user(callback.from_user.id)
     stats = await get_user_stats(callback.from_user.id)
 
-    history_text = f"""
-📋 <b>История</b>
-
-📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
-💎 Текущий баланс: <code>{user.credits}</code>🍌
-📅 Дата регистрации: <code>{stats['member_since']}</code>
-
-<i>Детальная история скоро будет доступна!</i>
-"""
+    history_text = (
+        "📋 <b>История</b>\n\n"
+        f"• Всего генераций: <code>{stats['generations']}</code>\n"
+        f"• Потрачено бананов: <code>{stats['total_spent']}</code>\n"
+        f"• Текущий баланс: <code>{user.credits}</code>🍌\n"
+        f"• Дата регистрации: <code>{stats['member_since']}</code>\n\n"
+        "<i>Подробная история запусков появится здесь чуть позже.</i>"
+    )
 
     try:
         await callback.message.edit_text(
@@ -789,14 +754,7 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
     )
 
     await callback.message.edit_text(
-        f"🎬 <b>Motion Control Standard</b>"
-        f"Стоимость: {cost}🍌"
-        f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать"
-        f"Это может быть:\n"
-        f"• Фото человека\n"
-        f"• Фото персонажа\n"
-        f"• Любое изображение для анимации",
+        _build_motion_control_step_text("🎬 <b>Motion Control Standard</b>", cost),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -828,14 +786,7 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
     )
 
     await callback.message.edit_text(
-        f"💎 <b>Motion Control Pro</b>"
-        f"Стоимость: {cost}🍌"
-        f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать"
-        f"Это может быть:\n"
-        f"• Фото человека\n"
-        f"• Фото персонажа\n"
-        f"• Любое изображение для анимации",
+        _build_motion_control_step_text("💎 <b>Motion Control Pro</b>", cost),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -852,19 +803,15 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
     # Сохраняем в состояние
     await state.update_data(preferred_model=model_type)
 
-    # Показываем подтверждение (короткое)
-    model_name = "Flash" if model_type == "flash" else "Pro"
-
     from bot.keyboards import get_settings_keyboard_with_ai
 
-    # Также получаем текущую модель видео
     data = await state.get_data()
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
-        f"✅ Изображение: {model_name}",
+        _build_settings_text(),
         reply_markup=get_settings_keyboard_with_ai(
             model_type,
             current_video_model,
@@ -873,7 +820,7 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await callback.answer("Настройки изображений обновлены")
 
 
 @router.callback_query(F.data.startswith("settings_video_"))
@@ -887,31 +834,15 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
     # Сохраняем в состояние
     await state.update_data(preferred_video_model=video_model)
 
-    # Короткие названия
-    video_names = {
-        "v3_std": "Std",
-        "v3_pro": "Pro",
-        "v3_omni_std": "Omni",
-        "v3_omni_pro": "Omni Pro",
-        "v3_omni_std_r2v": "V2V",
-        "v3_omni_pro_r2v": "V2V Pro",
-        "v26_pro": "Kling 2.6",
-        "v26_motion_pro": "Motion Pro",
-        "v26_motion_std": "Motion",
-    }
-
-    model_name = video_names.get(video_model, video_model)
-
     from bot.keyboards import get_settings_keyboard_with_ai
 
-    # Также получаем текущую модель изображений
     data = await state.get_data()
     current_model = data.get("preferred_model", "flash")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
-        f"✅ Видео: {model_name}",
+        _build_settings_text(),
         reply_markup=get_settings_keyboard_with_ai(
             current_model,
             video_model,
@@ -920,7 +851,7 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await callback.answer("Настройки видео обновлены")
 
 
 @router.callback_query(F.data.startswith("settings_i2v_"))
@@ -934,26 +865,15 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
     # Сохраняем в состояние
     await state.update_data(preferred_i2v_model=i2v_model)
 
-    # Короткие названия
-    i2v_names = {
-        "v3_std": "Std",
-        "v3_pro": "Pro",
-        "v3_omni_std": "Omni Std",
-        "v3_omni_pro": "Omni Pro",
-    }
-
-    model_name = i2v_names.get(i2v_model, i2v_model)
-
     from bot.keyboards import get_settings_keyboard_with_ai
 
-    # Получаем текущие модели
     data = await state.get_data()
     current_model = data.get("preferred_model", "flash")
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
 
     await callback.message.edit_text(
-        f"✅ Фото→Видео: {model_name}",
+        _build_settings_text(),
         reply_markup=get_settings_keyboard_with_ai(
             current_model,
             current_video_model,
@@ -962,12 +882,12 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await callback.answer("Настройки фото -> видео обновлены")
 
 
 @router.callback_query(F.data.startswith("settings_service_"))
 async def handle_settings_service(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора сервиса для генерации изображений (nanobanana, novita или seedream)"""
+    """Обработка выбора сервиса/модели для генерации изображений."""
     service = callback.data.replace("settings_service_", "")
 
     # Сохраняем выбор сервиса в БД
@@ -976,33 +896,21 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
     # Сохраняем в состояние
     await state.update_data(image_service=service)
 
-    # Названия сервисов
-    service_names = {
-        "nanobanana": "🍌 Nano Banana",
-        "novita": "✨ FLUX.2 Pro (Novita)",
-        "banana_pro": "💎 Banana Pro",
-        "seedream": "🎨 Seedream (Novita)",
-        "z_image_turbo": "🚀 Z-Image Turbo LoRA",
-    }
-
-    service_name = service_names.get(service, service)
-
     from bot.keyboards import get_settings_keyboard_with_ai
 
-    # Получаем текущие модели
     data = await state.get_data()
     current_model = data.get("preferred_model", "flash")
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
 
     await callback.message.edit_text(
-        f"✅ Сервис: {service_name}",
+        _build_settings_text(),
         reply_markup=get_settings_keyboard_with_ai(
             current_model, current_video_model, current_i2v_model, image_service=service
         ),
         parse_mode="HTML",
     )
-    await callback.answer()
+    await callback.answer("Сервис изображений обновлён")
 
 
 @router.callback_query(F.data.startswith("back_cat_"))
@@ -1096,14 +1004,14 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         if response:
             # Отправляем ответ пользователю с клавиатурой ИИ
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>{response}",
+                f"🤖 <b>BotAI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
         else:
             # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @chillcreative",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1111,7 +1019,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @chillcreative",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )
@@ -1150,27 +1058,23 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
     context = {
         "user_credits": user.credits,
         "menu_location": "главное меню",
-        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni",
+        "available_models": "Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i, Kling 3, Grok Imagine, Veo 3.1, Motion Control",
     }
 
     # Приветственное сообщение от ИИ
-    welcome_ai = """🍌 Привет! Я Banana Boom AI - твой ИИ-ассистент!
+    welcome_ai = """🍌 <b>AI-ассистент</b>
 
-Я здесь, чтобы помочь тебе с ЛЮБЫМ вопросом! Ты можешь спросить меня абсолютно обо всём:
+Я помогу с моделями, промптами, настройками и сценариями генерации.
 
-💡 <b>Примеры вопросов:</b>
-• "как сделать аниме арт?"
-• "какая модель лучше для фотореализма?"
-• "сколько стоит генерация?"
-• "как пополнить баланс?"
-• "что такое Motion Control?"
-• "помоги написать промпт для космоса"
-• "как отредактировать фото в стиле киберпанк?"
+<b>Например, можно спросить:</b>
+• какая модель лучше для фотореализма
+• что выбрать для видео из фото
+• как использовать референсы
+• как собрать промпт под fashion / anime / product
+• чем отличается Veo от Kling
+• как работает Motion Control
 
-📝 <b>Просто напиши свой вопрос!</b>
-Я отвечу на любой вопрос связанный с ботом.
-
-🔙 Нажми "В главное меню" чтобы вернуться."""
+<i>Просто напишите вопрос — отвечу по делу и подскажу следующий шаг в боте.</i>"""
 
     await callback.message.edit_text(
         welcome_ai, reply_markup=get_ai_assistant_keyboard(), parse_mode="HTML"
@@ -1193,33 +1097,20 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
-        "available_models": "Nano Banana (Flash/Pro), FLUX.2 Pro (Novita), Seedream (Novita), Kling 3 (Std/Pro/Omni)",
+        "available_models": "Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i, Kling 3, Grok Imagine, Veo 3.1",
     }
 
-    welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
+    welcome_ai = """🍌 <b>AI-ассистент по настройкам</b>
 
-Ты находишься в меню настройки моделей.
-Я могу объяснить:
+Сейчас я могу помочь выбрать подходящую модель и объяснить опции в меню.
 
-🍌 Какая модель изображений лучше:
-   - Flash (1🍌) - быстро и дёшево
-   - Pro (2🍌) - высокое качество, 4K
+<b>Чем могу помочь:</b>
+• подобрать модель под портрет, product, anime или edit
+• подсказать формат под TikTok, Reels, Shorts или YouTube
+• объяснить разницу между Kling, Grok Imagine и Veo
+• рассказать, когда использовать референсы и Motion Control
 
-🎬 Какая модель видео подойдёт:
-   - Std (4🍌) - стандарт
-   - Pro (5🍌) - лучше качество
-   - Omni - продвинутая
-
-🖼 Чем отличаются сервисы:
-   - Nano Banana - Gemini
-   - Novita - FLUX.2 Pro и Seedream
-
-Просто спроси меня! Например:
-• "что лучше для портрета?"
-• "какой формат выбрать для тиктока?"
-• "зачем нужен Omni?"
-
-Или нажми "Назад" чтобы вернуться к настройкам."""
+<i>Напишите вопрос в свободной форме — например: «что лучше для рекламного ролика?»</i>"""
 
     await callback.message.edit_text(
         welcome_ai, reply_markup=get_back_keyboard("menu_settings"), parse_mode="HTML"
@@ -1393,14 +1284,14 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         if response:
             # Отправляем ответ пользователю
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>{response}",
+                f"🤖 <b>BotAI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
         else:
             # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @S_k7222",
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @chillcreative",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1408,7 +1299,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @S_k7222",
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @chillcreative",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )

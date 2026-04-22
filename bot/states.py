@@ -37,6 +37,9 @@ class GenerationStates(StatesGroup):
     selecting_duration = State()  # Выбор длительности видео
     selecting_aspect_ratio = State()  # Выбор формата видео
     selecting_quality = State()  # Выбор качества видео
+    waiting_for_veo_seed = State()  # Ввод seed для Veo
+    waiting_for_veo_watermark = State()  # Ввод watermark для Veo
+    waiting_for_veo_extend_prompt = State()  # Промпт для продления Veo
 
 
 class PaymentStates(StatesGroup):
@@ -71,6 +74,14 @@ class ImageAnalyzerStates(StatesGroup):
     """Состояния для анализа изображения в промпт"""
 
     waiting_for_photo = State()
+
+
+class GrokI2IStates(StatesGroup):
+    """Состояния для Grok Imagine Image-to-Image"""
+
+    waiting_for_start_image = State()
+    confirming_settings = State()
+    waiting_for_prompt = State()
 
 
 class SeedreamVideoStates(StatesGroup):

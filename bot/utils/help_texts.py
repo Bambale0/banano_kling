@@ -1,7 +1,4 @@
-"""
-UX-адаптированные инструкции для пользователей на каждом этапе работы с ботом
-Согласно banana_api.md - все возможности Nano Banana / Gemini Image Generation
-"""
+"""Текстовые подсказки и утилиты для пользовательского UX в боте."""
 
 from typing import Dict, List
 
@@ -13,19 +10,19 @@ from typing import Dict, List
 def get_welcome_message() -> str:
     """Приветственное сообщение с объяснением возможностей"""
     return """
-🍌 <b>Добро пожаловать в Banano Kling AI Bot!</b>
+🍌 <b>Добро пожаловать!</b>
 
-Передовые AI: FLUX.2 Pro, Nano Banana, Kling 3/2.6, Seedream, Grok.
+Доступные сценарии: фото, видео, Motion Control, анализ фото и работа с референсами.
 
-🖼 Изображения (5-7🍌): текст/фото→фото, до 14 рефов, 4K
-🎬 Видео (15+🍌): t2v/i2v/motion/V2V, 3-30с
-✂️ Batch/FX: пакетное редактирование, апскейл
+🖼 Фото: Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i
+🎬 Видео: Kling 3, Kling 2.6, Grok Imagine, Veo 3.1
+🎯 Дополнительно: Motion Control, анализ фото → промпт
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Начните:</b>
 Выберите из меню!
 
-⚠️ Запрещено NSFW. Блок без возврата.
+⚠️ Соблюдайте правила платформы и не создавайте запрещённый контент.
 """
 
 
@@ -102,28 +99,28 @@ def get_model_selection_help() -> str:
 🤖 <b>Выбор модели AI</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🖼 <b>Изображения (5-7🍌)</b>
+🖼 <b>Изображения</b>
 
-• FLUX.2 Pro (flux_pro, 5🍌) - текст/реализм
-• Nano Banana Flash (gemini_2_5_flash, 5🍌) - быстро
-• Nano Banana Pro (gemini_3_pro/nano-banana-pro, 5🍌) - 4K
-• Banana 2 (7🍌), Seedream (5-7🍌), Z-Image Turbo (5🍌)
+• Banana Pro — универсальный качественный вариант
+• Banana 2 — хороший базовый сценарий
+• Seedream 4.5 — аккуратные стилизованные и edit-задачи
+• Grok Imagine i2i — редактирование по фото + текст
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 <b>Видео (15+🍌)</b>
+🎬 <b>Видео</b>
 
-• Kling 3 Std/Pro (15 base, 9-45🍌 / 3-15с)
-• Kling 2.6 Pro/Motion (15-30🍌)
-• Grok Imagine (15-50🍌, 6-30с)
-• Runway/Aleph (15-40🍌)
+• Kling 3 Std / Pro
+• Kling 2.6
+• Grok Imagine
+• Veo 3.1
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Рекомендации:</b>
 
-FLUX.2 Pro: логотипы/текст/реализм
-Nano Pro: 4K/профи
-Kling 3 Pro: видео качество
-Kling 2.6: скорость/motion
+Banana Pro: портреты, предметка, универсальная генерация
+Seedream 4.5: стилизация и image-edit
+Kling 3 Pro: видео с акцентом на качество
+Motion Control: перенос движения с видео на фото
 """
 
 

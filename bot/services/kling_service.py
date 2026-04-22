@@ -604,33 +604,8 @@ class KlingService:
         multi_shots: Optional[List[Dict[str, Any]]] = None,
         image_input: Optional[List[str]] = None,
     ) -> Optional[Dict]:
-        if model == "seedance2":
-            input_data = {
-                "prompt": prompt,
-                "aspect_ratio": aspect_ratio,
-                "duration": duration,
-                "generate_audio": generate_audio,
-                "resolution": "720p",
-                "nsfw_checker": False,
-                "web_search": False,
-            }
-            if image_url:
-                input_data["first_frame_url"] = image_url
-            if end_image_url:
-                input_data["last_frame_url"] = end_image_url
-            if image_input:
-                input_data["reference_image_urls"] = image_input[:9]
-            if video_url:
-                input_data["reference_video_urls"] = [video_url]
-            payload = {
-                "model": "bytedance/seedance-2",
-                "input": input_data,
-            }
-            if webhook_url:
-                payload["callBackUrl"] = webhook_url
-            return await self._kie_post("/api/v1/jobs/createTask", payload)
-
         # Kling 3.0 migration: prefer Kie.ai API
+
         if "v3" in model or "omni" in model:
             # Map model to mode
             mode = "pro" if "pro" in model else "std"
@@ -698,16 +673,6 @@ class KlingService:
                     "mode": "720p",  # default
                 },
                 webhook_url,
-            )
-        elif model == "runway":
-            logger.info("Runway model handled as std Kling 3.0 fallback")
-            return await self.generate_kling_3_video(
-                prompt=prompt,
-                mode="std",
-                duration=duration,
-                aspect_ratio=aspect_ratio,
-                sound=generate_audio,
-                webhook=webhook_url,
             )
         elif model == "glow":
             logger.info("Using Kling Glow preset_motion")

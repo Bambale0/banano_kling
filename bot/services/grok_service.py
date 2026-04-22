@@ -41,5 +41,29 @@ class GrokService(KlingService):
             payload["callBackUrl"] = callBackUrl
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 
+    async def generate_image_to_image(
+        self,
+        image_urls: List[str],
+        prompt: str = "",
+        nsfw_checker: bool = False,
+        callBackUrl: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Generate image from image + prompt using Grok Imagine i2i"""
+        if len(image_urls) == 0:
+            logger.error("No image_urls provided for Grok i2i")
+            return None
+        input_data = {
+            "prompt": prompt,
+            "image_urls": image_urls,
+            "nsfw_checker": nsfw_checker,
+        }
+        payload = {
+            "model": "grok-imagine/image-to-image",
+            "input": input_data,
+        }
+        if callBackUrl:
+            payload["callBackUrl"] = callBackUrl
+        return await self._kie_post("/api/v1/jobs/createTask", payload)
+
 
 grok_service = GrokService(kie_key=config.KIE_AI_API_KEY)

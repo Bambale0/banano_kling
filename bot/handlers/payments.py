@@ -287,12 +287,6 @@ async def cancel_payment(callback: types.CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "menu_buy_credits")
-async def back_to_packages(callback: types.CallbackQuery):
-    """Возврат к выбору пакетов из подтверждения оплаты"""
-    await show_packages(callback)
-
-
 # Вебхук для Т-Банка (обрабатывается в aiohttp сервере)
 async def handle_tbank_webhook(request):
     """Обработчик уведомлений от Т-Банка"""

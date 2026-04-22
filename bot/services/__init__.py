@@ -6,6 +6,7 @@ from .kling_service import KlingService, kling_service
 from .nano_banana_2_service import NanoBanana2Service, nano_banana_2_service
 from .nano_banana_pro_service import NanoBananaProService, nano_banana_pro_service
 from .tbank_service import TBankService, tbank_service
+from .veo_service import VeoService, veo_service
 
 __all__ = [
     "tbank_service",
@@ -16,4 +17,6 @@ __all__ = [
     "NanoBananaProService",
     "nano_banana_2_service",
     "NanoBanana2Service",
+    "veo_service",
+    "VeoService",
 ]

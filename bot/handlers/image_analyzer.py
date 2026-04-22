@@ -23,28 +23,30 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
 
     try:
         await callback.message.edit_text(
-            f"📸 <b>Анализ фото → Промпт</b>"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌"
-            f"Отправьте фото для анализа.\n"
-            f"🤖 ИИ создаст точный промпт для повторения:\n"
-            f"• Лица и люди\n"
-            f"• Позы и одежда\n"
-            f"• Освещение и фон"
-            f"<i>Это бесплатно!</i>",
+            "📸 <b>Анализ фото -> Промпт</b>\n"
+            f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+            "<b>Что делает этот режим</b>\n"
+            "Отправьте фото, и бот соберёт по нему аккуратный промпт для дальнейшей генерации.\n\n"
+            "Обычно хорошо распознаются:\n"
+            "• персонажи, лица и одежда\n"
+            "• поза, композиция и ракурс\n"
+            "• свет, фон и общее настроение\n\n"
+            "<i>Анализ бесплатный.</i>",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
         )
     except Exception as e:
         logger.warning(f"Cannot edit message in photo_to_prompt_handler: {e}")
         await callback.message.answer(
-            f"📸 <b>Анализ фото → Промпт</b>"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌"
-            f"Отправьте фото для анализа.\n"
-            f"🤖 ИИ создаст точный промпт для повторения:\n"
-            f"• Лица и люди\n"
-            f"• Позы и одежда\n"
-            f"• Освещение и фон"
-            f"<i>Это бесплатно!</i>",
+            "📸 <b>Анализ фото -> Промпт</b>\n"
+            f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+            "<b>Что делает этот режим</b>\n"
+            "Отправьте фото, и бот соберёт по нему аккуратный промпт для дальнейшей генерации.\n\n"
+            "Обычно хорошо распознаются:\n"
+            "• персонажи, лица и одежда\n"
+            "• поза, композиция и ракурс\n"
+            "• свет, фон и общее настроение\n\n"
+            "<i>Анализ бесплатный.</i>",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
         )
@@ -67,7 +69,7 @@ async def analyze_photo(message: Message, state: FSMContext):
         user = await get_or_create_user(message.from_user.id)
 
         short_caption = (
-            f"✅ <b>Готовый промпт!</b>🍌 Баланс: <code>{user.credits}</code>🍌"
+            "✅ <b>Промпт готов</b>\n" f"🍌 Баланс: <code>{user.credits}</code> бананов"
         )
         await message.answer_photo(
             photo=photo.file_id,
@@ -81,7 +83,9 @@ async def analyze_photo(message: Message, state: FSMContext):
             prompt = prompt[:max_len] + "... (промпт укорочен для Telegram лимита)"
 
         await message.answer(
-            f"📋 <code>{prompt}</code><i>Скопируйте промпт и используйте в 'Создать фото'!</i>",
+            "📋 <b>Готовый промпт</b>\n"
+            f"<code>{prompt}</code>\n\n"
+            "<i>Можете сразу использовать его в меню «Создать фото».</i>",
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
@@ -89,7 +93,8 @@ async def analyze_photo(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Photo analysis error: {e}")
         await message.answer(
-            "❌ Ошибка анализа фото. Попробуйте другое изображение.",
+            "Не получилось проанализировать фото.\n"
+            "Попробуйте отправить другое изображение с более чётким объектом в кадре.",
             reply_markup=get_back_keyboard("back_main"),
         )
 
