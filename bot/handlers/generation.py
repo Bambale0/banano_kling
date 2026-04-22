@@ -2972,7 +2972,14 @@ async def run_no_preset_video_from_message(
                 aspect_ratio=v_ratio,
                 callback_url=callback_url,
             )
+
         else:
+                video_urls=[video_url] if video_url else None,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+>>>>>>> ec4e6ab (Update bot components: database, handlers (common, generation), kling_service)
+            )
             result = await kling_service.generate_video(
                 prompt=prompt,
                 model=v_model,
@@ -2985,6 +2992,13 @@ async def run_no_preset_video_from_message(
                 webhook_url=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),
+            )
+=======
+                video_urls=[video_url] if video_url else None,
+                webhook_url=config.kling_notification_url
+                if config.WEBHOOK_HOST
+                else None,
+>>>>>>> ec4e6ab (Update bot components: database, handlers (common, generation), kling_service)
             )
 
         await processing_msg.delete()

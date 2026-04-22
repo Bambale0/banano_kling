@@ -928,7 +928,7 @@ async def deduct_credits(
         )
         row = await cursor.fetchone()
 
-        if not row or row["credits"] < amount:
+        if not row or (row["credits"] or 0) < amount:
             return False
 
         # Списываем

@@ -620,8 +620,8 @@ class KlingService:
                 input_data["last_frame_url"] = end_image_url
             if image_input:
                 input_data["reference_image_urls"] = image_input[:9]
-            if video_url:
-                input_data["reference_video_urls"] = [video_url]
+            if video_urls:
+                input_data["reference_video_urls"] = video_urls
             payload = {
                 "model": "bytedance/seedance-2",
                 "input": input_data,
@@ -683,8 +683,8 @@ class KlingService:
         elif "motion" in model.lower():
             return await self.generate_motion_control(
                 image_url=image_url,
-                video_url=video_urls[0] if video_urls else None,
-                prompt=prompt if negative_prompt is None else prompt,
+                video_urls=video_urls or [],
+                prompt=prompt,
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
             )
