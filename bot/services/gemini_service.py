@@ -203,7 +203,7 @@ Use the {ref_count} reference images to maintain character consistency and prese
                 )
 
         # Always enhance detail and quality for ALL Gemini models/generations
-        prompt += f"\n\n{self.DETAIL_ENHANCER_PROMPT}"
+        prompt += f"{self.DETAIL_ENHANCER_PROMPT}"
         logger.info("Added ultimate detail enhancer to prompt")
 
         if self.nanobanana_key:

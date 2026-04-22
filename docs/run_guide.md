@@ -1274,7 +1274,7 @@ client = RunwayML()
 
 document = client.documents.create(
 name='Product FAQ',
-content='# Product FAQ\n\n## What is your return policy?\n...',
+content='# Product FAQ## What is your return policy?\n...',
 )
 print(document)
 ```

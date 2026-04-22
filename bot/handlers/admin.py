@@ -92,7 +92,7 @@ async def admin_users_menu(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        "👥 <b>Управление пользователями</b>\n\n" "Введите Telegram ID пользователя:",
+        "👥 <b>Управление пользователями</b>" "Введите Telegram ID пользователя:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
     )
@@ -171,8 +171,8 @@ async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(target_user_id=user_id, action="add")
 
     await callback.message.edit_text(
-        f"➕ <b>Добавление кредитов</b>\n\n"
-        f"Пользователь ID: <code>{user_id}</code>\n\n"
+        f"➕ <b>Добавление кредитов</b>"
+        f"Пользователь ID: <code>{user_id}</code>"
         f"Введите количество кредитов для добавления:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
@@ -192,8 +192,8 @@ async def admin_deduct_credits_prompt(callback: types.CallbackQuery, state: FSMC
     await state.update_data(target_user_id=user_id, action="deduct")
 
     await callback.message.edit_text(
-        f"➖ <b>Списание кредитов</b>\n\n"
-        f"Пользователь ID: <code>{user_id}</code>\n\n"
+        f"➖ <b>Списание кредитов</b>"
+        f"Пользователь ID: <code>{user_id}</code>"
         f"Введите количество кредитов для списания:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
@@ -230,7 +230,7 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
     if success:
         stats = await get_user_stats(user_id)
         await message.answer(
-            f"✅ <b>Успешно!</b>\n\n"
+            f"✅ <b>Успешно!</b>"
             f"Пользователь ID: <code>{user_id}</code>\n"
             f"Действие: {action_text}\n"
             f"Текущий баланс: <code>{stats['credits']}</code> кредитов",
@@ -254,7 +254,7 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
         return
 
     await callback.message.edit_text(
-        "📢 <b>Рассылка всем пользователям</b>\n\n"
+        "📢 <b>Рассылка всем пользователям</b>"
         "Введите текст сообщения для рассылки:\n"
         "<i>Поддерживается HTML-форматирование</i>",
         reply_markup=get_back_keyboard("admin_back"),
@@ -270,10 +270,10 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
     await state.update_data(broadcast_text=message.text)
 
     await message.answer(
-        "📢 <b>Превью рассылки:</b>\n\n"
+        "📢 <b>Превью рассылки:</b>"
         "───────────────\n"
         f"{message.text}\n"
-        "───────────────\n\n"
+        "───────────────"
         "Подтверждаете отправку?",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -333,7 +333,7 @@ async def admin_execute_broadcast(
             error_count += 1
 
     await callback.message.edit_text(
-        f"📢 <b>Рассылка завершена!</b>\n\n"
+        f"📢 <b>Рассылка завершена!</b>"
         f"✅ Успешно: <code>{success_count}</code>\n"
         f"❌ Ошибок: <code>{error_count}</code>",
         reply_markup=get_admin_keyboard(),

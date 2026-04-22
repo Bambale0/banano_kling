@@ -301,9 +301,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             task_id = data["taskId"]
             video_url = data["data"].get("result_video_url")
             if task_id and video_url:
-                logger.info(
-                    f"Kling success webhook: task {task_id}, video {video_url[:50]}..."
-                )
                 from bot.database import (
                     complete_video_task,
                     get_task_by_id,
@@ -312,12 +309,20 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.keyboards import get_video_result_keyboard
 
                 task = await get_task_by_id(task_id)
+                model_display = task.model if task and task.model else "Kling"
+                if model_display == "aleph":
+                    model_display = "Aleph Video"
+                elif model_display == "glow":
+                    model_display = "Kling Glow"
+                logger.info(
+                    f"{model_display} success webhook: task {task_id}, video {video_url[:50]}..."
+                )
                 if task:
                     telegram_id = await get_telegram_id_by_user_id(task.user_id)
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            caption = f"✅ <b>Видео (Kling) готово!</b>\\n\\nID: <code>{task_id}</code>"
+                            caption = f"✅ <b>Видео ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
                             if task.duration:
                                 caption += f"\\n⏱ <code>{task.duration}с</code>"
                             if task.aspect_ratio:
@@ -338,10 +343,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 reply_markup=get_video_result_keyboard(video_url),
                             )
                             await complete_video_task(task_id, video_url)
-                            logger.info(f"Kling video sent to {telegram_id}")
+                            logger.info(f"{model_display} video sent to {telegram_id}")
                         except Exception as e:
                             logger.error(
-                                f"Failed to notify Kling user {telegram_id}: {e}"
+                                f"Failed to notify {model_display} user {telegram_id}: {e}"
                             )
                         finally:
                             await bot_instance.session.close()
@@ -362,11 +367,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 video_url = None
 
             if task_id:
-                logger.info(
-                    f"Kie.ai webhook: task {task_id}, status {status}, "
-                    + f"video {video_url[:50] if video_url else None}..., "
-                    + f"fail: {fail_code}/{fail_msg[:50]}..."
-                )
                 from bot.database import (
                     add_credits,
                     complete_video_task,
@@ -375,6 +375,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
+                model_display = task.model if task and task.model else "Kie.ai"
+                if model_display == "aleph":
+                    model_display = "Aleph Video"
+                elif model_display == "glow":
+                    model_display = "Kling Glow"
+                logger.info(
+                    f"{model_display} webhook: task {task_id}, status {status}, "
+                    + f"video {video_url[:50] if video_url else None}..., "
+                    + f"fail: {fail_code}/{fail_msg[:50]}..."
+                )
                 if task:
                     telegram_id = await get_telegram_id_by_user_id(task.user_id)
                     if telegram_id:
@@ -382,7 +392,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         try:
                             if status in {"success", "completed"} and video_url:
                                 # Success case
-                                caption = f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} ({task.model or 'Kie.ai'}) готово!</b>\\n\\nID: <code>{task_id}</code>"
+                                model_display = task.model if task.model else "Kie.ai"
+                                if model_display == "aleph":
+                                    model_display = "Aleph Video"
+                                elif model_display == "glow":
+                                    model_display = "Kling Glow"
+                                caption = f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
                                 if task.duration:
                                     caption += f"\\n⏱ <code>{task.duration}с</code>"
                                 if task.aspect_ratio:
@@ -482,9 +497,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 await add_credits(telegram_id, task.cost or 0)
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
-                                    text=f"❌ <b>Генерация не удалась</b>\n\n"
-                                    + f"ID: <code>{task_id}</code>\n\n"
-                                    + f"{error_msg}\n\n"
+                                    text=f"❌ <b>Генерация не удалась</b>"
+                                    + f"ID: <code>{task_id}</code>"
+                                    + f"{error_msg}"
                                     + f"🍌 Кредиты возвращены.",
                                     parse_mode="HTML",
                                 )
@@ -516,9 +531,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         return found
             return None
 
-        webhook_data = data.get("data") if isinstance(data.get("data"), dict) else data
+        webhook_data = data
         task_id = _extract_first(
-            webhook_data, ("task_id", "id", "prediction_id", "predictionId")
+            webhook_data, ("taskId", "task_id", "id", "prediction_id", "predictionId")
         )
         status = _extract_first(
             webhook_data, ("status", "state", "result", "prediction_status")
@@ -687,7 +702,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                         await bot_instance.send_message(
                             chat_id=telegram_id,
-                            text=f"🎬 Ваше видео готово!\n\n{video_url}",
+                            text=f"🎬 Ваше видео готово!{video_url}",
                             reply_markup=get_video_result_keyboard(video_url),
                             parse_mode="HTML",
                         )
@@ -699,6 +714,40 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 await bot_instance.session.close()
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
+
+            from bot.database import (
+                add_credits,
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
+
+            task = await get_task_by_id(task_id)
+            if task and task.cost:
+                telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                if telegram_id:
+                    bot_instance = Bot(token=config.BOT_TOKEN)
+                    try:
+                        fail_msg = data.get(
+                            "msg", str(status) if status else "Unknown error"
+                        )
+                        await add_credits(telegram_id, task.cost)
+                        await bot_instance.send_message(
+                            chat_id=telegram_id,
+                            text=f"❌ <b>Генерация Kling не удалась</b>\\n\\n"
+                            f"ID: <code>{task_id}</code>\\n\\n"
+                            f"<code>{fail_msg}</code>\\n\\n"
+                            f"🍌 Кредиты возвращены.",
+                            parse_mode="HTML",
+                        )
+                        await complete_video_task(task_id, None)
+                        logger.info(f"Kling failure notified to {telegram_id}")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to notify Kling failure to {telegram_id}: {e}"
+                        )
+                    finally:
+                        await bot_instance.session.close()
 
             # Check for sensitive content error
             # webhook_data['error'] or webhook_data['logs'] may be dicts (or other types)
@@ -739,8 +788,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             await bot_instance.send_message(
                                 chat_id=telegram_id,
                                 text=(
-                                    "❌ <b>Ваш промпт был помечен как чувствительный контент</b>\n\n"
-                                    "Пожалуйста, попробуйте другой промпт без чувствительного контента.\n\n"
+                                    "❌ <b>Ваш промпт был помечен как чувствительный контент</b>"
+                                    "Пожалуйста, попробуйте другой промпт без чувствительного контента."
                                     "🍌 Кредиты возвращены на счёт."
                                 ),
                                 parse_mode="HTML",
@@ -896,7 +945,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                 try:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
-                        text=f"🖼️ Ваше изображение готово!\n\n{image_url}",
+                        text=f"🖼️ Ваше изображение готово!{image_url}",
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -1015,9 +1064,9 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
 
             # Determine caption based on preset
             if task.preset_id == "no_preset" and task.prompt:
-                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
             else:
-                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Пресет: {task.preset_id}"
 
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
@@ -1040,7 +1089,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                 try:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
-                        text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!\n\n{image_url}",
+                        text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!{image_url}",
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -1128,9 +1177,9 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 return web.Response(status=200)
 
             caption = (
-                f"✅ <b>Ваше видео WanX готово!</b>\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
+                f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
                 if task.preset_id == "no_preset" and task.prompt
-                else f"✅ <b>Ваше видео WanX готово!</b>\n\n🎯 Пресет: {task.preset_id}"
+                else f"✅ <b>Ваше видео WanX готово!</b>🎯 Пресет: {task.preset_id}"
             )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
@@ -1154,7 +1203,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
 
                     await bot_instance.send_message(
                         chat_id=telegram_id,
-                        text=f"🎬 Ваше видео WanX готово!\n\n{video_url}",
+                        text=f"🎬 Ваше видео WanX готово!{video_url}",
                         reply_markup=get_video_result_keyboard(video_url),
                         parse_mode="HTML",
                     )
@@ -1282,7 +1331,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     try:
                         await bot_instance.send_message(
                             chat_id=telegram_id,
-                            text=f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nНет результата от API.",
+                            text=f"❌ <b>Ошибка генерации ({service_name})</b>ID: <code>{task_id}</code>Нет результата от API.",
                             parse_mode="HTML",
                         )
                     finally:
@@ -1527,7 +1576,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)
                 try:
-                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nКод: <code>{fail_code}</code>\nСообщение: {fail_msg}\n\n{'🍌 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
+                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>ID: <code>{task_id}</code>Код: <code>{fail_code}</code>\nСообщение: {fail_msg}{'🍌 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=error_msg,

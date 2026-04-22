@@ -91,7 +91,7 @@ async def cmd_start(message: types.Message):
             if transaction.status == "completed":
                 # Кредиты уже были начислены
                 await message.answer(
-                    f"✅ <b>Оплата уже обработана!</b>\n\n"
+                    f"✅ <b>Оплата уже обработана!</b>"
                     f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
                     reply_markup=get_main_menu_keyboard(user.credits),
                     parse_mode="HTML",
@@ -135,9 +135,9 @@ async def cmd_start(message: types.Message):
                     user = await get_or_create_user(message.from_user.id)
 
                     await message.answer(
-                        f"🎉 <b>Оплата успешно обработана!</b>\n\n"
+                        f"🎉 <b>Оплата успешно обработана!</b>"
                         f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
-                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽"
                         f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
@@ -146,7 +146,7 @@ async def cmd_start(message: types.Message):
                 else:
                     # Ожидаем подтверждения от банка/провайдера
                     await message.answer(
-                        "⏳ <b>Оплата в обработке...</b>\n\n"
+                        "⏳ <b>Оплата в обработке...</b>"
                         "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
@@ -154,8 +154,7 @@ async def cmd_start(message: types.Message):
                     return
         else:
             await message.answer(
-                "❌ <b>Транзакция не найдена</b>\n\n"
-                "Пожалуйста, свяжитесь с поддержкой.",
+                "❌ <b>Транзакция не найдена</b>" "Пожалуйста, свяжитесь с поддержкой.",
                 reply_markup=get_main_menu_keyboard(user.credits),
                 parse_mode="HTML",
             )
@@ -163,7 +162,7 @@ async def cmd_start(message: types.Message):
 
     elif args and args[0].startswith("fail_"):
         await message.answer(
-            "❌ <b>Оплата не была завершена</b>\n\n"
+            "❌ <b>Оплата не была завершена</b>"
             "Вы можете попробовать снова в любое время.",
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
@@ -328,14 +327,14 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
     # Полный текст главного меню как в cmd_start
     welcome_text = (
-        f"🏠 <b>Главное меню</b>\n\n"
-        f"Хватит просто смотреть — создавай с AI! 🔥\n\n"
+        f"🏠 <b>Главное меню</b>"
+        f"Хватит просто смотреть — создавай с AI! 🔥"
         f"✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.\n"
         f"✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.\n"
         f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
-        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.\n\n"
-        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов\n\n"
-        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>\n\n'
+        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион."
+        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов"
+        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>'
         f"<i>Попробуй прямо сейчас! 👇</i>"
     )
 
@@ -496,19 +495,19 @@ async def render_partner_program(target, user_id: int):
         offer_url = bot.offer_url
 
     text = (
-        "💼 <b>Партнёрам</b>\n\n"
+        "💼 <b>Партнёрам</b>"
         "Это практическое руководство по участию в партнёрской программе.\n"
-        "Юридически значимые условия содержатся в Публичной оферте.\n\n"
+        "Юридически значимые условия содержатся в Публичной оферте."
         f"🔗 Ваша личная ссылка: <code>{referral_link or 'Ссылка появится после активации'} </code>\n"
         f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
         f"💰 Заработано: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
         f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
         f"🧮 Текущий баланс: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>\n\n"
+        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>"
         "<b>Уровни вознаграждения:</b>\n"
         "• 30% — базовый уровень\n"
         "• 35% — от 100 000 ₽ оборота рефералов\n"
-        "• 50% — от 1 000 000 ₽ оборота рефералов\n\n"
+        "• 50% — от 1 000 000 ₽ оборота рефералов"
         "<b>Как это работает:</b>\n"
         "• Пользователь переходит по вашей ссылке\n"
         "• Регистрируется и закрепляется за вами навсегда\n"
@@ -556,7 +555,7 @@ async def accept_partner(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "✅ <b>Партнёрский статус активирован</b>\n\n"
+        "✅ <b>Партнёрский статус активирован</b>"
         "Теперь вы получаете денежное вознаграждение за оплату рефералов.\n"
         "Ваш процент зависит от оборота рефералов и обновляется автоматически.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
@@ -570,7 +569,7 @@ async def partner_stats(callback: types.CallbackQuery):
     """Показывает детальную статистику партнёра."""
     stats = await get_partner_overview(callback.from_user.id)
     text = (
-        "📈 <b>Детальная статистика</b>\n\n"
+        "📈 <b>Детальная статистика</b>"
         f"• Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
         f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
         f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
@@ -610,9 +609,9 @@ async def partner_withdraw(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "🎟️ <b>Вывод заработка</b>\n\n"
+        "🎟️ <b>Вывод заработка</b>"
         f"Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽\n\n"
+        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽"
         "Для оформления вывода напишите реквизиты и сумму в поддержку или добавим форму следующим шагом.",
         reply_markup=get_partner_program_keyboard(
             referral_link, is_partner=stats.get("is_partner", False)
@@ -790,10 +789,10 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
     )
 
     await callback.message.edit_text(
-        f"🎬 <b>Motion Control Standard</b>\n\n"
-        f"Стоимость: {cost}🍌\n\n"
+        f"🎬 <b>Motion Control Standard</b>"
+        f"Стоимость: {cost}🍌"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать\n\n"
+        f"которое нужно анимировать"
         f"Это может быть:\n"
         f"• Фото человека\n"
         f"• Фото персонажа\n"
@@ -829,10 +828,10 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
     )
 
     await callback.message.edit_text(
-        f"💎 <b>Motion Control Pro</b>\n\n"
-        f"Стоимость: {cost}🍌\n\n"
+        f"💎 <b>Motion Control Pro</b>"
+        f"Стоимость: {cost}🍌"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать\n\n"
+        f"которое нужно анимировать"
         f"Это может быть:\n"
         f"• Фото человека\n"
         f"• Фото персонажа\n"
@@ -1041,8 +1040,8 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"📂 <b>{categories[category]['name']}</b>\n"
-        f"📝 {categories[category].get('description', '')}\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"📝 {categories[category].get('description', '')}"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
         f"Выберите пресет:",
         reply_markup=get_category_keyboard(category, presets, user_credits),
         parse_mode="HTML",
@@ -1097,7 +1096,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         if response:
             # Отправляем ответ пользователю с клавиатурой ИИ
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                f"🍌 <b>Banana Boom AI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1252,7 +1251,7 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
 
     await state.update_data(v_image_url=v_image_url)
     await message.answer(
-        "✅ <b>Фото персонажа загружено!</b>\n\n"
+        "✅ <b>Фото персонажа загружено!</b>"
         "📹 <b>Шаг 2:</b> Загрузите видео с движением\n"
         "(3-10 секунд, четкое движение)",
         parse_mode="HTML",
@@ -1330,10 +1329,10 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
             )
             await db.commit()
         await message.answer(
-            f"🚀 <b>Motion Control запущен!</b>\n\n"
+            f"🚀 <b>Motion Control запущен!</b>"
             f"💰 <code>{cost}</code>🍌\n"
             f"🤖 <code>{mode.upper()}</code>\n"
-            f"🆔 <code>{api_task_id}</code>\n\n"
+            f"🆔 <code>{api_task_id}</code>"
             f"Ожидайте результат (1-5 мин)...",
             parse_mode="HTML",
         )
@@ -1394,7 +1393,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         if response:
             # Отправляем ответ пользователю
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>\n\n{response}",
+                f"🍌 <b>Banana Boom AI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )

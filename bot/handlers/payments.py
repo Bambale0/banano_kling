@@ -172,9 +172,9 @@ async def initiate_payment(callback: types.CallbackQuery):
             bonus_text = f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> бананов"
 
         await callback.message.edit_text(
-            f"💳 <b>Оплата пакета «{package['name']}»</b>\n\n"
+            f"💳 <b>Оплата пакета «{package['name']}»</b>"
             f"🍌 Бананов: <code>{total_credits}</code>{bonus_text}\n"
-            f"💰 Сумма: <code>{package['price_rub']}</code> ₽\n\n"
+            f"💰 Сумма: <code>{package['price_rub']}</code> ₽"
             f"Нажмите кнопку ниже для перехода к оплате.\n"
             f"После оплаты бананы начислятся автоматически.",
             reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
@@ -187,8 +187,8 @@ async def initiate_payment(callback: types.CallbackQuery):
             else "Нет соединения с банком"
         )
         await callback.message.edit_text(
-            f"❌ <b>Ошибка создания платежа</b>\n\n"
-            f"{error_msg}\n\n"
+            f"❌ <b>Ошибка создания платежа</b>"
+            f"{error_msg}"
             f"Попробуйте позже или обратитесь в поддержку.",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
@@ -218,9 +218,9 @@ async def check_payment_status(callback: types.CallbackQuery):
 
     if transaction.status == "completed":
         await callback.message.edit_text(
-            f"✅ <b>Оплата подтверждена!</b>\n\n"
+            f"✅ <b>Оплата подтверждена!</b>"
             f"🍌 Начислено <code>{transaction.credits}</code> бананов\n"
-            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽"
             f"Теперь вы можете создавать контент!",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
@@ -253,7 +253,7 @@ async def check_payment_status(callback: types.CallbackQuery):
             elif referral_bonus.get("mode") == "banana":
                 bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов\n"
             message_text = (
-                f"✅ <b>Оплата подтверждена!</b>\n\n"
+                f"✅ <b>Оплата подтверждена!</b>"
                 f"🍌 Начислено <code>{transaction.credits}</code> бананов\n"
                 f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
                 f"{bonus_text}\n"
@@ -271,7 +271,7 @@ async def check_payment_status(callback: types.CallbackQuery):
             )
     else:
         await callback.message.edit_text(
-            "❌ Платёж не был завершён.\n\n" "Попробуйте снова.",
+            "❌ Платёж не был завершён." "Попробуйте снова.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
@@ -281,7 +281,7 @@ async def check_payment_status(callback: types.CallbackQuery):
 async def cancel_payment(callback: types.CallbackQuery):
     """Отмена платежа"""
     await callback.message.edit_text(
-        "❌ <b>Платёж отменён</b>\n\n" "Вы можете попробовать снова в любое время.",
+        "❌ <b>Платёж отменён</b>" "Вы можете попробовать снова в любое время.",
         reply_markup=get_main_menu_keyboard(),
         parse_mode="HTML",
     )
@@ -341,7 +341,7 @@ async def handle_tbank_webhook(request):
                         await _notify_user(
                             request.app["bot"],
                             telegram_id,
-                            f"🎉 <b>Оплата успешна!</b>\n\n"
+                            f"🎉 <b>Оплата успешна!</b>"
                             f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
                             f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
                             f"{bonus_text}\n"
@@ -469,7 +469,7 @@ async def handle_yookassa_webhook(request):
                 await _notify_user(
                     request.app["bot"],
                     user.telegram_id,
-                    f"🎉 <b>Оплата успешна!</b>\n\n"
+                    f"🎉 <b>Оплата успешна!</b>"
                     f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
                     f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
                     f"{bonus_text}\n"

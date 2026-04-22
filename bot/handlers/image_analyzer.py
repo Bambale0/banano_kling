@@ -23,13 +23,13 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
 
     try:
         await callback.message.edit_text(
-            f"📸 <b>Анализ фото → Промпт</b>\n\n"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌\n\n"
+            f"📸 <b>Анализ фото → Промпт</b>"
+            f"🍌 Баланс: <code>{user.credits}</code>🍌"
             f"Отправьте фото для анализа.\n"
             f"🤖 ИИ создаст точный промпт для повторения:\n"
             f"• Лица и люди\n"
             f"• Позы и одежда\n"
-            f"• Освещение и фон\n\n"
+            f"• Освещение и фон"
             f"<i>Это бесплатно!</i>",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
@@ -37,13 +37,13 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.warning(f"Cannot edit message in photo_to_prompt_handler: {e}")
         await callback.message.answer(
-            f"📸 <b>Анализ фото → Промпт</b>\n\n"
-            f"🍌 Баланс: <code>{user.credits}</code>🍌\n\n"
+            f"📸 <b>Анализ фото → Промпт</b>"
+            f"🍌 Баланс: <code>{user.credits}</code>🍌"
             f"Отправьте фото для анализа.\n"
             f"🤖 ИИ создаст точный промпт для повторения:\n"
             f"• Лица и люди\n"
             f"• Позы и одежда\n"
-            f"• Освещение и фон\n\n"
+            f"• Освещение и фон"
             f"<i>Это бесплатно!</i>",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
@@ -67,7 +67,7 @@ async def analyze_photo(message: Message, state: FSMContext):
         user = await get_or_create_user(message.from_user.id)
 
         short_caption = (
-            f"✅ <b>Готовый промпт!</b>\n\n🍌 Баланс: <code>{user.credits}</code>🍌"
+            f"✅ <b>Готовый промпт!</b>🍌 Баланс: <code>{user.credits}</code>🍌"
         )
         await message.answer_photo(
             photo=photo.file_id,
@@ -78,10 +78,10 @@ async def analyze_photo(message: Message, state: FSMContext):
 
         max_len = 3800
         if len(prompt) > max_len:
-            prompt = prompt[:max_len] + "\n\n... (промпт укорочен для Telegram лимита)"
+            prompt = prompt[:max_len] + "... (промпт укорочен для Telegram лимита)"
 
         await message.answer(
-            f"📋 <code>{prompt}</code>\n\n<i>Скопируйте промпт и используйте в 'Создать фото'!</i>",
+            f"📋 <code>{prompt}</code><i>Скопируйте промпт и используйте в 'Создать фото'!</i>",
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )

@@ -107,13 +107,13 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
 
     # Показываем экран загрузки референсов (ШАГ 1)
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
-        f"<b>Шаг 1: Загрузка референсов (опционально)</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
+        f"<b>Шаг 1: Загрузка референсов (опционально)</b>"
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
-        f"• Персонажей (до 14 фото)\n\n"
+        f"• Персонажей (до 14 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны"
     )
@@ -146,13 +146,13 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
 
     # Показываем экран загрузки референсов (ШАГ 1)
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
-        f"<b>Шаг 1: Загрузка референсов (опционально)</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
+        f"<b>Шаг 1: Загрузка референсов (опционально)</b>"
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
-        f"• Персонажей (до 14 фото)\n\n"
+        f"• Персонажей (до 14 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны"
     )
@@ -190,11 +190,11 @@ async def start_motion_control(callback: types.CallbackQuery, state: FSMContext)
     )
 
     text = (
-        f"🎯 <b>Kling 2.6 Motion Control</b>\n\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        f"<b>Шаг 1: Reference Image</b>\n\n"
+        f"🎯 <b>Kling 2.6 Motion Control</b>"
+        f"🍌 Баланс: <code>{user_credits}</code>"
+        f"<b>Шаг 1: Reference Image</b>"
         f"Загрузите четкое фото субъекта:\n"
-        f"• Голова, плечи, торс (JPEG/PNG, макс 10MB)\n\n"
+        f"• Голова, плечи, торс (JPEG/PNG, макс 10MB)"
         f"<i>Фото станет персонажем с движением из видео</i>"
     )
 
@@ -223,9 +223,9 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
     current_ratio = "1:1"
 
     await callback.message.edit_text(
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"✨ Модель: <code>{current_service}</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
         f"Введите промпт для генерации:",
         reply_markup=get_create_image_keyboard(
             current_service, current_ratio, num_refs=0
@@ -246,7 +246,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
 
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
-        f"📎 <b>Загрузка референсов</b>\n\n"
+        f"📎 <b>Загрузка референсов</b>"
         f"Загрузите изображения для референса (до 14 штук)\n"
         f"После загрузки нажмите 'Продолжить' или 'Пропустить'",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
@@ -322,7 +322,7 @@ async def _show_video_creation_screen(
     )
 
     text = (
-        f"🎬 <b>Создание видео</b>\n\n"
+        f"🎬 <b>Создание видео</b>"
         f"{ref_text}"
         f"⚙️ <b>Текущие настройки:</b>\n"
         f"   📝 Тип: <code>{type_text}</code>\n"
@@ -331,7 +331,7 @@ async def _show_video_creation_screen(
         f"   📐 Формат: <code>{current_ratio}</code>\n"
         f"{media_status}"
         f"{prompt_text}\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите видео, которое хотите создать:\n"
         f"• Что происходит в сцене\n"
         f"• Движение камеры\n"
@@ -340,9 +340,11 @@ async def _show_video_creation_screen(
 
     # Напоминание о загрузке медиа
     if current_v_type == "imgtxt" and not v_image_url:
-        text += f"\n\n<i>📷 Загрузите фото, которое станет первым кадром видео</i>"
+        text += f"<i>📷 Загрузите фото, которое станет первым кадром видео</i>"
     elif current_v_type == "video" and not v_reference_videos:
-        text += f"\n\n<i>📹 Загрузите референсные видео (до 5, 3-10 сек) для стиля/движения</i>"
+        text += (
+            f"<i>📹 Загрузите референсные видео (до 5, 3-10 сек) для стиля/движения</i>"
+        )
 
     # Используем edit для callback, send для message
     try:
@@ -394,9 +396,9 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
         current_ratio = data.get("img_ratio", "1:1")
 
         await callback.message.edit_text(
-            f"🖼 <b>Создание фото</b>\n\n"
+            f"🖼 <b>Создание фото</b>"
             f"✨ Модель: <code>{current_service}</code>\n"
-            f"📐 Формат: <code>{current_ratio}</code>\n\n"
+            f"📐 Формат: <code>{current_ratio}</code>"
             f"Введите промпт для генерации:",
             reply_markup=get_create_image_keyboard(
                 current_service, current_ratio, num_refs=0
@@ -428,17 +430,15 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
 
         # Сразу показываем экран выбора модели и формата (без экрана подтверждения референсов)
         ref_text = (
-            f"📎 Референсов: <code>{len(current_refs)}</code>\n\n"
-            if current_refs
-            else ""
+            f"📎 Референсов: <code>{len(current_refs)}</code>" if current_refs else ""
         )
 
         await callback.message.edit_text(
-            f"🖼 <b>Создание фото</b>\n\n"
+            f"🖼 <b>Создание фото</b>"
             f"{ref_text}"
             f"✨ Модель: <code>{current_service}</code>\n"
-            f"📐 Формат: <code>{current_ratio}</code>\n\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"📐 Формат: <code>{current_ratio}</code>"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите что хотите создать:",
             reply_markup=get_create_image_keyboard(
                 current_service, current_ratio, num_refs=len(current_refs)
@@ -463,8 +463,8 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
     preset_id = "new" if generation_type != "video" else "video_new"
 
     await callback.message.edit_text(
-        f"📎 <b>Перезагрузка референсов</b>\n\n"
-        f"Загружено: <code>0/14</code>\n\n"
+        f"📎 <b>Перезагрузка референсов</b>"
+        f"Загружено: <code>0/14</code>"
         f"Отправьте новые фотографии для загрузки референсов:",
         reply_markup=get_reference_images_upload_keyboard(0, 14, preset_id),
         parse_mode="HTML",
@@ -486,14 +486,14 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
         return
 
     # Сразу показываем экран выбора модели и формата (пропускаем экран подтверждения референсов)
-    ref_text = f"📎 Референсов: <code>{len(current_refs)}</code>\n\n"
+    ref_text = f"📎 Референсов: <code>{len(current_refs)}</code>"
 
     await callback.message.edit_text(
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>{current_service}</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:",
         reply_markup=get_create_image_keyboard(current_service, current_ratio),
         parse_mode="HTML",
@@ -542,16 +542,16 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
         image_status = "\n✅ <b>Изображение загружено!</b>\n"
 
     text = (
-        f"🎬 <b>Создание видео</b>\n\n"
+        f"🎬 <b>Создание видео</b>"
         f"⚙️ <b>Текущие настройки:</b>\n"
         f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
         f"   🤖 Модель: <code>{current_model}</code>\n"
         f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
         f"   📐 Формат: <code>{current_ratio}</code>\n"
         f"{image_status}\n"
-        f"<b>📷 Загрузите стартовое изображение</b>\n\n"
+        f"<b>📷 Загрузите стартовое изображение</b>"
         f"Отправьте фото, которое станет первым кадром видео.\n"
-        f"После загрузки введите промпт для генерации.\n\n"
+        f"После загрузки введите промпт для генерации."
         f"<i>Пример: птица летит в небе, волны накатывают на берег</i>"
     )
 
@@ -580,13 +580,13 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(v_type="video")
 
     text = (
-        f"🎬 <b>Видео + Текст → Видео</b>\n\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        f"<b>Шаг 1: Загрузка референсов видео (опционально, до 5 шт)</b>\n\n"
+        f"🎬 <b>Видео + Текст → Видео</b>"
+        f"🍌 Баланс: <code>{user_credits}</code>"
+        f"<b>Шаг 1: Загрузка референсов видео (опционально, до 5 шт)</b>"
         f"Загрузите короткие видео (3-10 сек) для:\n"
         f"• Стиля движения\n"
         f"• Камеры\n"
-        f"• Атмосферы\n\n"
+        f"• Атмосферы"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить"
     )
@@ -694,10 +694,10 @@ async def _apply_video_model_selection(
 
     if model.startswith("wanx"):
         await callback.message.edit_text(
-            "🎬 <b>WanX LoRA</b>\n\n"
+            "🎬 <b>WanX LoRA</b>"
             "Выберите формат и длительность для генерации:\n"
             "• 📐 Доступные aspect ratio\n"
-            "• ⏱ Доступное время\n\n"
+            "• ⏱ Доступное время"
             "После выбора параметров введите промпт.",
             reply_markup=get_create_video_keyboard(
                 current_v_type=current_v_type,
@@ -976,7 +976,7 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -984,11 +984,11 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(img_service="flux_pro")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>flux_pro</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1012,7 +1012,7 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -1020,11 +1020,11 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(img_service="nanobanana")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>nanobanana</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1048,7 +1048,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -1056,11 +1056,11 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(img_service="banana_pro")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>banana_pro</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1084,7 +1084,7 @@ async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -1092,11 +1092,11 @@ async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(img_service="seedream")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>seedream</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1120,7 +1120,7 @@ async def handle_model_seedream_45(callback: types.CallbackQuery, state: FSMCont
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -1128,11 +1128,11 @@ async def handle_model_seedream_45(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(img_service="seedream_45")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>seedream_45</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1158,7 +1158,7 @@ async def handle_model_z_image_turbo_lora(
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
     ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
+        f"📎 Референсов: <code>{len(reference_images)}</code>"
         if reference_images
         else ""
     )
@@ -1166,11 +1166,11 @@ async def handle_model_z_image_turbo_lora(
     await state.update_data(img_service="z_image_turbo_lora")
 
     text = (
-        f"🖼 <b>Создание фото</b>\n\n"
+        f"🖼 <b>Создание фото</b>"
         f"{ref_text}"
         f"✨ Модель: <code>z_image_turbo_lora</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
+        f"📐 Формат: <code>{current_ratio}</code>"
+        f"<b>Введите промпт для генерации:</b>"
         f"Опишите что хотите создать:"
     )
 
@@ -1476,14 +1476,14 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
 
     # Шаг 1: Загрузка референсов
     await callback.message.edit_text(
-        f"🖼 <b>Генерация фото</b>\n\n"
+        f"🖼 <b>Генерация фото</b>"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)\n\n"
-        f"<b>Шаг 1: Референсы (опционально)</b>\n\n"
+        f"🤖 Модель: {model_name} ({model_cost}🍌)"
+        f"<b>Шаг 1: Референсы (опционально)</b>"
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
-        f"• Персонажей (до 4 фото)\n\n"
+        f"• Персонажей (до 4 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "generate_image"),
@@ -1511,13 +1511,13 @@ async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
     edit_cost = preset_manager.get_generation_cost("gemini-3-pro-image-preview")
 
     await callback.message.edit_text(
-        f"✏️ <b>Редактирование фото</b>\n\n"
+        f"✏️ <b>Редактирование фото</b>"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: 💎 Banano Pro ({edit_cost}🍌, 4K, сохранение лиц)\n\n"
+        f"🤖 Модель: 💎 Banano Pro ({edit_cost}🍌, 4K, сохранение лиц)"
         f"<b>Как редактировать:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>4 фото лица</b> для сохранения (опционально)\n"
-        f"3. Опишите что изменить\n\n"
+        f"3. Опишите что изменить"
         f"<i>💡 Для сохранения лица: загрузите сначала главное фото,\n"
         f"потом фото лица для сохранения, затем введите промпт</i>",
         reply_markup=get_back_keyboard("back_main"),
@@ -1558,17 +1558,17 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
     await state.update_data(video_options=video_options)
 
     await callback.message.edit_text(
-        f"🎬 <b>Генерация видео</b>\n\n"
+        f"🎬 <b>Генерация видео</b>"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)\n\n"
+        f"🤖 Модель: {model_name} ({model_cost}🍌)"
         f"<b>Опции видео:</b>\n"
         f"   ⏱ Длительность: <code>{video_options.get('duration', 5)} сек</code>\n"
         f"   📐 Формат: <code>{video_options.get('aspect_ratio', '16:9')}</code>\n"
-        f"   🔊 Со звуком: <code>{'Да' if video_options.get('generate_audio') else 'Нет'}</code>\n\n"
+        f"   🔊 Со звуком: <code>{'Да' if video_options.get('generate_audio') else 'Нет'}</code>"
         f"Опишите видео, которое хотите создать:\n"
         f"• Что происходит в сцене\n"
         f"• Движение камеры\n"
-        f"• Стиль и атмосфера\n\n"
+        f"• Стиль и атмосфера"
         f"<i>Чем подробнее описание — тем лучше результат!</i>",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -1610,9 +1610,9 @@ async def handle_video_options_change(callback: types.CallbackQuery, state: FSMC
     prompt_text = user_prompt if user_prompt else "<i>Опишите видео ниже</i>"
 
     await callback.message.edit_text(
-        f"🎬 <b>Настройка видео</b>\n\n"
-        f"Промпт: <code>{prompt_text[:100]}{'...' if len(prompt_text) > 100 else ''}</code>\n\n"
-        f"Выберите параметры и нажмите ▶️ Запустить:\n\n"
+        f"🎬 <b>Настройка видео</b>"
+        f"Промпт: <code>{prompt_text[:100]}{'...' if len(prompt_text) > 100 else ''}</code>"
+        f"Выберите параметры и нажмите ▶️ Запустить:"
         f"<i>⏱ Длительность: {video_options.get('duration', 5)} сек\n"
         f"📐 Формат: {video_options.get('aspect_ratio', '16:9')}\n"
         f"🔊 Звук: {'Да' if video_options.get('generate_audio') else 'Нет'}</i>",
@@ -1658,13 +1658,13 @@ async def start_video_editing(callback: types.CallbackQuery, state: FSMContext):
     from bot.keyboards import get_video_edit_input_type_keyboard
 
     await callback.message.edit_text(
-        f"✂️ <b>Видео-эффекты</b>\n\n"
+        f"✂️ <b>Видео-эффекты</b>"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)\n\n"
+        f"🤖 Модель: {model_name} ({model_cost}🍌)"
         f"<b>Kling 3 Omni</b>\n"
-        f"Выберите, что хотите загрузить:\n\n"
+        f"Выберите, что хотите загрузить:"
         f"🎬 <b>Видео</b> - преобразование видео\n"
-        f"🖼 <b>Фото</b> - создание видео из изображения\n\n"
+        f"🖼 <b>Фото</b> - создание видео из изображения"
         f"<i>Загрузите медиафайл и опишите эффект</i>",
         reply_markup=get_video_edit_input_type_keyboard(),
         parse_mode="HTML",
@@ -1704,13 +1704,13 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
     await state.update_data(video_options=video_options)
 
     await callback.message.edit_text(
-        f"🖼 <b>Фото в видео</b>\n\n"
+        f"🖼 <b>Фото в видео</b>"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)\n\n"
+        f"🤖 Модель: {model_name} ({model_cost}🍌)"
         f"<b>Kling 3 - Image to Video</b>\n"
         f"Загрузите изображение,\n"
         f"которое хотите превратить в видео.\n"
-        f"После загрузки опишите движение.\n\n"
+        f"После загрузки опишите движение."
         f"<i>Например: птица летит в небе, волны накатывают на берег</i>",
         reply_markup=get_back_keyboard("back_main"),
         parse_mode="HTML",
@@ -1740,8 +1740,8 @@ async def handle_video_edit_input_type(
             has_image=False,
         )
         text = (
-            "✂️ <b>Видео-эффекты</b>\n\n"
-            "<b>Режим: Преобразование видео</b>\n\n"
+            "✂️ <b>Видео-эффекты</b>"
+            "<b>Режим: Преобразование видео</b>"
             "Загрузите видео (3-10 секунд), которое хотите преобразить.\n"
             "После загрузки опишите желаем эффект."
         )
@@ -1754,8 +1754,8 @@ async def handle_video_edit_input_type(
             has_image=False,
         )
         text = (
-            "✂️ <b>Видео-эффекты</b>\n\n"
-            "<b>Режим: Создание видео из фото</b>\n\n"
+            "✂️ <b>Видео-эффекты</b>"
+            "<b>Режим: Создание видео из фото</b>"
             "Загрузите изображение, которое хотите превратить в видео.\n"
             "После загрузки опишите движение и эффект."
         )
@@ -1782,12 +1782,12 @@ async def handle_video_edit_change_type(
     user_credits = await get_user_credits(callback.from_user.id)
 
     await callback.message.edit_text(
-        f"✂️ <b>Видео-эффекты</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"✂️ <b>Видео-эффекты</b>"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
         f"<b>Kling 3 Omni</b>\n"
-        f"Выберите, что хотите загрузить:\n\n"
+        f"Выберите, что хотите загрузить:"
         f"🎬 <b>Видео</b> - преобразование видео\n"
-        f"🖼 <b>Фото</b> - создание видео из изображения\n\n"
+        f"🖼 <b>Фото</b> - создание видео из изображения"
         f"<i>Загрузите медиафайл и опишите эффект</i>",
         reply_markup=get_video_edit_input_type_keyboard(),
         parse_mode="HTML",
@@ -1865,11 +1865,11 @@ async def show_video_edit_options(
         media_status = "✅ Загружено" if has_image else "⏳ Ожидание загрузки"
         media_text = "🖼 Изображение"
 
-    text = f"✂️ <b>Видео-эффекты</b>\n\n"
+    text = f"✂️ <b>Видео-эффекты</b>"
     text += f"<b>Опции:</b>\n"
     text += f"   {quality_emoji} Качество: <code>{quality.upper()}</code>\n"
     text += f"   ⏱ Длительность: <code>{options.get('duration', 5)} сек</code>\n"
-    text += f"   📐 Формат: <code>{options.get('aspect_ratio', '16:9')}</code>\n\n"
+    text += f"   📐 Формат: <code>{options.get('aspect_ratio', '16:9')}</code>"
     text += f"{media_text}: {media_status}\n"
     if user_prompt:
         text += f"📝 Промпт: <code>{user_prompt[:50]}...</code>\n"
@@ -1921,8 +1921,8 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
+            text = f"✅ <b>Модель изменена</b>"
+            text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
                 text += "<i>Быстрая генерация, до 1024px</i>\n"
@@ -1959,8 +1959,8 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
+            text = f"✅ <b>Разрешение изменено</b>"
+            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
                 "1K": "Стандартное качество, 1024px",
@@ -2002,8 +2002,8 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
+            text = f"✅ <b>Формат изменён</b>"
+            text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {
                 "1:1": "Квадрат (Instagram, Facebook)",
@@ -2046,7 +2046,7 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
         if preset:
             enabled = generation_options["enable_search"]
             status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
+            text = f"✅ <b>Поиск в интернете: {status}</b>"
 
             if enabled:
                 text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
@@ -2089,12 +2089,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"📎 <b>Загрузка референсных изображений</b>"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
             f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
             f"• До 10 объектов с высокой точностью\n"
             f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
+            f"• До 14 изображений суммарно"
             f"После загрузки нажмите ▶️ Продолжить",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -2106,8 +2106,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Референсы очищены</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -2126,10 +2126,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(
                     current_service, current_ratio, num_refs=len(current_refs)
@@ -2151,10 +2151,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 current_service = data.get("img_service", "flux_pro")
                 current_ratio = data.get("img_ratio", "1:1")
                 await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                    f"✨ <b>Создание фото</b>"
+                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                     f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                    f"📐 Формат: <code>{current_ratio}</code>"
                     f"Введите промпт для генерации:",
                     reply_markup=get_create_image_keyboard(
                         current_service, current_ratio
@@ -2169,8 +2169,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Перезагрузка референсов</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте новые фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -2188,10 +2188,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(current_service, current_ratio),
                 parse_mode="HTML",
@@ -2251,9 +2251,9 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
+            f"📎 <b>Загрузите изображение</b>"
+            f"Для пресета: {preset.name}"
+            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -2263,12 +2263,12 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
+            f"✏️ <b>Введите ваш вариант</b>"
+            f"{preset.input_prompt or 'Опишите, что хотите создать'}"
             f"Примеры для вдохновения:\n"
             f"• Стиль: минимализм, винтаж, футуризм\n"
             f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
+            f"• Эмоция: радостное, удивлённое, задумчивое"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -2315,11 +2315,11 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     generation_options = data.get("generation_options", {})
 
     await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
+        f"▶️ <b>Подтвердите генерацию</b>"
         f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+        f"Стоимость: <code>{preset.cost}</code>🍌"
         f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
         f"{format_generation_options(generation_options)}",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -2418,9 +2418,9 @@ async def process_photo_for_video_prompt_state(
     total_photos = start_count + ref_count
 
     text = (
-        f"🎬 <b>Фото + Текст → Видео</b>\n\n"
-        f"📎 Фото: <code>{total_photos}/9</code> (старт + рефы)\n\n"
-        f"{status}\n\n"
+        f"🎬 <b>Фото + Текст → Видео</b>"
+        f"📎 Фото: <code>{total_photos}/9</code> (старт + рефы)"
+        f"{status}"
         f"⚙️ Модель: <code>{current_model}</code> | {current_duration}с | {current_ratio}\n"
         f"<b>Отправьте ещё фото или промпт:</b>"
     )
@@ -2487,9 +2487,9 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             current_count = len(v_reference_videos)
             max_refs = 5
             text = (
-                f"📹 <b>Загрузка видео референсов</b>\n\n"
-                f"Загружено: <code>{current_count}/{max_refs}</code>\n\n"
-                f"✅ Видео добавлено!\n\n"
+                f"📹 <b>Загрузка видео референсов</b>"
+                f"Загружено: <code>{current_count}/{max_refs}</code>"
+                f"✅ Видео добавлено!"
                 f"Отправьте следующее или нажмите кнопку ниже:"
             )
             await message.reply(
@@ -2580,9 +2580,9 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         current_count = len(reference_images)
 
         text = (
-            f"📎 <b>Загрузка референсов</b>\n\n"
-            f"Загружено: <code>{current_count}/{max_refs}</code>\n\n"
-            f"✅ Фото добавлено!\n\n"
+            f"📎 <b>Загрузка референсов</b>"
+            f"Загружено: <code>{current_count}/{max_refs}</code>"
+            f"✅ Фото добавлено!"
             f"Отправьте следующее или нажмите кнопку ниже:"
         )
 
@@ -2717,7 +2717,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 )
                 await db.commit()
             await message.answer(
-                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>🍌 списано\n\nОжидайте результат (1-3 мин).",
+                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>🍌 списаноОжидайте результат (1-3 мин).",
                 parse_mode="HTML",
             )
         elif result:  # bytes
@@ -2750,7 +2750,7 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
     Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
     """
     await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
+        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB)."
         "Это видео будет использовано как референс для стиля/движения."
     )
 
@@ -2849,9 +2849,11 @@ async def run_no_preset_video_from_message(
     data = await state.get_data()
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
+    video_urls = data.get("v_reference_videos", [])
+    if video_urls:
+        v_model = "aleph"
     if v_type == "video":
         v_model = "aleph"
-    v_model = data.get("v_model", "v3_std")
     v_duration = int(data.get("v_duration", 5))
     # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
     if v_type == "imgtxt" and v_model != "grok_imagine":
@@ -2899,11 +2901,11 @@ async def run_no_preset_video_from_message(
         await deduct_credits(message.from_user.id, cost)
 
     processing_msg = await message.answer(
-        f"🎬 <b>Видео генерируется...</b>\n\n"
+        f"🎬 <b>Видео генерируется...</b>"
         f"🤖 Модель: <code>{v_model}</code>\n"
         f"⏱ Длительность: <code>{v_duration}s</code>\n"
         f"📐 Формат: <code>{v_ratio}</code>\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌"
         f"<i>Ожидайте 1-5 минут</i>",
         parse_mode="HTML",
     )
@@ -3010,10 +3012,10 @@ async def run_no_preset_video_from_message(
                 cost=cost,
             )
             await message.answer(
-                f"✅ <b>Видео задача запущена!</b>\n\n"
+                f"✅ <b>Видео задача запущена!</b>"
                 f"🆔 <code>{result['task_id']}</code>\n"
                 f"🎯 <code>{v_model}</code> | {v_duration}s | {v_ratio}\n"
-                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}\n\n"
+                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}"
                 f"⏳ Результат через 1-5 мин в этом чате.",
                 parse_mode="HTML",
             )
@@ -3059,8 +3061,8 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
+            text = f"✅ <b>Модель изменена</b>"
+            text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
                 text += "<i>Быстрая генерация, до 1024px</i>\n"
@@ -3097,8 +3099,8 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
+            text = f"✅ <b>Разрешение изменено</b>"
+            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
                 "1K": "Стандартное качество, 1024px",
@@ -3140,8 +3142,8 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
+            text = f"✅ <b>Формат изменён</b>"
+            text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {
                 "1:1": "Квадрат (Instagram, Facebook)",
@@ -3184,7 +3186,7 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
         if preset:
             enabled = generation_options["enable_search"]
             status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
+            text = f"✅ <b>Поиск в интернете: {status}</b>"
 
             if enabled:
                 text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
@@ -3227,12 +3229,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"📎 <b>Загрузка референсных изображений</b>"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
             f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
             f"• До 10 объектов с высокой точностью\n"
             f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
+            f"• До 14 изображений суммарно"
             f"После загрузки нажмите ▶️ Продолжить",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -3244,8 +3246,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Референсы очищены</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -3264,10 +3266,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(
                     current_service, current_ratio, num_refs=len(current_refs)
@@ -3289,10 +3291,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 current_service = data.get("img_service", "flux_pro")
                 current_ratio = data.get("img_ratio", "1:1")
                 await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                    f"✨ <b>Создание фото</b>"
+                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                     f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                    f"📐 Формат: <code>{current_ratio}</code>"
                     f"Введите промпт для генерации:",
                     reply_markup=get_create_image_keyboard(
                         current_service, current_ratio
@@ -3307,8 +3309,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Перезагрузка референсов</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте новые фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -3326,10 +3328,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(current_service, current_ratio),
                 parse_mode="HTML",
@@ -3389,9 +3391,9 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
+            f"📎 <b>Загрузите изображение</b>"
+            f"Для пресета: {preset.name}"
+            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -3401,12 +3403,12 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
+            f"✏️ <b>Введите ваш вариант</b>"
+            f"{preset.input_prompt or 'Опишите, что хотите создать'}"
             f"Примеры для вдохновения:\n"
             f"• Стиль: минимализм, винтаж, футуризм\n"
             f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
+            f"• Эмоция: радостное, удивлённое, задумчивое"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -3453,11 +3455,11 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     generation_options = data.get("generation_options", {})
 
     await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
+        f"▶️ <b>Подтвердите генерацию</b>"
         f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+        f"Стоимость: <code>{preset.cost}</code>🍌"
         f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
         f"{format_generation_options(generation_options)}",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -3555,7 +3557,7 @@ async def process_photo_for_video_prompt_state(
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -3563,7 +3565,7 @@ async def process_photo_for_video_prompt_state(
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -3650,7 +3652,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{video_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
@@ -3658,11 +3660,11 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите желаемый эффект/стиль:\n"
             f"• Стиль видео\n"
             f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
+            f"• Атмосфера"
             f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
         )
 
@@ -3687,7 +3689,7 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
     Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
     """
     await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
+        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB)."
         "Это видео будет использовано как референс для стиля/движения."
     )
 
@@ -3746,8 +3748,8 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
+            text = f"✅ <b>Модель изменена</b>"
+            text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
                 text += "<i>Быстрая генерация, до 1024px</i>\n"
@@ -3784,8 +3786,8 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
+            text = f"✅ <b>Разрешение изменено</b>"
+            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
                 "1K": "Стандартное качество, 1024px",
@@ -3827,8 +3829,8 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
+            text = f"✅ <b>Формат изменён</b>"
+            text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {
                 "1:1": "Квадрат (Instagram, Facebook)",
@@ -3871,7 +3873,7 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
         if preset:
             enabled = generation_options["enable_search"]
             status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
+            text = f"✅ <b>Поиск в интернете: {status}</b>"
 
             if enabled:
                 text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
@@ -3914,12 +3916,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"📎 <b>Загрузка референсных изображений</b>"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
             f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
             f"• До 10 объектов с высокой точностью\n"
             f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
+            f"• До 14 изображений суммарно"
             f"После загрузки нажмите ▶️ Продолжить",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -3931,8 +3933,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Референсы очищены</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -3951,10 +3953,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(
                     current_service, current_ratio, num_refs=len(current_refs)
@@ -3976,10 +3978,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 current_service = data.get("img_service", "flux_pro")
                 current_ratio = data.get("img_ratio", "1:1")
                 await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                    f"✨ <b>Создание фото</b>"
+                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                     f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                    f"📐 Формат: <code>{current_ratio}</code>"
                     f"Введите промпт для генерации:",
                     reply_markup=get_create_image_keyboard(
                         current_service, current_ratio
@@ -3994,8 +3996,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Перезагрузка референсов</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте новые фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -4013,10 +4015,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(current_service, current_ratio),
                 parse_mode="HTML",
@@ -4076,9 +4078,9 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
+            f"📎 <b>Загрузите изображение</b>"
+            f"Для пресета: {preset.name}"
+            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -4088,12 +4090,12 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
+            f"✏️ <b>Введите ваш вариант</b>"
+            f"{preset.input_prompt or 'Опишите, что хотите создать'}"
             f"Примеры для вдохновения:\n"
             f"• Стиль: минимализм, винтаж, футуризм\n"
             f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
+            f"• Эмоция: радостное, удивлённое, задумчивое"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -4140,11 +4142,11 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     generation_options = data.get("generation_options", {})
 
     await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
+        f"▶️ <b>Подтвердите генерацию</b>"
         f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+        f"Стоимость: <code>{preset.cost}</code>🍌"
         f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
         f"{format_generation_options(generation_options)}",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -4234,7 +4236,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -4242,7 +4244,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -4344,7 +4346,7 @@ async def process_photo_for_video_prompt_state(
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -4352,7 +4354,7 @@ async def process_photo_for_video_prompt_state(
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -4439,7 +4441,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{video_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
@@ -4447,11 +4449,11 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите желаемый эффект/стиль:\n"
             f"• Стиль видео\n"
             f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
+            f"• Атмосфера"
             f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
         )
 
@@ -4476,7 +4478,7 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
     Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
     """
     await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
+        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB)."
         "Это видео будет использовано как референс для стиля/движения."
     )
 
@@ -4535,8 +4537,8 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
+            text = f"✅ <b>Модель изменена</b>"
+            text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
                 text += "<i>Быстрая генерация, до 1024px</i>\n"
@@ -4573,8 +4575,8 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
+            text = f"✅ <b>Разрешение изменено</b>"
+            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
                 "1K": "Стандартное качество, 1024px",
@@ -4616,8 +4618,8 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
+            text = f"✅ <b>Формат изменён</b>"
+            text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {
                 "1:1": "Квадрат (Instagram, Facebook)",
@@ -4660,7 +4662,7 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
         if preset:
             enabled = generation_options["enable_search"]
             status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
+            text = f"✅ <b>Поиск в интернете: {status}</b>"
 
             if enabled:
                 text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
@@ -4703,12 +4705,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"📎 <b>Загрузка референсных изображений</b>"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
             f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
             f"• До 10 объектов с высокой точностью\n"
             f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
+            f"• До 14 изображений суммарно"
             f"После загрузки нажмите ▶️ Продолжить",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -4720,8 +4722,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Референсы очищены</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -4740,10 +4742,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(
                     current_service, current_ratio, num_refs=len(current_refs)
@@ -4765,10 +4767,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 current_service = data.get("img_service", "flux_pro")
                 current_ratio = data.get("img_ratio", "1:1")
                 await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                    f"✨ <b>Создание фото</b>"
+                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                     f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                    f"📐 Формат: <code>{current_ratio}</code>"
                     f"Введите промпт для генерации:",
                     reply_markup=get_create_image_keyboard(
                         current_service, current_ratio
@@ -4783,8 +4785,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Перезагрузка референсов</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте новые фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -4802,10 +4804,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(current_service, current_ratio),
                 parse_mode="HTML",
@@ -4865,9 +4867,9 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
+            f"📎 <b>Загрузите изображение</b>"
+            f"Для пресета: {preset.name}"
+            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -4877,12 +4879,12 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
+            f"✏️ <b>Введите ваш вариант</b>"
+            f"{preset.input_prompt or 'Опишите, что хотите создать'}"
             f"Примеры для вдохновения:\n"
             f"• Стиль: минимализм, винтаж, футуризм\n"
             f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
+            f"• Эмоция: радостное, удивлённое, задумчивое"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -4929,11 +4931,11 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     generation_options = data.get("generation_options", {})
 
     await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
+        f"▶️ <b>Подтвердите генерацию</b>"
         f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+        f"Стоимость: <code>{preset.cost}</code>🍌"
         f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
         f"{format_generation_options(generation_options)}",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -5023,7 +5025,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -5031,7 +5033,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -5133,7 +5135,7 @@ async def process_photo_for_video_prompt_state(
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -5141,7 +5143,7 @@ async def process_photo_for_video_prompt_state(
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -5228,7 +5230,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{video_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
@@ -5236,11 +5238,11 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите желаемый эффект/стиль:\n"
             f"• Стиль видео\n"
             f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
+            f"• Атмосфера"
             f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
         )
 
@@ -5265,7 +5267,7 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
     Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
     """
     await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
+        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB)."
         "Это видео будет использовано как референс для стиля/движения."
     )
 
@@ -5324,8 +5326,8 @@ async def handle_model_selection(callback: types.CallbackQuery, state: FSMContex
         preset = preset_manager.get_preset(preset_id)
         if preset:
             model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
+            text = f"✅ <b>Модель изменена</b>"
+            text += f"{model_emoji} Теперь используется: <code>{model}</code>"
 
             if model_type == "flash":
                 text += "<i>Быстрая генерация, до 1024px</i>\n"
@@ -5362,8 +5364,8 @@ async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMC
         preset = preset_manager.get_preset(preset_id)
         if preset:
             res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
+            text = f"✅ <b>Разрешение изменено</b>"
+            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>"
 
             resolutions = {
                 "1K": "Стандартное качество, 1024px",
@@ -5405,8 +5407,8 @@ async def handle_image_ratio_selection(
         # Показываем подтверждение
         preset = preset_manager.get_preset(preset_id)
         if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
+            text = f"✅ <b>Формат изменён</b>"
+            text += f"📐 Теперь используется: <code>{ratio}</code>"
 
             ratios_desc = {
                 "1:1": "Квадрат (Instagram, Facebook)",
@@ -5449,7 +5451,7 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
         if preset:
             enabled = generation_options["enable_search"]
             status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
+            text = f"✅ <b>Поиск в интернете: {status}</b>"
 
             if enabled:
                 text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
@@ -5492,12 +5494,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"📎 <b>Загрузка референсных изображений</b>"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
             f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
             f"• До 10 объектов с высокой точностью\n"
             f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
+            f"• До 14 изображений суммарно"
             f"После загрузки нажмите ▶️ Продолжить",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
@@ -5509,8 +5511,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Референсы очищены</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -5529,10 +5531,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(
                     current_service, current_ratio, num_refs=len(current_refs)
@@ -5554,10 +5556,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 current_service = data.get("img_service", "flux_pro")
                 current_ratio = data.get("img_ratio", "1:1")
                 await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                    f"✨ <b>Создание фото</b>"
+                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                     f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                    f"📐 Формат: <code>{current_ratio}</code>"
                     f"Введите промпт для генерации:",
                     reply_markup=get_create_image_keyboard(
                         current_service, current_ratio
@@ -5572,8 +5574,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
+            f"📎 <b>Перезагрузка референсов</b>"
+            f"Загружено: <code>0/{max_refs}</code>"
             f"Отправьте новые фотографии для загрузки референсов:",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
@@ -5591,10 +5593,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             current_service = data.get("img_service", "flux_pro")
             current_ratio = data.get("img_ratio", "1:1")
             await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
+                f"✨ <b>Создание фото</b>"
+                f"📎 Референсы загружены: <code>{len(current_refs)}</code>"
                 f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
+                f"📐 Формат: <code>{current_ratio}</code>"
                 f"Введите промпт для генерации:",
                 reply_markup=get_create_image_keyboard(current_service, current_ratio),
                 parse_mode="HTML",
@@ -5654,9 +5656,9 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
+            f"📎 <b>Загрузите изображение</b>"
+            f"Для пресета: {preset.name}"
+            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -5666,12 +5668,12 @@ async def request_custom_input(callback: types.CallbackQuery, state: FSMContext)
 
         hint = UserHints.get_hint_for_stage("input")
         await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
+            f"✏️ <b>Введите ваш вариант</b>"
+            f"{preset.input_prompt or 'Опишите, что хотите создать'}"
             f"Примеры для вдохновения:\n"
             f"• Стиль: минимализм, винтаж, футуризм\n"
             f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
+            f"• Эмоция: радостное, удивлённое, задумчивое"
             f"<i>{hint}</i>",
             reply_markup=get_back_keyboard(f"preset_{preset_id}"),
             parse_mode="HTML",
@@ -5718,11 +5720,11 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     generation_options = data.get("generation_options", {})
 
     await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
+        f"▶️ <b>Подтвердите генерацию</b>"
         f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+        f"Стоимость: <code>{preset.cost}</code>🍌"
         f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
+        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
         f"{format_generation_options(generation_options)}",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -5812,7 +5814,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -5820,7 +5822,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -5922,7 +5924,7 @@ async def process_photo_for_video_prompt_state(
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{image_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
@@ -5930,7 +5932,7 @@ async def process_photo_for_video_prompt_state(
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите движение, которое хотите создать:\n"
             f"• Как двигается объект\n"
             f"• Движение камеры\n"
@@ -6017,7 +6019,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
 
         text = (
-            f"🎬 <b>Создание видео</b>\n\n"
+            f"🎬 <b>Создание видео</b>"
             f"{video_status}"
             f"⚙️ <b>Текущие настройки:</b>\n"
             f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
@@ -6025,11 +6027,11 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
             f"   📐 Формат: <code>{current_ratio}</code>\n"
             f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
+            f"<b>Введите промпт для генерации:</b>"
             f"Опишите желаемый эффект/стиль:\n"
             f"• Стиль видео\n"
             f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
+            f"• Атмосфера"
             f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
         )
 

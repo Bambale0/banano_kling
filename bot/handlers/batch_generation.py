@@ -142,23 +142,23 @@ async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext
     )
 
     text = (
-        f"🎨 <b>Редактирование по референсам</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"🎨 <b>Редактирование по референсам</b>"
+        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
         f"<b>Как это работает:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
         f"3. Введите промпт\n"
-        f"4. Получите результат с учётом всех референсов!\n\n"
+        f"4. Получите результат с учётом всех референсов!"
         f"<b>💡 Для сохранения лиц (важно!):</b>\n"
         f"• Первые <b>4 фото</b> — это референсы лиц/персонажей\n"
         f"• Загружайте чёткие фото лица крупным планом\n"
         f"• Остальные фото (5-14) — стиль, объекты, фон\n"
-        f"• В промпте укажите: «Сохрани лицо как на референсе»\n\n"
+        f"• В промпте укажите: «Сохрани лицо как на референсе»"
         f"<b>Возможности:</b>\n"
         f"• До 10 объектов с высокой точностью\n"
         f"• До 4 персонажей для консистентности\n"
-        f"• Перенос стиля, композиции, цветов\n\n"
-        f"💰 Стоимость: <b>4🍌</b> (Pro модель, 4K, сохранение лиц)\n\n"
+        f"• Перенос стиля, композиции, цветов"
+        f"💰 Стоимость: <b>4🍌</b> (Pro модель, 4K, сохранение лиц)"
         f"<i>📸 Отправьте главное фото для редактирования:</i>"
     )
 
@@ -206,10 +206,10 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         await state.update_data(main_image=image_data)
 
         await message.answer(
-            f"✅ <b>Главное фото загружено!</b>\n\n"
+            f"✅ <b>Главное фото загружено!</b>"
             f"Теперь вы можете:\n"
             f"• Добавить до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
-            f"• Или нажать «Готово» чтобы продолжить без референсов\n\n"
+            f"• Или нажать «Готово» чтобы продолжить без референсов"
             f"📎 Референсов добавлено: <code>0/14</code>",
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
@@ -218,7 +218,7 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         # Добавляем как референс
         if len(ref_images) >= 14:
             await message.answer(
-                f"⚠️ <b>Достигнут лимит референсов (14)</b>\n\n"
+                f"⚠️ <b>Достигнут лимит референсов (14)</b>"
                 f"Нажмите «Готово» чтобы продолжить.",
                 reply_markup=get_batch_upload_keyboard(),
                 parse_mode="HTML",
@@ -230,7 +230,7 @@ async def process_batch_image(message: types.Message, state: FSMContext):
 
         await message.answer(
             f"✅ <b>Референс добавлен!</b>\n"
-            f"📎 Референсов: <code>{len(ref_images)}/14</code>\n\n"
+            f"📎 Референсов: <code>{len(ref_images)}/14</code>"
             f"Можете загрузить ещё референсы или нажмите «Готово»",
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
@@ -259,16 +259,16 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     ref_count = len(ref_images)
 
     await callback.message.edit_text(
-        f"✏️ <b>Введите промпт</b>\n\n"
+        f"✏️ <b>Введите промпт</b>"
         f"🎨 <b>Режим:</b> Редактирование по референсам\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 14 референсов)\n\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 14 референсов)"
         f"📸 Главное фото: ✅ Загружено\n"
-        f"📎 Референсов: <code>{ref_count}/14</code>\n\n"
+        f"📎 Референсов: <code>{ref_count}/14</code>"
         f"Опишите, <b>что нужно сделать</b> с главным фото:\n"
         f"• Перенеси стиль с референсов\n"
         f"• Добавь объектов/персонажей из референсов\n"
         f"• Измени фон/композицию\n"
-        f"• Что-то другое\n\n"
+        f"• Что-то другое"
         f"<i>Например: «Примени стиль как на референсах, добавь персонажа»</i>",
         parse_mode="HTML",
     )
@@ -300,8 +300,8 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
     await state.set_state(GenerationStates.waiting_for_batch_aspect_ratio)
 
     await message.answer(
-        f"✏️ <b>Выберите формат изображения</b>\n\n"
-        f"📝 Промпт: <code>{user_prompt[:60]}{'...' if len(user_prompt) > 60 else ''}</code>\n\n"
+        f"✏️ <b>Выберите формат изображения</b>"
+        f"📝 Промпт: <code>{user_prompt[:60]}{'...' if len(user_prompt) > 60 else ''}</code>"
         f"Выберите соотношение сторон:",
         reply_markup=get_batch_aspect_ratio_keyboard(),
         parse_mode="HTML",
@@ -334,9 +334,9 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
 
     if not is_admin and user_credits < cost:
         await callback.message.edit_text(
-            f"❌ <b>Недостаточно бананов!</b>\n\n"
+            f"❌ <b>Недостаточно бананов!</b>"
             f"Требуется: <code>{cost}</code>🍌\n"
-            f"Доступно: <code>{user_credits}</code>🍌\n\n"
+            f"Доступно: <code>{user_credits}</code>🍌"
             f"💳 Пополните баланс.",
             reply_markup=get_main_menu_keyboard(),
         )
@@ -349,14 +349,14 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
     ref_count = len(ref_images)
 
     await callback.message.edit_text(
-        f"✏️ <b>Подтверждение редактирования по референсам</b>\n\n"
-        f"📝 <b>Промпт:</b>\n<code>{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}</code>\n\n"
+        f"✏️ <b>Подтверждение редактирования по референсам</b>"
+        f"📝 <b>Промпт:</b>\n<code>{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}</code>"
         f"🎨 Режим: Редактирование с референсами\n"
         f"📸 Главное фото: ✅\n"
         f"📎 Референсов: <code>{ref_count}/14</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"🤖 Модель: <code>Gemini 3 Pro</code> (4K)\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌"
         f"<i>Нажмите кнопку ниже для запуска:</i>",
         reply_markup=get_batch_confirmation_keyboard("ref_edit", cost),
         parse_mode="HTML",
@@ -389,11 +389,11 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
 
     # Сообщение с прогрессом
     progress_msg = await callback.message.answer(
-        f"⏳ <b>Редактирование с референсами</b>\n\n"
+        f"⏳ <b>Редактирование с референсами</b>"
         f"🤖 Модель: <code>Gemini 3 Pro</code>\n"
         f"📎 Референсов: <code>{len(ref_images)}</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
-        f"⏱ Это займёт 15-30 секунд...\n\n"
+        f"⏱ Это займёт 15-30 секунд..."
         f"<i>Используйте /cancel для отмены</i>",
         parse_mode="HTML",
     )
@@ -425,11 +425,11 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
             await callback.message.answer_photo(
                 photo=types.BufferedInputFile(result, "edited.png"),
                 caption=(
-                    f"✅ <b>Редактирование завершено!</b>\n\n"
+                    f"✅ <b>Редактирование завершено!</b>"
                     f"🎨 Режим: Редактирование с референсами\n"
                     f"📎 Референсов использовано: <code>{len(ref_images)}</code>\n"
                     f"📐 Формат: <code>{aspect_ratio}</code>\n"
-                    f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+                    f"💰 Стоимость: <code>{cost}</code>🍌"
                     f"<i>Сохраните изображение, если нужно</i>"
                 ),
                 reply_markup=get_main_menu_keyboard(await get_user_credits(user_id)),
@@ -484,10 +484,10 @@ async def show_batch_results(
     duration = job.completed_at - job.created_at if job.completed_at else 0
 
     caption = (
-        f"✅ <b>Пакетное редактирование завершено!</b>\n\n"
+        f"✅ <b>Пакетное редактирование завершено!</b>"
         f"📊 Успешно: <code>{len(successful)}/{len(job.items)}</code>\n"
         f"⏱ Время: <code>{duration:.1f}</code> сек\n"
-        f"🍌 Стоимость: <code>{job.total_cost}</code>🍌\n\n"
+        f"🍌 Стоимость: <code>{job.total_cost}</code>🍌"
         f"<i>Нажмите номер для просмотра в полном размере</i>"
     )
 
@@ -533,7 +533,7 @@ async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
 
     # Показываем изображение с информацией
     info_text = (
-        f"🖼 <b>Вариант {item.index + 1}</b>\n\n"
+        f"🖼 <b>Вариант {item.index + 1}</b>"
         f"⏱ Генерация: <code>{item.duration:.1f}</code> сек\n"
         f"📝 Промпт:\n<code>{item.prompt[:100]}...</code>"
     )
@@ -565,8 +565,8 @@ async def show_upscale_options(callback: types.CallbackQuery):
     user_credits = await get_user_credits(callback.from_user.id)
 
     await callback.message.edit_caption(
-        caption=f"🔍 <b>Апскейл варианта {item_index + 1}</b>\n\n"
-        f"🍌 Доступно: <code>{user_credits}</code>🍌\n\n"
+        caption=f"🔍 <b>Апскейл варианта {item_index + 1}</b>"
+        f"🍌 Доступно: <code>{user_credits}</code>🍌"
         f"Выберите качество:",
         reply_markup=get_upscale_options_keyboard(job_id, item_index),
         parse_mode="HTML",
@@ -603,7 +603,7 @@ async def execute_upscale(callback: types.CallbackQuery):
         if result:
             await callback.message.answer_photo(
                 photo=types.BufferedInputFile(result, f"upscaled_{resolution}.png"),
-                caption=f"✅ <b>Апскейл завершён!</b>\n\n"
+                caption=f"✅ <b>Апскейл завершён!</b>"
                 f"🖼 Разрешение: <code>{resolution}</code>\n"
                 f"🍌 Стоимость: <code>{cost}</code>🍌",
                 parse_mode="HTML",
@@ -669,7 +669,7 @@ async def back_to_results(callback: types.CallbackQuery):
     successful = [i for i in job.items if i.result]
 
     await callback.message.edit_text(
-        f"✅ <b>Результаты пакетной генерации</b>\n\n"
+        f"✅ <b>Результаты пакетной генерации</b>"
         f"📊 Вариантов: <code>{len(successful)}</code>\n"
         f"ID: <code>{job.id}</code>",
         reply_markup=get_results_gallery_keyboard(

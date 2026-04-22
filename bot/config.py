@@ -61,6 +61,8 @@ class Config:
     PIAPI_BASE_URL: str = "https://api.piapi.ai"
     NOVITA_BASE_URL: str = "https://api.novita.ai"
 
+    KIE_BASE_URL: str = "https://api.kie.ai"
+
     # Вебхуки
     # WEBHOOK_HOST must be the full external URL, e.g. "https://example.com"
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")

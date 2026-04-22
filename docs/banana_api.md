@@ -1397,7 +1397,7 @@ The following code shows an example of where thought signatures are included:
         "thought": true // Thoughts don't have signatures
       },
       {
-        "text": "Here is a step-by-step guide to baking macarons, presented in three separate images.\n\n### Step 1: Piping the Batter\n\nThe first step after making your macaron batter is to pipe it onto a baking sheet. This requires a steady hand to create uniform circles.\n\n",
+        "text": "Here is a step-by-step guide to baking macarons, presented in three separate images.### Step 1: Piping the BatterThe first step after making your macaron batter is to pipe it onto a baking sheet. This requires a steady hand to create uniform circles.",
         "thought_signature": "<Signature_A>" // The first non-thought part always has a signature
       },
       {
@@ -1408,7 +1408,7 @@ The following code shows an example of where thought signatures are included:
         "thought_signature": "<Signature_B>" // All image parts have a signatures
       },
       {
-        "text": "\n\n### Step 2: Baking and Developing Feet\n\nOnce piped, the macarons are baked in the oven. A key sign of a successful bake is the development of \"feet\"---the ruffled edge at the base of each macaron shell.\n\n"
+        "text": "### Step 2: Baking and Developing FeetOnce piped, the macarons are baked in the oven. A key sign of a successful bake is the development of \"feet\"---the ruffled edge at the base of each macaron shell."
         // Follow-up text parts don't have signatures
       },
       {
@@ -1419,7 +1419,7 @@ The following code shows an example of where thought signatures are included:
         "thought_signature": "<Signature_C>" // All image parts have a signatures
       },
       {
-        "text": "\n\n### Step 3: Assembling the Macaron\n\nThe final step is to pair the cooled macaron shells by size and sandwich them together with your desired filling, creating the classic macaron dessert.\n\n"
+        "text": "### Step 3: Assembling the MacaronThe final step is to pair the cooled macaron shells by size and sandwich them together with your desired filling, creating the classic macaron dessert."
       },
       {
         "inline_data": {

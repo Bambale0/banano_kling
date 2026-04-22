@@ -51,9 +51,9 @@ FALLBACK_VIDEO_COSTS = {
 
 
 class AIAssistantService:
-    """Сервис ИИ-ассистента для помощи пользователям с генерацией (Kie.ai Gemini 3 Flash)"""
+    """Сервис ИИ-ассистента для помощи пользователям с генерацией (Kie.ai GPT 5.2)"""
 
-    ENDPOINT = "/gemini-3-flash/v1/chat/completions"
+    ENDPOINT = "/gpt-5-2/v1/chat/completions"
 
     def __init__(self):
         self._session = None
@@ -71,7 +71,7 @@ class AIAssistantService:
         context: dict = None,
     ) -> Optional[str]:
         """
-        Получить ответ от ИИ-ассистента (Kie.ai Gemini 3 Flash)
+        Получить ответ от ИИ-ассистента (Kie.ai GPT 5.2)
 
         Args:
             user_message: Сообщение пользователя
@@ -114,7 +114,7 @@ class AIAssistantService:
             payload = {
                 "messages": [
                     {
-                        "role": "system",
+                        "role": "developer",
                         "content": [{"type": "text", "text": system_prompt}],
                     },
                     {
@@ -122,8 +122,8 @@ class AIAssistantService:
                         "content": [{"type": "text", "text": full_message}],
                     },
                 ],
-                "stream": False,  # Non-streaming for simplicity
-                "include_thoughts": True,
+                "tools": [{"type": "function", "function": {"name": "web_search"}}],
+                "stream": False,
                 "reasoning_effort": "high",
             }
 
@@ -132,16 +132,30 @@ class AIAssistantService:
                 headers=headers,
                 json=payload,
             ) as response:
+                response_text = await response.text()
+                logger.info(
+                    f"Kie.ai GPT 5.2 response status: {response.status}, content-type: {response.headers.get('content-type', 'none')}"
+                )
+                logger.info(f"Response preview: {response_text[:500]}...")
+
                 if response.status == 200:
-                    data = await response.json()
-                    if "choices" in data and data["choices"]:
-                        return data["choices"][0]["message"]["content"]
-                error_text = await response.text()
-                logger.error(f"Kie.ai Gemini error {response.status}: {error_text}")
+                    try:
+                        data = json.loads(response_text)
+                        if "choices" in data and data["choices"]:
+                            return data["choices"][0]["message"]["content"]
+                    except json.JSONDecodeError as json_err:
+                        logger.error(
+                            f"JSON decode error: {json_err}. Raw response: {response_text[:1000]}"
+                        )
+                        return None
+                else:
+                    logger.error(
+                        f"Kie.ai GPT 5.2 error {response.status}: {response_text[:1000]}"
+                    )
             return None
 
         except Exception as e:
-            logger.exception(f"Kie.ai Gemini call failed: {e}")
+            logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
             return None
 
     def _get_system_prompt(self) -> str:

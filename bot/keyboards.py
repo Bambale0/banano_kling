@@ -108,34 +108,32 @@ def get_create_video_keyboard(
     aleph_cost = preset_manager.get_video_cost("aleph", current_duration)
     glow_cost = preset_manager.get_video_cost("glow", current_duration)
 
-    models = [
-        {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
-        {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
-    ]
-    if current_v_type != "text":
-        models.append(
-            {
-                "key": "seedance2",
-                "label": "🌱 Seedance 2.0",
-                "cost": seedance_cost,
-            }
-        )
     if current_v_type == "video":
-        models.append(
+        models = [
             {
                 "key": "aleph",
                 "label": "🔮 Aleph Video (требует видео реф.)",
                 "cost": aleph_cost,
-            }
-        )
-        models.append(
+            },
             {
                 "key": "glow",
                 "label": "✨ Kling Glow (требует видео реф.)",
                 "cost": glow_cost,
-            }
-        )
+            },
+        ]
     else:
+        models = [
+            {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
+            {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
+        ]
+        if current_v_type != "text":
+            models.append(
+                {
+                    "key": "seedance2",
+                    "label": "🌱 Seedance 2.0",
+                    "cost": seedance_cost,
+                }
+            )
         models.append(
             {
                 "key": "runway",
