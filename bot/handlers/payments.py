@@ -150,18 +150,26 @@ async def initiate_payment(callback: types.CallbackQuery):
             notification_url=config.tbank_notification_url,
         )
 
-    if result and result.get("Success"):
-        payment_id = result["PaymentId"]
-        payment_url = result["PaymentURL"]
+    # Flexible check for both YooKassa ({"Success": True, "PaymentId":..., "PaymentURL":...}) 
+    # and T-Bank (direct {"PaymentId":..., "PaymentUrl":...}, {"Success": False} on error)
+    is_success = result.get("Success") != False if "Success" in result else True
+    has_payment_info = "PaymentId" in result or "payment_id" in result
+
+    if result and is_success and has_payment_info:
+        payment_id = result.get("PaymentId") or result.get("payment_id")
+        payment_url = result.get("PaymentURL") or result.get("PaymentUrl") or result.get("payment_url")
+
+        logger.info(f"Payment created successfully: {payment_id} via {provider}")
 
         # Сохраняем транзакцию в БД
         user = await get_or_create_user(callback.from_user.id)
         total_credits = package["credits"] + package.get("bonus_credits", 0)
+        actual_provider = "yookassa" if use_yookassa else "tbank"
         await create_transaction(
             order_id=order_id,
             user_id=user.id,
             payment_id=str(payment_id),
-            provider=provider if use_yookassa else "tbank",
+            provider=actual_provider,
             credits=total_credits,
             amount_rub=package["price_rub"],
             status="pending",
@@ -181,15 +189,12 @@ async def initiate_payment(callback: types.CallbackQuery):
             parse_mode="HTML",
         )
     else:
-        error_msg = (
-            result.get("Message", "Неизвестная ошибка")
-            if result
-            else "Нет соединения с банком"
-        )
+        error_msg = result.get("Message", result.get("message", "Неизвестная ошибка")) if result else "Нет соединения с провайдером"
+        logger.error(f"Payment creation failed for {provider}: {error_msg}, result: {result}")
         await callback.message.edit_text(
-            f"❌ <b>Ошибка создания платежа</b>"
-            f"{error_msg}"
-            f"Попробуйте позже или обратитесь в поддержку.",
+            f"❌ <b>Ошибка создания платежа ({provider})</b>\n"
+            f"{error_msg}\n"
+            f"Попробуйте позже или выберите другой способ оплаты.",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
         )
@@ -234,7 +239,7 @@ async def check_payment_status(callback: types.CallbackQuery):
         else:
             # Проверяем статус в Т-Банке
             result = await tbank_service.get_state(transaction.payment_id)
-            paid = bool(result and result.get("Status") == "CONFIRMED")
+            paid = bool(result and result.get("status") == "CONFIRMED")
 
         if paid:
             # Начисляем бананы
@@ -305,6 +310,7 @@ async def handle_tbank_webhook(request):
         # Проверяем подпись
         if not tbank_service.verify_notification(data.copy()):
             logger.warning("Invalid signature in T-Bank webhook")
+            logger.debug(f"Webhook data for sig check: {data}")
             return web.Response(status=403)
 
         order_id = data.get("OrderId")

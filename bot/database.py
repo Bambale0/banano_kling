@@ -66,7 +66,8 @@ async def init_db():
     """Инициализация базы данных"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # Таблица пользователей
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE NOT NULL,
@@ -74,7 +75,8 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Referral system migrations for existing databases
         try:
@@ -125,7 +127,8 @@ async def init_db():
             pass
 
         # Таблица транзакций (платежи)
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id TEXT UNIQUE NOT NULL,
@@ -138,10 +141,12 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """)
+        """
+        )
 
         # Таблица задач генерации
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS generation_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -160,7 +165,8 @@ async def init_db():
                 completed_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """)
+        """
+        )
 
         # Migration: add columns if not exists
         try:
@@ -201,7 +207,8 @@ async def init_db():
             pass
 
         # Таблица истории генераций
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS generation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -211,10 +218,12 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """)
+        """
+        )
 
         # Таблица настроек пользователя
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS user_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER UNIQUE NOT NULL,
@@ -226,7 +235,8 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
 
         # Referral system tables and migrations
         # Add columns to users if not exist
@@ -261,7 +271,8 @@ async def init_db():
             pass
 
         # Referrals table
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 referrer_id INTEGER NOT NULL,
@@ -272,7 +283,8 @@ async def init_db():
                 FOREIGN KEY (referred_id) REFERENCES users(id),
                 UNIQUE(referrer_id, referred_id)
             )
-        """)
+        """
+        )
 
         # Backfill missing referral codes for existing users later in get_or_create_user
 
@@ -284,7 +296,8 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
 
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS partner_withdrawals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -296,10 +309,12 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """)
+        """
+        )
 
         # Таблица batch_jobs
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS batch_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT UNIQUE NOT NULL,
@@ -311,7 +326,8 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """)
+        """
+        )
 
         await db.commit()
         logger.info("Database initialized successfully")
@@ -1213,7 +1229,8 @@ async def save_batch_job(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             # Создаём таблицу если не существует
-            await db.execute("""
+            await db.execute(
+                """
                 CREATE TABLE IF NOT EXISTS batch_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT UNIQUE NOT NULL,
@@ -1225,7 +1242,8 @@ async def save_batch_job(
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 )
-            """)
+            """
+            )
 
             await db.execute(
                 """INSERT INTO batch_jobs 
@@ -1315,7 +1333,8 @@ async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dic
 
 async def _ensure_user_settings_table(db):
     """Создает таблицу user_settings если она не существует (миграция)"""
-    await db.execute("""
+    await db.execute(
+        """
         CREATE TABLE IF NOT EXISTS user_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER UNIQUE NOT NULL,
@@ -1327,7 +1346,8 @@ async def _ensure_user_settings_table(db):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
-    """)
+    """
+    )
     # Миграция: добавляем колонку image_service если её нет
     try:
         await db.execute(

@@ -92,17 +92,26 @@ class TBankPaymentClient:
             if not result.get("Success", False):
                 error_code = result.get("ErrorCode", "0")
                 error_msg = result.get("Message", "Unknown error")
+                details = result.get("Details", "No details")
+
+                logger.error(
+                    f"T-Bank API ERROR {endpoint} {error_code}: {error_msg}. Details: {details}"
+                )
+                logger.error(f"Full response: {json.dumps(result, ensure_ascii=False)}")
 
                 if error_code == "0":
                     raise TBankAuthError(
-                        f"Authentication failed: {error_msg}", error_code
+                        f"Authentication failed: {error_msg}. Details: {details}",
+                        error_code,
                     )
                 elif error_code in ["1", "2", "3"]:
                     raise TBankValidationError(
-                        f"Validation error: {error_msg}", error_code
+                        f"Validation error: {error_msg}. Details: {details}", error_code
                     )
                 else:
-                    raise TBankAPIError(f"API error: {error_msg}", error_code)
+                    raise TBankAPIError(
+                        f"API error: {error_msg}. Details: {details}", error_code
+                    )
 
             return result
 
@@ -392,17 +401,29 @@ class TBankAsyncClient:
                 if not result.get("Success", False):
                     error_code = result.get("ErrorCode", "0")
                     error_msg = result.get("Message", "Unknown error")
+                    details = result.get("Details", "No details")
+
+                    logger.error(
+                        f"T-Bank API ERROR {endpoint} {error_code}: {error_msg}. Details: {details}"
+                    )
+                    logger.error(
+                        f"Full response: {json.dumps(result, ensure_ascii=False)}"
+                    )
 
                     if error_code == "0":
                         raise TBankAuthError(
-                            f"Authentication failed: {error_msg}", error_code
+                            f"Authentication failed: {error_msg}. Details: {details}",
+                            error_code,
                         )
                     elif error_code in ["1", "2", "3"]:
                         raise TBankValidationError(
-                            f"Validation error: {error_msg}", error_code
+                            f"Validation error: {error_msg}. Details: {details}",
+                            error_code,
                         )
                     else:
-                        raise TBankAPIError(f"API error: {error_msg}", error_code)
+                        raise TBankAPIError(
+                            f"API error: {error_msg}. Details: {details}", error_code
+                        )
 
                 return result
 
