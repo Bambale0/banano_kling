@@ -373,9 +373,7 @@ async def _show_video_creation_screen(
             media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
     elif current_v_type == "video":
         if v_reference_videos:
-            media_status = (
-                f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
-            )
+            media_status = f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
         else:
             media_status = "📹 <b>Загрузите референсные видео (до 5)</b>\n"
 
@@ -1407,11 +1405,7 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
                         text="⚙️ Изменить опции", callback_data="video_options_change"
                     )
                 ],
-                [
-                    types.InlineKeyboardButton(
-                        text="🔙 Назад", callback_data="back_main"
-                    )
-                ],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")],
             ]
         ),
         parse_mode="HTML",
