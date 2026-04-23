@@ -139,7 +139,9 @@ class JumpFinanceService:
             },
         }
         if bank_account_id or config.JUMP_FINANCE_BANK_ACCOUNT_ID:
-            payload["bank_account_id"] = bank_account_id or config.JUMP_FINANCE_BANK_ACCOUNT_ID
+            payload["bank_account_id"] = (
+                bank_account_id or config.JUMP_FINANCE_BANK_ACCOUNT_ID
+            )
 
         data = await self._request("POST", "/payments", payload)
         item = data.get("item")

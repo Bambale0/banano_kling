@@ -9,6 +9,7 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from bot.config import config
 from bot.database import (
     DATABASE_PATH,
     accept_partner_agreement,
@@ -23,7 +24,6 @@ from bot.database import (
     save_user_settings,
     update_partner_withdrawal_status,
 )
-from bot.config import config
 from bot.image_models import get_image_model_config, resolve_image_model
 from bot.keyboards import (
     get_ai_assistant_keyboard,
@@ -33,6 +33,7 @@ from bot.keyboards import (
     get_partner_program_keyboard,
     get_referral_keyboard,
 )
+from bot.services.jump_finance_service import JumpFinanceError, jump_finance_service
 from bot.services.preset_manager import preset_manager
 from bot.states import (
     AdminStates,
@@ -40,7 +41,6 @@ from bot.states import (
     PartnerWithdrawalStates,
     PaymentStates,
 )
-from bot.services.jump_finance_service import JumpFinanceError, jump_finance_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -674,7 +674,9 @@ async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
     min_withdraw = config.PARTNER_MIN_WITHDRAWAL_RUB
 
     if not stats.get("is_partner"):
-        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        await callback.answer(
+            "Сначала активируйте партнёрскую программу", show_alert=True
+        )
         return
     if not config.has_jump_finance:
         await callback.answer(
@@ -709,7 +711,9 @@ async def partner_withdraw_amount(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.replace(",", ".").strip())
     except Exception:
-        await message.answer("Введите сумму числом, например <code>2500</code>.", parse_mode="HTML")
+        await message.answer(
+            "Введите сумму числом, например <code>2500</code>.", parse_mode="HTML"
+        )
         return
 
     if amount < min_withdraw:
@@ -817,7 +821,9 @@ async def partner_withdraw_card(message: types.Message, state: FSMContext):
             8: "processing",
         }.get(status.get("id"), "processing")
         stored_status = (
-            "requested" if internal_status in {"failed", "cancelled"} else internal_status
+            "requested"
+            if internal_status in {"failed", "cancelled"}
+            else internal_status
         )
         withdrawal_id = await create_partner_withdrawal(
             telegram_id=message.from_user.id,

@@ -187,7 +187,16 @@ async def initiate_payment(callback: types.CallbackQuery):
     success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
     fail_url = f"https://t.me/{bot_info.username}?start=fail_{order_id}"
 
-    if provider == "cryptobot" and cryptobot_service.enabled:
+    if provider == "cryptobot":
+        if not cryptobot_service.enabled:
+            await callback.message.edit_text(
+                "❌ <b>Crypto Bot недоступен</b>\n"
+                "Проверьте настройку токена Crypto Bot и попробуйте снова.",
+                reply_markup=get_back_keyboard("back_main"),
+                parse_mode="HTML",
+            )
+            return
+
         result = await cryptobot_service.create_invoice(
             amount_rub=package["price_rub"],
             order_id=order_id,

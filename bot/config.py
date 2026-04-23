@@ -18,7 +18,11 @@ class Config:
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
     # Crypto Bot
-    CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")
+    # Backward-compatible fallback for older env files that still use
+    # CRYPTOBOT_API_KEY instead of CRYPTOBOT_API_TOKEN.
+    CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "") or os.getenv(
+        "CRYPTOBOT_API_KEY", ""
+    )
     CRYPTOBOT_BASE_URL: str = os.getenv("CRYPTOBOT_BASE_URL", "https://pay.crypt.bot")
     CRYPTOBOT_ACCEPTED_ASSETS: str = os.getenv(
         "CRYPTOBOT_ACCEPTED_ASSETS",
