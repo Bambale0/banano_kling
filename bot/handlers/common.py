@@ -20,6 +20,7 @@ from bot.database import (
     process_referral,
     save_user_settings,
 )
+from bot.image_models import get_image_model_config, resolve_image_model
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
@@ -98,7 +99,7 @@ async def cmd_start(message: types.Message):
                 )
                 return
             elif transaction.status == "pending":
-                # Проверяем статус у провайдера — поддерживаем Т-Банк и YooKassa
+                # Проверяем статус у провайдера — поддерживаем Т-Банк и Crypto Bot
                 try:
                     # T-Bank проверка
                     result = await tbank_service.get_state(transaction.payment_id)
@@ -110,20 +111,17 @@ async def cmd_start(message: types.Message):
                 if result and result.get("Status") == "CONFIRMED":
                     paid = True
 
-                # Если не T-Bank или не подтверждён — попробуем YooKassa
-                if not paid:
+                # Если не T-Bank или не подтверждён — пробуем Crypto Bot
+                if not paid and transaction.provider == "cryptobot":
                     try:
-                        from bot.services.yookassa_service import yookassa_service
+                        from bot.services.cryptobot_service import cryptobot_service
 
-                        yk = await yookassa_service.get_payment(transaction.payment_id)
-                        if yk and (
-                            yk.get("paid")
-                            or (yk.get("status") or "").lower()
-                            in ("succeeded", "paid", "captured")
-                        ):
+                        invoice = await cryptobot_service.get_invoice(
+                            transaction.payment_id
+                        )
+                        if invoice and (invoice.get("status") or "").lower() == "paid":
                             paid = True
                     except Exception:
-                        # Не фатально — будем ожидать webhook
                         pass
 
                 if paid:
@@ -256,7 +254,7 @@ async def cmd_help(message: types.Message):
 Видео будет готово через 1-3 минуты.
 
 <b>🍌 Стоимость операций:</b>
-• FLUX.2 Pro / Nano Banana / Seedream: 3🍌
+• Banana Pro / Banana 2 / GPT Image 2 / Seedream
 • Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
 • Kling Standard: 6🍌 | Kling Pro: 8-10🍌
 
@@ -280,7 +278,7 @@ async def show_help(callback: types.CallbackQuery):
 🖼 <b>Генерация изображений:</b>
 • Какую модель выбрать для фотореализма?
 • Как написать хороший промпт для аниме?
-• Чем отличается FLUX от Nano Banana?
+• Чем отличается GPT Image 2 от Banana Pro?
 
 🎬 <b>Генерация видео:</b>
 • Какая модель лучше для коротких роликов?
@@ -637,21 +635,23 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
         preferred_model=db_settings["preferred_model"],
         preferred_video_model=db_settings["preferred_video_model"],
         preferred_i2v_model=db_settings["preferred_i2v_model"],
-        image_service=db_settings.get("image_service", "nanobanana"),
+        image_service=resolve_image_model(
+            db_settings.get("image_service", "banana_pro")
+        ),
     )
 
     settings_text = """
 ⚙️ <b>Настройки</b>
 
 🖼 Изображения:
-• FLUX.2 Pro / Nano Banana / Seedream
-• Все модели: 3🍌
+• Banana Pro / Banana 2 / GPT Image 2
+• Seedream 5.0 Lite / Seedream 4.5
 
 🎬 Текст→Видео:
-• Kling 2.6 (8🍌) / Std (6🍌) / Pro (8🍌) / Omni / V2V
+• Kling 3 Std / Kling 3 Pro / Runway / Grok Imagine
 
 🖼→🎬 Фото→Видео:
-• Std (6🍌) / Pro (8🍌) / Omni
+• Kling 3 Std / Kling 3 Pro / Seedance 2.0 / Runway
 """
 
     await callback.message.edit_text(
@@ -660,7 +660,7 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
             db_settings["preferred_model"],
             db_settings["preferred_video_model"],
             db_settings["preferred_i2v_model"],
-            db_settings.get("image_service", "nanobanana"),
+            resolve_image_model(db_settings.get("image_service", "banana_pro")),
         ),
         parse_mode="HTML",
     )
@@ -898,6 +898,9 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
         "v26_pro": "Kling 2.6",
         "v26_motion_pro": "Motion Pro",
         "v26_motion_std": "Motion",
+        "runway": "Runway",
+        "grok_imagine": "Grok Imagine",
+        "seedance2": "Seedance 2.0",
     }
 
     model_name = video_names.get(video_model, video_model)
@@ -940,6 +943,8 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
         "v3_pro": "Pro",
         "v3_omni_std": "Omni Std",
         "v3_omni_pro": "Omni Pro",
+        "seedance2": "Seedance 2.0",
+        "runway": "Runway",
     }
 
     model_name = i2v_names.get(i2v_model, i2v_model)
@@ -967,8 +972,8 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
 
 @router.callback_query(F.data.startswith("settings_service_"))
 async def handle_settings_service(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора сервиса для генерации изображений (nanobanana, novita или seedream)"""
-    service = callback.data.replace("settings_service_", "")
+    """Обработка выбора сервиса для генерации изображений."""
+    service = resolve_image_model(callback.data.replace("settings_service_", ""))
 
     # Сохраняем выбор сервиса в БД
     await save_user_settings(callback.from_user.id, image_service=service)
@@ -977,15 +982,7 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(image_service=service)
 
     # Названия сервисов
-    service_names = {
-        "nanobanana": "🍌 Nano Banana",
-        "novita": "✨ FLUX.2 Pro (Novita)",
-        "banana_pro": "💎 Banana Pro",
-        "seedream": "🎨 Seedream (Novita)",
-        "z_image_turbo": "🚀 Z-Image Turbo LoRA",
-    }
-
-    service_name = service_names.get(service, service)
+    service_name = get_image_model_config(service)["settings_label"]
 
     from bot.keyboards import get_settings_keyboard_with_ai
 
@@ -1193,7 +1190,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
-        "available_models": "Nano Banana (Flash/Pro), FLUX.2 Pro (Novita), Seedream (Novita), Kling 3 (Std/Pro/Omni)",
+        "available_models": "Banana Pro, Banana 2, GPT Image 2, Seedream, Kling 3 (Std/Pro/Omni)",
     }
 
     welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
@@ -1212,7 +1209,7 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 
 🖼 Чем отличаются сервисы:
    - Nano Banana - Gemini
-   - Novita - FLUX.2 Pro и Seedream
+   - Banana / GPT Image 2 / Seedream - генерация изображений
 
 Просто спроси меня! Например:
 • "что лучше для портрета?"

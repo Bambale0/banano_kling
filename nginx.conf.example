@@ -56,15 +56,14 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 
-    location /yookassa/webhook {
-        # Endpoint for YooKassa webhook callbacks
-        # Important: YooKassa will POST JSON payloads to this endpoint.
+    location /cryptobot/webhook {
+        # Endpoint for Crypto Bot webhook callbacks.
         # Recommendations:
         # - Use TLS (HTTPS) for this endpoint (server is already configured for 443)
         # - Keep client_max_body_size sufficiently large for receipts (50m set globally)
         # - Disable proxy_request_buffering so POST bodies are streamed to the backend
         # - Increase timeouts to allow backend processing if necessary
-        proxy_pass http://127.0.0.1:8443/yookassa/webhook;
+        proxy_pass http://127.0.0.1:8443/cryptobot/webhook;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

@@ -32,7 +32,7 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_tbank_webhook, handle_yookassa_webhook
+from bot.handlers.payments import handle_cryptobot_webhook, handle_tbank_webhook
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -375,7 +375,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
-                model_display = task.model if task and task.model else "Kie.ai"
+                model_display = task.model if task and task.model else "AI"
                 if model_display == "aleph":
                     model_display = "Aleph Video"
                 elif model_display == "glow":
@@ -392,7 +392,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         try:
                             if status in {"success", "completed"} and video_url:
                                 # Success case
-                                model_display = task.model if task.model else "Kie.ai"
+                                model_display = task.model if task.model else "AI"
                                 if model_display == "aleph":
                                     model_display = "Aleph Video"
                                 elif model_display == "glow":
@@ -963,150 +963,6 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
         return web.Response(status=500)
 
 
-async def handle_novita_webhook(request: web.Request) -> web.Response:
-    """Обработчик уведомлений от Novita AI (FLUX.2 Pro) API
-
-    Novita AI webhook format (ASYNC_TASK_RESULT event):
-    {
-        "event_type": "ASYNC_TASK_RESULT",
-        "payload": {
-            "task": {
-                "task_id": "...",
-                "status": "TASK_STATUS_SUCCEED",
-                "task_type": "TXT_TO_IMG"
-            },
-            "images": [{"image_url": "https://..."}],
-            "extra": {...}
-        }
-    }
-    """
-    try:
-        logger.info(f"Novita FLUX webhook headers: {dict(request.headers)}")
-
-        body = await request.text()
-        logger.info(f"Novita FLUX webhook raw body: {repr(body)[:500]}")
-
-        if not body:
-            logger.warning("Novita FLUX webhook received empty body")
-            return web.Response(status=200)
-
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Novita FLUX webhook received invalid JSON: {e}")
-            return web.Response(status=200)
-
-        logger.info(f"Novita FLUX webhook parsed data: {data}")
-
-        # Check event type - Novita AI sends ASYNC_TASK_RESULT
-        event_type = data.get("event_type")
-        if event_type != "ASYNC_TASK_RESULT":
-            logger.warning(f"Unexpected event_type: {event_type}, ignoring")
-            return web.Response(status=200)
-
-        # Get payload
-        payload = data.get("payload", {})
-
-        # Get task info from payload.task
-        task_info = payload.get("task", {})
-        task_id = task_info.get("task_id")
-        status = task_info.get("status")
-
-        if not task_id:
-            logger.warning(f"No task_id in Novita FLUX webhook: {data}")
-            return web.Response(status=200)
-
-        logger.info(f"Novita FLUX task {task_id} status: {status}")
-
-        # Novita AI status: TASK_STATUS_SUCCEED, TASK_STATUS_FAILED
-        if status == "TASK_STATUS_SUCCEED":
-            # Get images from payload.images array
-            images = payload.get("images", [])
-
-            if not images:
-                logger.error(f"No images in completed task: {data}")
-                return web.Response(status=200)
-
-            # Novita returns images as objects with image_url field
-            image_url = None
-            if isinstance(images[0], dict):
-                image_url = images[0].get("image_url")
-            elif isinstance(images[0], str):
-                image_url = images[0]
-
-            if not image_url:
-                logger.error(f"Invalid images format: {images}")
-                return web.Response(status=200)
-
-            logger.info(f"Extracted image URL: {image_url[:50]}...")
-
-            # Находим задачу в БД по task_id
-            from bot.database import complete_video_task, get_task_by_id
-
-            task = await get_task_by_id(task_id)
-
-            if not task:
-                logger.warning(f"Task {task_id} not found in database")
-                return web.Response(status=200)
-
-            # Получаем Telegram ID пользователя
-            from bot.database import get_telegram_id_by_user_id
-
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
-
-            if not telegram_id:
-                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
-                return web.Response(status=200)
-
-            logger.info(
-                f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
-            )
-
-            # Determine caption based on preset
-            if task.preset_id == "no_preset" and task.prompt:
-                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-            else:
-                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Пресет: {task.preset_id}"
-
-            # Обновляем задачу в БД
-            await complete_video_task(task_id, image_url)
-
-            # Отправляем изображение пользователю
-            bot_instance = Bot(token=config.BOT_TOKEN)
-
-            try:
-                await bot_instance.send_photo(
-                    chat_id=telegram_id,
-                    photo=image_url,
-                    caption=caption,
-                    parse_mode="HTML",
-                )
-
-                logger.info(f"Image sent to user {telegram_id}")
-            except Exception as e:
-                logger.error(f"Failed to send image: {e}")
-                # Fallback — отправляем как ссылку
-                try:
-                    await bot_instance.send_message(
-                        chat_id=telegram_id,
-                        text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!{image_url}",
-                    )
-                except Exception as fallback_error:
-                    logger.error(f"Failed to send fallback message: {fallback_error}")
-            finally:
-                await bot_instance.session.close()
-
-        elif status == "TASK_STATUS_FAILED":
-            reason = task_info.get("reason", "Unknown error")
-            logger.error(f"Novita FLUX task {task_id} failed: {reason}")
-
-        return web.Response(status=200)
-
-    except Exception as e:
-        logger.exception(f"Novita FLUX webhook error: {e}")
-        return web.Response(status=500)
-
-
 async def handle_wanx_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от PiAPI WanX API"""
     try:
@@ -1291,7 +1147,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             else:
                 service_name += " 2"
         else:
-            service_name = "Kie.ai"
+            service_name = "AI"
 
         logger.info(
             f"Processing {service_name} task {task_id} with status {status} (normalized: {normalized_status})"
@@ -1620,8 +1476,8 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     # Вебхук Т-Банка
     app.router.add_post("/tbank/webhook", handle_tbank_webhook)
 
-    # Вебхук YooKassa
-    app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+    # Вебхук Crypto Bot
+    app.router.add_post("/cryptobot/webhook", handle_cryptobot_webhook)
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)

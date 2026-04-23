@@ -4,7 +4,7 @@
 
 # Flux 2 Pro - Create image from text
 
-> Create professional-grade images using FLUX.2 [pro], the next generation of Black Forest Labs' image models.
+> Legacy migration note for a removed image model integration.
 
 **Key Features:**
 - Professional quality without complex tuning
@@ -48,7 +48,7 @@ paths:
         - text-to-image
       summary: Flux 2 Pro - Create image from text
       description: >
-        Create professional-grade images using FLUX.2 [pro], the next generation
+        This section describes a legacy image model integration that is no longer used
         of Black Forest Labs' image models.
 
 
@@ -190,7 +190,7 @@ components:
             Text description of the image you want to generate.
 
 
-            **FLUX.2 [pro]** delivers professional-grade image generation
+            This legacy section described a removed professional-grade image model
             without requiring complex parameter tuning. The model automatically
             optimizes for quality and consistency.
 

@@ -30,23 +30,28 @@ def _load_price_data() -> dict:
 
 # Встроенные fallback-значения на случай отсутствия файла цен
 FALLBACK_IMAGE_COSTS = {
-    "novita": 3,
-    "nanobanana": 3,
+    "nanobanana": 7,
     "banana_pro": 5,
-    "seedream": 3,
-    "z_image_turbo": 3,
+    "gpt_image_2": 5,
+    "seedream": 5,
+    "z_image_turbo": 5,
 }
 
 FALLBACK_VIDEO_COSTS = {
-    "v3_std": 6,
-    "v3_pro": 8,
-    "v3_omni_std": 8,
-    "v3_omni_pro": 8,
-    "v3_omni_std_r2v": 8,
-    "v3_omni_pro_r2v": 8,
-    "v26_pro": 8,
-    "v26_motion_pro": 10,
-    "v26_motion_std": 8,
+    "v3_std": 15,
+    "v3_pro": 15,
+    "v3_omni_std": 15,
+    "v3_omni_pro": 15,
+    "v3_omni_std_r2v": 15,
+    "v3_omni_pro_r2v": 15,
+    "v26_pro": 15,
+    "v26_motion_pro": 15,
+    "v26_motion_std": 15,
+    "seedance2": 15,
+    "grok_imagine": 15,
+    "runway": 15,
+    "aleph": 15,
+    "glow": 25,
 }
 
 
@@ -199,9 +204,14 @@ class AIAssistantService:
         if "image_service" in context:
             service_names = {
                 "nanobanana": "Nano Banana",
-                "novita": "FLUX.2 Pro (Novita)",
                 "banana_pro": "Banana Pro",
-                "seedream": "Seedream (Novita)",
+                "banana_2": "Banana 2",
+                "gpt_image_2": "GPT Image 2",
+                "seedream": "Seedream",
+                "seedream_45": "Seedream 4.5",
+                "seedream_5_lite": "Seedream 5 Lite",
+                "seedream_edit": "Seedream Edit",
+                "z_image_turbo": "Z-Image Turbo",
             }
             service = service_names.get(
                 context["image_service"], context["image_service"]
@@ -232,11 +242,11 @@ class AIAssistantService:
                 return legacy.get(key)
             # mapping for friendly names
             fbmap = {
-                "novita": legacy.get("flux_pro") or image_models.get("flux_pro"),
                 "nanobanana": image_models.get("banana_2")
                 or legacy.get("gemini_2_5_flash"),
                 "banana_pro": image_models.get("gemini_3_pro")
                 or legacy.get("gemini_3_pro"),
+                "gpt_image_2": image_models.get("gpt_image_2"),
                 "seedream": image_models.get("seedream") or legacy.get("seedream"),
             }
             if (
@@ -247,7 +257,6 @@ class AIAssistantService:
                 return fbmap[fallback_name]
             return FALLBACK_IMAGE_COSTS.get(fallback_name or key, 3)
 
-        novita_cost = _img_cost("flux_pro", "novita") or FALLBACK_IMAGE_COSTS["novita"]
         flash_cost = (
             _img_cost("banana_2", "nanobanana") or FALLBACK_IMAGE_COSTS["nanobanana"]
         )
@@ -255,8 +264,16 @@ class AIAssistantService:
             _img_cost("gemini_3_pro", "banana_pro")
             or FALLBACK_IMAGE_COSTS["banana_pro"]
         )
+        gpt_image_2_cost = (
+            _img_cost("gpt_image_2", "gpt_image_2")
+            or FALLBACK_IMAGE_COSTS["gpt_image_2"]
+        )
         seedream_cost = (
             _img_cost("seedream", "seedream") or FALLBACK_IMAGE_COSTS["seedream"]
+        )
+        z_image_turbo_cost = (
+            _img_cost("z_image_turbo", "z_image_turbo")
+            or FALLBACK_IMAGE_COSTS["z_image_turbo"]
         )
 
         # Video models
@@ -309,6 +326,19 @@ class AIAssistantService:
         motion_std_10 = _video_cost("v26_motion_std", 10)
         # Дополнительные расчёты для таблицы (некоторые модели имеют значения для 15 сек)
         video_pro_15 = _video_cost("v3_pro", 15)
+        seedance_5 = _video_cost("seedance2", 5)
+        seedance_10 = _video_cost("seedance2", 10)
+        seedance_15 = _video_cost("seedance2", 15)
+        runway_5 = _video_cost("runway", 5)
+        runway_10 = _video_cost("runway", 10)
+        aleph_5 = _video_cost("aleph", 5)
+        aleph_10 = _video_cost("aleph", 10)
+        glow_5 = _video_cost("glow", 5)
+        glow_10 = _video_cost("glow", 10)
+        grok_6 = _video_cost("grok_imagine", 6)
+        grok_10 = _video_cost("grok_imagine", 10)
+        grok_20 = _video_cost("grok_imagine", 20)
+        grok_30 = _video_cost("grok_imagine", 30)
 
         omni_std_5 = _video_cost("v3_omni_std", 5)
         omni_std_10 = _video_cost("v3_omni_std", 10)
@@ -321,30 +351,44 @@ class AIAssistantService:
         return f"""## АКТУАЛЬНЫЕ ЦЕНЫ (автоматически загружены из data/price.json)
 
 🖼 Генерация изображений:
-- Nano Banana Flash: {flash_cost}🍌
-- Nano Banana Pro: {pro_cost}🍌
+- Banana Pro: {pro_cost}🍌
 - Banana 2: 7🍌
-
+- GPT Image 2: {gpt_image_2_cost}🍌
+- Seedream: {seedream_cost}🍌
+- Z-Image Turbo: {z_image_turbo_cost}🍌
 
 🎬 Генерация видео (текст → видео):
 │ Модель              │ 5 сек │ 10 сек │ 15 сек │
 │ Kling 2.6           │ {v26_5}🍌   │ {v26_10}🍌  │  -     │
 │ Kling 3 Std         │ {video_std_5}🍌   │ {video_std_10}🍌  │ {video_std_15}🍌  │
 │ Kling 3 Pro         │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
+│ Seedance 2.0        │ {seedance_5}🍌   │ {seedance_10}🍌  │ {seedance_15}🍌  │
 │ Kling 3 Omni Std    │ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
 │ Kling 3 Omni Pro    │ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
+
+🎨 Grok Imagine:
+│ Длительность │ Цена │
+│ 6 сек        │ {grok_6}🍌  │
+│ 10 сек       │ {grok_10}🍌  │
+│ 20 сек       │ {grok_20}🍌  │
+│ 30 сек       │ {grok_30}🍌  │
 
 🎬 Kling 2.6 Motion Control (движение с видео):
 │ Модель  │ 5 сек │ 10 сек │
 │ Pro     │ {motion_pro_5}🍌   │ {motion_pro_10}🍌  │
 │ Std     │ {motion_std_5}🍌   │ {motion_std_10}🍌  │
 
-✂️ Видео-эффекты (видео → видео):
+🎞 Фото/видео → видео:
 │ Модель  │ 5 сек │ 10 сек │
+│ Runway  │ {runway_5}🍌   │ {runway_10}🍌  │
+│ Aleph   │ {aleph_5}🍌   │ {aleph_10}🍌  │
+│ Glow    │ {glow_5}🍌   │ {glow_10}🍌  │
 │ V2V Std │ {v2v_std_5}🍌   │ {v2v_std_10}🍌  │
 │ V2V Pro │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌  │
 
-✏️ Редактирование: {pro_cost}🍌"""
+💳 Пополнение: T-Bank или Crypto Bot
+
+✏️ Редактирование: от {pro_cost}🍌"""
 
     async def close(self):
         """Закрытие сессии"""

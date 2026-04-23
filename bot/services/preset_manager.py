@@ -47,6 +47,7 @@ class PresetManager:
             "novita": 3,
             "nanobanana": 3,
             "banana_pro": 5,
+            "gpt_image_2": 5,
             "seedream": 3,
             "z_image_turbo": 3,
         }
@@ -200,10 +201,11 @@ class PresetManager:
             "banana_2": "banana_2",
             "banana_pro": "nano-banana-pro",
             "nano_banana_pro": "nano-banana-pro",
+            "gpt_image_2": "gpt_image_2",
+            "gpt-image-2": "gpt_image_2",
             "z_image_turbo": "z_image_turbo",
             "z-image-turbo": "z_image_turbo",
             "seedream": "seedream",
-            "flux_pro": "flux_pro",
             "seedream_lite": "seedream_lite",
         }
 

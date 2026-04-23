@@ -17,11 +17,14 @@ class Config:
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
-    # YooKassa
-    YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
-    YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
-    YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
-    YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
+    # Crypto Bot
+    CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")
+    CRYPTOBOT_BASE_URL: str = os.getenv("CRYPTOBOT_BASE_URL", "https://pay.crypt.bot")
+    CRYPTOBOT_ACCEPTED_ASSETS: str = os.getenv(
+        "CRYPTOBOT_ACCEPTED_ASSETS",
+        "USDT,TON,BTC,ETH,LTC,BNB,TRX,USDC",
+    )
+    CRYPTOBOT_EXPIRES_IN: int = int(os.getenv("CRYPTOBOT_EXPIRES_IN", "3600"))
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
 
     # AI Services API Keys
@@ -120,18 +123,18 @@ class Config:
         return f"{self.WEBHOOK_HOST}/tbank/webhook"
 
     @property
-    def yookassa_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/yookassa/webhook"
+    def cryptobot_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/cryptobot/webhook"
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"yookassa", "tbank"}:
+        if self.PAYMENT_PROVIDER in {"cryptobot", "tbank"}:
             return self.PAYMENT_PROVIDER
         return "tbank"
 
     @property
-    def has_yookassa(self) -> bool:
-        return bool(self.YOOKASSA_SHOP_ID and self.YOOKASSA_SECRET_KEY)
+    def has_cryptobot(self) -> bool:
+        return bool(self.CRYPTOBOT_API_TOKEN)
 
     @property
     def kling_notification_url(self) -> str:

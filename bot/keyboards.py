@@ -5,6 +5,13 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.image_models import (
+    IMAGE_MODEL_ORDER,
+    get_image_model_config,
+    get_image_option_label,
+    normalize_image_options,
+    resolve_image_model,
+)
 from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
@@ -85,13 +92,17 @@ def get_create_video_keyboard(
     imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
     video_check = "✅ " if current_v_type == "video" else ""
 
-    builder.button(text=f"{text_check}📝 Текст → Видео", callback_data="v_type_text")
-    builder.button(
-        text=f"{imgtxt_check}🖼 Фото + Текст → Видео", callback_data="v_type_imgtxt"
-    )
-    builder.button(
-        text=f"{video_check}🎬 Видео + Текст → Видео (Motion Control)",
-        callback_data="v_type_video",
+    builder.row(
+        InlineKeyboardButton(
+            text=f"{text_check}📝 Текст → Видео", callback_data="v_type_text"
+        ),
+        InlineKeyboardButton(
+            text=f"{imgtxt_check}🖼 Фото + Текст → Видео", callback_data="v_type_imgtxt"
+        ),
+        InlineKeyboardButton(
+            text=f"{video_check}🎬 Видео + Текст → Видео (Motion Control)",
+            callback_data="v_type_video",
+        ),
     )
 
     # Модели - цены из preset_manager (синхронно с списанием)
@@ -149,12 +160,19 @@ def get_create_video_keyboard(
             }
         )
 
+    model_buttons = []
     for model_info in models:
         check = "✅ " if current_model == model_info["key"] else ""
-        builder.button(
-            text=f"{check}{model_info['label']} • {model_info['cost']}🍌",
-            callback_data=f"v_model_{model_info['key']}",
+        model_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{model_info['label']} • {model_info['cost']}🍌",
+                callback_data=f"v_model_{model_info['key']}",
+            )
         )
+    builder.row(*model_buttons[:2])
+    if len(model_buttons) > 2:
+        for index in range(2, len(model_buttons), 2):
+            builder.row(*model_buttons[index : index + 2])
 
     # Размер - только поддерживаемые моделью
     supported_ratios = SUPPORTED_RATIOS.get(current_model, ["16:9", "9:16", "1:1"])
@@ -164,10 +182,12 @@ def get_create_video_keyboard(
         label = ratio.replace(":", "∶")  # визуально лучше
         ratio_buttons.append(
             InlineKeyboardButton(
-                text=f"{check}{label}", callback_data=f"ratio_{ratio.replace(':', '_')}"
+                text=f"{check}{label}",
+                callback_data=f"vratio_{ratio.replace(':', '_')}",
             )
         )
-    builder.row(*ratio_buttons)
+    for index in range(0, len(ratio_buttons), 3):
+        builder.row(*ratio_buttons[index : index + 3])
 
     # Длительности: показываем только поддерживаемые моделью значения
     model_data_for_durations = (
@@ -181,18 +201,31 @@ def get_create_video_keyboard(
     else:
         available_durations = [5, 10, 15]
 
+    duration_buttons = []
     for dur in available_durations:
         check = "✅ " if current_duration == dur else ""
-        builder.button(text=f"{check}{dur} сек", callback_data=f"video_dur_{dur}")
+        duration_buttons.append(
+            InlineKeyboardButton(text=f"{check}{dur} сек", callback_data=f"vdur_{dur}")
+        )
+    for index in range(0, len(duration_buttons), 4):
+        builder.row(*duration_buttons[index : index + 4])
 
     # Grok Imagine modes
     if current_model == "grok_imagine":
         normal_check = "✅ " if current_grok_mode == "normal" else ""
         fun_check = "✅ " if current_grok_mode == "fun" else ""
         spicy_check = "✅ " if current_grok_mode == "spicy" else ""
-        builder.button(text=f"{normal_check}Normal", callback_data="grok_mode_normal")
-        builder.button(text=f"{fun_check}Fun 🎉", callback_data="grok_mode_fun")
-        builder.button(text=f"{spicy_check}Spicy 🔥", callback_data="grok_mode_spicy")
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{normal_check}Normal", callback_data="grok_mode_normal"
+            ),
+            InlineKeyboardButton(
+                text=f"{fun_check}Fun 🎉", callback_data="grok_mode_fun"
+            ),
+            InlineKeyboardButton(
+                text=f"{spicy_check}Spicy 🔥", callback_data="grok_mode_spicy"
+            ),
+        )
 
     if current_v_type == "video":
         # Motion Control options
@@ -201,36 +234,33 @@ def get_create_video_keyboard(
         orient_check_image = "✅ " if current_orientation == "image" else ""
         orient_check_video = "✅ " if current_orientation == "video" else ""
 
-        builder.button(
-            text=f"{mode_check_720p}📱 720p (std)", callback_data="v_mode_720p"
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{mode_check_720p}📱 720p (std)", callback_data="v_mode_720p"
+            ),
+            InlineKeyboardButton(
+                text=f"{mode_check_1080p}🖥 1080p (pro)", callback_data="v_mode_1080p"
+            ),
         )
-        builder.button(
-            text=f"{mode_check_1080p}🖥 1080p (pro)", callback_data="v_mode_1080p"
-        )
-        builder.button(
-            text=f"{orient_check_image}🖼 Image orient",
-            callback_data="v_orientation_image",
-        )
-        builder.button(
-            text=f"{orient_check_video}🎬 Video orient",
-            callback_data="v_orientation_video",
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{orient_check_image}🖼 Image orient",
+                callback_data="v_orientation_image",
+            ),
+            InlineKeyboardButton(
+                text=f"{orient_check_video}🎬 Video orient",
+                callback_data="v_orientation_video",
+            ),
         )
 
     # Рассчитываем цену
     total_cost = preset_manager.get_video_cost(current_model, current_duration)
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"💰 {total_cost}🍌", callback_data="back_main")
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-
-    num_models = len(models)
-    widths = [3] + [1] * num_models + [5, len(available_durations), 2]
-    grok_width = 3 if current_model == "grok_imagine" else 0
-    if current_v_type == "video":
-        widths += [4, 2]
-    if grok_width:
-        widths += [grok_width]
-    builder.adjust(*widths)
+    builder.row(
+        InlineKeyboardButton(text=f"💰 {total_cost}🍌", callback_data="back_main"),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"),
+    )
     return builder.as_markup()
 
 
@@ -288,61 +318,117 @@ def get_reference_images_upload_keyboard(
 
 
 def get_create_image_keyboard(
-    current_service: str = "flux_pro", current_ratio: str = "1:1", num_refs: int = 0
+    current_service: str = "banana_pro",
+    current_ratio: str = "1:1",
+    num_refs: int = 0,
+    current_options: dict | None = None,
 ):
     """Меню создания фото - всё на одном экране"""
     builder = InlineKeyboardBuilder()
-
-    # Модели - цены из preset_manager
-    pro_cost = preset_manager.get_generation_cost("nano-banana-pro")
-    banana2_cost = preset_manager.get_generation_cost("banana_2")
-    seedream_5_lite_cost = preset_manager.get_generation_cost("seedream_5_lite")
-    seedream_edit_cost = preset_manager.get_generation_cost("seedream_edit")
-
-    pro_check = "✅ " if current_service == "nano-banana-pro" else ""
-    banana2_check = "✅ " if current_service == "banana_2" else ""
-    seedream_5_lite_check = "✅ " if current_service == "seedream_5_lite" else ""
-    seedream_edit_check = "✅ " if current_service == "seedream_edit" else ""
-
-    builder.button(
-        text=f"{pro_check}💎 Banana Pro • {pro_cost}🍌",
-        callback_data="model_banana_pro",
-    )
-    builder.button(
-        text=f"{banana2_check}🍌 Banana 2 • {banana2_cost}🍌",
-        callback_data="model_banana_2",
-    )
-    builder.button(
-        text=f"{seedream_5_lite_check}🔥 Seedream 5.0 Lite • {seedream_5_lite_cost}🍌",
-        callback_data="model_seedream_5_lite",
-    )
-    builder.button(
-        text=f"{seedream_edit_check}🖌 Seedream 4.5 • {seedream_edit_cost}🍌",
-        callback_data="model_seedream_edit",
+    current_service = resolve_image_model(current_service)
+    model_config = get_image_model_config(current_service)
+    current_options = normalize_image_options(
+        current_service, {"aspect_ratio": current_ratio, **(current_options or {})}
     )
 
-    # Размер
-    r1_1 = "✅ " if current_ratio == "1:1" else ""
-    r16_9 = "✅ " if current_ratio == "16:9" else ""
-    r9_16 = "✅ " if current_ratio == "9:16" else ""
-    r4_3 = "✅ " if current_ratio == "4:3" else ""
-    r3_2 = "✅ " if current_ratio == "3:2" else ""
+    model_buttons = []
+    for model_id in IMAGE_MODEL_ORDER:
+        config = get_image_model_config(model_id)
+        cost = preset_manager.get_generation_cost(config["cost_key"])
+        check = "✅ " if current_service == model_id else ""
+        model_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{config['label']} • {cost}🍌",
+                callback_data=f"img_model_{model_id}",
+            )
+        )
+    for index in range(0, len(model_buttons), 2):
+        builder.row(*model_buttons[index : index + 2])
+
+    for option_name, allowed_values in model_config["options"].items():
+        option_buttons = []
+        current_value = current_options.get(option_name)
+        for value in allowed_values:
+            check = "✅ " if current_value == value else ""
+            option_buttons.append(
+                InlineKeyboardButton(
+                    text=f"{check}{get_image_option_label(option_name, value)}",
+                    callback_data=_get_image_option_callback(option_name, value),
+                )
+            )
+        row_size = 3 if option_name == "aspect_ratio" else 2
+        for index in range(0, len(option_buttons), row_size):
+            builder.row(*option_buttons[index : index + row_size])
+
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
+    return builder.as_markup()
+
+
+def _get_image_option_callback(option_name: str, value) -> str:
+    if isinstance(value, bool):
+        suffix = "on" if value else "off"
+    else:
+        suffix = str(value).replace(":", "_").lower()
+    return f"imgopt_{option_name}_{suffix}"
+
+
+def get_settings_keyboard_with_ai(
+    current_model: str = "flash",
+    current_video_model: str = "v3_std",
+    current_i2v_model: str = "v3_std",
+    image_service: str = "banana_pro",
+):
+    builder = InlineKeyboardBuilder()
+    image_service = resolve_image_model(image_service)
+
+    image_buttons = []
+    for model_id in IMAGE_MODEL_ORDER:
+        config = get_image_model_config(model_id)
+        check = "✅ " if image_service == model_id else ""
+        image_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{config['settings_label']}",
+                callback_data=f"settings_service_{model_id}",
+            )
+        )
+    for index in range(0, len(image_buttons), 2):
+        builder.row(*image_buttons[index : index + 2])
+
+    video_names = {
+        "v3_std": "⚡ Kling 3 Std",
+        "v3_pro": "💎 Kling 3 Pro",
+        "runway": "🎥 Runway",
+        "grok_imagine": "🧠 Grok Imagine",
+        "seedance2": "🌱 Seedance 2.0",
+    }
+    video_buttons = []
+    for model_id in ["v3_std", "v3_pro", "runway", "grok_imagine"]:
+        check = "✅ " if current_video_model == model_id else ""
+        video_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{video_names[model_id]}",
+                callback_data=f"settings_video_{model_id}",
+            )
+        )
+    for index in range(0, len(video_buttons), 2):
+        builder.row(*video_buttons[index : index + 2])
+
+    i2v_buttons = []
+    for model_id in ["v3_std", "v3_pro", "seedance2", "runway"]:
+        check = "✅ " if current_i2v_model == model_id else ""
+        i2v_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{video_names.get(model_id, model_id)}",
+                callback_data=f"settings_i2v_{model_id}",
+            )
+        )
+    for index in range(0, len(i2v_buttons), 2):
+        builder.row(*i2v_buttons[index : index + 2])
 
     builder.row(
-        InlineKeyboardButton(text=f"{r1_1}1:1", callback_data="img_ratio_1_1"),
-        InlineKeyboardButton(text=f"{r16_9}16:9", callback_data="img_ratio_16_9"),
-        InlineKeyboardButton(text=f"{r9_16}9:16", callback_data="img_ratio_9_16"),
+        InlineKeyboardButton(text="💬 ИИ-ассистент", callback_data="menu_ai_settings")
     )
-    builder.row(
-        InlineKeyboardButton(text=f"{r4_3}4:3", callback_data="img_ratio_4_3"),
-        InlineKeyboardButton(text=f"{r3_2}3:2", callback_data="img_ratio_3_2"),
-    )
-
-    # Main menu button
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-
-    builder.adjust(1, 1, 1, 1, 3, 2, 1)
-
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_main"))
     return builder.as_markup()
 
 
@@ -363,15 +449,15 @@ def get_payment_provider_keyboard(current_provider: str = "tbank"):
     builder = InlineKeyboardBuilder()
 
     tbank_check = "✅ " if current_provider == "tbank" else ""
-    yk_check = "✅ " if current_provider == "yookassa" else ""
+    crypto_check = "✅ " if current_provider == "cryptobot" else ""
 
     builder.button(
         text=f"{tbank_check}💳 Т-Банк",
         callback_data="topup_provider_tbank",
     )
     builder.button(
-        text=f"{yk_check}💜 YooKassa",
-        callback_data="topup_provider_yookassa",
+        text=f"{crypto_check}₿ Crypto Bot",
+        callback_data="topup_provider_cryptobot",
     )
     builder.adjust(2)
     return builder.as_markup()
@@ -380,7 +466,7 @@ def get_payment_provider_keyboard(current_provider: str = "tbank"):
 def get_payment_packages_keyboard(packages: list, provider: str = None):
     """Клавиатура выбора пакета бананов с выбором провайдера"""
     provider = provider or config.payment_provider
-    if provider not in {"tbank", "yookassa"}:
+    if provider not in {"tbank", "cryptobot"}:
         provider = "tbank"
 
     builder = InlineKeyboardBuilder()

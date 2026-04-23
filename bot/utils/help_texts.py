@@ -15,7 +15,7 @@ def get_welcome_message() -> str:
     return """
 🍌 <b>Добро пожаловать в Banano Kling AI Bot!</b>
 
-Передовые AI: FLUX.2 Pro, Nano Banana, Kling 3/2.6, Seedream, Grok.
+Передовые AI: Nano Banana, GPT Image 2, Kling 3/2.6, Seedream, Grok.
 
 🖼 Изображения (5-7🍌): текст/фото→фото, до 14 рефов, 4K
 🎬 Видео (15+🍌): t2v/i2v/motion/V2V, 3-30с
@@ -104,10 +104,9 @@ def get_model_selection_help() -> str:
 ━━━━━━━━━━━━━━━━━━━━━━━━
 🖼 <b>Изображения (5-7🍌)</b>
 
-• FLUX.2 Pro (flux_pro, 5🍌) - текст/реализм
 • Nano Banana Flash (gemini_2_5_flash, 5🍌) - быстро
 • Nano Banana Pro (gemini_3_pro/nano-banana-pro, 5🍌) - 4K
-• Banana 2 (7🍌), Seedream (5-7🍌), Z-Image Turbo (5🍌)
+• Banana 2 (7🍌), GPT Image 2 (5🍌), Seedream (5-7🍌), Z-Image Turbo (5🍌)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 🎬 <b>Видео (15+🍌)</b>
@@ -120,7 +119,7 @@ def get_model_selection_help() -> str:
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Рекомендации:</b>
 
-FLUX.2 Pro: логотипы/текст/реализм
+GPT Image 2: гибкие форматы и image-to-image
 Nano Pro: 4K/профи
 Kling 3 Pro: видео качество
 Kling 2.6: скорость/motion

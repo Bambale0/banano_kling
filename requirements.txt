@@ -17,9 +17,6 @@ python-dotenv>=1.0.0
 # Type hints
 typing-extensions>=4.0.0
 
-# YooKassa payments
-yookassa>=3.4.0
-
 # Optional (face detection for improved frontal crops)
 # Installing face_recognition requires dlib and system build deps (cmake, boost).
 # On Debian/Ubuntu you may need: apt install build-essential cmake libboost-all-dev
