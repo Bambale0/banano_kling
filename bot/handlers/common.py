@@ -22,8 +22,13 @@ from bot.database import (
 )
 from bot.keyboards import (
     get_ai_assistant_keyboard,
+    get_animate_hub_keyboard,
     get_back_keyboard,
+    get_balance_keyboard,
+    get_create_hub_keyboard,
+    get_edit_hub_keyboard,
     get_main_menu_keyboard,
+    get_more_menu_keyboard,
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
     get_referral_keyboard,
@@ -67,16 +72,16 @@ def _get_user_menu(user_id: int) -> str:
 def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
-        "🏠 <b>Главное меню</b>\n"
-        "Создавайте изображения, видео и эффекты в одном аккуратном потоке.\n\n"
-        "<b>Что можно сделать</b>\n"
-        "• Арты и иллюстрации по промпту\n"
-        "• Редактирование и стилизация фото\n"
-        "• Видео из текста, фото и референсов\n"
-        "• Motion Control и апгрейды результата\n\n"
+        "🏠 <b>Banano AI Studio</b>\n"
+        "Выберите задачу — дальше бот подведёт к нужным настройкам.\n\n"
+        "<b>Основные сценарии</b>\n"
+        "• Создать фото или видео с нуля\n"
+        "• Изменить фото, стиль, фон или образ\n"
+        "• Оживить фото и перенести движение\n"
+        "• Разобрать фото в готовый промпт\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
-        "<i>Выберите, с чего начнём.</i>"
+        "<i>С чего начнём?</i>"
     )
 
 
@@ -129,6 +134,73 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
         "• персонаж или иллюстрация\n"
         "• любой объект, которому нужно передать движение"
     )
+
+
+@router.callback_query(F.data == "ux_create")
+async def show_create_hub(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает сценарии создания."""
+    await state.clear()
+    user = await get_or_create_user(callback.from_user.id)
+    text = (
+        "✨ <b>Создать</b>\n"
+        f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+        "Выберите, что нужно получить. Можно пойти быстрым путём через готовый "
+        "сценарий или открыть свои настройки."
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_create_hub_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ux_edit")
+async def show_edit_hub(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает сценарии редактирования фото."""
+    await state.clear()
+    user = await get_or_create_user(callback.from_user.id)
+    text = (
+        "✏️ <b>Изменить фото</b>\n"
+        f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+        "Загрузите фото или референсы, затем опишите, что поменять: стиль, фон, "
+        "образ, объекты или атмосферу."
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_edit_hub_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ux_animate")
+async def show_animate_hub(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает сценарии оживления."""
+    await state.clear()
+    user = await get_or_create_user(callback.from_user.id)
+    text = (
+        "🎬 <b>Оживить</b>\n"
+        f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+        "Выберите подходящий путь: фото в видео, Motion Control или "
+        "видео-референсы."
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_animate_hub_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ux_more")
+async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает вторичные разделы."""
+    await state.clear()
+    user = await get_or_create_user(callback.from_user.id)
+    text = (
+        "⋯ <b>Ещё</b>\n"
+        f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
+        "Здесь собраны оплата, история, партнёрская программа, помощь и поддержка."
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
 
 
 @router.message(CommandStart(), StateFilter(None))
@@ -353,7 +425,7 @@ async def show_balance(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         balance_text,
-        reply_markup=get_main_menu_keyboard(user.credits),
+        reply_markup=get_balance_keyboard(user.credits),
         parse_mode="HTML",
     )
 

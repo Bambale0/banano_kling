@@ -6,8 +6,8 @@ from unittest.mock import Mock, mock_open, patch
 import pytest
 
 from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
-                           get_create_video_keyboard, get_help_keyboard,
-                           get_main_menu_keyboard,
+                           get_create_hub_keyboard, get_create_video_keyboard,
+                           get_help_keyboard, get_main_menu_keyboard,
                            get_payment_packages_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
                            get_topup_keyboard, load_prices)
@@ -36,6 +36,16 @@ def test_load_prices(mock_prices):
 
 def test_get_main_menu_keyboard():
     kb = get_main_menu_keyboard(10)
+    assert kb.inline_keyboard
+    assert any(
+        "ux_create" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+
+
+def test_get_create_hub_keyboard():
+    kb = get_create_hub_keyboard()
     assert kb.inline_keyboard
     assert any(
         "create_video_new" in btn.callback_data

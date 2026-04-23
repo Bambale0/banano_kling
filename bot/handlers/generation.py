@@ -61,29 +61,7 @@ router = Router()
 @router.callback_query(F.data == "create_video_new")
 async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContext):
     """Показывает меню создания видео - начинаем с загрузки референсов"""
-    from bot.database import get_user_credits
-
-    user_credits = await get_user_credits(callback.from_user.id)
-
-    # Инициализируем опции по умолчанию
-    await state.update_data(
-        generation_type="video",
-        v_type="text",  # text или imgtxt
-        v_model="v3_std",  # модель видео
-        v_duration=5,
-        v_ratio="16:9",
-        v_mode="720p",
-        v_orientation="video",
-        reference_images=[],  # Реф. изображения для всех режимов (до 14)
-        v_reference_videos=[],  # Реф. видео для video+text (до 5)
-        user_prompt="",  # Инициализируем пустой промпт
-        grok_mode="normal",
-        veo_generation_type="TEXT_2_VIDEO",
-        veo_translation=True,
-        veo_resolution="720p",
-        veo_seed=None,
-        veo_watermark="",
-    )
+    await _init_default_video_state(state)
 
     # СРАЗУ показываем экран с параметрами видео и полем для промпта (без загрузки референсов)
     await _show_video_creation_screen(callback.message, state)
@@ -93,8 +71,6 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "create_image_refs_new")
 async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContext):
     """Показывает меню создания фото - начинаем с загрузки референсов"""
-    from bot.database import get_user_credits
-
     user_credits = await get_user_credits(callback.from_user.id)
 
     # Инициализируем опции по умолчанию
@@ -134,6 +110,149 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         )
     await callback.answer()
     await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "create_image_text_new")
+async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый вход в фото с нуля, без обязательного экрана референсов."""
+    await state.update_data(
+        generation_type="image",
+        img_service="banana_pro",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        preset_id="new",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "quick_product_image")
+async def show_quick_product_image(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый сценарий для товара/рекламы."""
+    await state.update_data(
+        generation_type="image",
+        img_service="banana_pro",
+        img_ratio="16:9",
+        img_count=1,
+        reference_images=[],
+        preset_id="new",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Формат 16:9 и Banana Pro выбраны для рекламного кадра")
+
+
+@router.callback_query(F.data.in_({"edit_style_image", "edit_background_image"}))
+async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMContext):
+    """Сценарии редактирования фото через загрузку исходника/референсов."""
+    user_credits = await get_user_credits(callback.from_user.id)
+    is_background = callback.data == "edit_background_image"
+    title = "🖼 <b>Сменить фон</b>" if is_background else "🎨 <b>Сменить стиль</b>"
+    hint = (
+        "Загрузите фото, у которого нужно заменить фон. После этого нажмите "
+        "<b>Продолжить</b> и опишите новый фон."
+        if is_background
+        else "Загрузите фото и, при желании, стиль-референсы. После этого нажмите "
+        "<b>Продолжить</b> и опишите желаемый стиль."
+    )
+
+    await state.update_data(
+        generation_type="image",
+        img_service="seedream_edit",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        preset_id="new",
+    )
+    await callback.message.edit_text(
+        f"{title}\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        f"{hint}\n\n"
+        "<i>Можно загрузить до 14 фото.</i>",
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "edit_grok_i2i")
+async def show_grok_i2i_upload(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый вход в Grok Imagine i2i."""
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="image",
+        img_service="grok_imagine_i2i",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        nsfw_enabled=False,
+        preset_id="new",
+    )
+    await callback.message.edit_text(
+        "🧠 <b>Grok Imagine i2i</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "Загрузите фото для редактирования, затем нажмите <b>Продолжить</b> "
+        "и опишите изменение.",
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "quick_reels_video")
+async def show_quick_reels_video(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый сценарий вертикального ролика."""
+    await _init_default_video_state(
+        state,
+        v_type="text",
+        v_model="veo3_fast",
+        v_duration=6,
+        v_ratio="9:16",
+    )
+    await _show_video_creation_screen(callback, state)
+    await callback.answer("Выбраны настройки для Reels/TikTok: 9:16, 6 сек")
+
+
+@router.callback_query(F.data == "quick_image_to_video")
+async def show_quick_image_to_video(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый сценарий фото -> видео."""
+    await _init_default_video_state(
+        state,
+        v_type="imgtxt",
+        v_model="v3_std",
+        v_duration=5,
+        v_ratio="9:16",
+    )
+    await _show_video_creation_screen(callback, state)
+    await callback.answer("Загрузите фото, затем промпт движения")
+
+
+@router.callback_query(F.data == "quick_video_reference")
+async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый вход в видео-референсы."""
+    user_credits = await get_user_credits(callback.from_user.id)
+    await _init_default_video_state(
+        state,
+        v_type="video",
+        v_model="glow",
+        v_duration=5,
+        v_ratio="16:9",
+    )
+    text = (
+        "🎞 <b>Видео-референс</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        "Загрузите до 5 коротких видео, чтобы передать движение, стиль камеры "
+        "или атмосферу. Можно пропустить и продолжить без референсов."
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.uploading_reference_videos)
 
 
 @router.callback_query(F.data == "motion_control")
@@ -214,6 +333,40 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
 # =============================================================================
 # СЛУЖЕБНЫЕ ФУНКЦИИ ДЛЯ UNIFIED UX
 # =============================================================================
+
+
+async def _init_default_video_state(
+    state: FSMContext,
+    *,
+    v_type: str = "text",
+    v_model: str = "v3_std",
+    v_duration: int = 5,
+    v_ratio: str = "16:9",
+):
+    """Инициализирует единый state для новых видео-сценариев."""
+    await state.update_data(
+        generation_type="video",
+        v_type=v_type,
+        v_model=v_model,
+        v_duration=v_duration,
+        v_ratio=v_ratio,
+        v_mode="720p",
+        v_orientation="video",
+        reference_images=[],
+        v_reference_videos=[],
+        v_image_url=None,
+        user_prompt="",
+        grok_mode="normal",
+        veo_generation_type=(
+            "FIRST_AND_LAST_FRAMES_2_VIDEO"
+            if v_type == "imgtxt" and v_model.startswith("veo3")
+            else "TEXT_2_VIDEO"
+        ),
+        veo_translation=True,
+        veo_resolution="720p",
+        veo_seed=None,
+        veo_watermark="",
+    )
 
 
 async def _show_video_creation_screen(
@@ -600,7 +753,7 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(**updates)
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "v_type_imgtxt")
@@ -647,8 +800,7 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer()
-    # Не меняем состояние - оставляем waiting_for_input для приёма и фото, и текста
-    # State will be waiting_for_input from previous handler
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "v_type_video")
@@ -658,7 +810,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
 
     user_credits = await get_user_credits(callback.from_user.id)
 
-    await state.update_data(v_type="video")
+    await state.update_data(v_type="video", v_model="glow", v_duration=5)
 
     text = (
         "🎬 <b>Видео + Текст -> Видео</b>\n"
@@ -808,7 +960,7 @@ async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContex
 
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_16_9")
@@ -823,7 +975,7 @@ async def handle_video_ratio_16_9(callback: types.CallbackQuery, state: FSMConte
 
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_9_16")
@@ -838,7 +990,7 @@ async def handle_video_ratio_9_16(callback: types.CallbackQuery, state: FSMConte
 
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_4_3")
@@ -853,7 +1005,7 @@ async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContex
 
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_3_2")
@@ -868,7 +1020,7 @@ async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContex
 
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_2_3")
@@ -877,7 +1029,7 @@ async def handle_video_ratio_2_3(callback: types.CallbackQuery, state: FSMContex
     await state.update_data(v_ratio="2:3")
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "ratio_Auto")
@@ -886,7 +1038,7 @@ async def handle_video_ratio_auto(callback: types.CallbackQuery, state: FSMConte
     await state.update_data(v_ratio="Auto")
     await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # Обработчик длительности видео

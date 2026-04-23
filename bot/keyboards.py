@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -10,27 +11,94 @@ from bot.services.preset_manager import preset_manager
 logger = logging.getLogger(__name__)
 
 
+def load_prices():
+    """Backward-compatible helper for tests and old integrations."""
+    price_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data",
+        "price.json",
+    )
+    with open(price_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+try:
+    PACKAGES = load_prices().get("packages", [])
+except Exception:
+    PACKAGES = []
+
+
 # =============================================================================
 # ГЛАВНОЕ МЕНЮ - согласно ux.md
 # =============================================================================
 
 
 def get_main_menu_keyboard(user_credits: int = 0):
-    """Главное меню бота - согласно ux.md"""
+    """Главное меню бота: задачи пользователя вместо списка инструментов."""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
-    builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="✨ Создать", callback_data="ux_create")
+    builder.button(text="✏️ Изменить", callback_data="ux_edit")
+    builder.button(text="🎬 Оживить", callback_data="ux_animate")
+    builder.button(text="📸 Фото → Промпт", callback_data="photo_to_prompt")
+    builder.button(text="💬 AI-помощник", callback_data="menu_ai_assistant")
+    builder.button(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance")
+    builder.button(text="⋯ Ещё", callback_data="ux_more")
+
+    builder.adjust(2, 2, 2, 1)
+
+    return builder.as_markup()
+
+
+def get_create_hub_keyboard():
+    """Подменю создания: фото, видео и быстрые сценарии."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🖼 Фото", callback_data="create_image_text_new")
+    builder.button(text="🎬 Видео", callback_data="create_video_new")
+    builder.button(text="📱 Reels/TikTok", callback_data="quick_reels_video")
+    builder.button(text="🛍 Товар/реклама", callback_data="quick_product_image")
+    builder.button(text="⚡ Быстрый старт", callback_data="create_image_text_new")
+    builder.button(text="⚙️ Свои настройки", callback_data="create_video_new")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
+
+
+def get_edit_hub_keyboard():
+    """Подменю редактирования фото."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎨 Сменить стиль", callback_data="edit_style_image")
+    builder.button(text="🖼 Сменить фон", callback_data="edit_background_image")
+    builder.button(text="🧩 По референсам", callback_data="create_image_refs_new")
+    builder.button(text="🧠 Grok i2i", callback_data="edit_grok_i2i")
+    builder.button(text="⚙️ Свои настройки", callback_data="create_image_refs_new")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 1, 1)
+    return builder.as_markup()
+
+
+def get_animate_hub_keyboard():
+    """Подменю оживления фото и видео."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🖼 Фото → Видео", callback_data="quick_image_to_video")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
+    builder.button(text="🎞 Видео-референс", callback_data="quick_video_reference")
+    builder.button(text="🎬 Видео с нуля", callback_data="create_video_new")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1, 1, 1)
+    return builder.as_markup()
 
-    builder.button(text="📸 Фото=Промпт", callback_data="photo_to_prompt")
+
+def get_more_menu_keyboard():
+    """Вторичные разделы, чтобы не перегружать главный экран."""
+    builder = InlineKeyboardBuilder()
     builder.button(text="💼 Партнёрам", callback_data="menu_partner")
+    builder.button(text="📋 История", callback_data="menu_history")
+    builder.button(text="❓ Как пользоваться", callback_data="menu_help")
+    builder.button(text="💬 Поддержка", callback_data="menu_support")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
-    builder.button(text="🆘 Тех. поддержка", callback_data="menu_support")
-    builder.button(text="❓ Помощь бота", callback_data="menu_help")
-
-    builder.adjust(2, 2, 2, 2)
-
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -289,7 +357,7 @@ def get_create_video_keyboard(
     total_cost = preset_manager.get_video_cost(current_model, current_duration)
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"💰 {total_cost}🍌", callback_data="back_main")
+    builder.button(text=f"Стоимость: {total_cost}🍌", callback_data="ignore")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     num_models = len(models)
@@ -470,6 +538,15 @@ def get_payment_packages_keyboard(packages: list):
         )
 
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_payment_provider_keyboard():
+    """Совместимость со старым меню выбора провайдера оплаты."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💳 CryptoBot", callback_data="menu_topup")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 
