@@ -64,6 +64,20 @@ class TestConfig:
         cfg.PAYMENT_PROVIDER = "invalid"
         assert cfg.payment_provider == "tbank"
 
+    def test_has_jump_finance_true_with_agent_id(self):
+        cfg = Config()
+        cfg.JUMP_FINANCE_CLIENT_KEY = "client-key"
+        cfg.JUMP_FINANCE_AGENT_ID = 123
+        assert cfg.has_jump_finance is True
+        assert cfg.jump_finance_missing_settings == []
+
+    def test_has_jump_finance_true_without_agent_id(self):
+        cfg = Config()
+        cfg.JUMP_FINANCE_CLIENT_KEY = "client-key"
+        cfg.JUMP_FINANCE_AGENT_ID = 0
+        assert cfg.has_jump_finance is True
+        assert cfg.jump_finance_missing_settings == []
+
     def test_has_yookassa_true(self):
         cfg = Config()
         cfg.YOOKASSA_SHOP_ID = "shop123"

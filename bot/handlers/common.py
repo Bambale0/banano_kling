@@ -148,9 +148,11 @@ async def _sync_partner_withdrawals(user_id: int) -> None:
                 status=internal_status,
                 status_title=status_title,
                 external_status_id=status_id,
-                error_message=(payment.get("error") or {}).get("detail")
-                if isinstance(payment.get("error"), dict)
-                else None,
+                error_message=(
+                    (payment.get("error") or {}).get("detail")
+                    if isinstance(payment.get("error"), dict)
+                    else None
+                ),
             )
         except Exception:
             logger.exception("Failed to sync partner withdrawal %s", withdrawal["id"])
@@ -679,8 +681,9 @@ async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
         )
         return
     if not config.has_jump_finance:
+        missing = ", ".join(config.jump_finance_missing_settings)
         await callback.answer(
-            "Автовыплаты пока не настроены в окружении",
+            f"Автовыплаты не настроены: заполните {missing}",
             show_alert=True,
         )
         return

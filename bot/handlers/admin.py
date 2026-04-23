@@ -305,7 +305,9 @@ async def admin_execute_broadcast(
     data = await state.get_data()
     broadcast_text = data.get("broadcast_text")
 
-    await callback.message.edit_text("📢 <b>Рассылка запущена...</b>", parse_mode="HTML")
+    await callback.message.edit_text(
+        "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+    )
 
     # Получаем всех пользователей
     import aiosqlite

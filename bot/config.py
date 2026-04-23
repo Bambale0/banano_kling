@@ -6,6 +6,17 @@ from typing import List
 logger = logging.getLogger(__name__)
 
 
+def _get_env_int(name: str, default: int = 0) -> int:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Invalid integer value for %s: %s", name, value)
+        return default
+
+
 @dataclass
 class Config:
     # Telegram
@@ -92,10 +103,8 @@ class Config:
     JUMP_FINANCE_BASE_URL: str = os.getenv(
         "JUMP_FINANCE_BASE_URL", "https://api.jump.finance/services/openapi"
     )
-    JUMP_FINANCE_AGENT_ID: int = int(os.getenv("JUMP_FINANCE_AGENT_ID", "0"))
-    JUMP_FINANCE_BANK_ACCOUNT_ID: int = int(
-        os.getenv("JUMP_FINANCE_BANK_ACCOUNT_ID", "0")
-    )
+    JUMP_FINANCE_AGENT_ID: int = _get_env_int("JUMP_FINANCE_AGENT_ID")
+    JUMP_FINANCE_BANK_ACCOUNT_ID: int = _get_env_int("JUMP_FINANCE_BANK_ACCOUNT_ID")
     JUMP_FINANCE_PAYOUT_SERVICE_NAME: str = os.getenv(
         "JUMP_FINANCE_PAYOUT_SERVICE_NAME",
         "Партнерское вознаграждение",
@@ -158,7 +167,14 @@ class Config:
 
     @property
     def has_jump_finance(self) -> bool:
-        return bool(self.JUMP_FINANCE_CLIENT_KEY and self.JUMP_FINANCE_AGENT_ID > 0)
+        return not self.jump_finance_missing_settings
+
+    @property
+    def jump_finance_missing_settings(self) -> List[str]:
+        missing = []
+        if not self.JUMP_FINANCE_CLIENT_KEY:
+            missing.append("JUMP_FINANCE_CLIENT_KEY")
+        return missing
 
     @property
     def kling_notification_url(self) -> str:
