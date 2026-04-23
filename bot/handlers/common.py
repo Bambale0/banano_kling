@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 
 import aiosqlite
@@ -14,12 +15,15 @@ from bot.database import (
     create_partner_withdrawal,
     get_or_create_user,
     get_partner_overview,
+    get_recent_partner_withdrawals,
     get_referral_stats,
     get_user_settings,
     get_user_stats,
     process_referral,
     save_user_settings,
+    update_partner_withdrawal_status,
 )
+from bot.config import config
 from bot.image_models import get_image_model_config, resolve_image_model
 from bot.keyboards import (
     get_ai_assistant_keyboard,
@@ -30,7 +34,13 @@ from bot.keyboards import (
     get_referral_keyboard,
 )
 from bot.services.preset_manager import preset_manager
-from bot.states import AdminStates, GenerationStates, PaymentStates
+from bot.states import (
+    AdminStates,
+    GenerationStates,
+    PartnerWithdrawalStates,
+    PaymentStates,
+)
+from bot.services.jump_finance_service import JumpFinanceError, jump_finance_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -63,6 +73,87 @@ def _set_user_menu(user_id: int, menu: str):
 def _get_user_menu(user_id: int) -> str:
     """Получает последнее посещённое меню пользователя"""
     return _user_last_menu.get(user_id)
+
+
+def _build_welcome_text(credits: int, referral_bonus_text: str = "") -> str:
+    bonus_block = f"{referral_bonus_text}\n\n" if referral_bonus_text else ""
+    return (
+        "🏠 <b>Главное меню</b>\n\n"
+        "Хватит просто смотреть, пора создавать с AI.\n\n"
+        "<b>Что можно сделать:</b>\n"
+        "• генерировать изображения по промпту\n"
+        "• редактировать фото и работать с референсами\n"
+        "• создавать видео из текста, фото и видео\n"
+        "• анимировать персонажей через Motion Control\n\n"
+        f"🍌 <b>Ваш баланс:</b> <code>{credits}</code> бананов\n\n"
+        f"{bonus_block}"
+        '📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>\n\n'
+        "<i>Выберите нужный режим ниже.</i>\n\n"
+        "⚠️ <b>Важно:</b>\n"
+        "Запрещено создавать порнографические материалы. За нарушение доступ к боту может быть ограничен без возврата потраченных бананов."
+    )
+
+
+def _mask_card(card_number: str) -> str:
+    digits = re.sub(r"\D", "", card_number or "")
+    if len(digits) < 4:
+        return "****"
+    return f"**** **** **** {digits[-4:]}"
+
+
+def _normalize_phone(phone: str) -> str:
+    digits = re.sub(r"\D", "", phone or "")
+    if digits.startswith("8") and len(digits) == 11:
+        digits = f"7{digits[1:]}"
+    if len(digits) != 11 or not digits.startswith("7"):
+        raise ValueError("Телефон должен быть в формате +79991234567")
+    return f"+{digits}"
+
+
+def _split_full_name(full_name: str) -> str:
+    normalized = re.sub(r"\s+", " ", (full_name or "").strip())
+    if len(normalized.split(" ")) < 2:
+        raise ValueError("Укажите минимум фамилию и имя")
+    return normalized
+
+
+async def _sync_partner_withdrawals(user_id: int) -> None:
+    if not config.has_jump_finance:
+        return
+    withdrawals = await get_recent_partner_withdrawals(user_id, limit=10)
+    for withdrawal in withdrawals:
+        if not withdrawal.get("external_payment_id"):
+            continue
+        if withdrawal.get("status") in {"completed", "failed", "cancelled"}:
+            continue
+        try:
+            payment = await jump_finance_service.get_payment(
+                withdrawal["external_payment_id"]
+            )
+            status = payment.get("status") or {}
+            status_id = status.get("id")
+            status_title = status.get("title")
+            internal_status = {
+                1: "completed",
+                2: "failed",
+                3: "processing",
+                4: "requested",
+                5: "failed",
+                6: "cancelled",
+                7: "processing",
+                8: "processing",
+            }.get(status_id, "processing")
+            await update_partner_withdrawal_status(
+                withdrawal["id"],
+                status=internal_status,
+                status_title=status_title,
+                external_status_id=status_id,
+                error_message=(payment.get("error") or {}).get("detail")
+                if isinstance(payment.get("error"), dict)
+                else None,
+            )
+        except Exception:
+            logger.exception("Failed to sync partner withdrawal %s", withdrawal["id"])
 
 
 @router.message(CommandStart(), StateFilter(None))
@@ -177,26 +268,7 @@ async def cmd_start(message: types.Message):
                 "Вы получили бонус за регистрацию по приглашению."
             )
 
-    # Приветственное сообщение
-    welcome_text = f"""
-Хватит просто смотреть — создавай с AI! 🔥
-
-✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.
-✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.
-✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.
-✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион.
-
-🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов
-
-{referral_bonus_text}
-
-📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>
-
-<i>Попробуй прямо сейчас! 👇</i>
-
-⚠️ <b><u>ВАЖНО:</u></b>
-Запрещено создавать порнографические материалы. Нарушители блокируются без возврата потраченных бананов. Администрация не несет ответственности за действия пользователей.
-"""
+    welcome_text = _build_welcome_text(user.credits, referral_bonus_text)
 
     try:
         await message.answer(
@@ -323,18 +395,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     # Запоминаем, что пользователь в главном меню
     _set_user_menu(callback.from_user.id, "main_menu")
 
-    # Полный текст главного меню как в cmd_start
-    welcome_text = (
-        f"🏠 <b>Главное меню</b>"
-        f"Хватит просто смотреть — создавай с AI! 🔥"
-        f"✅ <b>Генерация артов:</b> Пиши промпт — получай шедевр.\n"
-        f"✅ <b>Фото-магия:</b> Стилизация и замена объектов в пару кликов.\n"
-        f"✅ <b>Видео-продакшн:</b> Делаю ролики из слов и фото.\n"
-        f"✅ <b>FX-эффекты:</b> Твои видео станут выглядеть на миллион."
-        f"🍌 <b>Ваш баланс:</b> <code>{user.credits}</code> бананов"
-        f'📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>'
-        f"<i>Попробуй прямо сейчас! 👇</i>"
-    )
+    welcome_text = _build_welcome_text(user.credits)
 
     try:
         await callback.message.edit_text(
@@ -385,8 +446,9 @@ async def cmd_partner(message: types.Message):
 
 
 @router.callback_query(F.data.in_({"menu_referrals", "menu_partner"}))
-async def show_partner(callback: types.CallbackQuery):
+async def show_partner(callback: types.CallbackQuery, state: FSMContext):
     """Показывает партнёрскую программу."""
+    await state.clear()
     await render_partner_program(callback.message, user_id=callback.from_user.id)
     await callback.answer()
 
@@ -475,8 +537,10 @@ async def show_partner_offer(callback: types.CallbackQuery):
 
 async def render_partner_program(target, user_id: int):
     """Рендерит экран партнёрской программы."""
+    await _sync_partner_withdrawals(user_id)
     user = await get_or_create_user(user_id)
     stats = await get_partner_overview(user_id)
+    withdrawals = await get_recent_partner_withdrawals(user_id, limit=3)
 
     bot = target.bot
     me = await bot.get_me()
@@ -487,30 +551,39 @@ async def render_partner_program(target, user_id: int):
 
     tier = stats.get("tier", "basic")
     percent = stats.get("percent", 30)
-    offer_url = "https://example.com/offer"
-    rules_url = "https://example.com/rules"
-    if hasattr(bot, "offer_url"):
-        offer_url = bot.offer_url
+    recent_lines = []
+    for item in withdrawals:
+        status_title = item.get("status_title") or item.get("status") or "unknown"
+        recent_lines.append(
+            f"• {item.get('amount_rub', 0)} ₽ · {item.get('card_mask') or item.get('method') or 'карта'} · <code>{status_title}</code>"
+        )
+    recent_text = (
+        "\n".join(recent_lines)
+        if recent_lines
+        else "• Пока нет созданных заявок на вывод"
+    )
 
     text = (
-        "💼 <b>Партнёрам</b>"
-        "Это практическое руководство по участию в партнёрской программе.\n"
-        "Юридически значимые условия содержатся в Публичной оферте."
-        f"🔗 Ваша личная ссылка: <code>{referral_link or 'Ссылка появится после активации'} </code>\n"
+        "💼 <b>Партнёрская программа</b>\n\n"
+        "Здесь вы можете отслеживать рефералов, начисления и заявки на вывод.\n"
+        "Юридически значимые условия размещены в публичной оферте.\n\n"
+        f"🔗 Ваша ссылка: <code>{referral_link or 'Ссылка появится после активации'}</code>\n"
         f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
-        f"💰 Заработано: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
-        f"🧮 Текущий баланс: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>"
-        "<b>Уровни вознаграждения:</b>\n"
+        f"🧾 Всего оплат: <code>{stats.get('total_payments', 0)}</code>\n"
+        f"💰 Баланс к выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        f"💸 Уже выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
+        f"🏷 Уровень: <code>{tier}</code> · <code>{percent}%</code>\n\n"
+        "<b>Ставки партнёрской программы:</b>\n"
         "• 30% — базовый уровень\n"
         "• 35% — от 100 000 ₽ оборота рефералов\n"
-        "• 50% — от 1 000 000 ₽ оборота рефералов"
+        "• 50% — от 1 000 000 ₽ оборота рефералов\n\n"
         "<b>Как это работает:</b>\n"
-        "• Пользователь переходит по вашей ссылке\n"
-        "• Регистрируется и закрепляется за вами навсегда\n"
-        "• После оплат рефералов начисляется денежное вознаграждение\n"
-        "• Вывод доступен после достижения минимальной суммы\n"
+        "• пользователь переходит по вашей ссылке\n"
+        "• регистрируется и закрепляется за вами\n"
+        "• после первой оплаты начисляется вознаграждение\n"
+        "• активным партнёрам начисляется денежный бонус в ₽\n\n"
+        "<b>Последние заявки на вывод:</b>\n"
+        f"{recent_text}"
     )
 
     markup = (
@@ -553,9 +626,9 @@ async def accept_partner(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "✅ <b>Партнёрский статус активирован</b>"
-        "Теперь вы получаете денежное вознаграждение за оплату рефералов.\n"
-        "Ваш процент зависит от оборота рефералов и обновляется автоматически.",
+        "✅ <b>Партнёрский статус активирован</b>\n\n"
+        "Теперь вы участвуете в партнёрской программе и получаете вознаграждение за оплаты рефералов.\n"
+        "Процент зависит от общего оборота и обновляется автоматически.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
         parse_mode="HTML",
     )
@@ -565,15 +638,16 @@ async def accept_partner(callback: types.CallbackQuery):
 @router.callback_query(F.data == "partner_stats")
 async def partner_stats(callback: types.CallbackQuery):
     """Показывает детальную статистику партнёра."""
+    await _sync_partner_withdrawals(callback.from_user.id)
     stats = await get_partner_overview(callback.from_user.id)
     text = (
-        "📈 <b>Детальная статистика</b>"
+        "📈 <b>Детальная статистика</b>\n\n"
         f"• Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
         f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
-        f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
-        f"• Доход за месяц: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
-        f"• Новые за сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
-        f"• Доход за сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
+        f"• Всего оплат: <code>{stats.get('total_payments', 0)}</code>\n"
+        f"• Оборот за месяц: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
+        f"• Оплат сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
+        f"• Оборот сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
     )
     # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
     user = await get_or_create_user(callback.from_user.id)
@@ -594,29 +668,205 @@ async def partner_stats(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data == "partner_withdraw")
-async def partner_withdraw(callback: types.CallbackQuery):
-    """Показывает меню вывода."""
+async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает вывод партнёрского заработка."""
     stats = await get_partner_overview(callback.from_user.id)
-    min_withdraw = 2000
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    user = await get_or_create_user(callback.from_user.id)
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
-    )
+    min_withdraw = config.PARTNER_MIN_WITHDRAWAL_RUB
+
+    if not stats.get("is_partner"):
+        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        return
+    if not config.has_jump_finance:
+        await callback.answer(
+            "Автовыплаты пока не настроены в окружении",
+            show_alert=True,
+        )
+        return
+    if stats.get("balance_rub", 0) < min_withdraw:
+        await callback.answer(
+            f"Минимальная сумма вывода: {min_withdraw} ₽",
+            show_alert=True,
+        )
+        return
 
     await callback.message.edit_text(
-        "🎟️ <b>Вывод заработка</b>"
-        f"Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽"
-        "Для оформления вывода напишите реквизиты и сумму в поддержку или добавим форму следующим шагом.",
-        reply_markup=get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        ),
+        "🎟️ <b>Вывод заработка</b>\n\n"
+        f"Доступно к выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        f"Минимальная сумма: <code>{min_withdraw}</code> ₽\n\n"
+        "Шаг 1 из 4.\n"
+        "Введите сумму вывода в рублях без копеек или с копейками.",
+        reply_markup=get_back_keyboard("menu_partner"),
         parse_mode="HTML",
     )
     await callback.answer()
+    await state.set_state(PartnerWithdrawalStates.waiting_amount)
+
+
+@router.message(PartnerWithdrawalStates.waiting_amount)
+async def partner_withdraw_amount(message: types.Message, state: FSMContext):
+    stats = await get_partner_overview(message.from_user.id)
+    min_withdraw = config.PARTNER_MIN_WITHDRAWAL_RUB
+    try:
+        amount = float(message.text.replace(",", ".").strip())
+    except Exception:
+        await message.answer("Введите сумму числом, например <code>2500</code>.", parse_mode="HTML")
+        return
+
+    if amount < min_withdraw:
+        await message.answer(
+            f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽.",
+            parse_mode="HTML",
+        )
+        return
+    if amount > float(stats.get("balance_rub", 0)):
+        await message.answer(
+            f"Недостаточно средств. Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽.",
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(partner_withdraw_amount=round(amount, 2))
+    await state.set_state(PartnerWithdrawalStates.waiting_full_name)
+    await message.answer(
+        "Шаг 2 из 4.\n\n"
+        "Введите ФИО получателя полностью.\n"
+        "Пример: <code>Иванов Иван Иванович</code>",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(PartnerWithdrawalStates.waiting_full_name)
+async def partner_withdraw_full_name(message: types.Message, state: FSMContext):
+    try:
+        full_name = _split_full_name(message.text)
+    except ValueError as e:
+        await message.answer(str(e))
+        return
+
+    await state.update_data(partner_withdraw_full_name=full_name)
+    await state.set_state(PartnerWithdrawalStates.waiting_phone)
+    await message.answer(
+        "Шаг 3 из 4.\n\n"
+        "Введите номер телефона получателя в формате <code>+79991234567</code>.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(PartnerWithdrawalStates.waiting_phone)
+async def partner_withdraw_phone(message: types.Message, state: FSMContext):
+    try:
+        phone = _normalize_phone(message.text)
+    except ValueError as e:
+        await message.answer(str(e))
+        return
+
+    await state.update_data(partner_withdraw_phone=phone)
+    await state.set_state(PartnerWithdrawalStates.waiting_card)
+    await message.answer(
+        "Шаг 4 из 4.\n\n"
+        "Введите номер банковской карты РФ без пробелов или с пробелами.\n"
+        "Пример: <code>5469 5500 5321 9652</code>",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(PartnerWithdrawalStates.waiting_card)
+async def partner_withdraw_card(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    digits = re.sub(r"\D", "", message.text or "")
+    if len(digits) < 16 or len(digits) > 19:
+        await message.answer("Номер карты должен содержать от 16 до 19 цифр.")
+        return
+
+    amount = float(data["partner_withdraw_amount"])
+    full_name = data["partner_withdraw_full_name"]
+    phone = data["partner_withdraw_phone"]
+    card_mask = _mask_card(digits)
+
+    await message.answer(
+        "⏳ Создаю выплату...\n"
+        "Проверяю исполнителя и отправляю заявку в платёжный сервис."
+    )
+
+    try:
+        contractor = await jump_finance_service.upsert_contractor(
+            phone=phone,
+            full_name=full_name,
+        )
+        payment = await jump_finance_service.create_payment(
+            contractor_id=int(contractor["id"]),
+            amount_rub=amount,
+            card_number=digits,
+            customer_payment_id=str(uuid.uuid4()),
+            service_name=config.JUMP_FINANCE_PAYOUT_SERVICE_NAME,
+            payment_purpose=config.JUMP_FINANCE_PAYOUT_PURPOSE,
+        )
+        status = payment.get("status") or {}
+        requisite = payment.get("requisite") or {}
+        internal_status = {
+            1: "completed",
+            2: "failed",
+            3: "processing",
+            4: "requested",
+            5: "failed",
+            6: "cancelled",
+            7: "processing",
+            8: "processing",
+        }.get(status.get("id"), "processing")
+        stored_status = (
+            "requested" if internal_status in {"failed", "cancelled"} else internal_status
+        )
+        withdrawal_id = await create_partner_withdrawal(
+            telegram_id=message.from_user.id,
+            amount_rub=amount,
+            method="bank_card",
+            requisites=card_mask,
+            recipient_name=full_name,
+            phone=phone,
+            card_mask=card_mask,
+            external_payment_id=str(payment.get("id")),
+            external_contractor_id=int(contractor["id"]),
+            external_requisite_id=requisite.get("id"),
+            external_status_id=status.get("id"),
+            status_title=status.get("title"),
+            status=stored_status,
+        )
+        if withdrawal_id and internal_status in {"failed", "cancelled"}:
+            await update_partner_withdrawal_status(
+                withdrawal_id,
+                status=internal_status,
+                status_title=status.get("title"),
+                external_status_id=status.get("id"),
+                error_message="Выплата была отклонена сразу после создания",
+            )
+        await state.clear()
+        await message.answer(
+            "✅ <b>Заявка на вывод создана</b>\n\n"
+            f"Сумма: <code>{amount}</code> ₽\n"
+            f"Карта: <code>{card_mask}</code>\n"
+            f"Статус: <code>{status.get('title') or 'создана'}</code>\n"
+            f"ID выплаты: <code>{payment.get('id')}</code>\n\n"
+            "Обновлённый статус можно посмотреть в разделе партнёрки.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+    except JumpFinanceError as e:
+        await state.clear()
+        await message.answer(
+            f"❌ Не удалось создать выплату.\n\n<code>{str(e)}</code>",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("Partner withdrawal payout failed")
+        await state.clear()
+        await message.answer(
+            "❌ Не удалось создать выплату из-за внутренней ошибки.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
 
 
 @router.callback_query(F.data == "menu_settings")

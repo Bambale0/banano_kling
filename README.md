@@ -31,11 +31,12 @@ banano_kling/
 │   │   └── payments.py      # Платежи (T-Bank/Crypto Bot)
 │   ├── services/            # AI/платёжные интеграции
 │   │   ├── gemini_service.py     # NanoBanana/Gemini (text2img, edit, refs до 14)
-│   │   ├── kling_service.py      # Kling 3.0/2.6 (PiAPI/Kie.ai/Replicate) - video gen/motion
+│   │   ├── kling_service.py      # Kling 3.0/2.6 - video gen/motion
 │   │   ├── nano_banana_2/pro_service.py # Banana 2/Pro (Gemini 3.1 Flash/Pro)
 │   │   ├── seedream_service.py    # Seedream (Novita AI)
 │   │   ├── grok_service.py        # Grok Imagine (image-to-video)
 │   │   ├── cryptobot_service.py # Платежи Crypto Bot
+│   │   ├── jump_finance_service.py # Выплаты партнёрам на банковские карты
 │   │   ├── preset_manager.py      # Цены/пресеты из JSON
 │   │   └── ai_assistant_service.py # ИИ-ассистент (Grok/Claude)
 │   └── utils/               # Help texts, validators
@@ -174,7 +175,7 @@ ADMIN_IDS=123,456
 - **generation_tasks**: task_id, user_id, type (image/video), preset_id, model, duration, aspect_ratio, prompt, cost, result_url
 - **batch_jobs**: job_id, user_id, mode, total_cost, results_count
 - **user_settings**: preferred_model/video_model/i2v_model/image_service
-- **partner_withdrawals**: user_id, amount_rub, method, requisites, status (requested/completed)
+- **partner_withdrawals**: user_id, amount_rub, method, requisites, recipient_name, phone, card_mask, external_payment_id, external_status_id, status_title, error_message, status
 - **referrals**: referrer_id, referred_id, bonus_credits
 
 ### Ключевые функции
@@ -187,33 +188,34 @@ get_admin_stats() → dict (users, revenue, generations)
 process_referral(referred_id, code) → bool
 credit_first_payment_referral_bonus(...) → dict (mode: partner/banana, value, %)
 get_partner_overview(id) → dict (balance_rub, tier, referrals_count)
-create_partner_withdrawal(id, amount, method, requisites) → bool
+create_partner_withdrawal(id, amount, method, requisites, ...) → int | None
+update_partner_withdrawal_status(id, status, ...) → bool
+get_recent_partner_withdrawals(id, limit=5) → list[dict]
 ```
 
 ## 👥 Реферальная/Партнёрская система
 
 ### Как работает
 1. **Регистрация:** Новый пользователь получает уникальный `referral_code` (8 символов).
-2. **Приглашение:** `t.me/bot?start=ref_XXXXXX` → `process_referral()` закрепляет за мастер-партнёром (ID: 339795159).
+2. **Приглашение:** `t.me/bot?start=ref_XXXXXX` → `process_referral()` закрепляет пользователя за владельцем кода.
 3. **Бонус за регистрацию:** 5🍌 новому (signup_bonus).
-4. **Первая оплата реферала:** `credit_first_payment_referral_bonus()` начисляет мастеру:
-   - **Banana бонус:** 10% от credits (если не партнёр).
-   - **Partner %:** basic=30%, gold=35% (≥100k ₽), pro=50% (≥1M ₽) от RUB.
+4. **Первая оплата реферала:** `credit_first_payment_referral_bonus()` начисляет владельцу кода:
+   - **Banana бонус:** 10% от credits, если пригласивший не активировал партнёрский статус.
+   - **Partner %:** basic=30%, gold=35% (≥100k ₽), pro=50% (≥1M ₽) от суммы в ₽, если партнёр активирован.
 5. **Уровни:** `get_partner_tier_by_total(total_revenue_rub)`.
-6. **Вывод:** `create_partner_withdrawal()` (мин. 2000₽), статус: requested → completed.
+6. **Вывод:** `create_partner_withdrawal()` резервирует сумму на балансе и создаёт заявку на выплату через Jump Finance.
+7. **Синхронизация статуса:** `update_partner_withdrawal_status()` обновляет статус выплаты и возвращает деньги на баланс при `failed/cancelled`.
 
 ### Flows (common.py)
 - `/ref` или "Партнёрка" → `render_partner_program()` → stats, link.
 - "Принять оферту" → `accept_partner_agreement()` → tier= basic.
 - "Статистика" → `get_partner_overview()` (balance, tier, revenue).
-- "Вывод" → `create_partner_withdrawal()`.
+- "Вывод" → FSM на 4 шага → `jump_finance_service` → `create_partner_withdrawal()`.
 
 ### DB интеграция
 - `generate_referral_code()`: уникальный код (race-safe).
 - `set_user_referrer()`: one-time bind.
 - Partner fields: `partner_balance_rub += bonus_rub`, `tier` auto-update.
-
-**Централизованно:** Все бонусы → мастер-партнёр (339795159).
 
 
 ## 🎛️ FSM Состояния (aiogram StatesGroup)

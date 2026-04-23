@@ -46,7 +46,12 @@ async def _notify_user(bot: Bot, telegram_id: int, text: str, *, parse_mode=None
         await bot.send_message(telegram_id, text, parse_mode=parse_mode)
     except TelegramBadRequest as exc:
         if _is_ignored_telegram_error(exc):
-            raise
+            logger.warning(
+                "Skipping notification for telegram_id=%s: %s",
+                telegram_id,
+                exc,
+            )
+            return
         raise
 
 
@@ -116,7 +121,9 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
     await add_credits(telegram_id, transaction.credits)
     await update_transaction_status(order_id, "completed")
     referral_bonus = await credit_first_payment_referral_bonus(
-        telegram_id, transaction.credits, transaction.amount_rub
+        telegram_id,
+        transaction.credits,
+        transaction.amount_rub,
     )
 
     if bot:
@@ -127,13 +134,8 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
                 _payment_success_text(transaction, referral_bonus),
                 parse_mode="HTML",
             )
-        except TelegramBadRequest as exc:
-            if _is_ignored_telegram_error(exc):
-                logger.warning(
-                    "Skipping payment notification for %s: %s", telegram_id, exc
-                )
-            else:
-                logger.exception("Failed to notify user about payment")
+        except TelegramBadRequest:
+            logger.exception("Failed to notify user about payment")
 
     return True
 
@@ -204,110 +206,59 @@ async def initiate_payment(callback: types.CallbackQuery):
             notification_url=config.tbank_notification_url,
         )
 
-<<<<<<< HEAD
-        # Flexible check for both YooKassa ({"Success": True, "PaymentId":..., "PaymentURL":...})
-    # and T-Bank (direct {"PaymentId":..., "PaymentUrl":...}, {"Success": False} on error)
-    is_success = result.get("Success") != False if "Success" in result else True
-    has_payment_info = "PaymentId" in result or "payment_id" in result
+    is_success = (
+        result.get("Success") != False
+        if result and "Success" in result
+        else bool(result)
+    )
+    has_payment_info = bool(result) and (
+        "PaymentId" in result or "payment_id" in result
+    )
 
-    if result and is_success and has_payment_info:
-        payment_id = result.get("PaymentId") or result.get("payment_id")
-        payment_url = result.get("PaymentURL") or result.get("PaymentUrl") or result.get("payment_url")
-
-        logger.info(f"Payment created successfully: {payment_id} via {provider}")
-
-        # Сохраняем транзакцию в БД
-        user = await get_or_create_user(callback.from_user.id)
-        total_credits = package["credits"] + package.get("bonus_credits", 0)
-        actual_provider = "yookassa" if use_yookassa else "tbank"
-        await create_transaction(
-            order_id=order_id,
-            user_id=user.id,
-            payment_id=str(payment_id),
-            provider=actual_provider,
-            credits=total_credits,
-            amount_rub=package["price_rub"],
-            status="pending",
+    if not result or not is_success or not has_payment_info:
+        error_msg = (
+            result.get("Message", result.get("message", "Неизвестная ошибка"))
+            if result
+            else "Нет соединения с провайдером"
         )
-
-        bonus_text = ""
-        if package.get("bonus_credits", 0) > 0:
-            bonus_text = f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> бананов"
-
-        await callback.message.edit_text(
-            f"💳 <b>Оплата пакета «{package['name']}»</b>"
-            f"🍌 Бананов: <code>{total_credits}</code>{bonus_text}\n"
-            f"💰 Сумма: <code>{package['price_rub']}</code> ₽"
-            f"Нажмите кнопку ниже для перехода к оплате.\n"
-            f"После оплаты бананы начислятся автоматически.",
-            reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
-            parse_mode="HTML",
+        logger.error(
+            "Payment creation failed for %s: %s, result=%s",
+            provider,
+            error_msg,
+            result,
         )
-    else:
-        error_msg = result.get("Message", result.get("message", "Неизвестная ошибка")) if result else "Нет соединения с провайдером"
-        logger.error(f"Payment creation failed for {provider}: {error_msg}, result: {result}")
         await callback.message.edit_text(
             f"❌ <b>Ошибка создания платежа ({provider})</b>\n"
             f"{error_msg}\n"
-            f"Попробуйте позже или выберите другой способ оплаты.",
+            "Попробуйте позже или выберите другой способ оплаты.",
             reply_markup=get_back_keyboard("back_main"),
-=======
-    # Flexible check for both YooKassa ({"Success": True, "PaymentId":..., "PaymentURL":...}) 
-    # and T-Bank (direct {"PaymentId":..., "PaymentUrl":...}, {"Success": False} on error)
-    is_success = result.get("Success") != False if "Success" in result else True
-    has_payment_info = "PaymentId" in result or "payment_id" in result
-
-    if result and is_success and has_payment_info:
-        payment_id = result.get("PaymentId") or result.get("payment_id")
-        payment_url = result.get("PaymentURL") or result.get("PaymentUrl") or result.get("payment_url")
-
-        logger.info(f"Payment created successfully: {payment_id} via {provider}")
-
-        # Сохраняем транзакцию в БД
-        user = await get_or_create_user(callback.from_user.id)
-        total_credits = package["credits"] + package.get("bonus_credits", 0)
-        actual_provider = "yookassa" if use_yookassa else "tbank"
-        await create_transaction(
-            order_id=order_id,
-            user_id=user.id,
-            payment_id=str(payment_id),
-            provider=actual_provider,
-            credits=total_credits,
-            amount_rub=package["price_rub"],
-            status="pending",
-        )
-
-        bonus_text = ""
-        if package.get("bonus_credits", 0) > 0:
-            bonus_text = f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> бананов"
-
-        await callback.message.edit_text(
-            f"💳 <b>Оплата пакета «{package['name']}»</b>"
-            f"🍌 Бананов: <code>{total_credits}</code>{bonus_text}\n"
-            f"💰 Сумма: <code>{package['price_rub']}</code> ₽"
-            f"Нажмите кнопку ниже для перехода к оплате.\n"
-            f"После оплаты бананы начислятся автоматически.",
-            reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
-            parse_mode="HTML",
-        )
-    else:
-        error_msg = result.get("Message", result.get("message", "Неизвестная ошибка")) if result else "Нет соединения с провайдером"
-        logger.error(f"Payment creation failed for {provider}: {error_msg}, result: {result}")
-        await callback.message.edit_text(
-            f"❌ <b>Ошибка создания платежа ({provider})</b>\n"
-            f"{error_msg}\n"
-            f"Попробуйте позже или выберите другой способ оплаты.",
-            reply_markup=get_back_keyboard("back_main"),
->>>>>>> 35ca789bec2414536eaefca994bed2cfdcf4040f
             parse_mode="HTML",
         )
         return
 
-    payment_id = result["PaymentId"]
-    payment_url = result["PaymentURL"]
+    payment_id = result.get("PaymentId") or result.get("payment_id")
+    payment_url = (
+        result.get("PaymentURL")
+        or result.get("PaymentUrl")
+        or result.get("payment_url")
+    )
+
+    if not payment_url:
+        logger.error("Payment URL missing for %s: result=%s", provider, result)
+        await callback.message.edit_text(
+            "❌ <b>Ошибка создания платежа</b>\n"
+            "Провайдер не вернул ссылку на оплату.\n"
+            "Попробуйте позже.",
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+        return
+
+    logger.info("Payment created successfully: %s via %s", payment_id, provider)
 
     user = await get_or_create_user(callback.from_user.id)
     total_credits = package["credits"] + package.get("bonus_credits", 0)
+
     await create_transaction(
         order_id=order_id,
         user_id=user.id,
@@ -350,20 +301,7 @@ async def check_payment_status(callback: types.CallbackQuery):
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
-<<<<<<< HEAD
         return
-=======
-    elif transaction.status == "pending":
-        if transaction.provider == "yookassa":
-            result = await yookassa_service.get_payment(transaction.payment_id)
-            paid = bool(
-                result and (result.get("paid") or result.get("status") == "succeeded")
-            )
-        else:
-            # Проверяем статус в Т-Банке
-            result = await tbank_service.get_state(transaction.payment_id)
-            paid = bool(result and result.get("status") == "CONFIRMED")
->>>>>>> 35ca789bec2414536eaefca994bed2cfdcf4040f
 
     paid = False
     if transaction.provider == "cryptobot":
@@ -389,7 +327,7 @@ async def check_payment_status(callback: types.CallbackQuery):
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "❌ <b>Платёж отменён</b>\n\n" "Вы можете попробовать снова в любое время.",
+        "❌ <b>Платёж отменён</b>\n\nВы можете попробовать снова в любое время.",
         reply_markup=get_main_menu_keyboard(),
         parse_mode="HTML",
     )
@@ -402,7 +340,7 @@ async def handle_tbank_webhook(request):
 
         if not tbank_service.verify_notification(data.copy()):
             logger.warning("Invalid signature in T-Bank webhook")
-            logger.debug(f"Webhook data for sig check: {data}")
+            logger.debug("Webhook data for sig check: %s", data)
             return web.Response(status=403)
 
         if data.get("Status") == "CONFIRMED":

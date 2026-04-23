@@ -47,6 +47,15 @@ class PaymentStates(StatesGroup):
     waiting_payment = State()  # Ожидание оплаты
 
 
+class PartnerWithdrawalStates(StatesGroup):
+    """Состояния для вывода партнёрского вознаграждения"""
+
+    waiting_amount = State()
+    waiting_full_name = State()
+    waiting_phone = State()
+    waiting_card = State()
+
+
 class AdminStates(StatesGroup):
     """Состояния для админ-панели"""
 

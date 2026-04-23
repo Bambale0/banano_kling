@@ -84,6 +84,22 @@ class Config:
     PARTNER_MIN_WITHDRAWAL_RUB: int = int(
         os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "2000")
     )
+    JUMP_FINANCE_CLIENT_KEY: str = os.getenv("JUMP_FINANCE_CLIENT_KEY", "")
+    JUMP_FINANCE_BASE_URL: str = os.getenv(
+        "JUMP_FINANCE_BASE_URL", "https://api.jump.finance/services/openapi"
+    )
+    JUMP_FINANCE_AGENT_ID: int = int(os.getenv("JUMP_FINANCE_AGENT_ID", "0"))
+    JUMP_FINANCE_BANK_ACCOUNT_ID: int = int(
+        os.getenv("JUMP_FINANCE_BANK_ACCOUNT_ID", "0")
+    )
+    JUMP_FINANCE_PAYOUT_SERVICE_NAME: str = os.getenv(
+        "JUMP_FINANCE_PAYOUT_SERVICE_NAME",
+        "Партнерское вознаграждение",
+    )
+    JUMP_FINANCE_PAYOUT_PURPOSE: str = os.getenv(
+        "JUMP_FINANCE_PAYOUT_PURPOSE",
+        "Выплата партнерского вознаграждения",
+    )
 
     # Пути к JSON
     PRESETS_PATH: str = "data/presets.json"
@@ -135,6 +151,10 @@ class Config:
     @property
     def has_cryptobot(self) -> bool:
         return bool(self.CRYPTOBOT_API_TOKEN)
+
+    @property
+    def has_jump_finance(self) -> bool:
+        return bool(self.JUMP_FINANCE_CLIENT_KEY and self.JUMP_FINANCE_AGENT_ID > 0)
 
     @property
     def kling_notification_url(self) -> str:
