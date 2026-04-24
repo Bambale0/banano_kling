@@ -22,8 +22,8 @@ const workspaceConfig: Record<
   { title: string; description: string; icon: typeof Sparkles }
 > = {
   assistant: {
-    title: 'AI-помощник',
-    description: 'Помогает выбрать модель, улучшить запрос и быстро определиться со сценарием.',
+    title: 'Помощник',
+    description: 'Подскажет модель, настройки и поможет с запросом.',
     icon: Bot,
   },
   'photo-prompt': {
@@ -167,7 +167,7 @@ function AssistantChat({ starters }: { starters: string[] }) {
       setMessages((prev) => [...prev, assistantMessage].slice(-6))
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Не удалось получить ответ'
-      toast.error('AI-ассистент недоступен', { description: errorMessage })
+      toast.error('Помощник недоступен', { description: errorMessage })
 
       // Fallback на сценарный ответ, если backend недоступен
       const fallbackReply = buildFallbackReply(content, state.user.credits)
@@ -297,7 +297,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
   const [goal, setGoal] = useState('максимально похожее изображение для повторной генерации')
   const [isUploading, setIsUploading] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [result, setResult] = useState<{
+  const [result, setРезультат] = useState<{
     prompt_en: string
     prompt_ru: string
     negative_prompt: string
@@ -306,7 +306,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
 
   async function handleUpload(file: File) {
     setIsUploading(true)
-    setResult(null)
+    setРезультат(null)
 
     try {
       setPreviewUrl(URL.createObjectURL(file))
@@ -331,7 +331,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
     }
 
     setIsAnalyzing(true)
-    setResult(null)
+    setРезультат(null)
 
     try {
       const data = await photoToPrompt({
@@ -339,7 +339,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
         preserve,
         goal,
       })
-      setResult(data)
+      setРезультат(data)
       toast.success('Промпт собран')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось собрать промпт'
@@ -357,7 +357,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
   return (
     <div className="space-y-5 pb-10">
       <div className="rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-gold">Prompt Lab</p>
+        <p className="text-[11px] uppercase tracking-[0.18em] text-gold">Разбор фото</p>
         <h3 className="mt-2 font-serif text-2xl text-foreground">Фото → точный prompt</h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Загрузите референс. AI разберёт кадр и соберёт промпт для генерации похожего изображения:
@@ -439,17 +439,17 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
 
       {result && (
         <div className="space-y-3">
-          <PromptResultCard
+          <PromptРезультатCard
             title="Prompt EN"
             text={result.prompt_en}
             onCopy={() => copyText(result.prompt_en, 'Prompt EN')}
           />
-          <PromptResultCard
+          <PromptРезультатCard
             title="Prompt RU"
             text={result.prompt_ru}
             onCopy={() => copyText(result.prompt_ru, 'Prompt RU')}
           />
-          <PromptResultCard
+          <PromptРезультатCard
             title="Negative prompt"
             text={result.negative_prompt}
             onCopy={() => copyText(result.negative_prompt, 'Negative prompt')}
@@ -479,7 +479,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
   )
 }
 
-function PromptResultCard({
+function PromptРезультатCard({
   title,
   text,
   onCopy,
@@ -724,7 +724,7 @@ function MorePanel({
   const actions = [
     { label: 'Фото', description: 'Перейти к генерации изображений', action: onPhoto },
     { label: 'Видео', description: 'Перейти к генерации роликов', action: onVideo },
-    { label: 'AI-помощник', description: 'Быстро уточнить идею и модель', action: onAssistant },
+    { label: 'Помощник', description: 'Подскажет модель и улучшит запрос', action: onAssistant },
     { label: 'Партнёрам', description: 'Посмотреть выгоду и материалы', action: onPartners },
     { label: 'Поддержка', description: 'Собрать обращение и не забыть детали', action: onSupport },
   ]

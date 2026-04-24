@@ -26,26 +26,26 @@ export function QuickActionGrid({
 }: QuickActionGridProps) {
   const items = [
     {
-      label: 'Photo Canvas',
-      description: 'Nano Banana, Seedream, GPT Image',
+      label: 'Создать фото',
+      description: 'Изображения по описанию или референсам',
       icon: Image,
       onClick: onPhotoClick,
     },
     {
-      label: 'Video Canvas',
-      description: 'Kling, Veo, Grok video flows',
+      label: 'Создать видео',
+      description: 'Ролики из текста, фото или видео-референса',
       icon: Video,
       onClick: onVideoClick,
     },
     {
-      label: 'Motion Control',
-      description: 'Перенос движения по видео',
+      label: 'Оживить фото',
+      description: 'Перенести движение на персонажа или объект',
       icon: Sparkles,
       onClick: onMotionClick || onVideoClick,
     },
     {
-      label: 'AI Assistant',
-      description: 'Помощь с промптами и моделями',
+      label: 'Помощник',
+      description: 'Подскажет модель и поможет с запросом',
       icon: Bot,
       onClick: onAssistantClick,
     },
@@ -55,6 +55,7 @@ export function QuickActionGrid({
     <div className="grid grid-cols-2 gap-3">
       {items.map((item, index) => {
         const Icon = item.icon
+
         return (
           <button
             key={item.label}
@@ -67,12 +68,15 @@ export function QuickActionGrid({
               actionStyles[index]
             )}
           >
-            <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-white/10 blur-2xl transition-opacity group-hover:opacity-100 opacity-40" />
+            <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-white/10 blur-2xl opacity-40 transition-opacity group-hover:opacity-100" />
+
             <div className="relative">
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-background/55 border border-white/10">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-background/55">
                 <Icon className="h-5 w-5 text-gold" />
               </div>
+
               <p className="font-serif text-base text-foreground">{item.label}</p>
+
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {item.description}
               </p>
