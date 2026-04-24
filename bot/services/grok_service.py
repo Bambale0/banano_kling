@@ -26,7 +26,9 @@ class GrokService(KlingService):
     ) -> Optional[Dict]:
         """Generate video from images using Grok Imagine"""
         input_data = {
-            "image_urls": image_sources_to_provider_safe_png_urls(image_urls[:7]),  # max 7
+            "image_urls": image_sources_to_provider_safe_png_urls(
+                image_urls[:7]
+            ),  # max 7
             "prompt": prompt,
             "mode": mode,
             "duration": duration,
