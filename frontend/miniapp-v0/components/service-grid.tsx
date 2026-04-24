@@ -27,7 +27,7 @@ const primaryServices = [
     icon: Pencil,
     title: 'Изменить фото',
     description: 'Правки по исходнику: фон, стиль, детали, одежда, настроение.',
-    badge: 'Edit',
+    badge: 'Правки',
     tone: 'cyan',
   },
   {
@@ -35,15 +35,15 @@ const primaryServices = [
     icon: Play,
     title: 'Оживить фото',
     description: 'Переход к видео-сценариям: стартовый кадр, движение, камера.',
-    badge: 'Video',
+    badge: 'Анимация',
     tone: 'success',
   },
   {
     id: 'batch-edit',
     icon: Layers,
-    title: 'Batch Edit',
-    description: 'Один стиль или одна задача для серии изображений.',
-    badge: 'Batch',
+    title: 'Серия фото',
+    description: 'Один стиль или одна правка сразу для нескольких фото.',
+    badge: 'Пакетно',
     tone: 'accent',
   },
 ]

@@ -42,8 +42,8 @@ const workspaceConfig: Record<
     icon: Headphones,
   },
   'batch-edit': {
-    title: 'Batch Edit',
-    description: 'Подходит для серии изображений, когда нужен один стиль и один набор правил.',
+    title: 'Серия фото',
+    description: 'Одинаковая обработка сразу для нескольких фото.',
     icon: Layers,
   },
   more: {

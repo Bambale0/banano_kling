@@ -30,7 +30,7 @@ const serviceMap: Record<string, ServiceConfig> = {
     message: 'Открываю видео-сценарии для анимации.',
   },
   'batch-edit': {
-    title: 'Batch Edit',
+    title: 'Серия фото',
     workspace: 'batch-edit',
     message: 'Открываю подготовку серии изображений.',
   },
