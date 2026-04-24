@@ -172,9 +172,9 @@ FILE_KIND_MAP = {
 def _resolve_miniapp_static_root() -> Path:
     """Prefer a built Next.js export when available, fallback to bundled static app."""
     candidates = [
+        Path("static/miniapp"),
         Path("frontend/miniapp-v0/out"),
         Path("frontend/miniapp-v0/dist"),
-        Path("static/miniapp"),
     ]
     for candidate in candidates:
         if (candidate / "index.html").exists():
