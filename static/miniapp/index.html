@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <title>Banano AI Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Telegram Mini App</p>
+          <h1>Banano AI Studio</h1>
+          <p class="hero-text">
+            Тёмная студия для фото и видео генерации: загружайте исходники,
+            выбирайте модель, запускайте задачи и следите за ними прямо внутри
+            Mini App.
+          </p>
+          <div class="hero-pills">
+            <span>Welcome 25🍌</span>
+            <span>Фото</span>
+            <span>Видео</span>
+            <span>История</span>
+          </div>
+        </div>
+        <div class="hero-stage">
+          <div class="stage-card stage-photo">
+            <div class="art art-photo"></div>
+            <div class="stage-meta">
+              <strong>Photo Lab</strong>
+              <span>Nano Banana Pro • Seedream • GPT Image 2</span>
+            </div>
+          </div>
+          <div class="stage-card stage-video">
+            <div class="art art-video"></div>
+            <div class="stage-meta">
+              <strong>Video Lab</strong>
+              <span>Kling • Veo • Grok</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="status-bar">
+        <div>
+          <p class="status-label">Пользователь</p>
+          <p class="status-value" id="userName">Загрузка…</p>
+        </div>
+        <div>
+          <p class="status-label">Баланс</p>
+          <p class="status-value"><span id="creditsValue">—</span> 🍌</p>
+        </div>
+        <div>
+          <p class="status-label">Последнее обновление</p>
+          <p class="status-value" id="lastSync">—</p>
+        </div>
+      </section>
+
+      <nav class="tabbar">
+        <button class="tab is-active" data-tab="dashboard" type="button">Студия</button>
+        <button class="tab" data-tab="image" type="button">Фото</button>
+        <button class="tab" data-tab="video" type="button">Видео</button>
+        <button class="tab" data-tab="motion" type="button">Motion</button>
+        <button class="tab" data-tab="tools" type="button">Сервисы</button>
+      </nav>
+
+      <main class="content-stack">
+        <section class="panel is-active" data-panel="dashboard">
+          <div class="panel-grid dashboard-grid">
+            <article class="glass-card spotlight-card">
+              <div class="section-head">
+                <h2>Быстрый старт</h2>
+                <button class="ghost-button" id="refreshButton" type="button">
+                  Обновить
+                </button>
+              </div>
+              <div class="spotlight-grid" id="quickActions"></div>
+            </article>
+
+            <article class="glass-card history-card">
+              <div class="section-head">
+                <h2>Последние задачи</h2>
+                <p>Обновляются из живой базы бота.</p>
+              </div>
+              <div class="task-list" id="taskList"></div>
+              <div class="task-detail-card" id="taskDetailCard">
+                <div class="task-detail-empty">
+                  Выберите задачу в списке слева, чтобы увидеть детали и live-статус.
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="image">
+          <div class="panel-grid form-grid">
+            <article class="glass-card">
+              <div class="section-head">
+                <h2>Создать фото</h2>
+                <p>Запуск из Mini App без возврата в чат.</p>
+              </div>
+
+              <label class="field">
+                <span>Модель</span>
+                <select id="imageModel"></select>
+              </label>
+
+              <div class="two-col">
+                <label class="field">
+                  <span>Формат</span>
+                  <select id="imageRatio"></select>
+                </label>
+                <label class="field">
+                  <span>Качество</span>
+                  <select id="imageQuality">
+                    <option value="basic">Basic</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Промпт</span>
+                <textarea
+                  id="imagePrompt"
+                  rows="5"
+                  placeholder="Опишите сцену, стиль, свет, композицию и важные детали."
+                ></textarea>
+              </label>
+
+              <div class="uploader-block">
+                <div class="uploader-copy">
+                  <strong>Референсы и исходники</strong>
+                  <span id="imageUploadHint">Можно загрузить до 14 изображений.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="imageUploadInput" type="file" accept="image/*" multiple />
+                  <span>Загрузить фото</span>
+                </label>
+              </div>
+
+              <div class="asset-grid" id="imageAssets"></div>
+
+              <div class="form-footer">
+                <p class="cost-pill" id="imageCost">Стоимость: —</p>
+                <button class="primary-button" id="imageSubmit" type="button">
+                  Запустить фото
+                </button>
+              </div>
+              <p class="helper-text" id="imageStatusText">
+                Подходит для text-to-image и edit-сценариев.
+              </p>
+            </article>
+
+            <article class="glass-card preview-card">
+              <div class="section-head">
+                <h2>Что отправим</h2>
+                <p>Проверка перед запуском.</p>
+              </div>
+              <div class="summary-list" id="imageSummary"></div>
+              <div class="result-card" id="imageResult"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="video">
+          <div class="panel-grid form-grid">
+            <article class="glass-card">
+              <div class="section-head">
+                <h2>Создать видео</h2>
+                <p>Text-to-video, image-to-video и reference video.</p>
+              </div>
+
+              <div class="two-col">
+                <label class="field">
+                  <span>Модель</span>
+                  <select id="videoModel"></select>
+                </label>
+                <label class="field">
+                  <span>Сценарий</span>
+                  <select id="videoType">
+                    <option value="text">Текст → Видео</option>
+                    <option value="imgtxt">Фото + Текст → Видео</option>
+                    <option value="video">Видео + Текст → Видео</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="two-col">
+                <label class="field">
+                  <span>Формат</span>
+                  <select id="videoRatio"></select>
+                </label>
+                <label class="field">
+                  <span>Длительность</span>
+                  <select id="videoDuration"></select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Промпт</span>
+                <textarea
+                  id="videoPrompt"
+                  rows="5"
+                  placeholder="Опишите движение камеры, действие, темп, настроение и визуальный стиль."
+                ></textarea>
+              </label>
+
+              <div class="uploader-block" id="videoImageUploader">
+                <div class="uploader-copy">
+                  <strong>Стартовое фото</strong>
+                  <span>Нужно для режима Фото + Текст.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="videoImageInput" type="file" accept="image/*" />
+                  <span>Загрузить стартовое фото</span>
+                </label>
+              </div>
+
+              <div class="uploader-block">
+                <div class="uploader-copy">
+                  <strong>Дополнительные референсы</strong>
+                  <span>Фото-референсы помогают удерживать стиль и героя.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="videoRefsInput" type="file" accept="image/*" multiple />
+                  <span>Загрузить фото-референсы</span>
+                </label>
+              </div>
+
+              <div class="uploader-block" id="videoReferenceUploader">
+                <div class="uploader-copy">
+                  <strong>Видео-референсы</strong>
+                  <span>Нужно для режима Видео + Текст.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="videoUploadInput" type="file" accept="video/*" multiple />
+                  <span>Загрузить видео</span>
+                </label>
+              </div>
+
+              <div class="asset-grid" id="videoImageAssets"></div>
+              <div class="asset-grid" id="videoAssets"></div>
+
+              <div class="form-footer">
+                <p class="cost-pill" id="videoCost">Стоимость: —</p>
+                <button class="primary-button" id="videoSubmit" type="button">
+                  Запустить видео
+                </button>
+              </div>
+              <p class="helper-text" id="videoStatusText">
+                Результат придёт в чат, а статус отобразится и здесь после обновления.
+              </p>
+            </article>
+
+            <article class="glass-card preview-card">
+              <div class="section-head">
+                <h2>Сценарий видео</h2>
+                <p>Что увидит backend.</p>
+              </div>
+              <div class="summary-list" id="videoSummary"></div>
+              <div class="result-card" id="videoResult"></div>
+            </article>
+          </div>
+        </section>
+
+
+        <section class="panel" data-panel="motion">
+          <div class="panel-grid form-grid">
+            <article class="glass-card">
+              <div class="section-head">
+                <h2>Motion Control</h2>
+                <p>Перенесите движение из видео на фото персонажа.</p>
+              </div>
+
+              <div class="two-col">
+                <label class="field">
+                  <span>Качество</span>
+                  <select id="motionMode">
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Ориентация героя</span>
+                  <select id="motionDirection">
+                    <option value="video">Как в видео</option>
+                    <option value="image">Как на фото</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Промпт</span>
+                <textarea
+                  id="motionPrompt"
+                  rows="4"
+                  placeholder="Опционально: уточните стиль движения, камеру, эмоцию и темп."
+                ></textarea>
+              </label>
+
+              <div class="uploader-block">
+                <div class="uploader-copy">
+                  <strong>Фото персонажа</strong>
+                  <span>Исходное фото, которое нужно оживить.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="motionImageInput" type="file" accept="image/*" />
+                  <span>Загрузить фото</span>
+                </label>
+              </div>
+
+              <div class="uploader-block">
+                <div class="uploader-copy">
+                  <strong>Видео движения</strong>
+                  <span>Короткое видео, с которого переносим движение.</span>
+                </div>
+                <label class="upload-button">
+                  <input id="motionVideoInput" type="file" accept="video/*" />
+                  <span>Загрузить видео</span>
+                </label>
+              </div>
+
+              <div class="asset-grid" id="motionAssets"></div>
+
+              <div class="form-footer">
+                <p class="cost-pill" id="motionCost">Стоимость: видео-тариф Motion</p>
+                <button class="primary-button" id="motionSubmit" type="button">
+                  Запустить Motion
+                </button>
+              </div>
+              <p class="helper-text" id="motionStatusText">
+                Нужны два файла: фото персонажа и видео движения.
+              </p>
+            </article>
+
+            <article class="glass-card preview-card">
+              <div class="section-head">
+                <h2>Что отправим</h2>
+                <p>Проверка перед запуском.</p>
+              </div>
+              <div class="summary-list" id="motionSummary"></div>
+              <div class="result-card" id="motionResult"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="tools">
+          <div class="panel-grid tools-grid">
+            <article class="glass-card">
+              <div class="section-head">
+                <h2>Меню и сервисы</h2>
+                <p>Открывают живые разделы бота в чате.</p>
+              </div>
+              <div class="tool-grid" id="secondaryActions"></div>
+            </article>
+
+            <article class="glass-card">
+              <div class="section-head">
+                <h2>Подсказки</h2>
+              </div>
+              <div class="info-grid">
+                <article>
+                  <strong>Фото</strong>
+                  <p>Для Seedream и Grok сначала загрузите исходник или референс.</p>
+                </article>
+                <article>
+                  <strong>Видео</strong>
+                  <p>Для image-to-video достаточно стартового фото и сильного prompt.</p>
+                </article>
+                <article>
+                  <strong>История</strong>
+                  <p>После запуска нажмите «Обновить», чтобы подтянуть статус из базы.</p>
+                </article>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="actionCardTemplate">
+      <button class="action-card" type="button">
+        <span class="action-icon"></span>
+        <span class="action-title"></span>
+        <span class="action-description"></span>
+      </button>
+    </template>
+
+    <template id="assetTagTemplate">
+      <div class="asset-tag">
+        <span class="asset-tag__name"></span>
+        <button class="asset-tag__remove" type="button">×</button>
+      </div>
+    </template>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="./static/app.js"></script>
+  </body>
+</html>
