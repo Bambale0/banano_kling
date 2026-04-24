@@ -17,6 +17,7 @@ export function StudioTab() {
         <QuickActionGrid 
           onPhotoClick={() => setActiveTab(1)}
           onVideoClick={() => setActiveTab(2)}
+          onMotionClick={() => setActiveTab(3)}
           onBalanceClick={openBalance}
           onAssistantClick={() => openWorkspace('assistant')}
         />

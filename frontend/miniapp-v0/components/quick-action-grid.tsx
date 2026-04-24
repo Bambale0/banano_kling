@@ -1,110 +1,80 @@
 'use client'
 
+import { Image, Video, Sparkles, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Image, Video, Wallet, Bot } from 'lucide-react'
 
 interface QuickActionGridProps {
   onPhotoClick: () => void
   onVideoClick: () => void
+  onMotionClick?: () => void
   onBalanceClick: () => void
   onAssistantClick: () => void
 }
 
-const actions = [
-  {
-    id: 'photo',
-    icon: Image,
-    title: 'Создать фото',
-    description: 'AI-генерация изображений',
-    gradient: 'from-gold/20 to-gold/5',
-    iconColor: 'text-gold',
-    action: 'photo',
-  },
-  {
-    id: 'video',
-    icon: Video,
-    title: 'Создать видео',
-    description: 'AI-генерация видео',
-    gradient: 'from-cyan/20 to-cyan/5',
-    iconColor: 'text-cyan',
-    action: 'video',
-  },
-  {
-    id: 'balance',
-    icon: Wallet,
-    title: 'Баланс и пакеты',
-    description: 'Управление бананами',
-    gradient: 'from-success/20 to-success/5',
-    iconColor: 'text-success',
-    action: 'balance',
-  },
-  {
-    id: 'assistant',
-    icon: Bot,
-    title: 'AI-помощник',
-    description: 'Советы и подсказки',
-    gradient: 'from-accent/20 to-accent/5',
-    iconColor: 'text-accent',
-    action: 'assistant',
-  },
+const actionStyles = [
+  'from-gold/[0.18] to-gold/[0.04] border-gold/25',
+  'from-cyan/[0.18] to-cyan/[0.04] border-cyan/25',
+  'from-purple-500/[0.18] to-gold/[0.04] border-gold/20',
+  'from-card/80 to-muted/30 border-border/60',
 ]
 
 export function QuickActionGrid({
   onPhotoClick,
   onVideoClick,
-  onBalanceClick,
+  onMotionClick,
   onAssistantClick,
 }: QuickActionGridProps) {
-  const handleClick = (actionId: string) => {
-    if (actionId === 'photo') onPhotoClick()
-    else if (actionId === 'video') onVideoClick()
-    else if (actionId === 'balance') onBalanceClick()
-    else if (actionId === 'assistant') onAssistantClick()
-  }
+  const items = [
+    {
+      label: 'Photo Canvas',
+      description: 'Nano Banana, Seedream, GPT Image',
+      icon: Image,
+      onClick: onPhotoClick,
+    },
+    {
+      label: 'Video Canvas',
+      description: 'Kling, Veo, Grok video flows',
+      icon: Video,
+      onClick: onVideoClick,
+    },
+    {
+      label: 'Motion Control',
+      description: 'Перенос движения по видео',
+      icon: Sparkles,
+      onClick: onMotionClick || onVideoClick,
+    },
+    {
+      label: 'AI Assistant',
+      description: 'Помощь с промптами и моделями',
+      icon: Bot,
+      onClick: onAssistantClick,
+    },
+  ]
 
   return (
     <div className="grid grid-cols-2 gap-3">
-      {actions.map((action, index) => {
-        const Icon = action.icon
+      {items.map((item, index) => {
+        const Icon = item.icon
         return (
           <button
-            key={action.id}
-            onClick={() => handleClick(action.id)}
+            key={item.label}
+            type="button"
+            onClick={item.onClick}
             className={cn(
-              "group relative flex flex-col items-start p-4 rounded-2xl",
-              "bg-card/50 border border-border/50",
-              "transition-all duration-300 ease-out",
-              "hover:bg-card hover:border-border hover:scale-[1.02]",
-              "active:scale-[0.98]",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              'group relative overflow-hidden rounded-3xl border p-4 text-left',
+              'bg-gradient-to-br transition-all duration-300',
+              'hover:scale-[1.015] active:scale-[0.99]',
+              actionStyles[index]
             )}
-            style={{
-              animationDelay: `${index * 50}ms`,
-            }}
           >
-            {/* Gradient overlay */}
-            <div className={cn(
-              "absolute inset-0 rounded-2xl opacity-0",
-              "bg-gradient-to-br",
-              action.gradient,
-              "transition-opacity duration-300",
-              "group-hover:opacity-100"
-            )} />
-
-            {/* Content */}
-            <div className="relative z-10">
-              <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center mb-3",
-                "bg-secondary/80 transition-all duration-300",
-                "group-hover:bg-secondary"
-              )}>
-                <Icon className={cn("w-5 h-5 transition-colors", action.iconColor)} />
+            <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-white/10 blur-2xl transition-opacity group-hover:opacity-100 opacity-40" />
+            <div className="relative">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-background/55 border border-white/10">
+                <Icon className="h-5 w-5 text-gold" />
               </div>
-              <h3 className="text-sm font-semibold text-foreground mb-0.5 text-left">
-                {action.title}
-              </h3>
-              <p className="text-xs text-muted-foreground text-left">
-                {action.description}
+              <p className="font-serif text-base text-foreground">{item.label}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {item.description}
               </p>
             </div>
           </button>
