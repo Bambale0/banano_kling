@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -373,9 +374,7 @@ async def _show_video_creation_screen(
             media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
     elif current_v_type == "video":
         if v_reference_videos:
-            media_status = (
-                f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
-            )
+            media_status = f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
         else:
             media_status = "📹 <b>Загрузите референсные видео (до 5)</b>\n"
 
@@ -404,35 +403,38 @@ async def _show_video_creation_screen(
     elif current_v_type == "video" and not v_reference_videos:
         text += "\n\n<i>📹 Загрузите референсные видео: до 5 файлов, длительность 3-10 сек.</i>"
 
+    keyboard = get_create_video_keyboard(
+        current_v_type=current_v_type,
+        current_model=current_model,
+        current_duration=current_duration,
+        current_ratio=current_ratio,
+        current_mode=ui["current_mode"],
+        current_orientation=ui["current_orientation"],
+        current_grok_mode=ui["current_grok_mode"],
+    )
     # Используем edit для callback, send для message
     try:
         await message_or_callback.message.edit_text(
             text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-                current_mode=ui["current_mode"],
-                current_orientation=ui["current_orientation"],
-                current_grok_mode=ui["current_grok_mode"],
-            ),
+            reply_markup=keyboard,
             parse_mode="HTML",
         )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        target = (
+            message_or_callback.message
+            if hasattr(message_or_callback, "message")
+            else message_or_callback
+        )
+        await target.answer(text, reply_markup=keyboard, parse_mode="HTML")
     except Exception:
-        await message_or_callback.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-                current_mode=ui["current_mode"],
-                current_orientation=ui["current_orientation"],
-                current_grok_mode=ui["current_grok_mode"],
-            ),
-            parse_mode="HTML",
+        target = (
+            message_or_callback.message
+            if hasattr(message_or_callback, "message")
+            else message_or_callback
         )
+        await target.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
     # Устанавливаем состояние ожидания промпта для видео
     await state.set_state(GenerationStates.waiting_for_video_prompt)
@@ -1407,11 +1409,7 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
                         text="⚙️ Изменить опции", callback_data="video_options_change"
                     )
                 ],
-                [
-                    types.InlineKeyboardButton(
-                        text="🔙 Назад", callback_data="back_main"
-                    )
-                ],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")],
             ]
         ),
         parse_mode="HTML",

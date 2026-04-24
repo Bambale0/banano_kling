@@ -5,6 +5,13 @@ import json
 from typing import Any, Dict, List, Optional
 
 
+def _normalize_token_value(value: Any) -> str:
+    """Normalize primitive values to the representation expected by T-Bank."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def generate_token(data: Dict[str, Any], password: str) -> str:
     """
     Генерация токена для подписи запроса к API Т-Банка
@@ -26,7 +33,7 @@ def generate_token(data: Dict[str, Any], password: str) -> str:
         if isinstance(value, (dict, list)):
             continue
         if value is not None:
-            filtered_data[key] = str(value)
+            filtered_data[key] = _normalize_token_value(value)
 
     # Добавляем пароль
     filtered_data["Password"] = password
@@ -35,7 +42,7 @@ def generate_token(data: Dict[str, Any], password: str) -> str:
     sorted_items = sorted(filtered_data.items(), key=lambda x: x[0])
 
     # Конкатенируем только значения
-    values_str = "".join([str(value) for _, value in sorted_items])
+    values_str = "".join([_normalize_token_value(value) for _, value in sorted_items])
 
     # SHA-256
     return hashlib.sha256(values_str.encode("utf-8")).hexdigest()

@@ -350,15 +350,19 @@ async def handle_tbank_webhook(request):
         if not tbank_service.verify_notification(data.copy()):
             logger.warning("Invalid signature in T-Bank webhook")
             logger.debug("Webhook data for sig check: %s", data)
-            return web.Response(status=403)
+            return web.json_response(
+                {"Success": False, "Message": "Invalid signature"}, status=200
+            )
 
         if data.get("Status") == "CONFIRMED":
             await _complete_transaction(data.get("OrderId"), request.app["bot"])
 
-        return web.Response(text="OK", status=200)
+        return web.json_response({"Success": True}, status=200)
     except Exception as exc:
         logger.exception("Error processing T-Bank webhook: %s", exc)
-        return web.Response(status=500)
+        return web.json_response(
+            {"Success": False, "Message": "Internal error"}, status=500
+        )
 
 
 async def handle_cryptobot_webhook(request):
