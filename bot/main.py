@@ -1821,7 +1821,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
             return fallback
         return raw if raw.startswith("/") else f"/{raw}"
 
-    app = web.Application()
+    app = web.Application(client_max_size=60 * 1024 * 1024)
     app["bot"] = bot
     app["dp"] = dp
 
