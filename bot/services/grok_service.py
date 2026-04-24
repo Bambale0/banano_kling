@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from bot.config import config
 from bot.services.kling_service import KlingService
-from bot.services.media_input_utils import image_sources_to_data_uris
+from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class GrokService(KlingService):
     ) -> Optional[Dict]:
         """Generate video from images using Grok Imagine"""
         input_data = {
-            "image_urls": image_sources_to_data_uris(image_urls[:7]),  # max 7
+            "image_urls": image_sources_to_provider_safe_png_urls(image_urls[:7]),  # max 7
             "prompt": prompt,
             "mode": mode,
             "duration": duration,
@@ -55,7 +55,7 @@ class GrokService(KlingService):
             return None
         input_data = {
             "prompt": prompt,
-            "image_urls": image_sources_to_data_uris(image_urls),
+            "image_urls": image_sources_to_provider_safe_png_urls(image_urls),
             "nsfw_checker": nsfw_checker,
         }
         payload = {
