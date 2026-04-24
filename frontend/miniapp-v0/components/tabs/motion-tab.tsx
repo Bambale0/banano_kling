@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Sparkles, Upload, Video, Image as ImageIcon, Wand2 } from 'lucide-react'
+import { Sparkles, Upload, Video, Image as ImageIcon, Wand2, CheckCircle2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { generateMotion, uploadFile } from '@/lib/api'
 import type { Task, UploadedFile } from '@/lib/types'
@@ -48,10 +48,11 @@ function MotionUploadCard({
   return (
     <label
       className={cn(
-        'group relative block overflow-hidden rounded-3xl border border-border/60',
-        'bg-card/45 p-5 transition-all duration-300',
-        'hover:border-gold/40 hover:bg-card/70',
-        file && 'border-gold/45 bg-gold/[0.05]'
+        'group relative block overflow-hidden rounded-[1.75rem] border p-4',
+        'transition-all duration-300 active:scale-[0.99]',
+        file
+          ? 'border-gold/45 bg-gold/[0.06]'
+          : 'border-border/60 bg-card/45 hover:border-gold/35 hover:bg-card/70'
       )}
     >
       <input
@@ -62,28 +63,31 @@ function MotionUploadCard({
         onChange={handleChange}
       />
 
-      <div className="absolute inset-0 bg-gradient-to-br from-gold/[0.08] via-transparent to-cyan/[0.08] opacity-0 transition-opacity group-hover:opacity-100" />
-
-      <div className="relative flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-background/70 border border-border/60">
-          <Icon className={cn('h-5 w-5', file ? 'text-gold' : 'text-muted-foreground')} />
+      <div className="relative flex items-center gap-3">
+        <div
+          className={cn(
+            'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border',
+            file
+              ? 'border-gold/35 bg-gold/10'
+              : 'border-border/60 bg-background/70'
+          )}
+        >
+          {file ? (
+            <CheckCircle2 className="h-5 w-5 text-gold" />
+          ) : (
+            <Icon className="h-5 w-5 text-muted-foreground" />
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="font-serif text-lg text-foreground">{title}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className="font-serif text-lg leading-6 text-foreground">{title}</p>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
 
-          <div className="mt-4 rounded-2xl border border-dashed border-border/70 bg-background/45 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm">
-              <Upload className="h-4 w-4 text-gold" />
-              <span className="truncate">
-                {isUploading
-                  ? 'Загружаю…'
-                  : file
-                    ? file.name
-                    : 'Нажмите, чтобы загрузить файл'}
-              </span>
-            </div>
+          <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-2 text-sm">
+            <Upload className="h-4 w-4 shrink-0 text-gold" />
+            <span className="truncate">
+              {isUploading ? 'Загрузка…' : file ? file.name : 'Загрузить'}
+            </span>
           </div>
         </div>
       </div>
@@ -193,27 +197,26 @@ export function MotionTab() {
     }
   }
 
-  const estimatedCost = mode === '1080p' ? 'Pro тариф' : 'Standard тариф'
+  const estimatedCost = mode === '1080p' ? 'Pro' : 'Standard'
 
   return (
-    <div className="px-4 space-y-6">
-      <div className="relative overflow-hidden rounded-[2rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.10] p-6">
-        <div className="absolute -right-12 -top-12 h-36 w-36 rounded-full bg-gold/20 blur-3xl" />
-        <div className="absolute -left-10 bottom-0 h-28 w-28 rounded-full bg-cyan/15 blur-3xl" />
+    <div className="px-4 space-y-5 pb-28">
+      <div className="relative overflow-hidden rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.10] p-5">
+        <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-gold/20 blur-3xl" />
+        <div className="absolute -left-10 bottom-0 h-24 w-24 rounded-full bg-cyan/15 blur-3xl" />
 
         <div className="relative">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-gold/25 bg-background/50 px-3 py-1 text-xs uppercase tracking-[0.22em] text-gold">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-gold/25 bg-background/50 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-gold">
             <Sparkles className="h-3.5 w-3.5" />
-            Motion Canvas
+            Motion Control
           </div>
 
-          <h2 className="font-serif text-3xl font-semibold leading-tight text-foreground">
-            Перенесите движение на персонажа
+          <h2 className="font-serif text-2xl font-semibold leading-tight text-foreground">
+            Перенос движения
           </h2>
 
-          <p className="mt-3 max-w-[34rem] text-sm leading-6 text-muted-foreground">
-            Загрузите фото героя и видео движения. Kling 2.6 Motion Control
-            перенесёт динамику, сохранив образ и визуальное направление.
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Загрузите фото персонажа и видео с движением. Модель перенесёт динамику на ваш образ.
           </p>
         </div>
       </div>
@@ -222,7 +225,7 @@ export function MotionTab() {
         <div className="space-y-4">
           <MotionUploadCard
             title="Фото персонажа"
-            description="Исходное фото героя, объекта или персонажа."
+            description="Кого нужно оживить."
             icon={ImageIcon}
             accept="image/*"
             file={characterImage}
@@ -232,7 +235,7 @@ export function MotionTab() {
 
           <MotionUploadCard
             title="Видео движения"
-            description="Короткий ролик, с которого переносим движение."
+            description="Откуда берём движение."
             icon={Video}
             accept="video/*"
             file={motionVideo}
@@ -240,55 +243,70 @@ export function MotionTab() {
             disabled={isSubmitting}
           />
 
-          <div className="glass rounded-3xl border border-border/60 p-5">
-            <p className="font-serif text-lg text-foreground mb-4">Настройки движения</p>
+          <div className="glass rounded-[1.75rem] border border-border/60 p-4">
+            <p className="font-serif text-lg text-foreground mb-4">Настройки</p>
 
-            <div className="grid grid-cols-2 gap-3">
-              {(['720p', '1080p'] as MotionMode[]).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setMode(item)}
-                  className={cn(
-                    'rounded-2xl border px-4 py-3 text-sm transition-all',
-                    mode === item
-                      ? 'border-gold/60 bg-gold/10 text-gold'
-                      : 'border-border/70 bg-background/40 text-muted-foreground'
-                  )}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+            <div className="space-y-3">
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  Качество
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['720p', '1080p'] as MotionMode[]).map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setMode(item)}
+                      className={cn(
+                        'rounded-2xl border px-4 py-3 text-sm font-medium transition-all',
+                        mode === item
+                          ? 'border-gold/60 bg-gold/10 text-gold'
+                          : 'border-border/70 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {[
-                { id: 'video' as const, label: 'Как в видео' },
-                { id: 'image' as const, label: 'Как на фото' },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setDirection(item.id)}
-                  className={cn(
-                    'rounded-2xl border px-4 py-3 text-sm transition-all',
-                    direction === item.id
-                      ? 'border-cyan/60 bg-cyan/10 text-cyan'
-                      : 'border-border/70 bg-background/40 text-muted-foreground'
-                  )}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  Ориентация
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'video' as const, label: 'Из видео' },
+                    { id: 'image' as const, label: 'Из фото' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setDirection(item.id)}
+                      className={cn(
+                        'rounded-2xl border px-3 py-3 text-sm font-medium transition-all',
+                        direction === item.id
+                          ? 'border-cyan/60 bg-cyan/10 text-cyan'
+                          : 'border-border/70 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="mt-4">
-              <Textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Опционально: keep face stable, cinematic motion, smooth camera…"
-                className="min-h-28 rounded-2xl bg-background/50"
-              />
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  Промпт
+                </p>
+                <Textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="Например: сохранить лицо, плавная камера, киношный свет…"
+                  className="min-h-24 rounded-2xl bg-background/50 text-sm"
+                />
+              </div>
             </div>
           </div>
 
@@ -306,20 +324,20 @@ export function MotionTab() {
             className="h-14 w-full rounded-2xl bg-gold text-background hover:bg-gold/90"
           >
             <Wand2 className="mr-2 h-5 w-5" />
-            {isSubmitting ? 'Запускаю Motion…' : 'Run Motion Control'}
+            {isSubmitting ? 'Запускаю…' : 'Запустить Motion'}
           </Button>
         </div>
 
         <div className="space-y-4">
-          <div className="glass rounded-3xl border border-border/60 p-5">
+          <div className="glass rounded-[1.75rem] border border-border/60 p-5">
             <p className="text-xs uppercase tracking-[0.18em] text-gold/80 mb-3">
-              Что отправим
+              Проверка
             </p>
 
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between gap-4">
-                <span className="text-muted-foreground">Режим</span>
-                <strong>Kling 2.6 Motion</strong>
+                <span className="text-muted-foreground">Модель</span>
+                <strong>Kling Motion</strong>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Качество</span>
@@ -327,18 +345,18 @@ export function MotionTab() {
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Ориентация</span>
-                <strong>{direction === 'video' ? 'как в видео' : 'как на фото'}</strong>
+                <strong>{direction === 'video' ? 'из видео' : 'из фото'}</strong>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Фото</span>
-                <strong>{characterImage ? 'загружено' : 'нет'}</strong>
+                <strong>{characterImage ? 'готово' : 'нет'}</strong>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Видео</span>
-                <strong>{motionVideo ? 'загружено' : 'нет'}</strong>
+                <strong>{motionVideo ? 'готово' : 'нет'}</strong>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <span className="text-muted-foreground">Стоимость</span>
+                <span className="text-muted-foreground">Тариф</span>
                 <strong>{estimatedCost}</strong>
               </div>
             </div>
@@ -347,16 +365,15 @@ export function MotionTab() {
           {lastResult ? (
             <ResultCard task={lastResult} onClose={() => setLastResult(null)} />
           ) : (
-            <div className="rounded-3xl border border-cyan/20 bg-cyan/[0.06] p-5">
+            <div className="rounded-[1.75rem] border border-cyan/20 bg-cyan/[0.06] p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">
-                Result
+                Результат
               </p>
               <h3 className="font-serif text-lg text-foreground mb-2">
-                Готово к переносу движения
+                Готово к запуску
               </h3>
               <p className="text-sm leading-6 text-muted-foreground">
-                После запуска здесь появится task id и статус. Готовый ролик
-                подтянется в историю и придёт в чат бота.
+                После запуска здесь появится задача. Готовый ролик придёт в чат и историю.
               </p>
             </div>
           )}
