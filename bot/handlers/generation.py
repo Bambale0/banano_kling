@@ -4457,3 +4457,9 @@ async def run_no_preset_video_from_message(
         )
 
     await state.clear()
+
+# Service callback for informational inline buttons.
+# Prevents Telegram loading spinner on non-action buttons like price/status.
+@router.callback_query(F.data == "ignore")
+async def ignore_callback(callback: types.CallbackQuery):
+    await callback.answer()
