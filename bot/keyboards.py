@@ -161,7 +161,7 @@ IMAGE_MODEL_LABELS = {
     "banana_2": "Nano Banana 2",
     "seedream_edit": "Seedream 4.5",
     "grok_imagine_i2i": "Grok Imagine",
-    "nanobanana": "Nano Banana 2",
+    "nanobanana": "Nano Banana Pro",
 }
 
 
