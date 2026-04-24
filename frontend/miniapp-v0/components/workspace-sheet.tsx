@@ -28,17 +28,17 @@ const workspaceConfig: Record<
   },
   'photo-prompt': {
     title: 'Промпт по фото',
-    description: 'Собирает сильное описание по референсу и сразу подводит к запуску.',
+    description: 'Анализ фото и prompt для похожей генерации.',
     icon: Wand2,
   },
   partners: {
     title: 'Партнёрская программа',
-    description: 'Показывает условия, выгоду и следующие шаги в одном окне.',
+    description: 'Ваша ссылка, рефералы и партнёрский баланс.',
     icon: BriefcaseBusiness,
   },
   support: {
     title: 'Поддержка',
-    description: 'Помогает быстро собрать обращение и не потерять важные детали по задаче.',
+    description: 'Помощь по задачам, оплате и результатам.',
     icon: Headphones,
   },
   'batch-edit': {
@@ -69,18 +69,24 @@ export function WorkspaceSheet() {
       <SheetContent side="bottom" className="h-[86vh] rounded-t-[28px] border-border/50 bg-background/95 px-0">
         <SheetHeader className="px-5 pt-3 text-left">
           <div className="mb-2">
-            <div className="mb-2 h-1 w-10 rounded-full bg-border/80" />
-            <SheetTitle className="flex items-center gap-2 font-serif text-[2rem] leading-none text-foreground">
-              <Icon className="h-5 w-5 text-gold" />
-              {config?.title}
-            </SheetTitle>
-            <SheetDescription className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-              {config?.description}
-            </SheetDescription>
+            <div className="mb-3 h-1 w-10 rounded-full bg-border/80" />
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-gold/20 bg-gold/10">
+                <Icon className="h-4 w-4 text-gold" />
+              </div>
+              <div className="min-w-0">
+                <SheetTitle className="font-serif text-2xl leading-tight text-foreground">
+                  {config?.title}
+                </SheetTitle>
+                <SheetDescription className="mt-1 max-w-xl text-sm leading-5 text-muted-foreground">
+                  {config?.description}
+                </SheetDescription>
+              </div>
+            </div>
           </div>
         </SheetHeader>
 
-        <div className="h-[calc(86vh-98px)] overflow-auto px-5 pb-6">
+        <div className="h-[calc(86vh-92px)] overflow-auto px-5 pb-6">
           {activeWorkspace === 'assistant' && <AssistantChat starters={assistantStarters} />}
           {activeWorkspace === 'photo-prompt' && (
             <PhotoPromptPanel
@@ -531,86 +537,97 @@ function PartnersPanel() {
   }, [])
 
   const referralLink = partner?.referral_link || ''
+  const statusLabel = partner?.status === 'partner' ? 'Партнёр' : 'Базовый'
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-gold">
-          Partner program
-        </p>
-        <h3 className="mt-2 font-serif text-2xl text-foreground">
-          Партнёрская программа
-        </h3>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Реальная статистика из backend-партнёрки: статус, приглашённые пользователи,
-          баланс и ваша реферальная ссылка.
-        </p>
-      </div>
-
-      {isLoading && (
+    <div className="space-y-4 pb-8">
+      {isLoading && !partner && (
         <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin text-gold" />
-            Загружаю данные партнёрки…
+            Загружаю данные…
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-          <p className="text-xs text-muted-foreground">Статус</p>
-          <p className="mt-2 font-serif text-xl text-foreground">
-            {partner?.status === 'partner' ? 'Партнёр' : 'Базовый'}
-          </p>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-3">
+          <p className="text-[11px] text-muted-foreground">Статус</p>
+          <p className="mt-1 truncate font-serif text-lg text-foreground">{statusLabel}</p>
         </div>
 
-        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-          <p className="text-xs text-muted-foreground">Рефералов</p>
-          <p className="mt-2 font-serif text-xl text-foreground">
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-3">
+          <p className="text-[11px] text-muted-foreground">Рефералов</p>
+          <p className="mt-1 font-serif text-lg text-foreground">
             {partner?.referrals_count ?? '—'}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-          <p className="text-xs text-muted-foreground">Баланс</p>
-          <p className="mt-2 font-serif text-xl text-foreground">
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-3">
+          <p className="text-[11px] text-muted-foreground">Баланс</p>
+          <p className="mt-1 font-serif text-lg text-foreground">
             {partner ? `${partner.balance_rub} ₽` : '—'}
           </p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
-        <p className="text-xs uppercase tracking-[0.16em] text-gold/80">
-          Реферальная ссылка
-        </p>
-
-        <div className="mt-3 rounded-2xl border border-border/50 bg-background/45 p-3">
-          <p className="break-all text-sm leading-6 text-foreground">
-            {referralLink || 'Ссылка пока недоступна'}
-          </p>
-        </div>
-
-        <div className="mt-4 flex gap-3">
-          <Button
-            disabled={!referralLink}
-            onClick={() => {
-              navigator.clipboard.writeText(referralLink)
-              toast.success('Реферальная ссылка скопирована')
-            }}
-            className="flex-1 bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Скопировать
-          </Button>
+      <div className="rounded-[1.5rem] border border-gold/20 bg-gold/10 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.16em] text-gold/80">
+              Ваша ссылка
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Делитесь ей с клиентами и авторами.
+            </p>
+          </div>
 
           <Button
             variant="outline"
             onClick={loadPartnerData}
             disabled={isLoading}
-            className="border-border/50 bg-background/40 hover:bg-background/60"
+            className="shrink-0 border-border/50 bg-background/40 hover:bg-background/60"
           >
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Обновить'}
           </Button>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-border/50 bg-background/45 p-3">
+          <p className="break-all text-sm leading-6 text-foreground">
+            {referralLink || 'Ссылка пока недоступна'}
+          </p>
+        </div>
+
+        <Button
+          disabled={!referralLink}
+          onClick={() => {
+            navigator.clipboard.writeText(referralLink)
+            toast.success('Реферальная ссылка скопирована')
+          }}
+          className="mt-4 h-12 w-full rounded-2xl bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
+        >
+          <Copy className="mr-2 h-4 w-4" />
+          Скопировать ссылку
+        </Button>
+      </div>
+
+      <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+        <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+          Как это работает
+        </p>
+        <div className="mt-3 space-y-2">
+          {[
+            'Пользователь переходит по вашей ссылке.',
+            'Backend фиксирует приглашение в партнёрской системе.',
+            'Статистика и баланс обновляются в этом разделе.',
+          ].map((item, index) => (
+            <div key={item} className="flex gap-3 rounded-xl bg-background/35 px-3 py-3">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gold/10 text-xs text-gold">
+                {index + 1}
+              </span>
+              <p className="text-sm leading-5 text-foreground">{item}</p>
+            </div>
+          ))}
         </div>
       </div>
     </div>
