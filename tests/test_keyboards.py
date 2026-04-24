@@ -7,10 +7,12 @@ import pytest
 
 from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_create_hub_keyboard, get_create_video_keyboard,
-                           get_help_keyboard, get_main_menu_keyboard,
+                           get_help_keyboard, get_image_result_keyboard,
+                           get_main_menu_keyboard,
                            get_payment_packages_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
-                           get_topup_keyboard, load_prices)
+                           get_topup_keyboard, get_video_media_step_keyboard,
+                           get_video_model_label, load_prices)
 
 
 @pytest.fixture
@@ -38,7 +40,16 @@ def test_get_main_menu_keyboard():
     kb = get_main_menu_keyboard(10)
     assert kb.inline_keyboard
     assert any(
-        "ux_create" in btn.callback_data
+        btn.callback_data and "create_image_text_new" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+
+
+def test_get_main_menu_keyboard_contains_mini_app_button():
+    kb = get_main_menu_keyboard(10)
+    assert any(
+        getattr(btn, "web_app", None) is not None and btn.text == "🚀 Открыть Mini App"
         for row in kb.inline_keyboard
         for btn in row
     )
@@ -48,7 +59,7 @@ def test_get_create_hub_keyboard():
     kb = get_create_hub_keyboard()
     assert kb.inline_keyboard
     assert any(
-        "create_video_new" in btn.callback_data
+        "quick_reels_video" in btn.callback_data
         for row in kb.inline_keyboard
         for btn in row
     )
@@ -66,8 +77,52 @@ def test_get_create_video_keyboard():
     kb = get_create_video_keyboard()
     assert kb.inline_keyboard
     assert any(
-        "v_type_text" in btn.callback_data for row in kb.inline_keyboard for btn in row
+        "video_change_media" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
     )
+
+
+def test_get_create_video_keyboard_for_kling_25_shows_doc_settings():
+    kb = get_create_video_keyboard(current_model="v26_pro")
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "kling_negative_prompt_edit" in callback_ids
+    assert "kling_cfg_scale_edit" in callback_ids
+
+
+def test_get_video_media_step_keyboard_for_avatar():
+    kb = get_video_media_step_keyboard(
+        current_v_type="avatar",
+        current_model="avatar_std",
+        has_start_image=True,
+        has_avatar_audio=False,
+    )
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert any("Аватар: загружено" in text for text in button_texts)
+    assert any("Аудио: не загружено" in text for text in button_texts)
+    assert "video_media_continue" in callback_ids
+
+
+def test_get_video_model_label_for_new_models():
+    assert get_video_model_label("v26_pro") == "Kling 2.5 Turbo Pro"
+    assert get_video_model_label("avatar_std") == "Kling AI Avatar Standard"
+    assert get_video_model_label("avatar_pro") == "Kling AI Avatar Pro"
+
+
+def test_get_image_result_keyboard_contains_repeat_and_main_menu():
+    kb = get_image_result_keyboard("https://example.com/image.png", task_id="img_123")
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "🔁 Повторить" in button_texts
+    assert "repeat_image_img_123" in callback_ids
+    assert "back_main" in callback_ids
 
 
 def test_get_topup_keyboard(mock_prices):

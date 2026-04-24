@@ -73,53 +73,54 @@ def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> s
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
         "🏠 <b>Banano AI Studio</b>\n"
-        "Выберите задачу — дальше бот подведёт к нужным настройкам.\n\n"
-        "<b>Основные сценарии</b>\n"
-        "• Создать фото или видео с нуля\n"
-        "• Изменить фото, стиль, фон или образ\n"
-        "• Оживить фото и перенести движение\n"
-        "• Разобрать фото в готовый промпт\n\n"
+        "Выберите, что хотите сделать. Бот сам проведёт вас по шагам.\n\n"
+        "<b>Что можно сделать</b>\n"
+        "• Создать фото\n"
+        "• Создать видео\n"
+        "• Изменить фото\n"
+        "• Получить промпт по фото\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
-        "<i>С чего начнём?</i>"
+        "🎁 <b>Welcome-бонус для новых пользователей:</b> <code>25</code> бананов\n"
+        "<i>Нажмите нужную кнопку ниже.</i>"
     )
 
 
 def _build_balance_text(stats: dict) -> str:
     return (
         "💎 <b>Баланс и статистика</b>\n\n"
-        f"• Бананов доступно: <code>{stats['credits']}</code>\n"
-        f"• Всего генераций: <code>{stats['generations']}</code>\n"
-        f"• Потрачено бананов: <code>{stats['total_spent']}</code>\n"
-        f"• Дата регистрации: <code>{stats['member_since']}</code>\n"
+        f"• Сейчас на балансе: <code>{stats['credits']}</code> бананов\n"
+        f"• Всего запусков: <code>{stats['generations']}</code>\n"
+        f"• Всего потрачено: <code>{stats['total_spent']}</code> бананов\n"
+        f"• Вы с нами с: <code>{stats['member_since']}</code>\n"
         f"• Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>\n"
-        f"• Заработано по рефералке: <code>{stats.get('referral_earned', 0)}</code>"
+        f"• Заработано по приглашениям: <code>{stats.get('referral_earned', 0)}</code>"
     )
 
 
 def _build_settings_text() -> str:
     return (
         "⚙️ <b>Настройки</b>\n"
-        "Здесь можно выбрать модели по умолчанию для разных сценариев.\n\n"
-        "<b>Разделы</b>\n"
-        "• Изображения\n"
-        "• Текст -> Видео\n"
-        "• Фото -> Видео\n"
-        "• Сервис для изображений\n\n"
-        "<i>Текущий выбор всегда отмечен в клавиатуре ниже.</i>"
+        "Здесь можно выбрать модели по умолчанию.\n\n"
+        "<b>Что можно настроить</b>\n"
+        "• фото\n"
+        "• видео из текста\n"
+        "• видео из фото\n"
+        "• основной сервис для картинок\n\n"
+        "<i>Текущий выбор отмечен в кнопках ниже.</i>"
     )
 
 
 def _build_motion_control_menu_text(user_credits: int) -> str:
     return (
         "🎬 <b>Motion Control</b>\n"
-        "Перенесите движение из референсного видео на персонажа или объект на фото.\n\n"
+        "Этот режим переносит движение из видео на фото.\n\n"
         "<b>Как это работает</b>\n"
         "1. Загрузите фото\n"
         "2. Добавьте видео с движением\n"
         "3. Получите анимированный результат\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов\n\n"
-        "<i>Выберите качество ниже.</i>"
+        "<i>Ниже выберите подходящий вариант.</i>"
     )
 
 
@@ -128,7 +129,7 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
         f"{title}\n"
         f"🍌 <b>Стоимость:</b> <code>{cost}</code>\n\n"
         "<b>Шаг 1. Фото персонажа</b>\n"
-        "Загрузите изображение, которое нужно анимировать.\n\n"
+        "Загрузите фото или картинку, которую нужно оживить.\n\n"
         "Подойдёт:\n"
         "• фото человека\n"
         "• персонаж или иллюстрация\n"
@@ -144,8 +145,8 @@ async def show_create_hub(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "✨ <b>Создать</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Выберите, что нужно получить. Можно пойти быстрым путём через готовый "
-        "сценарий или открыть свои настройки."
+        "Выберите, что хотите получить. Можно использовать готовый сценарий "
+        "или открыть пошаговый режим."
     )
     await callback.message.edit_text(
         text, reply_markup=get_create_hub_keyboard(), parse_mode="HTML"
@@ -161,8 +162,8 @@ async def show_edit_hub(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "✏️ <b>Изменить фото</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Загрузите фото или референсы, затем опишите, что поменять: стиль, фон, "
-        "образ, объекты или атмосферу."
+        "Здесь можно поменять стиль, фон, одежду, детали или настроение кадра.\n"
+        "Сначала выберите сценарий ниже."
     )
     await callback.message.edit_text(
         text, reply_markup=get_edit_hub_keyboard(), parse_mode="HTML"
@@ -178,8 +179,10 @@ async def show_animate_hub(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "🎬 <b>Оживить</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Выберите подходящий путь: фото в видео, Motion Control или "
-        "видео-референсы."
+        "Выберите, как хотите сделать видео:\n"
+        "• оживить фото\n"
+        "• перенести движение\n"
+        "• использовать видео-референсы"
     )
     await callback.message.edit_text(
         text, reply_markup=get_animate_hub_keyboard(), parse_mode="HTML"
@@ -195,7 +198,7 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "⋯ <b>Ещё</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Здесь собраны оплата, история, партнёрская программа, помощь и поддержка."
+        "Здесь находятся баланс, история, помощь, поддержка и партнёрская программа."
     )
     await callback.message.edit_text(
         text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
@@ -325,23 +328,23 @@ async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
     help_text = (
         "📖 <b>Помощь</b>\n"
-        "Коротко о том, что сейчас умеет бот.\n\n"
+        "Коротко и простыми словами.\n\n"
         "<b>Фото</b>\n"
-        "• Генерация и редактирование в одном меню\n"
-        "• Модели: Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i\n"
-        "• Можно добавлять референсы и менять формат кадра\n\n"
+        "• можно создать фото с нуля\n"
+        "• можно изменить готовое фото\n"
+        "• можно добавить фото-референсы для большей точности\n\n"
         "<b>Видео</b>\n"
-        "• Генерация из текста, фото и видео-референсов\n"
-        "• Модели: Kling 3, Grok Imagine, Veo 3.1\n"
-        "• Для части моделей доступны расширенные настройки прямо в клавиатуре\n\n"
+        "• можно сделать видео из текста\n"
+        "• можно оживить фото\n"
+        "• можно использовать видео-референсы\n\n"
         "<b>Дополнительно</b>\n"
-        "• Motion Control для переноса движения с видео на фото\n"
-        "• Анализ фото -> промпт\n"
-        "• Пополнение баланса внутри бота\n\n"
-        "<b>Как получить лучший результат</b>\n"
-        "• пишите промпт полными фразами\n"
+        "• Motion Control переносит движение из видео на фото\n"
+        "• «Промпт по фото» помогает разобрать картинку в описание\n"
+        "• баланс можно пополнить прямо в боте\n\n"
+        "<b>Как получить хороший результат</b>\n"
+        "• пишите простыми фразами, что хотите увидеть\n"
         "• добавляйте стиль, свет, ракурс и настроение\n"
-        "• используйте референсы, если важны персонажи, стиль или композиция\n\n"
+        "• используйте референсы, если важно сохранить человека или стиль\n\n"
         "<b>Поддержка</b>\n"
         "@chillcreative"
     )
@@ -356,13 +359,10 @@ async def show_help(callback: types.CallbackQuery):
         "📖 <b>Помощь</b>\n\n"
         "<b>Что можно сделать в боте</b>\n"
         "• создать фото по промпту\n"
-        "• отредактировать фото с референсами\n"
-        "• сгенерировать видео из текста, фото или видео\n"
+        "• изменить фото\n"
+        "• создать видео из текста, фото или видео\n"
         "• запустить Motion Control\n"
         "• разобрать фото в готовый промпт\n\n"
-        "<b>Актуальные модели</b>\n"
-        "• Фото: Banana Pro, Banana 2, Seedream 4.5, Grok Imagine i2i\n"
-        "• Видео: Kling 3, Grok Imagine, Veo 3.1\n\n"
         "<b>О чём можно спросить AI-ассистента</b>\n"
         "• какую модель выбрать под задачу\n"
         "• как написать сильный промпт\n"
@@ -382,6 +382,29 @@ async def show_help(callback: types.CallbackQuery):
         logger.warning(f"Cannot edit message in show_help: {e}")
         await callback.message.answer(
             help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_prompt_channel")
+async def show_prompt_channel(callback: types.CallbackQuery):
+    """Показывает информацию о канале с промптами."""
+    text = (
+        "📚 <b>Канал промптов</b>\n\n"
+        "Здесь позже будет ссылка на канал с готовыми промптами и примерами.\n\n"
+        "Пока можно использовать:\n"
+        "• кнопку <b>Промпт по фото</b> для разбора референса\n"
+        "• AI-помощника для сборки промпта под вашу задачу\n\n"
+        "Когда добавите ссылку на канал, её можно будет поставить сюда отдельной кнопкой."
+    )
+    try:
+        await callback.message.edit_text(
+            text, reply_markup=get_back_keyboard(), parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Cannot edit message in show_prompt_channel: {e}")
+        await callback.message.answer(
+            text, reply_markup=get_back_keyboard(), parse_mode="HTML"
         )
     await callback.answer()
 

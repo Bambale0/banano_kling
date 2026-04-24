@@ -1,317 +1,375 @@
 # Banano Kling AI Bot
 
-## 🎯 Описание
+Telegram-бот для генерации фото и видео с понятным пошаговым интерфейсом. Проект рассчитан не только на опытных пользователей: внутри есть отдельные сценарии для новичков, простые подсказки на экранах и аккуратные мастера для фото, видео и аватаров.
 
-Telegram-бот для генерации изображений и видео с использованием передовых AI-моделей (Gemini/NanoBanana, Kling 3.0/2.6, FLUX.2 Pro, Seedream, Grok). Поддерживает:
-- Text-to-Image/Video
-- Image-to-Image/Video (редактирование)
-- Motion Control (перенос движения)
-- Пакетная генерация (batch editing)
-- Референсные изображения (до 14 шт)
-- Платежи: CryptoBot (Crypto Pay API)
-- Партнёрская программа
-- Админ-панель
+## Что умеет бот
 
-## 🏗️ Архитектура
+- Создавать фото по текстовому описанию
+- Редактировать фото по референсам
+- Создавать видео по тексту, фото или видео-референсам
+- Делать talking avatar из фото и аудио
+- Переносить движение через Motion Control
+- Подсказывать промпт по фото
+- Вести баланс, оплаты и историю задач
+- Поддерживать партнерскую программу и админ-инструменты
 
-```
+## Как это выглядит для пользователя
+
+Главный экран специально упрощен:
+
+- `Создать фото`
+- `Создать видео`
+- `Промпт по фото`
+- `Промпт-канал`
+- `AI-помощник`
+- `Баланс`
+- `Поддержка`
+- `Партнерам`
+
+Почти все генерации теперь идут по понятной схеме:
+
+1. Выбрать модель
+2. Загрузить исходники, если они нужны
+3. Настроить параметры
+4. Написать промпт простыми словами
+5. Получить результат или понятное сообщение об ошибке
+
+## Основные сценарии
+
+### Создать фото
+
+Поток для фото построен как мастер из трех шагов:
+
+1. Выбор модели
+2. Загрузка референсов, если они нужны
+3. Настройки и текстовый промпт
+
+Подходит для:
+
+- нового изображения с нуля
+- сохранения внешности человека
+- стилизации по референсам
+- аккуратного редактирования фото
+
+### Создать видео
+
+Поток для видео тоже разбит на шаги:
+
+1. Выбор модели
+2. Выбор типа генерации и нужного медиа
+3. Настройки и промпт
+
+Поддерживаемые типы:
+
+- `Текст -> Видео`
+- `Фото + Текст -> Видео`
+- `Видео + Текст -> Видео`
+- `Аватар + Аудио -> Видео`
+
+### Talking avatar
+
+Для `Kling AI Avatar Standard` и `Kling AI Avatar Pro` пользователь проходит отдельный сценарий:
+
+1. Выбрать модель аватара
+2. Загрузить одно фото аватара
+3. Загрузить одно аудио
+4. Написать короткий текст-подсказку
+5. Запустить генерацию
+
+### Motion Control
+
+Сценарий для переноса движения:
+
+1. Загрузить фото персонажа
+2. Загрузить видео движения
+3. Запустить анимацию
+
+### Промпт по фото
+
+Помогает новичкам, которые не умеют писать промпты. Пользователь отправляет фото, бот помогает описать сцену, стиль и детали.
+
+## Модели
+
+### Фото
+
+| Кнопка в боте | Внутренний ключ | Что делает |
+|---|---|---|
+| Nano Banana Pro | `banana_pro` | Генерация и edit через Gemini/Nano Banana Pro |
+| Nano Banana 2 | `banana_2` | Более легкий вариант Nano Banana |
+| Seedream 4.5 | `seedream_edit` | Image edit по документации Kie.ai |
+| GPT Image 2 | `flux_pro` | GPT Image 2 text-to-image и image-to-image |
+| Grok Imagine | `grok_imagine_i2i` | Генерация/редактирование через Grok |
+
+### Видео
+
+| Кнопка в боте | Внутренний ключ | Что делает |
+|---|---|---|
+| Kling 3.0 | `v3_pro` | Основная генерация Kling 3.0 |
+| Kling v3 | `v3_std` | Более доступная версия Kling |
+| Kling 2.5 Turbo Pro | `v26_pro` | Реализован по `kl.md`, с `negative_prompt` и `cfg_scale` |
+| Kling AI Avatar Standard | `avatar_std` | Talking avatar по `kl2.md` |
+| Kling AI Avatar Pro | `avatar_pro` | Продвинутый talking avatar по `kl2.md` |
+| Veo 3.1 Quality | `veo3` | Видео через Veo |
+| Veo 3.1 Fast | `veo3_fast` | Быстрый Veo |
+| Veo 3.1 Lite | `veo3_lite` | Легкий Veo |
+| Kling Glow | `glow` | Упрощенный видео-сценарий |
+
+## Что реализовано по документации моделей
+
+### GPT Image 2
+
+Реализовано:
+
+- text-to-image
+- image-to-image
+- `aspect_ratio`
+- `nsfw_checker`
+- автоматический переход в i2i, если пользователь загрузил исходники
+
+### Seedream 4.5 Edit
+
+Реализовано:
+
+- обязательный image input
+- `aspect_ratio`
+- `quality`
+- `nsfw_checker`
+- создание задач через Kie.ai task API
+
+### Kling 2.5 Turbo Pro
+
+Реализовано:
+
+- text-to-video
+- image-to-video
+- `duration` только `5` и `10`
+- `aspect_ratio`
+- `negative_prompt`
+- `cfg_scale`
+
+### Kling AI Avatar Standard / Pro
+
+Реализовано:
+
+- `image_url`
+- `audio_url`
+- `prompt`
+- отдельный пользовательский сценарий
+- валидация, что без фото и аудио задача не стартует
+
+## Важные UX-принципы проекта
+
+Бот ориентирован на людей без опыта. Поэтому в интерфейсе соблюдаются такие правила:
+
+- сначала действие, потом настройки
+- короткие и простые тексты на экранах
+- минимум технических терминов
+- понятные статусы загрузки файлов
+- ошибки объясняются человеческим языком
+- если модель требует медиа, бот не дает случайно пропустить критический шаг
+
+## Архитектура проекта
+
+```text
 banano_kling/
 ├── bot/
-│   ├── main.py              # aiohttp сервер + webhook handlers (Telegram, Kling, Kie.ai, CryptoBot)
-│   ├── config.py            # Конфиг из .env (API ключи, webhook URLs)
-│   ├── database.py          # SQLite модели: User, Transaction, GenerationTask
-│   ├── states.py            # FSM состояния (aiogram)
-│   ├── keyboards.py         # Inline/RK клавиатуры (меню, настройки, генерация)
-│   ├── handlers/            # User flows
-│   │   ├── admin.py         # Админ-панель (статистика, рассылка, управление пользователями)
-│   │   ├── batch_generation.py # Пакетная генерация (до 10 изображений)
-│   │   ├── common.py        # /start, /help, баланс, партнёрка, настройки, ИИ-ассистент
-│   │   ├── generation.py    # Основная генерация (image/video/motion/edit)
-│   │   ├── image_analyzer.py # Анализ фото → промпт
-│   │   └── payments.py      # Платежи (CryptoBot)
-│   ├── services/            # AI/платёжные интеграции
-│   │   ├── gemini_service.py     # NanoBanana/Gemini (text2img, edit, refs до 14)
-│   │   ├── kling_service.py      # Kling 3.0/2.6 (PiAPI/Kie.ai/Replicate) - video gen/motion
-│   │   ├── nano_banana_2/pro_service.py # Banana 2/Pro (Gemini 3.1 Flash/Pro)
-│   │   ├── seedream_service.py    # Seedream (Novita AI)
-│   │   ├── grok_service.py        # Grok Imagine (image-to-video)
-│   │   ├── cryptobot_service.py # Платежи
-│   │   ├── preset_manager.py      # Цены/пресеты из JSON
-│   │   └── ai_assistant_service.py # ИИ-ассистент (Grok/Claude)
-│   └── utils/               # Help texts, validators
-├── data/                    # price.json (пакеты/цены), presets.json
-├── static/uploads/          # Загруженные файлы (nginx static)
-├── logs/                    # Логи
-└── requirements.txt
+│   ├── config.py
+│   ├── database.py
+│   ├── keyboards.py
+│   ├── main.py
+│   ├── states.py
+│   ├── handlers/
+│   │   ├── admin.py
+│   │   ├── batch_generation.py
+│   │   ├── common.py
+│   │   ├── generation.py
+│   │   ├── image_analyzer.py
+│   │   └── payments.py
+│   ├── services/
+│   │   ├── ai_assistant_service.py
+│   │   ├── cryptobot_service.py
+│   │   ├── gemini_service.py
+│   │   ├── gpt_image_service.py
+│   │   ├── grok_service.py
+│   │   ├── kling_service.py
+│   │   ├── nano_banana_2_service.py
+│   │   ├── nano_banana_pro_service.py
+│   │   ├── preset_manager.py
+│   │   └── seedream_service.py
+│   └── utils/
+├── data/
+├── logs/
+├── static/uploads/
+├── tests/
+├── start.sh
+└── stop.sh
 ```
 
-### Детальная структура модулей
+### Ключевые файлы
 
-#### Handlers (User Flows)
-| Handler | Ключевые функции |
-|---------|------------------|
-| **admin.py** | `cmd_admin()`, `admin_show_stats()`, `admin_add_credits_prompt()`, `admin_broadcast_prompt()` |
-| **batch_generation.py** | `show_batch_edit_start()`, `process_batch_image()`, `execute_batch()`, `show_batch_results()` |
-| **common.py** | `cmd_start()`, `cmd_help()`, `back_to_main()`, `show_settings()`, `handle_ai_assistant_message()` |
-| **generation.py** | `show_create_video_menu()`, `handle_v_model()`, `handle_img_ref_upload_new()`, `handle_video_prompt_text()` |
-| **image_analyzer.py** | `photo_to_prompt_handler()`, `analyze_photo()` |
-| **payments.py** | `show_topup_menu()`, `initiate_payment()`, `handle_cryptobot_webhook()` |
+- [bot/handlers/common.py](/root/banano_kling/bot/handlers/common.py) отвечает за стартовые экраны, помощь, баланс и вторичные меню
+- [bot/handlers/generation.py](/root/banano_kling/bot/handlers/generation.py) содержит основные пользовательские сценарии фото и видео
+- [bot/keyboards.py](/root/banano_kling/bot/keyboards.py) хранит все клавиатуры и подписи моделей
+- [bot/services/kling_service.py](/root/banano_kling/bot/services/kling_service.py) инкапсулирует работу с Kling и Kie.ai
+- [bot/services/gpt_image_service.py](/root/banano_kling/bot/services/gpt_image_service.py) отвечает за GPT Image 2
+- [bot/services/seedream_service.py](/root/banano_kling/bot/services/seedream_service.py) отвечает за Seedream 4.5 Edit
+- [bot/database.py](/root/banano_kling/bot/database.py) содержит SQLite-слой, статусы задач и операции с балансом
+- [bot/main.py](/root/banano_kling/bot/main.py) поднимает приложение и принимает webhooks
 
-#### Services (Интеграции)
-| Service | Ключевые методы |
-|---------|-----------------|
-| **gemini_service.py** | `generate_image()`, `edit_image()`, `generate_with_references()`, `generate_with_search()` |
-| **kling_service.py** | `generate_video()`, `generate_motion_control()`, `generate_omni_video_generation()`, `get_task_status()` |
-| **nano_banana_2/pro_service.py** | `generate_image()`, `create_task()`, `get_task_status()` |
-| **seedream_service.py** | `generate_image()`, `wait_for_completion()` |
-| **cryptobot_service.py** | `create_invoice()`, `get_invoice()`, `verify_webhook_signature()` |
-| **preset_manager.py** | `get_generation_cost()`, `get_video_cost()`, `get_packages()` |
+## База данных
 
-#### Database (database.py)
-**Модели:** `User`, `Transaction`, `GenerationTask`, `BatchJob`
+Используется SQLite.
 
-**Ключевые queries:**
-- `get_or_create_user(telegram_id)`
-- `add_credits/deduct_credits(telegram_id, amount)`
-- `add_generation_task(...)`
-- `complete_video_task(task_id, result_url)`
-- `get_admin_stats()` → {users, generations, revenue}
+Основные таблицы:
 
-#### Keyboards (keyboards.py)
-- `get_main_menu_keyboard()`, `get_create_video/image_keyboard()`
-- `get_model_selection_keyboard()`, `get_reference_images_keyboard()`
-- `get_payment_packages_keyboard()`
+- `users`
+- `transactions`
+- `generation_tasks`
+- `generation_history`
+- `user_settings`
+- `referrals`
+- `partner_withdrawals`
+- `batch_jobs`
 
-### FSM States (states.py) - Полный список
-```
-GenerationStates:
-- waiting_for_input/image/video/prompt/ref_video/motion_character/video_start_image/confirming_generation/selecting_batch_count
-- uploading_reference_images/videos/confirming_reference_images
-- waiting_for_batch_image/prompt/aspect_ratio/selecting_duration/aspect_ratio/quality
+Важный момент:
 
-PaymentStates: selecting_package/confirming_payment/waiting_payment
+- если у задачи есть `result_url`, `complete_video_task()` ставит статус `completed`
+- если результата нет, задача помечается как `failed`
 
-AdminStates: waiting_broadcast_text/confirming_broadcast/waiting_user_id/waiting_credits_amount
+Это важно и для интерфейса, и для корректной аналитики.
 
-BatchGenerationStates: selecting_mode/preset/entering_prompts/uploading_references/confirming_batch/selecting_batch_count
+## Webhooks
 
-ImageAnalyzerStates: waiting_for_photo
+Проект принимает несколько типов webhook-событий:
 
-AIAssistantStates: main_menu/settings/waiting_for_message
-```
+- Telegram updates
+- Kling / Kie.ai callbacks
+- CryptoBot callbacks
 
-### User Flows (Диаграммы)
-```
-Главное меню → Создать фото/видео → Refs (опц.) → Модель/Формат → Промпт → Генерация → Результат
+Типовой сценарий видео-задачи:
 
-Платежи: Меню → Пополнить → Пакет → Оплата → Webhook → Credits
+1. Бот создает задачу у внешнего провайдера
+2. Сохраняет внутренний `task_id`
+3. Ждет webhook
+4. Получает ссылку на результат
+5. Закрывает задачу и отправляет видео пользователю
 
-Motion Control: Меню → Motion → Std/Pro → Фото персонажа → Видео движения → Kling API
+## Конфигурация
 
-Batch: Меню → Batch → Фото → Промпт → Aspect → Запуск → Галерея/Упскейл
-```
+Минимально нужно настроить `.env`.
 
-### Webhook Flows
-```
-Telegram → /webhook → Dispatcher (aiogram)
+Основные переменные:
 
-Kling/Kie/Replicate → /webhook/kling → complete_video_task() → Send to user
-
-CryptoBot → /cryptobot/webhook → add_credits() → Notify user
-```
-
-## 🚀 Установка и запуск
-
-```bash
-git clone <repo>
-cd banano_kling
-pip install -r requirements.txt
-cp .env.example .env  # Настройте ключи!
-./start.sh  # Запуск (docker-compose или systemd)
-```
-
-**Запуск разработки:**
-```bash
-isort . && black . && ./stop.sh && ./start.sh && tail -f logs/vk_bot.log
-```
-
-## ⚙️ Конфигурация (.env)
-
-```
-# Telegram
-BOT_TOKEN=your_bot_token
-
-# Webhook (production)
-WEBHOOK_HOST=https://your-domain.com
+```env
+BOT_TOKEN=
+WEBHOOK_HOST=
 WEBHOOK_PATH=/webhook
 WEBHOOK_PORT=8443
 
-# AI API Keys
-NANOBANANA_API_KEY=...
-KIE_AI_API_KEY=...      # Kling 3.0 / Motion Control
-REPLICATE_API_TOKEN=... # Kling fallback
-NOVITA_API_KEY=...      # Seedream/FLUX
-GEMINI_API_KEY=...      # Legacy
+ADMIN_IDS=
 
-# Payments (CryptoBot)
-PAYMENT_PROVIDER=cryptobot
-CRYPTOBOT_API_TOKEN=...
+KIE_AI_API_KEY=
+GEMINI_API_KEY=
+NANOBANANA_API_KEY=
+REPLICATE_API_TOKEN=
+
+CRYPTOBOT_API_TOKEN=
 CRYPTOBOT_USE_TESTNET=0
 CRYPTOBOT_WEBHOOK_PATH=/cryptobot/webhook
-
-# Admins
-ADMIN_IDS=123,456
 ```
 
-## 🗄️ База данных (SQLite: bot.db)
+Если в проекте используются дополнительные сервисы, смотрите [bot/config.py](/root/banano_kling/bot/config.py) и `.env.example`.
 
-### Таблицы
-- **users**: telegram_id, credits, referral_code, referred_by, referral_earned, has_paid, partner_agreed_at, partner_total_revenue_rub, partner_balance_rub, partner_withdrawn_rub, partner_tier (basic/gold/pro)
-- **transactions**: order_id, user_id, credits, amount_rub, status (pending/completed), provider (cryptobot)
-- **generation_tasks**: task_id, user_id, type (image/video), preset_id, model, duration, aspect_ratio, prompt, cost, result_url
-- **batch_jobs**: job_id, user_id, mode, total_cost, results_count
-- **user_settings**: preferred_model/video_model/i2v_model/image_service
-- **partner_withdrawals**: user_id, amount_rub, method, requisites, status (requested/completed)
-- **referrals**: referrer_id, referred_id, bonus_credits
+## Установка и запуск
 
-### Ключевые функции
-```python
-get_or_create_user(telegram_id) → User
-add_credits/deduct_credits(telegram_id, amount)
-add_generation_task(...) → bool
-complete_video_task(task_id, result_url)
-get_admin_stats() → dict (users, revenue, generations)
-process_referral(referred_id, code) → bool
-credit_first_payment_referral_bonus(...) → dict (mode: partner/banana, value, %)
-get_partner_overview(id) → dict (balance_rub, tier, referrals_count)
-create_partner_withdrawal(id, amount, method, requisites) → bool
+### Локальный запуск
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-## 👥 Реферальная/Партнёрская система
+После настройки `.env`:
 
-### Как работает
-1. **Регистрация:** Новый пользователь получает уникальный `referral_code` (8 символов).
-2. **Приглашение:** `t.me/bot?start=ref_XXXXXX` → `process_referral()` закрепляет за мастер-партнёром (ID: 339795159).
-3. **Бонус за регистрацию:** 5🍌 новому (signup_bonus).
-4. **Первая оплата реферала:** `credit_first_payment_referral_bonus()` начисляет мастеру:
-   - **Banana бонус:** 10% от credits (если не партнёр).
-   - **Partner %:** basic=30%, gold=35% (≥100k ₽), pro=50% (≥1M ₽) от RUB.
-5. **Уровни:** `get_partner_tier_by_total(total_revenue_rub)`.
-6. **Вывод:** `create_partner_withdrawal()` (мин. 2000₽), статус: requested → completed.
+```bash
+./start.sh
+```
 
-### Flows (common.py)
-- `/ref` или "Партнёрка" → `render_partner_program()` → stats, link.
-- "Принять оферту" → `accept_partner_agreement()` → tier= basic.
-- "Статистика" → `get_partner_overview()` (balance, tier, revenue).
-- "Вывод" → `create_partner_withdrawal()`.
+Остановка:
 
-### DB интеграция
-- `generate_referral_code()`: уникальный код (race-safe).
-- `set_user_referrer()`: one-time bind.
-- Partner fields: `partner_balance_rub += bonus_rub`, `tier` auto-update.
+```bash
+./stop.sh
+```
 
-**Централизованно:** Все бонусы → мастер-партнёр (339795159).
+Скрипт `stop.sh` настроен так, чтобы останавливать только этот бот, а не все процессы `python -m bot.main` в системе.
 
+## Тесты
 
-## 🎛️ FSM Состояния (aiogram StatesGroup)
+В проекте есть unit и integration-style тесты.
 
-### GenerationStates
-- waiting_for_input/image/video/prompt/ref_video/motion_character/video_start_image
-- confirming_generation / selecting_batch_count
-- uploading_reference_images/videos / confirming_reference_images
-- waiting_for_batch_image/prompt/aspect_ratio
+Основные группы:
 
-### PaymentStates
-- selecting_package / confirming_payment / waiting_payment
+- `tests/test_keyboards.py` — клавиатуры и доступные действия
+- `tests/test_database.py` — база данных, пользователи, транзакции, статусы задач
+- `tests/test_kling_service.py` — новые интеграции Kling 2.5 Turbo и AI Avatar
+- `tests/test_generation_helpers.py` — легкие helper-функции генерации
+- `tests/test_webhook_handler.py` — webhook-обработчики
 
-### AdminStates
-- waiting_broadcast_text / confirming_broadcast / waiting_user_id / waiting_credits_amount
+Запуск всех тестов:
 
-### BatchGenerationStates
-- selecting_mode/preset / entering_prompts / uploading_references / confirming_batch
+```bash
+pytest
+```
 
-### ImageAnalyzerStates
-- waiting_for_photo
+Запуск только ключевых свежих тестов:
 
-### AIAssistantStates
-- main_menu / settings / waiting_for_message
+```bash
+pytest tests/test_keyboards.py tests/test_database.py tests/test_kling_service.py tests/test_generation_helpers.py
+```
 
-## 📱 Handlers (User Flows)
+Если нужен отдельный набор зависимостей для тестов, смотрите [tests/requirements.txt](/root/banano_kling/tests/requirements.txt).
 
-### common.py (/start, меню)
-- Главное меню, баланс, партнёрка, настройки, ИИ-ассистент
-- Motion Control (Kling 2.6): фото персонажа + видео движения
+## Что стоит проверять после изменений
 
-### generation.py (основная логика)
-- create_image/video (новый UX: refs → params → prompt)
-- Модели: FLUX, NanoBanana(2/Pro), Seedream(4.5/5/Lite/Edit), Z-Image Turbo
-- Видео: text/imgtxt/video modes (Kling 3/2.6, Grok)
-- Refs: до 14 img / 5 video
-- Edit: image/video input types
+После любого заметного изменения в генерации полезно проверить:
 
-### payments.py
-- Пакеты (mini/standard/optimal/pro/studio)
-- CryptoBot (webhook)
-- Ручная проверка /check_payment_
+1. Открывается ли нужный экран мастера
+2. Можно ли пройти сценарий без пропуска обязательных шагов
+3. Правильно ли отображаются подписи моделей
+4. Совпадают ли настройки в UI с документацией провайдера
+5. Корректно ли завершается задача через webhook
+6. Возвращаются ли кредиты при внешней ошибке провайдера
 
-### admin.py
-- /admin: stats, users (add/deduct credits), broadcast
+## Особенности безопасности и устойчивости
 
-### batch_generation.py
-- Batch edit (img + prompt + refs → multiple outputs)
-- Upscale (2K/4K)
+- Жесткие внешние фильтры провайдеров не считаются внутренней ошибкой бота
+- Для чувствительных fashion/edit запросов добавлен мягкий fallback, если строгая модель может отфильтровать безопасный запрос
+- Критические сценарии аватаров и edit-flow не стартуют без обязательных файлов
+- Новые интеграции строятся через task-based API и webhook completion
 
-## 🔌 Services (Интеграции)
+## Для разработчика
 
-| Service | Функции | Webhook |
-|---------|---------|---------|
-| **Gemini/NanoBanana** | t2i/i2i/edit/refs(14)/search/4K | `/webhook/kie_ai` |
-| **Kling (Kie.ai/PiAPI/Replicate)** | t2v/i2v/v2v/motion(2.6)/omni | `/webhook/kling` |
-| **Seedream/Novita** | t2i (4.5/5/Lite/Edit) | `/webhook/seedream` |
-| **Grok** | i2v (Imagine) | - |
-| **CryptoBot** | Платежи (Crypto Pay API) | `/cryptobot/webhook` |
-| **PresetManager** | Цены из price.json, пакеты | - |
+Если вы добавляете новую модель, полезный порядок такой:
 
-### Webhooks (main.py)
-- Telegram: `/webhook`
-- Kling/Kie/Replicate: `/webhook/kling` (signature verify)
-- Health: `/health`
+1. Добавить сервисный вызов в `bot/services/`
+2. Подключить модель в `bot/keyboards.py`
+3. Добавить ветку в `bot/handlers/generation.py`
+4. Обновить friendly label в `bot/main.py`, если модель приходит через webhook
+5. Добавить цену в `data/price.json`
+6. Написать unit-тесты на payload и UI
+7. Обновить README
 
-## 💰 Цены (data/price.json)
+## Текущее направление проекта
 
-### Пакеты бананов
-| Пакет | Бананы | ₽ | Популярный |
-|-------|--------|----|------------|
-| Mini | 15 | 150 | - |
-| Стандарт | 30 | 250 | - |
-| Оптимальный | 50 | 400 | ⭐ |
-| Pro | 100 | 700 | - |
-| Студия | 200 | 1400 | - |
+Сейчас проект уже умеет:
 
-### Модели изображений
-| Модель | Цена |
-|--------|------|
-| FLUX.2 Pro | 5🍌 |
-| Nano Banana Pro | 5🍌 |
-| Gemini 3 Pro | 5🍌 |
-| Banana 2 | 7🍌 |
-| Seedream Edit | 7🍌 |
+- понятные пошаговые фото- и видео-сценарии
+- GPT Image 2 с t2i и i2i
+- Seedream 4.5 Edit по документации
+- Kling 2.5 Turbo Pro по документации
+- Kling AI Avatar Standard и Pro по документации
+- более дружелюбные тексты для новичков
 
-### Видео (Kling)
-| Модель/Duration | 5s | 10s | 15s |
-|-----------------|----|-----|-----|
-| v3_std | 15 | 30 | 45 |
-| v3_pro | 15 | 30 | 45 |
-
-## 👑 Админ-панель (/admin)
-
-- Статистика (users, generations, revenue)
-- Управление пользователями (credits +/-)
-- Рассылка (broadcast)
-
-## 🔧 Разработка
-
-- **Линтинг/Форматирование:** `isort . && black .`
-- **Тесты:** `pytest tests/`
-- **Логи:** `tail -f logs/bot.log`
-- **Static cleanup:** Авто каждые 6ч (static/uploads)
+Следующий естественный шаг развития: держать таким же понятным весь остальной интерфейс, включая историю, пополнение, поддержку и партнерские экраны.

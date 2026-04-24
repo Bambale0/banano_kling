@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Dict, List, Optional
 
 from bot.config import config
@@ -118,6 +119,7 @@ class VeoService(KlingService):
                 urls.extend([str(item) for item in value if item])
                 continue
             if isinstance(value, str):
+                value = value.strip()
                 parsed = None
                 try:
                     parsed = json.loads(value)
@@ -127,6 +129,8 @@ class VeoService(KlingService):
                     urls.extend([str(item) for item in parsed if item])
                 elif value.startswith("http"):
                     urls.append(value)
+                else:
+                    urls.extend(re.findall(r"https?://[^\s,\]\"']+", value))
 
         return urls
 

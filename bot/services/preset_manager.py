@@ -38,6 +38,8 @@ CANONICAL_VIDEO_ALIASES = {
     "veo3": "veo3",
     "veo3_fast": "veo3_fast",
     "veo3_lite": "veo3_lite",
+    "avatar_std": "avatar_std",
+    "avatar_pro": "avatar_pro",
     "v26_motion_std": "v26_motion_std",
     "v26_motion_pro": "v26_motion_pro",
     # legacy aliases kept only for safe DB/config compatibility

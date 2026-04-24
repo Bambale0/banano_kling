@@ -17,6 +17,10 @@ from bot.services.gemini_service import gemini_service
 logger = logging.getLogger(__name__)
 
 
+def _is_binary_image_payload(result) -> bool:
+    return isinstance(result, (bytes, bytearray))
+
+
 class BatchStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -91,6 +95,13 @@ class BatchEditingService:
         Сохраняет результат в папку static/uploads и возвращает публичный URL.
         """
         try:
+            if not _is_binary_image_payload(file_bytes):
+                logger.error(
+                    "Batch _save_result_file expected bytes, got %s",
+                    type(file_bytes).__name__,
+                )
+                return None
+
             # Создаём поддиректорию по дате
             date_str = datetime.now().strftime("%Y%m%d")
             upload_dir = os.path.join("static", "uploads", date_str)
@@ -103,7 +114,7 @@ class BatchEditingService:
 
             # Сохраняем файл
             with open(filepath, "wb") as f:
-                f.write(file_bytes)
+                f.write(bytes(file_bytes))
 
             # Формируем публичный URL
             base_url = config.static_base_url
@@ -197,16 +208,27 @@ class BatchEditingService:
                         resolution="4K",
                     )
 
-                    if result:
-                        item.result = result
+                    if _is_binary_image_payload(result):
+                        result_bytes = bytes(result)
+                        item.result = result_bytes
                         # Сохраняем результат в файл и получаем публичный URL
-                        result_url = self._save_result_file(result, "png")
+                        result_url = self._save_result_file(result_bytes, "png")
                         if result_url:
                             item.result_url = result_url
                         item.status = BatchStatus.COMPLETED
                     else:
                         item.status = BatchStatus.FAILED
-                        item.error = "Empty response"
+                        item.error = (
+                            f"Unexpected response type: {type(result).__name__}"
+                            if result
+                            else "Empty response"
+                        )
+                        if result:
+                            logger.error(
+                                "Batch item %s returned non-binary payload: %s",
+                                item.index,
+                                type(result).__name__,
+                            )
 
                 except Exception as e:
                     logger.exception(f"Item {item.index} failed: {e}")
@@ -352,7 +374,16 @@ class BatchEditingService:
             image_input=item.result,
         )
 
-        return result
+        if _is_binary_image_payload(result):
+            return bytes(result)
+        if result:
+            logger.error(
+                "Batch upscale returned non-binary payload for job %s item %s: %s",
+                job_id,
+                item_index,
+                type(result).__name__,
+            )
+        return None
 
     def get_job(self, job_id: str) -> Optional[BatchJob]:
         """Получает активную задачу"""

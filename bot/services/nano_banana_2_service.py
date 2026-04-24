@@ -3,6 +3,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.services.media_input_utils import image_sources_to_supported_image_urls
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,11 +75,12 @@ class NanoBanana2Service:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
+        normalized_image_input = image_sources_to_supported_image_urls(image_input)
         payload = {
             "model": "nano-banana-2",
             "input": {
                 "prompt": prompt,
-                "image_input": image_input or [],
+                "image_input": normalized_image_input,
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
                 "output_format": output_format,

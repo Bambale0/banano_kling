@@ -2,10 +2,12 @@ import asyncio
 import hashlib
 import hmac
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import web
 
+import bot.database
 from bot.config import config
 from bot.main import handle_kling_webhook
 
@@ -36,7 +38,35 @@ async def test_handle_kling_webhook_signature_ok(monkeypatch):
         async def read(self):
             return self._body
 
+    monkeypatch.setattr(bot.database, "get_task_by_id", AsyncMock(return_value=None))
+
     req = FakeReq(body, {"x-replicate-signature": sig})
+
+    resp = await handle_kling_webhook(req)
+    assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_handle_kling_webhook_signature_rejects_invalid_signature(monkeypatch):
+    payload = {
+        "id": "task123",
+        "status": "succeeded",
+        "output": "https://x.example/out.mp4",
+    }
+    body = json.dumps(payload).encode("utf-8")
+
+    secret = "testsecret"
+    monkeypatch.setattr(config, "REPLICATE_WEBHOOK_SECRET", secret)
+
+    class FakeReq:
+        def __init__(self, body, headers):
+            self._body = body
+            self.headers = headers
+
+        async def read(self):
+            return self._body
+
+    req = FakeReq(body, {"x-replicate-signature": "bad-signature"})
 
     resp = await handle_kling_webhook(req)
     assert resp.status == 200

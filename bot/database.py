@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ class GenerationTask:
     status: str = "pending"
     telegram_id: Optional[int] = None
     result_url: Optional[str] = None
+    request_data: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -154,6 +156,7 @@ async def init_db():
                 aspect_ratio TEXT,
                 prompt TEXT,
                 cost INTEGER,
+                request_data TEXT,
                 status TEXT DEFAULT 'pending',
                 result_url TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -191,6 +194,12 @@ async def init_db():
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN cost INTEGER")
         except aiosqlite.OperationalError:
             pass  # Column already exists
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN request_data TEXT"
+            )
+        except aiosqlite.OperationalError:
+            pass
 
         # Миграция: добавляем provider в transactions
         try:
@@ -380,7 +389,7 @@ async def get_or_create_user(telegram_id: int) -> User:
         try:
             referral_code = await generate_referral_code(db)
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 10, ?)",
+                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 25, ?)",
                 (telegram_id, referral_code),
             )
             await db.commit()
@@ -1040,13 +1049,19 @@ async def add_generation_task(
     aspect_ratio: Optional[str] = None,
     prompt: Optional[str] = None,
     cost: Optional[int] = None,
+    request_data: Optional[dict | str] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        serialized_request = (
+            json.dumps(request_data, ensure_ascii=False)
+            if isinstance(request_data, dict)
+            else request_data
+        )
         result = await db.execute(
             """INSERT OR IGNORE INTO generation_tasks 
-               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, status) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, request_data, status) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
             (
                 user_id,
                 telegram_id,
@@ -1058,6 +1073,7 @@ async def add_generation_task(
                 aspect_ratio,
                 prompt,
                 cost,
+                serialized_request,
             ),
         )
         await db.commit()
@@ -1098,6 +1114,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             status=row["status"],
             telegram_id=row["telegram_id"],
             result_url=row["result_url"],
+            request_data=row["request_data"] if "request_data" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -1105,11 +1122,12 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        final_status = "completed" if result_url else "failed"
         await db.execute(
             """UPDATE generation_tasks 
-               SET status = 'completed', result_url = ?, completed_at = CURRENT_TIMESTAMP 
+               SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP 
                WHERE task_id = ?""",
-            (result_url, task_id),
+            (final_status, result_url, task_id),
         )
         await db.commit()
         return True

@@ -80,6 +80,13 @@
           "15": 45
         }
       },
+      "v26_pro": {
+        "base": 15,
+        "duration_costs": {
+          "5": 15,
+          "10": 30
+        }
+      },
       "v26_motion_pro": {
         "base": 15,
         "duration_costs": {

@@ -6,7 +6,11 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
-from bot.keyboards import get_admin_keyboard, get_back_keyboard
+from bot.keyboards import (
+    get_admin_keyboard,
+    get_back_keyboard,
+    get_main_menu_button_keyboard,
+)
 from bot.states import AdminStates
 
 logger = logging.getLogger(__name__)
@@ -22,7 +26,10 @@ def is_admin(user_id: int) -> bool:
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""
     if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        await message.answer(
+            "⛔ У вас нет доступа к админ-панели.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     stats = await get_admin_stats()
@@ -106,7 +113,10 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
     try:
         user_id = int(message.text)
     except ValueError:
-        await message.answer("❌ Неверный формат ID. Введите число:")
+        await message.answer(
+            "❌ Неверный формат ID. Введите число:",
+            reply_markup=get_back_keyboard("admin_back"),
+        )
         return
 
     # Получаем статистику пользователя
@@ -114,7 +124,10 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
         stats = await get_user_stats(user_id)
     except Exception as e:
         logger.warning(f"User {user_id} not found: {e}")
-        await message.answer(f"❌ Пользователь с ID {user_id} не найден.")
+        await message.answer(
+            f"❌ Пользователь с ID {user_id} не найден.",
+            reply_markup=get_back_keyboard("admin_back"),
+        )
         return
 
     await state.update_data(target_user_id=user_id)

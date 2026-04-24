@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
 from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
-from bot.keyboards import get_main_menu_keyboard
+from bot.keyboards import get_main_menu_button_keyboard, get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
@@ -27,7 +27,8 @@ def get_batch_upload_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Готово, ввести промпт", callback_data="batch_done_upload")
     builder.button(text="❌ Отмена", callback_data="cancel_batch")
-    builder.adjust(1)
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 2)
     return builder.as_markup()
 
 
@@ -37,7 +38,9 @@ def get_batch_confirmation_keyboard(job_id: str, cost: int):
 
     builder.button(text=f"▶️ Запустить за {cost}🍌", callback_data=f"batchrun_{job_id}")
     builder.button(text="🔙 Отмена", callback_data="cancel_batch")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
 
+    builder.adjust(1, 2)
     return builder.as_markup()
 
 
@@ -49,7 +52,8 @@ def get_batch_aspect_ratio_keyboard():
     builder.button(text="9:16 Вертикальный", callback_data="batch_aspect_9:16")
     builder.button(text="4:3 Классический", callback_data="batch_aspect_4:3")
     builder.button(text="3:4 Портрет", callback_data="batch_aspect_3:4")
-    builder.adjust(2, 2, 1)
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -83,13 +87,19 @@ def get_upscale_options_keyboard(job_id: str, item_index: int):
         text="🖼 4K (10🍌)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
     )
     builder.button(text="🔙 Назад к результатам", callback_data=f"batchback_{job_id}")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
 
+    builder.adjust(2, 2)
     return builder.as_markup()
 
 
 # Хранилище для загружаемых фото (в памяти)
 _batch_uploads: dict[int, list[bytes]] = {}
 _batch_upload_urls: dict[int, list[str]] = {}
+
+
+def _is_binary_image_payload(result) -> bool:
+    return isinstance(result, (bytes, bytearray))
 
 
 def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
@@ -105,12 +115,19 @@ def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[st
         upload_dir = os.path.join("static", "uploads", date_str)
         os.makedirs(upload_dir, exist_ok=True)
 
+        if not _is_binary_image_payload(file_bytes):
+            logger.error(
+                "Batch _save_uploaded_file expected bytes, got %s",
+                type(file_bytes).__name__,
+            )
+            return None
+
         file_id = str(uuid.uuid4())[:8]
         filename = f"{file_id}.{file_ext}"
         filepath = os.path.join(upload_dir, filename)
 
         with open(filepath, "wb") as f:
-            f.write(file_bytes)
+            f.write(bytes(file_bytes))
 
         base_url = config.static_base_url
         public_url = f"{base_url}/uploads/{date_str}/{filename}"
@@ -184,7 +201,10 @@ async def process_batch_image(message: types.Message, state: FSMContext):
 
     photo = message.photo[-1] if message.photo else None
     if not photo:
-        await message.answer("❌ Пожалуйста, отправьте изображение.")
+        await message.answer(
+            "❌ Пожалуйста, отправьте изображение.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     try:
@@ -193,7 +213,10 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         image_data = image_bytes.read()
     except Exception as e:
         logger.exception(f"Failed to download image: {e}")
-        await message.answer("❌ Ошибка загрузки изображения. Попробуйте снова.")
+        await message.answer(
+            "❌ Ошибка загрузки изображения. Попробуйте снова.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     user_id = message.from_user.id
@@ -417,13 +440,14 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         except Exception as e:
             pass
 
-        if result:
+        if _is_binary_image_payload(result):
             # Сохраняем результат
-            saved_url = save_uploaded_file(result, "png")
+            result_bytes = bytes(result)
+            saved_url = save_uploaded_file(result_bytes, "png")
 
             # Отправляем результат
             await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result, "edited.png"),
+                photo=types.BufferedInputFile(result_bytes, "edited.png"),
                 caption=(
                     f"✅ <b>Редактирование завершено!</b>"
                     f"🎨 Режим: Редактирование с референсами\n"
@@ -436,6 +460,11 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
                 parse_mode="HTML",
             )
         else:
+            if result:
+                logger.error(
+                    "Batch edit returned non-binary payload: %s",
+                    type(result).__name__,
+                )
             # Возвращаем кредиты при неудаче
             await add_credits(user_id, cost)
             await callback.message.answer(
@@ -600,15 +629,23 @@ async def execute_upscale(callback: types.CallbackQuery):
     try:
         result = await batch_service.upscale_selected(job_id, item_index, resolution)
 
-        if result:
+        if _is_binary_image_payload(result):
+            result_bytes = bytes(result)
             await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result, f"upscaled_{resolution}.png"),
+                photo=types.BufferedInputFile(
+                    result_bytes, f"upscaled_{resolution}.png"
+                ),
                 caption=f"✅ <b>Апскейл завершён!</b>"
                 f"🖼 Разрешение: <code>{resolution}</code>\n"
                 f"🍌 Стоимость: <code>{cost}</code>🍌",
                 parse_mode="HTML",
             )
         else:
+            if result:
+                logger.error(
+                    "Batch upscale returned non-binary payload: %s",
+                    type(result).__name__,
+                )
             await add_credits(callback.from_user.id, cost)
             await callback.message.answer("❌ Ошибка апскейла. Бананы возвращены.")
 

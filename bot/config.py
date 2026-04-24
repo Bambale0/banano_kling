@@ -83,6 +83,8 @@ class Config:
     # Default to "/webhook" to avoid registering an empty route in aiohttp.
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
+    MINI_APP_PATH: str = os.getenv("MINI_APP_PATH", "/mini-app")
+    MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
@@ -187,6 +189,16 @@ class Config:
         return (
             self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
         )
+
+    @property
+    def mini_app_url(self) -> str:
+        if self.MINI_APP_URL:
+            return self.MINI_APP_URL
+        base = (self.WEBHOOK_HOST or self.static_base_url).rstrip("/")
+        path = self.MINI_APP_PATH or "/mini-app"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{base}{path}"
 
 
 config = Config()

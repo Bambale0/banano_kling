@@ -40,6 +40,9 @@ class GenerationStates(StatesGroup):
     waiting_for_veo_seed = State()  # Ввод seed для Veo
     waiting_for_veo_watermark = State()  # Ввод watermark для Veo
     waiting_for_veo_extend_prompt = State()  # Промпт для продления Veo
+    waiting_for_kling_negative_prompt = State()  # Negative prompt для Kling 2.5
+    waiting_for_kling_cfg_scale = State()  # CFG scale для Kling 2.5
+    waiting_for_avatar_audio = State()  # Аудио для Kling AI Avatar
 
 
 class PaymentStates(StatesGroup):

@@ -1,15 +1,18 @@
 import asyncio
 import base64
 import io
+import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -30,17 +33,24 @@ from bot.keyboards import (
     get_create_image_keyboard,
     get_create_video_keyboard,
     get_image_model_label,
+    get_image_model_selection_keyboard,
+    get_image_result_keyboard,
+    get_main_menu_button_keyboard,
     get_main_menu_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
+    get_video_media_step_keyboard,
     get_video_model_label,
+    get_video_model_selection_keyboard,
     get_video_type_label,
 )
 from bot.services.gemini_service import gemini_service
+from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
+from bot.services.seedream_service import seedream_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
@@ -53,6 +63,273 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+SENSITIVE_FASHION_KEYWORDS = {
+    "белье",
+    "нижнее белье",
+    "нижнем белье",
+    "бюстгальтер",
+    "стринги",
+    "лиф",
+    "чулки",
+    "подвяз",
+    "корсет",
+    "бикини",
+    "купальник",
+    "lingerie",
+    "underwear",
+    "bra",
+    "thong",
+    "stockings",
+    "garter",
+    "corset",
+    "bikini",
+    "swimsuit",
+}
+
+
+def _get_image_provider_model(img_service: str, reference_images: list[str]) -> str:
+    """Return provider-facing model identifier for routing logs."""
+    if img_service == "banana_2":
+        return "google/gemini-2.5-flash-image"
+    if img_service in {"banana_pro", "nanobanana"}:
+        return "google/gemini-3-pro-image"
+    if img_service == "seedream_edit":
+        return "seedream/4.5-edit"
+    if img_service == "flux_pro":
+        return (
+            "gpt-image-2-image-to-image"
+            if reference_images
+            else "gpt-image-2-text-to-image"
+        )
+    if img_service in {"seedream", "seedream_45"}:
+        return "google/gemini-pro"
+    if img_service == "grok_imagine_i2i":
+        return "grok-imagine-image-to-image"
+    return img_service
+
+
+def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
+    """Normalize provider responses into queued/done/failed states."""
+    if isinstance(result, dict):
+        if result.get("task_id"):
+            return "queued", None
+        error_message = result.get("message") or result.get("error") or str(result)
+        return "failed", error_message
+    if isinstance(result, (bytes, bytearray)):
+        return "done", None
+    if result:
+        return "failed", f"Unexpected result type: {type(result).__name__}"
+    return "failed", None
+
+
+def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
+    """Reduce false positives for benign fashion/editorial prompts without bypassing policy."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return prompt
+    if img_service not in {"banana_pro", "banana_2", "nanobanana", "grok_imagine_i2i"}:
+        return prompt
+
+    replacements = {
+        r"\blingerie\b": "fashion outfit",
+        r"\bunderwear\b": "fashion outfit",
+        r"\bbra\b": "top",
+        r"\bthong\b": "swimwear bottom",
+        r"\bstockings\b": "fashion stockings",
+        r"\bgarter\b": "fashion accessory",
+        r"\bбелье\b": "модный образ",
+        r"\bнижнее белье\b": "модный образ",
+        r"\bбюстгальтер\b": "топ",
+        r"\bстринги\b": "низ от купальника",
+        r"\bчулки\b": "fashion-чулки",
+        r"\bкорсет\b": "fashion-корсет",
+    }
+    normalized = prompt
+    for pattern, replacement in replacements.items():
+        normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+
+    safety_prefix = (
+        "Safe, non-explicit editorial image of an adult subject. "
+        "Fashion or product focused, no nudity, no explicit anatomy, no sexual content. "
+    )
+    return f"{safety_prefix}{normalized}"
+
+
+async def _start_image_generation_task(
+    *,
+    user,
+    telegram_id: int,
+    img_service: str,
+    prompt: str,
+    img_ratio: str,
+    reference_images: list[str],
+    unit_cost: int,
+    img_quality: str = "basic",
+    img_nsfw_checker: bool = False,
+    nsfw_enabled: bool = False,
+    callback_url: Optional[str] = None,
+):
+    """Launch one image generation task and persist enough data for repeats."""
+    runtime_img_service = img_service
+    provider_model = _get_image_provider_model(runtime_img_service, reference_images)
+
+    local_task_id = f"img_{uuid.uuid4().hex[:12]}"
+    effective_prompt = _apply_safe_prompt_framing(runtime_img_service, prompt)
+    request_snapshot = {
+        "img_service": img_service,
+        "prompt": prompt,
+        "effective_prompt": effective_prompt,
+        "img_ratio": img_ratio,
+        "reference_images": reference_images,
+        "img_quality": img_quality,
+        "img_nsfw_checker": img_nsfw_checker,
+        "nsfw_enabled": nsfw_enabled,
+        "provider_model": provider_model,
+    }
+    await add_generation_task(
+        user.id,
+        telegram_id,
+        local_task_id,
+        "image",
+        runtime_img_service,
+        model=runtime_img_service,
+        aspect_ratio=img_ratio,
+        prompt=prompt,
+        cost=unit_cost,
+        request_data=request_snapshot,
+    )
+    logger.info(
+        "Image route: local_task_id=%s selected_model=%s runtime_model=%s provider_model=%s references=%s ratio=%s",
+        local_task_id,
+        img_service,
+        runtime_img_service,
+        provider_model,
+        len(reference_images),
+        img_ratio,
+    )
+
+    if runtime_img_service == "banana_2":
+        result = await nano_banana_2_service.generate_image(
+            prompt=effective_prompt,
+            aspect_ratio=img_ratio,
+            image_input=reference_images,
+            callback_url=callback_url,
+        )
+    elif runtime_img_service in {"banana_pro", "nanobanana"}:
+        result = await nano_banana_pro_service.generate_image(
+            prompt=effective_prompt,
+            aspect_ratio=img_ratio,
+            image_input=reference_images,
+            callback_url=callback_url,
+        )
+    elif runtime_img_service == "seedream_edit":
+        result = await seedream_service.generate_image(
+            prompt=prompt,
+            model="seedream/4.5-edit",
+            aspect_ratio=img_ratio,
+            image_urls=reference_images,
+            quality=img_quality,
+            nsfw_checker=img_nsfw_checker,
+            callBackUrl=callback_url,
+        )
+    elif runtime_img_service == "flux_pro":
+        if reference_images:
+            result = await gpt_image_service.generate_image_to_image(
+                prompt=prompt,
+                input_urls=reference_images,
+                model="gpt-image-2-image-to-image",
+                aspect_ratio=img_ratio,
+                nsfw_checker=img_nsfw_checker,
+                callBackUrl=callback_url,
+            )
+        else:
+            result = await gpt_image_service.generate_image(
+                prompt=prompt,
+                model="gpt-image-2-text-to-image",
+                aspect_ratio=img_ratio,
+                nsfw_checker=img_nsfw_checker,
+                callBackUrl=callback_url,
+            )
+    elif runtime_img_service in {"seedream", "seedream_45"}:
+        result = await gemini_service.generate_image(
+            prompt=prompt,
+            model="pro",
+            aspect_ratio=img_ratio,
+            reference_image_urls=reference_images,
+        )
+    elif runtime_img_service == "grok_imagine_i2i":
+        result = await grok_service.generate_image_to_image(
+            image_urls=reference_images,
+            prompt=effective_prompt,
+            nsfw_checker=nsfw_enabled,
+            callBackUrl=callback_url,
+        )
+    else:
+        result = await nano_banana_pro_service.generate_image(
+            prompt=effective_prompt,
+            aspect_ratio=img_ratio,
+            image_input=reference_images,
+            callback_url=callback_url,
+        )
+
+    result_status, error_message = _classify_image_generation_result(result)
+
+    if result_status == "queued":
+        api_task_id = result["task_id"]
+        import aiosqlite
+
+        from bot.database import DATABASE_PATH
+
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
+                (api_task_id, local_task_id, user.id),
+            )
+            await db.commit()
+        logger.info(
+            "Image route confirmed: local_task_id=%s api_task_id=%s selected_model=%s runtime_model=%s provider_model=%s",
+            local_task_id,
+            api_task_id,
+            img_service,
+            runtime_img_service,
+            provider_model,
+        )
+        return {
+            "status": "queued",
+            "task_id": api_task_id,
+            "local_task_id": local_task_id,
+            "runtime_img_service": runtime_img_service,
+        }
+
+    if result_status == "done":
+        result_bytes = bytes(result)
+        saved_url = save_uploaded_file(result_bytes, "png")
+        await complete_video_task(local_task_id, saved_url)
+        return {
+            "status": "done",
+            "task_id": local_task_id,
+            "result_bytes": result_bytes,
+            "saved_url": saved_url,
+            "runtime_img_service": runtime_img_service,
+        }
+
+    if error_message:
+        logger.error(
+            "Image generation failed before queueing: local_task_id=%s selected_model=%s runtime_model=%s provider_model=%s error=%s",
+            local_task_id,
+            img_service,
+            runtime_img_service,
+            provider_model,
+            error_message,
+        )
+    await complete_video_task(local_task_id, None)
+    return {
+        "status": "failed",
+        "task_id": local_task_id,
+        "runtime_img_service": runtime_img_service,
+    }
+
+
 # =============================================================================
 # НОВЫЙ UX: МЕНЮ СОЗДАНИЯ ВИДЕО (get_create_video_keyboard)
 # =============================================================================
@@ -60,11 +337,10 @@ router = Router()
 
 @router.callback_query(F.data == "create_video_new")
 async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает меню создания видео - начинаем с загрузки референсов"""
+    """Пошаговый вход в видео: модель -> настройки/медиа/промпт."""
     await _init_default_video_state(state)
-
-    # СРАЗУ показываем экран с параметрами видео и полем для промпта (без загрузки референсов)
-    await _show_video_creation_screen(callback.message, state)
+    await state.update_data(video_flow_step="select_model")
+    await _show_video_model_selection_screen(callback, state)
     await callback.answer()
 
 
@@ -88,10 +364,11 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         "🖼 <b>Создание фото</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         "<b>Шаг 1. Референсы</b>\n"
-        "Загрузка необязательна, но может помочь, если важно:\n"
-        "• сохранить внешность объекта или персонажа\n"
-        "• удержать стиль и детали\n"
-        "• опереться на конкретные исходники\n\n"
+        "Этот шаг можно пропустить.\n"
+        "Фото-референсы помогают, если важно:\n"
+        "• сохранить внешность человека или предмета\n"
+        "• повторить стиль и детали\n"
+        "• опираться на конкретный исходник\n\n"
         "<i>Можно загрузить до 14 фото.</i>\n"
         "Когда всё готово, нажмите <b>▶️ Продолжить</b>.\n"
         "Если референсы не нужны — выберите <b>⏭ Пропустить</b>."
@@ -114,17 +391,203 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
 
 @router.callback_query(F.data == "create_image_text_new")
 async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMContext):
-    """Быстрый вход в фото с нуля, без обязательного экрана референсов."""
+    """Пошаговый вход в фото: модель -> референсы -> настройки."""
     await state.update_data(
         generation_type="image",
         img_service="banana_pro",
         img_ratio="1:1",
         img_count=1,
+        img_quality="basic",
+        img_nsfw_checker=False,
         reference_images=[],
+        img_flow_step="select_model",
         preset_id="new",
     )
-    await _show_image_creation_screen(callback, state)
+    await _show_image_model_selection_screen(callback, state)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("repeat_image_"))
+async def repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
+    """Повторяет фото-задачу с тем же промптом, моделью и исходниками."""
+    task_id = callback.data.replace("repeat_image_", "", 1)
+    task = await get_task_by_id(task_id)
+
+    if not task or task.type != "image" or not task.request_data:
+        await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
+        return
+
+    try:
+        request_data = json.loads(task.request_data)
+    except Exception:
+        await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
+        return
+
+    unit_cost = task.cost or 0
+    is_admin = config.is_admin(callback.from_user.id)
+    if unit_cost > 0 and not is_admin:
+        can_afford = await check_can_afford(callback.from_user.id, unit_cost)
+        if not can_afford:
+            await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
+            return
+        if not await deduct_credits(callback.from_user.id, unit_cost):
+            await callback.answer("Не удалось списать бананы.", show_alert=True)
+            return
+
+    user = await get_or_create_user(callback.from_user.id)
+    img_service = request_data.get("img_service", task.model or "banana_pro")
+    prompt = request_data.get("prompt", task.prompt or "")
+    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    reference_images = request_data.get("reference_images", [])
+    img_quality = request_data.get("img_quality", "basic")
+    img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
+    nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+    callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+
+    model_label = get_image_model_label(img_service)
+    progress_message = await callback.message.answer(
+        "🔁 <b>Повторяю генерацию</b>\n"
+        f"• Модель: <code>{model_label}</code>\n"
+        f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+        f"• Референсы: <code>{len(reference_images)}</code>",
+        parse_mode="HTML",
+    )
+
+    try:
+        launch_result = await _start_image_generation_task(
+            user=user,
+            telegram_id=callback.from_user.id,
+            img_service=img_service,
+            prompt=prompt,
+            img_ratio=img_ratio,
+            reference_images=reference_images,
+            unit_cost=unit_cost,
+            img_quality=img_quality,
+            img_nsfw_checker=img_nsfw_checker,
+            nsfw_enabled=nsfw_enabled,
+            callback_url=callback_url,
+        )
+        await progress_message.delete()
+
+        if launch_result["status"] == "queued":
+            await callback.message.answer(
+                "🚀 <b>Повторная генерация запущена</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• ID: <code>{launch_result['task_id']}</code>\n"
+                f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
+                "Результат придёт в этот чат.",
+                parse_mode="HTML",
+            )
+        elif launch_result["status"] == "done":
+            result_bytes = launch_result["result_bytes"]
+            saved_url = launch_result["saved_url"]
+            await callback.message.answer_photo(
+                photo=types.BufferedInputFile(result_bytes, filename="repeated.png"),
+                caption=(
+                    "✅ <b>Повтор готов</b>\n"
+                    f"• Модель: <code>{model_label}</code>\n"
+                    f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
+                ),
+                parse_mode="HTML",
+                reply_markup=get_image_result_keyboard(
+                    saved_url, task_id=launch_result["task_id"]
+                ),
+            )
+            await _send_original_document(
+                callback.message.answer_document,
+                result_bytes,
+                saved_url,
+                filename="repeated_original.png",
+            )
+        else:
+            if unit_cost > 0 and not is_admin:
+                await add_credits(callback.from_user.id, unit_cost)
+            await callback.message.answer(
+                "❌ Не получилось повторить генерацию. Бананы за попытку уже возвращены."
+            )
+
+        await callback.answer("Повтор запускаю")
+    except Exception:
+        logger.exception("Repeat image generation failed")
+        if unit_cost > 0 and not is_admin:
+            await add_credits(callback.from_user.id, unit_cost)
+        try:
+            await progress_message.delete()
+        except Exception:
+            pass
+        await callback.answer("Не удалось повторить генерацию.", show_alert=True)
+
+
+@router.callback_query(F.data == "main_img_banana_pro")
+async def show_main_img_banana_pro(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="banana_pro")
+
+
+@router.callback_query(F.data == "main_img_banana_2")
+async def show_main_img_banana_2(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="banana_2")
+
+
+@router.callback_query(F.data == "main_img_seedream")
+async def show_main_img_seedream(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="seedream_edit")
+
+
+@router.callback_query(F.data == "main_img_flux")
+async def show_main_img_flux(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="flux_pro")
+
+
+@router.callback_query(F.data == "main_img_grok")
+async def show_main_img_grok(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(
+        callback, state, model="grok_imagine_i2i", upload_first=True
+    )
+
+
+@router.callback_query(F.data == "main_vid_v3_std")
+async def show_main_vid_v3_std(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(callback, state, model="v3_std")
+
+
+@router.callback_query(F.data == "main_vid_v3_pro")
+async def show_main_vid_v3_pro(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(callback, state, model="v3_pro")
+
+
+@router.callback_query(F.data == "main_vid_veo3")
+async def show_main_vid_veo3(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback, state, model="veo3", duration=6, ratio="9:16"
+    )
+
+
+@router.callback_query(F.data == "main_vid_veo3_fast")
+async def show_main_vid_veo3_fast(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback, state, model="veo3_fast", duration=6, ratio="9:16"
+    )
+
+
+@router.callback_query(F.data == "main_vid_veo3_lite")
+async def show_main_vid_veo3_lite(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback, state, model="veo3_lite", duration=6, ratio="9:16"
+    )
+
+
+@router.callback_query(F.data == "main_vid_grok")
+async def show_main_vid_grok(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback, state, model="grok_imagine", duration=6, ratio="16:9"
+    )
+
+
+@router.callback_query(F.data == "main_vid_glow")
+async def show_main_vid_glow(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback, state, model="glow", v_type="video", duration=5, ratio="16:9"
+    )
 
 
 @router.callback_query(F.data == "quick_product_image")
@@ -149,11 +612,12 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
     is_background = callback.data == "edit_background_image"
     title = "🖼 <b>Сменить фон</b>" if is_background else "🎨 <b>Сменить стиль</b>"
     hint = (
-        "Загрузите фото, у которого нужно заменить фон. После этого нажмите "
-        "<b>Продолжить</b> и опишите новый фон."
+        "Загрузите фото, у которого нужно заменить фон.\n"
+        "Потом нажмите <b>Продолжить</b> и напишите, какой фон нужен."
         if is_background
-        else "Загрузите фото и, при желании, стиль-референсы. После этого нажмите "
-        "<b>Продолжить</b> и опишите желаемый стиль."
+        else "Загрузите фото.\n"
+        "При желании добавьте ещё стиль-референсы.\n"
+        "Потом нажмите <b>Продолжить</b> и опишите нужный стиль."
     )
 
     await state.update_data(
@@ -161,6 +625,8 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         img_service="seedream_edit",
         img_ratio="1:1",
         img_count=1,
+        img_quality="basic",
+        img_nsfw_checker=False,
         reference_images=[],
         preset_id="new",
     )
@@ -192,8 +658,8 @@ async def show_grok_i2i_upload(callback: types.CallbackQuery, state: FSMContext)
     await callback.message.edit_text(
         "🧠 <b>Grok Imagine i2i</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
-        "Загрузите фото для редактирования, затем нажмите <b>Продолжить</b> "
-        "и опишите изменение.",
+        "Загрузите фото для изменения.\n"
+        "Потом нажмите <b>Продолжить</b> и напишите, что нужно поменять.",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
@@ -243,8 +709,8 @@ async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMCo
     text = (
         "🎞 <b>Видео-референс</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        "Загрузите до 5 коротких видео, чтобы передать движение, стиль камеры "
-        "или атмосферу. Можно пропустить и продолжить без референсов."
+        "Загрузите до 5 коротких видео, если хотите передать движение, стиль камеры "
+        "или атмосферу.\nМожно пропустить шаг и продолжить без них."
     )
     await callback.message.edit_text(
         text,
@@ -276,12 +742,12 @@ async def start_motion_control(callback: types.CallbackQuery, state: FSMContext)
         "🎯 <b>Kling 2.6 Motion Control</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code>\n\n"
         "<b>Шаг 1. Фото персонажа</b>\n"
-        "Загрузите чёткое фото, которое нужно анимировать.\n\n"
+        "Загрузите чёткое фото, которое нужно оживить.\n\n"
         "Подойдёт:\n"
         "• портрет или персонаж по пояс\n"
         "• иллюстрация или рендер\n"
         "• JPEG/PNG до 10 MB\n\n"
-        "<i>Движение будет перенесено из референсного видео на это изображение.</i>"
+        "<i>Движение потом будет перенесено с видео на это изображение.</i>"
     )
 
     await callback.message.edit_text(
@@ -320,7 +786,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
         "📎 <b>Загрузка референсов</b>\n"
-        "Добавьте изображения, если хотите точнее передать стиль, персонажа или объект.\n\n"
+        "Добавьте фото, если хотите точнее передать стиль, человека или объект.\n\n"
         "<i>Можно загрузить до 14 фото.</i>\n"
         "Когда всё готово, нажмите <b>Продолжить</b> или <b>Пропустить</b>.",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
@@ -366,7 +832,85 @@ async def _init_default_video_state(
         veo_resolution="720p",
         veo_seed=None,
         veo_watermark="",
+        kling_negative_prompt="",
+        kling_cfg_scale=0.5,
+        avatar_audio_url=None,
     )
+
+
+async def _open_image_model_from_main(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    *,
+    model: str,
+    upload_first: bool = False,
+):
+    """Прямой вход из главного меню в нужную модель фото."""
+    await state.update_data(
+        generation_type="image",
+        img_service=model,
+        img_ratio="auto" if model == "flux_pro" else "1:1",
+        img_count=1,
+        img_quality="basic",
+        img_nsfw_checker=False,
+        reference_images=[],
+        preset_id="new",
+    )
+
+    if model == "flux_pro":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    elif upload_first:
+        user_credits = await get_user_credits(callback.from_user.id)
+        await callback.message.edit_text(
+            "🧠 <b>Grok Imagine</b>\n"
+            f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+            "Сначала загрузите фото для редактирования, затем нажмите "
+            "<b>Продолжить</b> и опишите изменение.",
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            parse_mode="HTML",
+        )
+        await state.set_state(GenerationStates.uploading_reference_images)
+    else:
+        await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+async def _open_video_model_from_main(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    *,
+    model: str,
+    v_type: str = "text",
+    duration: int = 5,
+    ratio: str = "16:9",
+):
+    """Прямой вход из главного меню в нужную модель видео."""
+    await _init_default_video_state(
+        state,
+        v_type=v_type,
+        v_model=model,
+        v_duration=duration,
+        v_ratio=ratio,
+    )
+
+    if v_type == "video":
+        user_credits = await get_user_credits(callback.from_user.id)
+        text = (
+            "🎞 <b>Видео-референс</b>\n"
+            f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+            "Загрузите до 5 коротких видео, чтобы передать движение, стиль камеры "
+            "или атмосферу. Можно пропустить и продолжить без референсов."
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
+            parse_mode="HTML",
+        )
+        await state.set_state(GenerationStates.uploading_reference_videos)
+    else:
+        await _show_video_creation_screen(callback, state)
+    await callback.answer()
 
 
 async def _show_video_creation_screen(
@@ -386,6 +930,7 @@ async def _show_video_creation_screen(
     reference_images = data.get("reference_images", [])
     v_reference_videos = data.get("v_reference_videos", [])
     v_image_url = data.get("v_image_url")
+    avatar_audio_url = data.get("avatar_audio_url")
     user_prompt = data.get("user_prompt", "")
     grok_mode = data.get("grok_mode", "normal")
     veo_generation_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
@@ -393,6 +938,8 @@ async def _show_video_creation_screen(
     veo_resolution = data.get("veo_resolution", "720p")
     veo_seed = data.get("veo_seed")
     veo_watermark = data.get("veo_watermark", "")
+    kling_negative_prompt = data.get("kling_negative_prompt", "")
+    kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
 
     await _normalize_veo_state(state)
     data = await state.get_data()
@@ -415,7 +962,14 @@ async def _show_video_creation_screen(
 
     # Формируем статус медиа в зависимости от типа
     media_status = ""
-    if current_v_type == "imgtxt":
+    if current_v_type == "avatar":
+        media_status = (
+            f"{'✅' if v_image_url else '🖼'} <b>Аватар:</b> "
+            f"<code>{'загружен' if v_image_url else 'не загружен'}</code>\n"
+            f"{'✅' if avatar_audio_url else '🎵'} <b>Аудио:</b> "
+            f"<code>{'загружено' if avatar_audio_url else 'не загружено'}</code>\n"
+        )
+    elif current_v_type == "imgtxt":
         start_count = 1 if v_image_url else 0
         ref_count = len(reference_images)
         total = start_count + ref_count
@@ -440,12 +994,21 @@ async def _show_video_creation_screen(
         f"   📝 Тип: <code>{get_video_type_label(current_v_type)}</code>",
         f"   🤖 Модель: <code>{get_video_model_label(current_model)}</code>",
     ]
-    if not current_model.startswith("veo3"):
+    if current_model not in {
+        "avatar_std",
+        "avatar_pro",
+    } and not current_model.startswith("veo3"):
         settings_lines.append(f"   ⏱ Длительность: <code>{current_duration} сек</code>")
-    settings_lines.append(f"   📐 Формат: <code>{current_ratio}</code>")
+    if current_model not in {"avatar_std", "avatar_pro"}:
+        settings_lines.append(f"   📐 Формат: <code>{current_ratio}</code>")
 
     if current_model == "grok_imagine":
         settings_lines.append(f"   🧠 Режим Grok: <code>{grok_mode}</code>")
+    if current_model == "v26_pro":
+        settings_lines.append(
+            f"   🚫 Negative: <code>{kling_negative_prompt or 'off'}</code>"
+        )
+        settings_lines.append(f"   🎚 CFG: <code>{kling_cfg_scale:.1f}</code>")
     if current_model.startswith("veo3"):
         veo_mode_label_map = {
             "TEXT_2_VIDEO": "Text -> Video",
@@ -465,39 +1028,74 @@ async def _show_video_creation_screen(
             settings_lines.append(f"   🏷 Watermark: <code>{veo_watermark}</code>")
 
     text = (
-        f"🎬 <b>Создание видео</b>"
+        f"🎬 <b>Создание видео</b>\n"
+        f"<b>Шаг 3. Настройки и промпт</b>\n"
         f"{ref_text}"
         f"⚙️ <b>Текущие настройки:</b>\n" + "\n".join(settings_lines) + "\n"
         f"{media_status}"
         f"{prompt_text}\n"
-        f"<b>Введите промпт для генерации:</b>"
-        f"Опишите видео, которое хотите создать:\n"
-        f"• Что происходит в сцене\n"
-        f"• Движение камеры\n"
-        f"• Стиль и атмосфера"
+        f"<b>Опишите видео</b>\n"
+        f"Напишите простыми словами:\n"
+        f"• что происходит в кадре\n"
+        f"• как двигается камера\n"
+        f"• какой нужен стиль или настроение"
     )
 
     # Напоминание о загрузке медиа
-    if current_v_type == "imgtxt" and not v_image_url:
-        text += f"<i>📷 Загрузите фото, которое станет первым кадром видео</i>"
+    if current_v_type == "avatar" and not (v_image_url and avatar_audio_url):
+        text += "<i>🗣 Сначала загрузите фото аватара и аудио.</i>"
+    elif current_v_type == "imgtxt" and not v_image_url:
+        text += f"<i>📷 Сначала загрузите фото для первого кадра.</i>"
     elif current_v_type == "video" and not v_reference_videos:
-        text += (
-            f"<i>📹 Загрузите референсные видео (до 5, 3-10 сек) для стиля/движения</i>"
-        )
+        text += f"<i>📹 При желании загрузите до 5 коротких видео-референсов.</i>"
+
+    keyboard = _build_video_creation_keyboard(data)
 
     # Используем edit для callback, send для message
     try:
-        await message_or_callback.message.edit_text(
-            text,
-            reply_markup=_build_video_creation_keyboard(data),
-            parse_mode="HTML",
-        )
-    except Exception:
-        await message_or_callback.answer(
-            text,
-            reply_markup=_build_video_creation_keyboard(data),
-            parse_mode="HTML",
-        )
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+        elif edit:
+            await message_or_callback.edit_text(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+    except TelegramBadRequest as e:
+        error_msg = str(e).lower()
+        if "message is not modified" in error_msg:
+            pass
+        elif isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.answer(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+    except AttributeError:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.answer("Экран создания уже открыт")
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
 
     # Устанавливаем состояние ожидания промпта для видео
     await state.set_state(GenerationStates.waiting_for_video_prompt)
@@ -520,6 +1118,8 @@ def _build_video_creation_keyboard(data: dict):
         current_veo_resolution=data.get("veo_resolution", "720p"),
         current_veo_seed=data.get("veo_seed"),
         current_veo_watermark=data.get("veo_watermark", ""),
+        current_kling_negative_prompt=data.get("kling_negative_prompt", ""),
+        current_kling_cfg_scale=float(data.get("kling_cfg_scale", 0.5)),
     )
 
 
@@ -573,13 +1173,19 @@ def _build_video_run_summary(
     parts = [
         f"🤖 <code>{get_video_model_label(v_model)}</code>",
         f"📝 <code>{get_video_type_label(v_type)}</code>",
-        f"📐 <code>{v_ratio}</code>",
     ]
-    if not v_model.startswith("veo3"):
+    if v_model not in {"avatar_std", "avatar_pro"}:
+        parts.append(f"📐 <code>{v_ratio}</code>")
+    if v_model not in {"avatar_std", "avatar_pro"} and not v_model.startswith("veo3"):
         parts.append(f"⏱ <code>{v_duration}s</code>")
 
     if v_model == "grok_imagine":
         parts.append(f"🧠 <code>{data.get('grok_mode', 'normal')}</code>")
+    if v_model == "v26_pro":
+        negative = data.get("kling_negative_prompt", "")
+        parts.append(f"🎚 <code>{float(data.get('kling_cfg_scale', 0.5)):.1f}</code>")
+        if negative:
+            parts.append("🚫 <code>negative on</code>")
 
     if v_model.startswith("veo3"):
         veo_mode = data.get("veo_generation_type", "TEXT_2_VIDEO")
@@ -605,10 +1211,14 @@ def _build_video_run_summary(
 
 def _build_image_creation_text(data: dict) -> str:
     current_service = data.get("img_service", "banana_pro")
-    current_ratio = data.get("img_ratio", "1:1")
+    current_ratio = data.get(
+        "img_ratio", "auto" if current_service == "flux_pro" else "1:1"
+    )
     current_count = data.get("img_count", 1)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
+    img_quality = data.get("img_quality", "basic")
+    img_nsfw_checker = data.get("img_nsfw_checker", False)
     ratio_label = current_ratio.replace(":", "∶")
     unit_cost = preset_manager.get_generation_cost(current_service)
     total_cost = unit_cost * current_count
@@ -621,22 +1231,146 @@ def _build_image_creation_text(data: dict) -> str:
     ]
     if reference_images:
         info_lines.append(f"• Референсы: <code>{len(reference_images)}</code>")
+    elif current_service == "flux_pro":
+        info_lines.append("• Референсы: <code>0 (text-to-image)</code>")
+    if current_service == "seedream_edit":
+        info_lines.append(f"• Quality: <code>{img_quality}</code>")
+        info_lines.append(
+            f"• NSFW checker: <code>{'on' if img_nsfw_checker else 'off'}</code>"
+        )
+    if current_service == "flux_pro":
+        info_lines.append(
+            f"• NSFW checker: <code>{'on' if img_nsfw_checker else 'off'}</code>"
+        )
     if current_service == "grok_imagine_i2i":
         info_lines.append(f"• NSFW: <code>{'Вкл' if nsfw_enabled else 'Выкл'}</code>")
 
     prompt_hint = (
-        "Опишите, что нужно изменить на загруженных фото."
-        if current_service == "grok_imagine_i2i"
-        else "Опишите, что хотите создать."
+        "Опишите, что нужно изменить на загруженном изображении."
+        if current_service == "seedream_edit"
+        else (
+            "Опишите, что нужно изменить на загруженных фото."
+            if current_service == "grok_imagine_i2i"
+            else (
+                "Опишите, что хотите создать или как переработать загруженные изображения."
+                if current_service == "flux_pro"
+                else "Опишите, что хотите создать."
+            )
+        )
     )
 
     return (
         "🖼 <b>Создание фото</b>\n"
+        + "<b>Шаг 3. Настройки и промпт</b>\n"
+        + "Модель уже выбрана. Ниже можно настроить результат и отправить описание.\n\n"
         + "<b>Текущие настройки</b>\n"
         + "\n".join(info_lines)
         + "\n\n<b>Промпт</b>\n"
         + prompt_hint
     )
+
+
+async def _show_image_model_selection_screen(
+    message_or_callback, state: FSMContext, edit: bool = True
+):
+    data = await state.get_data()
+    current_service = data.get("img_service", "banana_pro")
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    user_credits = await get_user_credits(user_id) if user_id else 0
+    text = (
+        "🖼 <b>Создание фото</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "<b>Шаг 1. Выберите модель</b>\n"
+        "Сначала выберите модель.\n"
+        "После этого бот покажет следующий шаг: референсы или настройки."
+    )
+    keyboard = get_image_model_selection_keyboard(current_service)
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        elif edit:
+            await message_or_callback.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+    except Exception:
+        await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+async def _show_image_references_screen(
+    message_or_callback,
+    state: FSMContext,
+    *,
+    current_count: int = 0,
+):
+    data = await state.get_data()
+    current_service = data.get("img_service", "banana_pro")
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    user_credits = await get_user_credits(user_id) if user_id else 0
+    text = (
+        "🖼 <b>Создание фото</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "<b>Шаг 2. Референсы</b>\n"
+        f"Выбрана модель: <code>{get_image_model_label(current_service)}</code>\n\n"
+        + (
+            "Для <b>GPT Image 2</b> фото не обязательны.\n"
+            "Если загрузите фото, бот изменит его.\n"
+            "Если пропустите шаг, бот создаст картинку с нуля.\n\n"
+            if current_service == "flux_pro"
+            else (
+                "Для <b>Seedream 4.5 Edit</b> нужно хотя бы одно исходное фото.\n"
+                "Можно добавить и дополнительные фото, если это поможет.\n\n"
+                if current_service == "seedream_edit"
+                else "Референсы не обязательны, но помогают сохранить человека, "
+                "стиль, одежду, товар или композицию.\n\n"
+            )
+        )
+        + f"<i>Можно загрузить до {16 if current_service == 'flux_pro' else 14} фото. Когда всё готово, нажмите «Продолжить».</i>"
+    )
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text,
+                reply_markup=get_reference_images_upload_keyboard(
+                    current_count, 16 if current_service == "flux_pro" else 14, "new"
+                ),
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=get_reference_images_upload_keyboard(
+                    current_count, 16 if current_service == "flux_pro" else 14, "new"
+                ),
+                parse_mode="HTML",
+            )
+    except Exception:
+        await message_or_callback.answer(
+            text,
+            reply_markup=get_reference_images_upload_keyboard(
+                current_count, 16 if current_service == "flux_pro" else 14, "new"
+            ),
+            parse_mode="HTML",
+        )
+
+    await state.set_state(GenerationStates.uploading_reference_images)
 
 
 async def _show_image_creation_screen(message_or_callback, state: FSMContext):
@@ -648,6 +1382,8 @@ async def _show_image_creation_screen(message_or_callback, state: FSMContext):
         current_count=data.get("img_count", 1),
         num_refs=len(data.get("reference_images", [])),
         nsfw_enabled=data.get("nsfw_enabled", False),
+        img_quality=data.get("img_quality", "basic"),
+        img_nsfw_checker=data.get("img_nsfw_checker", False),
     )
 
     try:
@@ -666,11 +1402,147 @@ async def _show_image_creation_screen(message_or_callback, state: FSMContext):
     await state.set_state(GenerationStates.waiting_for_input)
 
 
+async def _show_video_model_selection_screen(
+    message_or_callback, state: FSMContext, edit: bool = True
+):
+    data = await state.get_data()
+    current_model = data.get("v_model", "v3_pro")
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    user_credits = await get_user_credits(user_id) if user_id else 0
+    text = (
+        "🎬 <b>Создание видео</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "<b>Шаг 1. Выберите модель</b>\n"
+        "Сначала выберите модель видео.\n"
+        "После этого бот покажет следующий шаг именно для неё."
+    )
+    keyboard = get_video_model_selection_keyboard(current_model)
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        elif edit:
+            await message_or_callback.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+    except Exception:
+        await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+async def _show_video_media_screen(
+    message_or_callback, state: FSMContext, edit: bool = True
+):
+    data = await state.get_data()
+    current_model = data.get("v_model", "v3_pro")
+    current_v_type = data.get("v_type", "text")
+    v_image_url = data.get("v_image_url")
+    avatar_audio_url = data.get("avatar_audio_url")
+    reference_images = data.get("reference_images", [])
+    v_reference_videos = data.get("v_reference_videos", [])
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    user_credits = await get_user_credits(user_id) if user_id else 0
+
+    if current_v_type == "avatar":
+        body = (
+            "<b>Шаг 2. Аватар и аудио</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Загрузите 1 фото аватара и 1 аудиофайл.\n"
+            "После этого можно переходить к описанию."
+        )
+        next_state = GenerationStates.waiting_for_video_prompt
+    elif current_v_type == "imgtxt":
+        body = (
+            "<b>Шаг 2. Тип и медиа</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            + (
+                "Выбран режим <b>Фото + Текст → Видео</b>.\n"
+                "Для Kling 2.5 Turbo нужно только одно стартовое фото."
+                if current_model == "v26_pro"
+                else "Выбран режим <b>Фото + Текст → Видео</b>.\n"
+                "Сначала отправьте стартовое фото.\n"
+                "При желании потом можно добавить ещё фото-референсы."
+            )
+        )
+        next_state = GenerationStates.waiting_for_video_prompt
+    elif current_v_type == "video":
+        body = (
+            "<b>Шаг 2. Тип и медиа</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Выбран режим <b>Видео + Текст → Видео</b>.\n"
+            "Загрузите до 5 коротких видео или пропустите шаг."
+        )
+        next_state = GenerationStates.uploading_reference_videos
+    else:
+        body = (
+            "<b>Шаг 2. Тип и медиа</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Выбран режим <b>Текст → Видео</b>.\n"
+            "Ничего загружать не нужно. Можно сразу переходить дальше."
+        )
+        next_state = GenerationStates.waiting_for_input
+
+    text = (
+        "🎬 <b>Создание видео</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        f"{body}"
+    )
+    keyboard = get_video_media_step_keyboard(
+        current_v_type=current_v_type,
+        current_model=current_model,
+        has_start_image=bool(v_image_url),
+        reference_image_count=len(reference_images),
+        reference_video_count=len(v_reference_videos),
+        has_avatar_audio=bool(avatar_audio_url),
+    )
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        elif edit:
+            await message_or_callback.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+    except Exception:
+        await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    await state.set_state(next_state)
+
+
 @router.callback_query(F.data == "img_ref_skip_new")
 async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
     """Пропускает загрузку референсов и переходит к вводу промпта"""
     data = await state.get_data()
     generation_type = data.get("generation_type")
+    current_service = data.get("img_service", "banana_pro")
+
+    if generation_type == "image" and current_service == "seedream_edit":
+        await callback.answer(
+            "Для Seedream 4.5 Edit нужно хотя бы одно исходное изображение",
+            show_alert=True,
+        )
+        return
 
     # Очищаем референсы
     await state.update_data(reference_images=[])
@@ -680,6 +1552,7 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
         await _show_video_creation_screen(callback.message, state)
         await callback.answer()
     else:
+        await state.update_data(img_flow_step="configure")
         await _show_image_creation_screen(callback, state)
         await callback.answer()
 
@@ -690,6 +1563,19 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
     # УБРАНА ПРОВЕРКА: референсы опциональны, всегда продолжаем
     data = await state.get_data()
     generation_type = data.get("generation_type")
+    current_service = data.get("img_service", "banana_pro")
+    reference_images = data.get("reference_images", [])
+
+    if (
+        generation_type == "image"
+        and current_service == "seedream_edit"
+        and not reference_images
+    ):
+        await callback.answer(
+            "Для Seedream 4.5 Edit нужно загрузить хотя бы одно изображение",
+            show_alert=True,
+        )
+        return
 
     if generation_type == "video":
         # Сразу показываем единый экран с параметрами и промптом (без подтверждения)
@@ -697,6 +1583,7 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
         await callback.answer()
         return
     else:
+        await state.update_data(img_flow_step="configure")
         await _show_image_creation_screen(callback, state)
         await callback.answer()
 
@@ -724,6 +1611,74 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
+@router.callback_query(F.data == "image_change_model")
+async def handle_image_change_model(callback: types.CallbackQuery, state: FSMContext):
+    """Возвращает пользователя к шагу выбора модели."""
+    await state.update_data(img_flow_step="select_model")
+    await _show_image_model_selection_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "video_change_model")
+async def handle_video_change_model(callback: types.CallbackQuery, state: FSMContext):
+    """Возвращает пользователя к шагу выбора модели видео."""
+    await state.update_data(video_flow_step="select_model")
+    await _show_video_model_selection_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "video_change_media")
+async def handle_video_change_media(callback: types.CallbackQuery, state: FSMContext):
+    """Возвращает пользователя к шагу выбора типа и медиа."""
+    await state.update_data(video_flow_step="media")
+    await _show_video_media_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "video_media_skip")
+async def handle_video_media_skip(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает медиашаг, если он опционален."""
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    if current_v_type == "avatar":
+        await callback.answer("Для Avatar нужны и фото, и аудио", show_alert=True)
+        return
+    if current_v_type == "imgtxt":
+        await callback.answer(
+            "Для режима Фото + Текст сначала загрузите стартовое фото", show_alert=True
+        )
+        return
+    if current_v_type == "video":
+        await state.update_data(v_reference_videos=[])
+    await state.update_data(video_flow_step="configure")
+    await _show_video_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "video_media_continue")
+async def handle_video_media_continue(callback: types.CallbackQuery, state: FSMContext):
+    """Переходит к шагу настроек после выбора типа и загрузки медиа."""
+    data = await state.get_data()
+    current_v_type = data.get("v_type", "text")
+    if current_v_type == "avatar":
+        if not data.get("v_image_url"):
+            await callback.answer("Сначала загрузите фото аватара", show_alert=True)
+            return
+        if not data.get("avatar_audio_url"):
+            await callback.answer("Сначала загрузите аудио", show_alert=True)
+            return
+        await state.update_data(video_flow_step="configure")
+        await _show_video_creation_screen(callback, state)
+        await callback.answer()
+        return
+    if current_v_type == "imgtxt" and not data.get("v_image_url"):
+        await callback.answer("Сначала загрузите стартовое фото", show_alert=True)
+        return
+    await state.update_data(video_flow_step="configure")
+    await _show_video_creation_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "ref_confirm_new")
 async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContext):
     """Подтверждает референсы для нового UX - переходит к выбору модели/формата"""
@@ -744,99 +1699,48 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: текст"""
     data = await state.get_data()
     current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
 
     updates = {"v_type": "text"}
     if current_model.startswith("veo3"):
         updates["veo_generation_type"] = "TEXT_2_VIDEO"
     await state.update_data(**updates)
-    await _show_video_creation_screen(callback, state)
+    await _show_video_media_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "v_type_imgtxt")
 async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор типа генерации: фото+текст - запрашиваем изображение на том же экране"""
+    """Выбор типа генерации: фото+текст."""
     data = await state.get_data()
     current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-    current_ratio = data.get("v_ratio", "16:9")
-    v_image_url = data.get("v_image_url")
 
     updates = {"v_type": "imgtxt"}
     if current_model.startswith("veo3"):
         updates["veo_generation_type"] = "FIRST_AND_LAST_FRAMES_2_VIDEO"
     await state.update_data(**updates)
-
-    # Показываем сообщение с просьбой загрузить изображение на ТОМ ЖЕ экране
-    image_status = ""
-    if v_image_url:
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-    text = (
-        f"🎬 <b>Создание видео</b>"
-        f"⚙️ <b>Текущие настройки:</b>\n"
-        f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-        f"   🤖 Модель: <code>{get_video_model_label(current_model)}</code>\n"
-        f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-        f"   📐 Формат: <code>{current_ratio}</code>\n"
-        f"{image_status}\n"
-        f"<b>📷 Загрузите стартовое изображение</b>"
-        f"Отправьте фото, которое станет первым кадром видео.\n"
-        f"После загрузки введите промпт для генерации."
-        f"<i>Пример: птица летит в небе, волны накатывают на берег</i>"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_video_keyboard(
-            current_v_type="imgtxt",
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        ),
-        parse_mode="HTML",
-    )
+    await _show_video_media_screen(callback, state)
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 @router.callback_query(F.data == "v_type_video")
 async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор типа генерации: видео+текст - запрашиваем несколько видео референсов"""
-    from bot.database import get_user_credits
-
-    user_credits = await get_user_credits(callback.from_user.id)
-
-    await state.update_data(v_type="video", v_model="glow", v_duration=5)
-
-    text = (
-        "🎬 <b>Видео + Текст -> Видео</b>\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        "<b>Шаг 1. Видео-референсы</b>\n"
-        "Загрузка необязательна, но помогает точнее передать:\n"
-        "• характер движения\n"
-        "• работу камеры\n"
-        "• атмосферу сцены\n\n"
-        "<i>Можно добавить до 5 коротких видео по 3-10 секунд.</i>\n"
-        "Когда всё готово, нажмите <b>▶️ Продолжить</b>.\n"
-        "Если референсы не нужны — выберите <b>⏭ Пропустить</b>."
-    )
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
-        parse_mode="HTML",
-    )
-    await state.set_state(GenerationStates.uploading_reference_videos)
-    await callback.answer()
+    """Выбор типа генерации: видео+текст."""
+    data = await state.get_data()
+    updates = {"v_type": "video", "v_duration": 5}
+    if data.get("v_model") != "glow":
+        updates["v_model"] = "glow"
+    await state.update_data(**updates)
+    await _show_video_media_screen(callback, state)
+    await callback.answer("Для режима Видео + Текст выбрана модель Kling Glow")
 
 
 @router.callback_query(F.data == "vid_ref_skip_new")
 async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
     """Пропускает загрузку видео референсов для video+text"""
     await state.update_data(v_reference_videos=[])
+    await state.update_data(video_flow_step="configure")
     await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
@@ -844,6 +1748,7 @@ async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
 @router.callback_query(F.data == "vid_ref_continue_new")
 async def handle_vid_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
     """Продолжает после загрузки видео референсов"""
+    await state.update_data(video_flow_step="configure")
     await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
@@ -901,6 +1806,20 @@ async def _apply_video_model_selection(
     # Set default grok_mode for grok_imagine
     if model == "grok_imagine":
         await state.update_data(grok_mode="normal")
+    elif model == "v26_pro":
+        await state.update_data(
+            kling_negative_prompt=data.get("kling_negative_prompt", ""),
+            kling_cfg_scale=float(data.get("kling_cfg_scale", 0.5)),
+            reference_images=[],
+            v_reference_videos=[],
+        )
+    elif model in {"avatar_std", "avatar_pro"}:
+        await state.update_data(
+            reference_images=[],
+            v_reference_videos=[],
+            v_image_url=None,
+            avatar_audio_url=None,
+        )
     elif model.startswith("veo3"):
         await state.update_data(
             veo_generation_type=(
@@ -916,17 +1835,28 @@ async def _apply_video_model_selection(
     # to expose aspect ratio and duration controls immediately.
     if model.startswith("wanx"):
         current_v_type = "text"
+    if model == "glow":
+        current_v_type = "video"
+    if model in {"avatar_std", "avatar_pro"}:
+        current_v_type = "avatar"
+    if model == "v26_pro" and current_v_type == "video":
+        current_v_type = "text"
     if model.startswith("veo3") and current_v_type == "video":
         current_v_type = "text"
 
-    await state.update_data(v_model=model, v_type=current_v_type)
+    updates = {"v_model": model, "v_type": current_v_type}
+    if data.get("video_flow_step") == "select_model":
+        updates["video_flow_step"] = "media"
+    await state.update_data(**updates)
     await _normalize_veo_state(state)
     if model.startswith("wanx"):
         await state.update_data(
             wanx_lora_settings=[{"lora_type": "nsfw-general", "lora_strength": 1.0}]
         )
 
-    if model.startswith("wanx"):
+    if data.get("video_flow_step") == "select_model":
+        await _show_video_media_screen(callback, state)
+    elif model.startswith("wanx"):
         await callback.message.edit_text(
             "🎬 <b>WanX LoRA</b>"
             "Выберите формат и длительность для генерации:\n"
@@ -944,7 +1874,17 @@ async def _apply_video_model_selection(
     else:
         await _show_video_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    current_data = await state.get_data()
+    if current_data.get("video_flow_step") == "media":
+        current_type = current_data.get("v_type", "text")
+        if current_type == "imgtxt":
+            await state.set_state(GenerationStates.waiting_for_video_prompt)
+        elif current_type == "video":
+            await state.set_state(GenerationStates.uploading_reference_videos)
+        else:
+            await state.set_state(GenerationStates.waiting_for_input)
+    else:
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
 # Обработчики формата видео
@@ -1068,9 +2008,19 @@ async def handle_video_duration(callback: types.CallbackQuery, state: FSMContext
 
 @router.callback_query(F.data == "model_flux_pro")
 async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели FLUX.2 Pro"""
-    await state.update_data(img_service="flux_pro")
-    await _show_image_creation_screen(callback, state)
+    """Выбор модели GPT Image 2."""
+    await state.update_data(
+        img_service="flux_pro",
+        img_ratio="auto",
+        img_nsfw_checker=False,
+        reference_images=[],
+    )
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
     await callback.answer()
 
 
@@ -1087,7 +2037,12 @@ async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMConte
 async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Banana Pro"""
     await state.update_data(img_service="banana_pro")
-    await _show_image_creation_screen(callback, state)
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
     await callback.answer()
 
 
@@ -1095,15 +2050,30 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Banana 2 (Gemini 3.1 Flash Image Preview)"""
     await state.update_data(img_service="banana_2")
-    await _show_image_creation_screen(callback, state)
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
     await callback.answer()
 
 
 @router.callback_query(F.data == "model_seedream_edit")
 async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Seedream 4.5"""
-    await state.update_data(img_service="seedream_edit")
-    await _show_image_creation_screen(callback, state)
+    await state.update_data(
+        img_service="seedream_edit",
+        img_ratio="1:1",
+        img_quality="basic",
+        img_nsfw_checker=False,
+    )
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
     await callback.answer()
 
 
@@ -1114,11 +2084,24 @@ async def handle_model_grok_i2i(callback: types.CallbackQuery, state: FSMContext
     nsfw_enabled = data.get("nsfw_enabled", False)
 
     await state.update_data(img_service="grok_imagine_i2i", nsfw_enabled=nsfw_enabled)
-    await _show_image_creation_screen(callback, state)
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
     await callback.answer()
 
 
 # Обработчики формата изображения
+@router.callback_query(F.data == "img_ratio_auto")
+async def handle_img_ratio_auto(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения auto."""
+    await state.update_data(img_ratio="auto")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "img_ratio_1_1")
 async def handle_img_ratio_1_1(callback: types.CallbackQuery, state: FSMContext):
     """Выбор формата изображения 1:1"""
@@ -1159,6 +2142,30 @@ async def handle_img_ratio_3_2(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
+@router.callback_query(F.data == "img_ratio_2_3")
+async def handle_img_ratio_2_3(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения 2:3"""
+    await state.update_data(img_ratio="2:3")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ratio_3_4")
+async def handle_img_ratio_3_4(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения 3:4"""
+    await state.update_data(img_ratio="3:4")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ratio_21_9")
+async def handle_img_ratio_21_9(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения 21:9"""
+    await state.update_data(img_ratio="21:9")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("img_count_"))
 async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
     """Выбор количества изображений для пакетной генерации."""
@@ -1177,6 +2184,22 @@ async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer(f"Количество: {img_count}")
 
 
+@router.callback_query(F.data == "img_quality_basic")
+async def handle_img_quality_basic(callback: types.CallbackQuery, state: FSMContext):
+    """Seedream quality: basic."""
+    await state.update_data(img_quality="basic")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Quality: basic")
+
+
+@router.callback_query(F.data == "img_quality_high")
+async def handle_img_quality_high(callback: types.CallbackQuery, state: FSMContext):
+    """Seedream quality: high."""
+    await state.update_data(img_quality="high")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Quality: high")
+
+
 # =============================================================================
 # СЛУЖЕБНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ
 # =============================================================================
@@ -1187,6 +2210,13 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
     Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL.
     """
     try:
+        if not isinstance(file_bytes, (bytes, bytearray)):
+            logger.error(
+                "save_uploaded_file expected bytes, got %s",
+                type(file_bytes).__name__,
+            )
+            return None
+
         # Создаём поддиректорию по дате
         date_str = datetime.now().strftime("%Y%m%d")
         upload_dir = os.path.join("static", "uploads", date_str)
@@ -1199,7 +2229,7 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
 
         # Сохраняем файл
         with open(filepath, "wb") as f:
-            f.write(file_bytes)
+            f.write(bytes(file_bytes))
 
         # Формируем публичный URL
         # nginx настроен на /uploads/ -> static/uploads/
@@ -1932,13 +2962,10 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.update_data(preset_id=preset_id, reference_images=current_refs)
 
         await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>"
-            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
-            f"• До 10 объектов с высокой точностью\n"
-            f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно"
-            f"После загрузки нажмите ▶️ Продолжить",
+            f"📎 <b>Загрузка референсов</b>\n"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"Отправьте фото, которые помогут точнее передать внешний вид, стиль или детали.\n"
+            f"После загрузки нажмите <b>▶️ Продолжить</b>.",
             reply_markup=get_reference_images_upload_keyboard(
                 len(current_refs), max_refs, preset_id
             ),
@@ -1949,9 +2976,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Очищаем все референсы
         await state.update_data(reference_images=[])
         await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>"
-            f"Загружено: <code>0/{max_refs}</code>"
-            f"Отправьте фотографии для загрузки референсов:",
+            f"📎 <b>Референсы очищены</b>\n"
+            f"Загружено: <code>0/{max_refs}</code>\n"
+            f"Теперь можно загрузить новые фото.",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
         )
@@ -1986,9 +3013,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         await state.set_state(GenerationStates.uploading_reference_images)
 
         await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>"
-            f"Загружено: <code>0/{max_refs}</code>"
-            f"Отправьте новые фотографии для загрузки референсов:",
+            f"📎 <b>Начнём заново</b>\n"
+            f"Загружено: <code>0/{max_refs}</code>\n"
+            f"Отправьте новые фото-референсы.",
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
         )
@@ -2146,7 +3173,13 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.photo)
+@router.message(
+    GenerationStates.waiting_for_video_prompt,
+    F.photo
+    | (
+        F.document & F.document.mime_type.in_(["image/jpeg", "image/png", "image/webp"])
+    ),
+)
 async def process_photo_for_video_prompt_state(
     message: types.Message, state: FSMContext
 ):
@@ -2156,12 +3189,27 @@ async def process_photo_for_video_prompt_state(
     """
     data = await state.get_data()
     v_type = data.get("v_type")
-    if v_type != "imgtxt":
-        await message.answer("Пожалуйста, отправьте текстовое описание.")
+    current_model = data.get("v_model", "v3_std")
+    if v_type not in {"imgtxt", "avatar"}:
+        await message.answer(
+            "Пожалуйста, отправьте текстовое описание.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     # Download photo
-    photo = message.photo[-1]
+    if message.photo:
+        photo = message.photo[-1]
+    else:
+        photo = message.document
+
+    file_size = getattr(photo, "file_size", 0) or 0
+    if v_type == "avatar" and file_size and file_size > 10 * 1024 * 1024:
+        await message.answer(
+            "❌ Фото аватара слишком большое. Максимум 10MB.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
     file = await message.bot.get_file(photo.file_id)
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
@@ -2175,36 +3223,70 @@ async def process_photo_for_video_prompt_state(
         img = Image.open(io.BytesIO(image_data))
         width, height = img.size
         logger.info(f"Image validated for Kling: {width}×{height}")
-        if width < 300 or height < 300:
+        if v_type != "avatar" and (width < 300 or height < 300):
             await message.answer(
-                f"❌ Изображение слишком маленькое: {width}×{height} (мин 300px)"
+                f"❌ Изображение слишком маленькое: {width}×{height} (мин 300px)",
+                reply_markup=get_main_menu_button_keyboard(),
             )
             return
     except Exception as e:
         logger.error(f"Image validation failed: {e}")
-        await message.answer("❌ Не удалось обработать изображение.")
+        await message.answer(
+            "❌ Не удалось обработать изображение.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
-    image_url = save_uploaded_file(image_data, "png")
+    if message.photo:
+        file_ext = "jpg"
+    else:
+        mime_type = message.document.mime_type
+        file_ext = (
+            "jpg"
+            if mime_type == "image/jpeg"
+            else "png" if mime_type == "image/png" else "webp"
+        )
+
+    image_url = save_uploaded_file(image_data, file_ext)
     if not image_url:
-        await message.answer("❌ Не удалось сохранить фото.")
+        await message.answer(
+            "❌ Не удалось сохранить фото.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     v_image_url = data.get("v_image_url")
     reference_images = data.get("reference_images", [])
 
+    if v_type == "avatar":
+        await state.update_data(v_image_url=image_url)
+        await message.answer("✅ Фото аватара загружено. Можно перейти дальше.")
+        if data.get("video_flow_step") == "media":
+            await _show_video_media_screen(message, state, edit=False)
+        else:
+            await _show_video_creation_screen(message, state, edit=False)
+        return
+
+    if current_model == "v26_pro" and v_image_url:
+        await message.answer(
+            "Для Kling 2.5 Turbo можно использовать только одно стартовое фото."
+        )
+        return
+
     start_count = 1 if v_image_url else 0
     current_refs = len(reference_images)
     total = start_count + current_refs + 1  # +1 for this photo
     if total > 9:
-        await message.answer("❌ Максимум 9 фото (1 старт + 8 рефов). Введите промпт.")
+        await message.answer(
+            "❌ Можно загрузить максимум 9 фото: 1 основное и 8 дополнительных."
+        )
         return
 
     if not v_image_url:
         # Первое фото - стартовый кадр
         await state.update_data(v_image_url=image_url)
         logger.info(f"Saved start image for video (1st photo): {image_url}")
-        status = "✅ Старт фото установлено! (1/9)"
+        status = "✅ Основное фото загружено. (1/9)"
     else:
         # Последующие - референсы
         reference_images.append(image_url)
@@ -2212,7 +3294,7 @@ async def process_photo_for_video_prompt_state(
         logger.info(
             f"Saved reference image for video (ref #{current_refs + 1}): {image_url}"
         )
-        status = f"✅ Реф. фото добавлено! (total {total}/9)"
+        status = f"✅ Дополнительное фото загружено. Всего: {total}/9"
 
     # Update UI with current count
     data = await state.get_data()
@@ -2224,24 +3306,31 @@ async def process_photo_for_video_prompt_state(
     ref_count = len(data.get("reference_images", []))
     total_photos = start_count + ref_count
 
-    text = (
-        f"🎬 <b>Фото + Текст → Видео</b>"
-        f"📎 Фото: <code>{total_photos}/9</code> (старт + рефы)"
-        f"{status}"
-        f"⚙️ Модель: <code>{current_model}</code> | {current_duration}с | {current_ratio}\n"
-        f"<b>Отправьте ещё фото или промпт:</b>"
-    )
+    if data.get("video_flow_step") == "media":
+        await message.answer(
+            f"{status}\nНиже открыт обновлённый шаг с файлами.",
+            parse_mode="HTML",
+        )
+        await _show_video_media_screen(message, state, edit=False)
+    else:
+        text = (
+            f"🎬 <b>Фото + Текст → Видео</b>\n"
+            f"📎 Загружено фото: <code>{total_photos}/9</code>\n"
+            f"{status}\n"
+            f"⚙️ Модель: <code>{current_model}</code> | {current_duration}с | {current_ratio}\n\n"
+            f"<b>Можно отправить ещё фото или сразу написать описание видео.</b>"
+        )
 
-    await message.answer(
-        text,
-        reply_markup=get_create_video_keyboard(
-            current_v_type="imgtxt",
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio=current_ratio,
-        ),
-        parse_mode="HTML",
-    )
+        await message.answer(
+            text,
+            reply_markup=get_create_video_keyboard(
+                current_v_type="imgtxt",
+                current_model=current_model,
+                current_duration=current_duration,
+                current_ratio=current_ratio,
+            ),
+            parse_mode="HTML",
+        )
 
 
 @router.message(
@@ -2264,19 +3353,26 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         elif message.document and message.document.mime_type.startswith("video/"):
             video_obj = message.document
         else:
-            await message.answer("❌ Неверный тип файла. Отправьте видео.")
+            await message.answer(
+                "❌ Неверный тип файла. Отправьте видео.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
             return
 
         # Проверяем размер (макс 20MB)
         file_size = getattr(video_obj, "file_size", 0)
         if file_size > 20 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 20MB).")
+            await message.answer(
+                "❌ Видео слишком большое (макс 20MB).",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
             return
 
         if len(v_reference_videos) >= 5:
             await message.answer(
-                "❌ Максимум 5 видео референсов. Нажмите 'Продолжить'.",
+                "❌ Можно загрузить максимум 5 видео. Дальше нажмите «Продолжить».",
                 parse_mode="HTML",
+                reply_markup=get_main_menu_button_keyboard(),
             )
             return
 
@@ -2291,26 +3387,39 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             await state.update_data(v_reference_videos=v_reference_videos)
             logger.info(f"Added reference video {len(v_reference_videos)}: {video_url}")
 
-            current_count = len(v_reference_videos)
-            max_refs = 5
-            text = (
-                f"📹 <b>Загрузка видео референсов</b>"
-                f"Загружено: <code>{current_count}/{max_refs}</code>"
-                f"✅ Видео добавлено!"
-                f"Отправьте следующее или нажмите кнопку ниже:"
-            )
-            await message.reply(
-                text,
-                reply_markup=get_reference_videos_upload_keyboard(
-                    current_count, max_refs, "video_new"
-                ),
-                parse_mode="HTML",
-            )
+            if data.get("video_flow_step") == "media":
+                await message.answer(
+                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/5</code>",
+                    parse_mode="HTML",
+                )
+                await _show_video_media_screen(message, state, edit=False)
+            else:
+                current_count = len(v_reference_videos)
+                max_refs = 5
+                text = (
+                    f"📹 <b>Загрузка видео-референсов</b>\n"
+                    f"Загружено: <code>{current_count}/{max_refs}</code>\n"
+                    f"✅ Видео добавлено.\n"
+                    f"Можно отправить ещё одно или нажать кнопку ниже."
+                )
+                await message.reply(
+                    text,
+                    reply_markup=get_reference_videos_upload_keyboard(
+                        current_count, max_refs, "video_new"
+                    ),
+                    parse_mode="HTML",
+                )
         else:
-            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
+            await message.answer(
+                "❌ Не удалось сохранить видео. Попробуйте ещё раз.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
         return
 
-    await message.answer("Пожалуйста, отправьте видео.")
+    await message.answer(
+        "Пожалуйста, отправьте видео.",
+        reply_markup=get_main_menu_button_keyboard(),
+    )
 
 
 @router.message(
@@ -2321,16 +3430,18 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
     ),
 )
 async def process_reference_photo_upload(message: types.Message, state: FSMContext):
-    """Handles reference photo uploads during image creation (up to 14 refs or 9 for video imgtxt)"""
+    """Handles reference photo uploads during image creation."""
     data = await state.get_data()
     reference_images = data.get("reference_images", [])
     v_type = data.get("v_type")
-    max_refs = 9 if v_type == "imgtxt" else 14
+    img_service = data.get("img_service")
+    max_refs = 9 if v_type == "imgtxt" else (16 if img_service == "flux_pro" else 14)
 
     if len(reference_images) >= max_refs:
         await message.answer(
-            f"❌ Максимум {max_refs} референсов. Нажмите 'Продолжить' или очистите.",
+            f"❌ Можно загрузить максимум {max_refs} фото. Дальше нажмите «Продолжить» или очистите список.",
             parse_mode="HTML",
+            reply_markup=get_main_menu_button_keyboard(),
         )
         return
 
@@ -2355,13 +3466,17 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         if width < 300 or height < 300:
             await message.answer(
                 f"❌ Изображение слишком маленькое: {width}×{height}\n"
-                "Загрузите фото не менее 300×300 px.",
+                "Нужно фото не меньше 300×300 px.",
                 parse_mode="HTML",
+                reply_markup=get_main_menu_button_keyboard(),
             )
             return
     except Exception as e:
         logger.error(f"Image validation failed: {e}")
-        await message.answer("❌ Не удалось обработать изображение. Попробуйте другое.")
+        await message.answer(
+            "❌ Не удалось обработать изображение. Попробуйте другое.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
         return
 
     # Save and get URL
@@ -2387,10 +3502,10 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         current_count = len(reference_images)
 
         text = (
-            f"📎 <b>Загрузка референсов</b>"
-            f"Загружено: <code>{current_count}/{max_refs}</code>"
-            f"✅ Фото добавлено!"
-            f"Отправьте следующее или нажмите кнопку ниже:"
+            f"📎 <b>Загрузка референсов</b>\n"
+            f"Загружено: <code>{current_count}/{max_refs}</code>\n"
+            f"✅ Фото добавлено.\n"
+            f"Можно отправить ещё одно или нажать кнопку ниже."
         )
 
         try:
@@ -2411,7 +3526,10 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
             )
         logger.info(f"Reference photo {current_count} added: {image_url}")
     else:
-        await message.answer("❌ Не удалось сохранить фото. Попробуйте ещё раз.")
+        await message.answer(
+            "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
 
 
 @router.message(GenerationStates.waiting_for_input, F.text)
@@ -2424,19 +3542,29 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     prompt = message.text.strip()
     if not prompt:
         await message.answer(
-            "Нужен текстовый промпт — опишите, какое изображение хотите получить."
+            "Нужен текстовый промпт — опишите, какое изображение хотите получить.",
+            reply_markup=get_main_menu_button_keyboard(),
         )
         return
 
     img_service = data.get("img_service", "nanobanana")
     img_ratio = data.get("img_ratio", "1:1")
     img_count = data.get("img_count", 1)
+    img_quality = data.get("img_quality", "basic")
+    img_nsfw_checker = data.get("img_nsfw_checker", False)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
 
     if img_service == "grok_imagine_i2i" and not reference_images:
         await message.answer(
-            "Для Grok Imagine сначала добавьте хотя бы одно фото-референс."
+            "Для Grok Imagine сначала добавьте хотя бы одно фото-референс.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+    if img_service == "seedream_edit" and not reference_images:
+        await message.answer(
+            "Для Seedream 4.5 Edit сначала добавьте хотя бы одно исходное изображение.",
+            reply_markup=get_main_menu_button_keyboard(),
         )
         return
 
@@ -2475,89 +3603,33 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
         for index in range(img_count):
-            local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-            current_local_task_id = local_task_id
-            await add_generation_task(
-                user.id,
-                message.from_user.id,
-                local_task_id,
-                "image",
-                img_service,
-                model=img_service,
-                aspect_ratio=img_ratio,
+            launch_result = await _start_image_generation_task(
+                user=user,
+                telegram_id=message.from_user.id,
+                img_service=img_service,
                 prompt=prompt,
-                cost=unit_cost,
+                img_ratio=img_ratio,
+                reference_images=reference_images,
+                unit_cost=unit_cost,
+                img_quality=img_quality,
+                img_nsfw_checker=img_nsfw_checker,
+                nsfw_enabled=nsfw_enabled,
+                callback_url=callback_url,
             )
+            current_local_task_id = launch_result.get(
+                "local_task_id"
+            ) or launch_result.get("task_id")
 
-            if img_service == "banana_2":
-                result = await nano_banana_2_service.generate_image(
-                    prompt=prompt,
-                    aspect_ratio=img_ratio,
-                    image_input=reference_images,
-                    callback_url=callback_url,
-                )
-            elif img_service == "banana_pro" or img_service == "nanobanana":
-                result = await nano_banana_pro_service.generate_image(
-                    prompt=prompt,
-                    aspect_ratio=img_ratio,
-                    image_input=reference_images,
-                    callback_url=callback_url,
-                )
-            elif img_service in [
-                "flux_pro",
-                "seedream",
-                "seedream_45",
-                "seedream_edit",
-            ]:
-                model_map = {
-                    "flux_pro": "seedream/flux-pro",
-                    "seedream": "seedream/4.5",
-                    "seedream_45": "seedream 4.5",
-                    "seedream_edit": "seedream/4.5-edit",
-                }
-                api_model = model_map.get(img_service, "seedream 4.5")
-                result = await seedream_service.generate_image(
-                    prompt=prompt,
-                    model=api_model,
-                    aspect_ratio=img_ratio,
-                    image_urls=reference_images,
-                    callback_url=callback_url,
-                )
-            elif img_service == "grok_imagine_i2i":
-                result = await grok_service.generate_image_to_image(
-                    image_urls=reference_images,
-                    prompt=prompt,
-                    nsfw_checker=nsfw_enabled,
-                    callBackUrl=callback_url,
-                )
-            else:
-                result = await nano_banana_pro_service.generate_image(
-                    prompt=prompt,
-                    aspect_ratio=img_ratio,
-                    image_input=reference_images,
-                    callback_url=callback_url,
-                )
-
-            if isinstance(result, dict) and "task_id" in result:
-                api_task_id = result["task_id"]
-                import aiosqlite
-
-                from bot.database import DATABASE_PATH
-
-                async with aiosqlite.connect(DATABASE_PATH) as db:
-                    await db.execute(
-                        "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
-                        (api_task_id, local_task_id, user.id),
-                    )
-                    await db.commit()
-                started_task_ids.append(api_task_id)
+            if launch_result["status"] == "queued":
+                started_task_ids.append(launch_result["task_id"])
                 current_local_task_id = None
-            elif result:  # bytes
+            elif launch_result["status"] == "done":
                 immediate_success_count += 1
-                saved_url = save_uploaded_file(result, "png")
+                result_bytes = launch_result["result_bytes"]
+                saved_url = launch_result["saved_url"]
                 await message.answer_photo(
                     photo=types.BufferedInputFile(
-                        result, filename=f"generated_{index + 1}.png"
+                        result_bytes, filename=f"generated_{index + 1}.png"
                     ),
                     caption=(
                         "✅ <b>Изображение готово</b>\n"
@@ -2566,16 +3638,17 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                         f"• Списано: <code>{unit_cost}</code>🍌"
                     ),
                     parse_mode="HTML",
+                    reply_markup=get_image_result_keyboard(
+                        saved_url, task_id=launch_result["task_id"]
+                    ),
                 )
                 await _send_original_document(
-                    message.answer_document, result, saved_url
+                    message.answer_document, result_bytes, saved_url
                 )
-                await complete_video_task(local_task_id, saved_url)
                 current_local_task_id = None
             else:
                 refunded_count += 1
                 await add_credits(message.from_user.id, unit_cost)
-                await complete_video_task(local_task_id, None)
                 current_local_task_id = None
 
         await processing_msg.delete()
@@ -2651,6 +3724,28 @@ async def handle_grok_i2i_nsfw_toggle(callback: types.CallbackQuery, state: FSMC
     await state.update_data(nsfw_enabled=nsfw_enabled)
     await _show_image_creation_screen(callback, state)
     await callback.answer(f"NSFW: {'Вкл' if nsfw_enabled else 'Выкл'}")
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "seedream_nsfw_toggle")
+async def handle_seedream_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
+    """Toggle Seedream nsfw_checker."""
+    data = await state.get_data()
+    img_nsfw_checker = not data.get("img_nsfw_checker", False)
+    await state.update_data(img_nsfw_checker=img_nsfw_checker)
+    await _show_image_creation_screen(callback, state)
+    await callback.answer(f"NSFW checker: {'on' if img_nsfw_checker else 'off'}")
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "gpt_nsfw_toggle")
+async def handle_gpt_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
+    """Toggle GPT Image 2 nsfw_checker."""
+    data = await state.get_data()
+    img_nsfw_checker = not data.get("img_nsfw_checker", False)
+    await state.update_data(img_nsfw_checker=img_nsfw_checker)
+    await _show_image_creation_screen(callback, state)
+    await callback.answer(f"NSFW checker: {'on' if img_nsfw_checker else 'off'}")
     await state.set_state(GenerationStates.waiting_for_input)
 
 
@@ -2740,6 +3835,37 @@ async def handle_veo_watermark_edit(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 
+@router.callback_query(F.data == "kling_negative_prompt_edit")
+async def handle_kling_negative_prompt_edit(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Prompt user to enter Kling 2.5 negative prompt."""
+    data = await state.get_data()
+    current_negative = data.get("kling_negative_prompt") or "off"
+    await callback.message.answer(
+        "🚫 Введите negative prompt для Kling 2.5 Turbo или `off`, чтобы отключить.\n"
+        "До 500 символов.\n"
+        f"Сейчас: <code>{current_negative}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_kling_negative_prompt)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "kling_cfg_scale_edit")
+async def handle_kling_cfg_scale_edit(callback: types.CallbackQuery, state: FSMContext):
+    """Prompt user to enter Kling 2.5 CFG scale."""
+    data = await state.get_data()
+    current_cfg = float(data.get("kling_cfg_scale", 0.5))
+    await callback.message.answer(
+        "🎚 Введите CFG scale для Kling 2.5 Turbo от `0.0` до `1.0` с шагом `0.1`.\n"
+        f"Сейчас: <code>{current_cfg:.1f}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_kling_cfg_scale)
+    await callback.answer()
+
+
 @router.message(GenerationStates.waiting_for_veo_seed, F.text)
 async def handle_veo_seed_input(message: types.Message, state: FSMContext):
     """Store Veo seed and return to video creation screen."""
@@ -2765,6 +3891,35 @@ async def handle_veo_watermark_input(message: types.Message, state: FSMContext):
     await state.update_data(
         veo_watermark="" if value.lower() in {"off", "none"} else value[:32]
     )
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_kling_negative_prompt, F.text)
+async def handle_kling_negative_prompt_input(message: types.Message, state: FSMContext):
+    """Store Kling 2.5 negative prompt and return to video creation screen."""
+    value = message.text.strip()
+    if value.lower() in {"off", "none", "disable", "disabled"}:
+        await state.update_data(kling_negative_prompt="")
+    else:
+        await state.update_data(kling_negative_prompt=value[:500])
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_kling_cfg_scale, F.text)
+async def handle_kling_cfg_scale_input(message: types.Message, state: FSMContext):
+    """Store Kling 2.5 CFG scale and return to video creation screen."""
+    value = message.text.strip().replace(",", ".")
+    try:
+        cfg_scale = float(value)
+    except ValueError:
+        await message.answer("❌ CFG scale должен быть числом от 0.0 до 1.0.")
+        return
+
+    if cfg_scale < 0 or cfg_scale > 1:
+        await message.answer("❌ CFG scale должен быть в диапазоне 0.0-1.0.")
+        return
+
+    await state.update_data(kling_cfg_scale=round(cfg_scale, 1))
     await _show_video_creation_screen(message, state)
 
 
@@ -2970,6 +4125,11 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
     generation_type = data.get("generation_type", "")
+    if generation_type == "video" and data.get("video_flow_step") != "configure":
+        await message.answer(
+            "Сначала завершите шаг с типом и медиа, затем нажмите кнопку перехода к настройкам."
+        )
+        return
     logger.info(f"Generation type: {generation_type}")
 
     await state.update_data(user_prompt=prompt)
@@ -2980,6 +4140,70 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     else:
         logger.info("Calling run_no_preset_video_from_message")
         await run_no_preset_video_from_message(message, state, prompt)
+
+
+@router.message(
+    GenerationStates.waiting_for_video_prompt,
+    F.audio
+    | F.voice
+    | (
+        F.document
+        & F.document.mime_type.in_(
+            [
+                "audio/mpeg",
+                "audio/wav",
+                "audio/x-wav",
+                "audio/aac",
+                "audio/mp4",
+                "audio/ogg",
+            ]
+        )
+    ),
+)
+async def process_avatar_audio_upload(message: types.Message, state: FSMContext):
+    """Handles audio uploads for Kling AI Avatar flow."""
+    data = await state.get_data()
+    if data.get("v_type") != "avatar":
+        await message.answer("Пожалуйста, отправьте текстовое описание.")
+        return
+
+    media = message.audio or message.voice or message.document
+    file_size = getattr(media, "file_size", 0) or 0
+    if file_size and file_size > 10 * 1024 * 1024:
+        await message.answer("❌ Аудиофайл слишком большой. Максимум 10MB.")
+        return
+
+    file = await message.bot.get_file(media.file_id)
+    audio_bytes = await message.bot.download_file(file.file_path)
+    audio_data = audio_bytes.read()
+
+    if message.audio:
+        mime_type = message.audio.mime_type or "audio/mpeg"
+    elif message.voice:
+        mime_type = "audio/ogg"
+    else:
+        mime_type = message.document.mime_type or "audio/mpeg"
+
+    ext_map = {
+        "audio/mpeg": "mp3",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/aac": "aac",
+        "audio/mp4": "m4a",
+        "audio/ogg": "ogg",
+    }
+    file_ext = ext_map.get(mime_type, "mp3")
+    audio_url = save_uploaded_file(audio_data, file_ext)
+    if not audio_url:
+        await message.answer("❌ Не удалось сохранить аудио.")
+        return
+
+    await state.update_data(avatar_audio_url=audio_url)
+    await message.answer("✅ Аудио загружено.")
+    if data.get("video_flow_step") == "media":
+        await _show_video_media_screen(message, state, edit=False)
+    else:
+        await _show_video_creation_screen(message, state, edit=False)
 
 
 async def run_no_preset_video_from_message(
@@ -2994,6 +4218,8 @@ async def run_no_preset_video_from_message(
     v_duration = int(data.get("v_duration", 5))
     if v_model.startswith("veo3"):
         v_duration = max(2, min(v_duration, 10))
+    if v_model == "v26_pro":
+        v_duration = 10 if v_duration == 10 else 5
     # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
     if (
         v_type == "imgtxt"
@@ -3149,15 +4375,45 @@ async def run_no_preset_video_from_message(
                 ),
             )
         else:
+            if v_model == "v26_pro" and v_type == "video":
+                await message.answer(
+                    "❌ Kling 2.5 Turbo не поддерживает режим Видео + Текст."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+            if v_model in {"avatar_std", "avatar_pro"}:
+                if not image_url:
+                    await message.answer("❌ Для Kling AI Avatar нужно фото аватара.")
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
+                if not avatar_audio_url:
+                    await message.answer("❌ Для Kling AI Avatar нужно аудио.")
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
             result = await kling_service.generate_video(
                 prompt=prompt,
                 model=v_model,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 image_url=image_url,
-                video_urls=video_urls,
+                video_urls=(
+                    [avatar_audio_url]
+                    if v_model in {"avatar_std", "avatar_pro"} and avatar_audio_url
+                    else video_urls
+                ),
                 image_input=image_refs if v_type != "imgtxt" else None,
                 elements=elements_list,
+                negative_prompt=kling_negative_prompt or None,
+                cfg_scale=kling_cfg_scale,
                 webhook_url=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),

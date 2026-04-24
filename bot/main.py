@@ -33,6 +33,7 @@ from bot.handlers import (
     payments_router,
 )
 from bot.handlers.payments import handle_cryptobot_webhook
+from bot.miniapp import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -65,7 +66,10 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "banana_pro": "Banana Pro",
         "banana_2": "Banana 2",
         "seedream_edit": "Seedream 4.5",
-        "flux_pro": "FLUX.2 Pro",
+        "flux_pro": "GPT Image 2",
+        "v26_pro": "Kling 2.5 Turbo Pro",
+        "avatar_std": "Kling AI Avatar Standard",
+        "avatar_pro": "Kling AI Avatar Pro",
         "nanobanana": "Nano Banana",
     }
     return mapping.get(
@@ -90,6 +94,16 @@ def _extract_first(obj, keys):
             if found not in (None, ""):
                 return found
     return None
+
+
+def _extract_task_request_data(task) -> dict:
+    """Safely decode stored request_data for debug logging."""
+    if not task or not getattr(task, "request_data", None):
+        return {}
+    try:
+        return json.loads(task.request_data)
+    except Exception:
+        return {}
 
 
 async def _remove_old_files(
@@ -952,6 +966,28 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             logger.info(
                 f"Found task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
+            request_data = _extract_task_request_data(task)
+            selected_model = request_data.get("img_service") or task.model
+            provider_model = request_data.get("provider_model")
+            webhook_model = task_info.get("model") or payload.get("model")
+            logger.info(
+                "Seedream webhook route: task_id=%s selected_model=%s stored_model=%s provider_model=%s webhook_model=%s preset=%s",
+                task_id,
+                selected_model,
+                task.model,
+                provider_model,
+                webhook_model,
+                task.preset_id,
+            )
+            if webhook_model and task.model and webhook_model != task.model:
+                logger.warning(
+                    "Seedream webhook model mismatch: task_id=%s selected_model=%s stored_model=%s webhook_model=%s provider_model=%s",
+                    task_id,
+                    selected_model,
+                    task.model,
+                    webhook_model,
+                    provider_model,
+                )
 
             model_display = task.model or task.preset_id or "Seedream"
             caption = f"✅ <b>Изображение ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
@@ -964,6 +1000,8 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             else:
                 caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
 
+            from bot.keyboards import get_image_result_keyboard
+
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -971,12 +1009,42 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             bot_instance = Bot(token=config.BOT_TOKEN)
 
             try:
-                await bot_instance.send_photo(
-                    chat_id=telegram_id,
-                    photo=image_url,
-                    caption=caption,
-                    parse_mode="HTML",
-                )
+                image_bytes = None
+                try:
+                    import aiohttp
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(image_url, timeout=30) as resp:
+                            if resp.status == 200:
+                                image_bytes = await resp.read()
+                except Exception as download_error:
+                    logger.error(
+                        f"Failed to download seedream result image bytes: {download_error}"
+                    )
+
+                if image_bytes:
+                    photo = types.BufferedInputFile(
+                        image_bytes, filename="seedream.png"
+                    )
+                    await bot_instance.send_photo(
+                        chat_id=telegram_id,
+                        photo=photo,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
+                    )
+                else:
+                    await bot_instance.send_photo(
+                        chat_id=telegram_id,
+                        photo=image_url,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
+                    )
 
                 logger.info(f"Image sent to user {telegram_id}")
             except Exception as e:
@@ -986,6 +1054,9 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=f"🖼️ Ваше изображение готово!{image_url}",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -1108,6 +1179,8 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             else:
                 caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Пресет: {task.preset_id}"
 
+            from bot.keyboards import get_image_result_keyboard
+
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
 
@@ -1115,12 +1188,40 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             bot_instance = Bot(token=config.BOT_TOKEN)
 
             try:
-                await bot_instance.send_photo(
-                    chat_id=telegram_id,
-                    photo=image_url,
-                    caption=caption,
-                    parse_mode="HTML",
-                )
+                image_bytes = None
+                try:
+                    import aiohttp
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(image_url, timeout=30) as resp:
+                            if resp.status == 200:
+                                image_bytes = await resp.read()
+                except Exception as download_error:
+                    logger.error(
+                        f"Failed to download novita result image bytes: {download_error}"
+                    )
+
+                if image_bytes:
+                    photo = types.BufferedInputFile(image_bytes, filename="flux.png")
+                    await bot_instance.send_photo(
+                        chat_id=telegram_id,
+                        photo=photo,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
+                    )
+                else:
+                    await bot_instance.send_photo(
+                        chat_id=telegram_id,
+                        photo=image_url,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
+                    )
 
                 logger.info(f"Image sent to user {telegram_id}")
             except Exception as e:
@@ -1130,6 +1231,9 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!{image_url}",
+                        reply_markup=get_image_result_keyboard(
+                            image_url, task_id=task_id
+                        ),
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -1304,7 +1408,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         model = webhook_data.get("model", "")
         model_lower = model.lower()
-        if "seedream" in model_lower:
+        if "gpt-image-2" in model_lower:
+            service_name = "GPT Image 2"
+        elif "seedream" in model_lower:
             service_name = "Seedream"
             if "4.5-edit" in model_lower:
                 service_name += " 4.5 Edit"
@@ -1316,6 +1422,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 service_name += " Pro"
             else:
                 service_name += " 2"
+        elif "kling/ai-avatar-standard" in model_lower:
+            service_name = "Kling AI Avatar Standard"
+        elif "kling/ai-avatar-pro" in model_lower:
+            service_name = "Kling AI Avatar Pro"
+        elif "kling/v2-5-turbo" in model_lower:
+            service_name = "Kling 2.5 Turbo Pro"
         elif "veo" in model_lower or is_veo_payload:
             service_name = "Veo 3.1"
         else:
@@ -1431,7 +1543,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if result_url:
                 url_lower = result_url.lower()
                 video_exts = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".flv"]
-                if any(url_lower.endswith(ext) for ext in video_exts):
+                if task and task.type == "video":
+                    is_video = True
+                elif task and (task.model or "").startswith("veo3"):
+                    is_video = True
+                elif any(ext in url_lower.split("?", 1)[0] for ext in video_exts):
                     is_video = True
                 elif "video" in model_lower:
                     is_video = True
@@ -1440,10 +1556,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             info_lines = []
             prompt_or_preset = (
                 f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                if task.preset_id == "no_preset" and task.prompt
+                if task.preset_id in {"no_preset", "no_preset_video"} and task.prompt
                 else task.preset_id
             )
-            label = "Промпт" if task.preset_id == "no_preset" else "Пресет"
+            label = (
+                "Промпт"
+                if task.preset_id in {"no_preset", "no_preset_video"}
+                else "Пресет"
+            )
             model_label = _get_task_model_label(
                 task.model if task else None, task.type if task else None
             )
@@ -1465,14 +1585,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 full_caption += source_links
             full_caption += f"\n\n🔗 <a href='{result_url}'>Открыть оригинал</a>"
 
-            kb_link = types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text="📥 Скачать оригинал", url=result_url
-                        )
-                    ]
-                ]
+            from bot.keyboards import get_image_result_keyboard
+
+            kb_link = (
+                get_video_result_keyboard(
+                    result_url,
+                    task_id=task_id,
+                    model=task.model if task else None,
+                )
+                if is_video
+                else get_image_result_keyboard(result_url, task_id=task_id)
             )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
@@ -1636,6 +1758,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 or data.get("msg")
                 or "No details"
             )
+            user_fail_msg = fail_msg
+            fail_msg_lower = str(fail_msg).lower()
+            if "generative ai prohibited use policy" in fail_msg_lower:
+                user_fail_msg = (
+                    "внешний safety-фильтр провайдера не пропустил результат. "
+                    "Это не обязательно значит, что запрос запрещён, но текущая модель "
+                    "не вернула картинку."
+                )
             logger.error(
                 f"{service_name} task {task_id} FAILED: failCode={fail_code}, failMsg={fail_msg}, full data: {webhook_data}"
             )
@@ -1655,7 +1785,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         f"Не удалось завершить генерацию {('видео' if task and task.type == 'video' else 'результата')}.\n"
                         f"• Модель: <code>{service_name}</code>\n"
                         f"• ID: <code>{task_id}</code>\n"
-                        f"• Причина: <code>{fail_msg or 'сервис не смог обработать запрос'}</code>"
+                        f"• Причина: <code>{user_fail_msg or 'сервис не смог обработать запрос'}</code>"
                         f"{refund_text}"
                     )
                     await bot_instance.send_message(
@@ -1693,11 +1823,13 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     app = web.Application()
     app["bot"] = bot
+    app["dp"] = dp
 
     # Serve static uploads directory to fix 404 errors for Novita image downloads
     app.router.add_static(
         "/uploads/", path="static/uploads", show_index=False, name="uploads"
     )
+    setup_miniapp_routes(app)
 
     # Вебхук Telegram
     async def telegram_webhook_handler(request: web.Request) -> web.Response:
