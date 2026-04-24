@@ -7,12 +7,12 @@ import { CheckCircle2, Clock, X, ExternalLink, Copy, AlertCircle, Maximize2 } fr
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 
-interface ResultCardProps {
+interface РезультатCardProps {
   task: Task
   onClose: () => void
 }
 
-export function ResultCard({ task, onClose }: ResultCardProps) {
+export function РезультатCard({ task, onClose }: РезультатCardProps) {
   const [viewerOpen, setViewerOpen] = useState(false)
 
   const isPending = task.status === 'pending'

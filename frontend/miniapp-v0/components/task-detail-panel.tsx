@@ -78,7 +78,7 @@ export function TaskDetailPanel() {
                 <div className="relative aspect-square rounded-2xl overflow-hidden bg-secondary/50">
                   <img
                     src={taskDetail.result_url}
-                    alt="Result"
+                    alt="Результат"
                     className="w-full h-full object-cover"
                   />
                 </div>

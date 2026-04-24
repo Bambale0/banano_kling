@@ -3,14 +3,14 @@
 import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
-import { ResultCard } from '../result-card'
+import { РезультатCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import { generateVideo, uploadFile } from '@/lib/api'
 
 export function VideoTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [lastResult, setLastResult] = useState<Task | null>(null)
+  const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (data: {
@@ -38,7 +38,7 @@ export function VideoTab() {
         const result = await generateVideo(data)
         addTask(result.task)
         setCredits(result.credits)
-        setLastResult(result.task)
+        setLastРезультат(result.task)
         if (result.detail) {
           setTaskDetail(result.detail)
         }
@@ -60,7 +60,7 @@ export function VideoTab() {
         }
         addTask(newTask)
         setCredits(Math.max(state.user.credits - cost, 0))
-        setLastResult(newTask)
+        setLastРезультат(newTask)
         selectTask(newTask)
       }
     } catch (e) {
@@ -124,10 +124,10 @@ export function VideoTab() {
             </div>
           )}
 
-          {lastResult ? (
-            <ResultCard 
-              task={lastResult}
-              onClose={() => setLastResult(null)}
+          {lastРезультат ? (
+            <РезультатCard 
+              task={lastРезультат}
+              onClose={() => setLastРезультат(null)}
             />
           ) : (
             <div className="glass rounded-2xl border border-cyan/20 p-5">

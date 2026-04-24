@@ -3,14 +3,14 @@
 import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { ImageGeneratorForm } from '../forms/image-generator-form'
-import { ResultCard } from '../result-card'
+import { РезультатCard } from '../result-card'
 import type { Task, UploadedFile } from '@/lib/types'
 import { generateImage, uploadFile } from '@/lib/api'
 
 export function PhotoTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [lastResult, setLastResult] = useState<Task | null>(null)
+  const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (data: {
@@ -68,7 +68,7 @@ export function PhotoTab() {
 
       setCredits(latestCredits)
       if (lastTask) {
-        setLastResult(lastTask)
+        setLastРезультат(lastTask)
         selectTask(lastTask)
       }
     } catch (e) {
@@ -118,10 +118,10 @@ export function PhotoTab() {
             </div>
           )}
 
-          {lastResult ? (
-            <ResultCard 
-              task={lastResult}
-              onClose={() => setLastResult(null)}
+          {lastРезультат ? (
+            <РезультатCard 
+              task={lastРезультат}
+              onClose={() => setLastРезультат(null)}
             />
           ) : (
             <div className="glass rounded-2xl border border-border/50 p-5">

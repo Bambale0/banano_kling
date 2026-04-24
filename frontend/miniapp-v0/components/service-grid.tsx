@@ -19,7 +19,7 @@ const primaryServices = [
     icon: Wand2,
     title: 'Промпт по фото',
     description: 'Загрузите референс — AI соберёт точный prompt для похожей генерации.',
-    badge: 'Prompt Lab',
+    badge: 'Разбор фото',
     tone: 'gold',
   },
   {
@@ -90,7 +90,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
 
         <div className="relative">
           <p className="text-[11px] uppercase tracking-[0.18em] text-gold">
-            Creative tools
+            Инструменты
           </p>
           <h2 className="mt-2 font-serif text-2xl font-semibold text-foreground">
             Сервисы

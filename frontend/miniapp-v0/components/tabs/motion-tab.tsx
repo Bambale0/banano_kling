@@ -7,7 +7,7 @@ import { generateMotion, uploadFile } from '@/lib/api'
 import type { Task, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { ResultCard } from '../result-card'
+import { РезультатCard } from '../result-card'
 import { cn } from '@/lib/utils'
 
 type MotionMode = '720p' | '1080p'
@@ -104,7 +104,7 @@ export function MotionTab() {
   const [direction, setDirection] = useState<MotionDirection>('video')
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [lastResult, setLastResult] = useState<Task | null>(null)
+  const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function uploadImage(file: File) {
@@ -164,7 +164,7 @@ export function MotionTab() {
 
         addTask(result.task)
         setCredits(result.credits)
-        setLastResult(result.task)
+        setLastРезультат(result.task)
         selectTask(result.task)
 
         if (result.detail) {
@@ -187,7 +187,7 @@ export function MotionTab() {
 
         addTask(newTask)
         setCredits(Math.max(state.user.credits - cost, 0))
-        setLastResult(newTask)
+        setLastРезультат(newTask)
         selectTask(newTask)
       }
     } catch (e) {
@@ -362,8 +362,8 @@ export function MotionTab() {
             </div>
           </div>
 
-          {lastResult ? (
-            <ResultCard task={lastResult} onClose={() => setLastResult(null)} />
+          {lastРезультат ? (
+            <РезультатCard task={lastРезультат} onClose={() => setLastРезультат(null)} />
           ) : (
             <div className="rounded-[1.75rem] border border-cyan/20 bg-cyan/[0.06] p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">
