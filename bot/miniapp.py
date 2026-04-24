@@ -1011,6 +1011,80 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
+    """Analyze a reference image and return generation prompts."""
+    try:
+        body = await request.json()
+        init_data = body.get("init_data", "")
+        image_url = str(body.get("image_url", "") or "").strip()
+        preserve = str(body.get("preserve", "") or "").strip()
+        goal = str(body.get("goal", "") or "").strip()
+
+        await _get_user_context(request.app, init_data)
+
+        if not image_url:
+            return web.json_response(
+                {"ok": False, "error": "Загрузите фото для анализа"},
+                status=400,
+            )
+
+        analysis_request = (
+            "Ты создаёшь prompt для повторной генерации максимально похожего изображения. "
+            "Опиши только видимые визуальные признаки, без идентификации личности. "
+            "Нужно вернуть строго JSON с ключами: prompt_en, prompt_ru, negative_prompt, model_hint. "
+            "prompt_en должен быть детальным английским промптом для image generation. "
+            "prompt_ru — русская версия. negative_prompt — список дефектов, которых избегать. "
+            "model_hint — короткая рекомендация модели. "
+            f"Image URL: {image_url}. "
+            f"Что важно сохранить: {preserve or 'композицию, объект, свет, стиль, цвета'}. "
+            f"Какой нужен результат: {goal or 'максимально похожий кадр для генерации'}."
+        )
+
+        try:
+            reply = await ai_assistant_service.ask(
+                message=analysis_request,
+                history=[],
+                user_context={"source": "miniapp_photo_to_prompt"},
+            )
+        except TypeError:
+            reply = await ai_assistant_service.ask(analysis_request)
+
+        if isinstance(reply, dict):
+            raw_text = reply.get("reply") or reply.get("text") or json.dumps(reply, ensure_ascii=False)
+        else:
+            raw_text = str(reply)
+
+        parsed = None
+        try:
+            start = raw_text.find("{")
+            end = raw_text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                parsed = json.loads(raw_text[start : end + 1])
+        except Exception:
+            parsed = None
+
+        if not isinstance(parsed, dict):
+            parsed = {
+                "prompt_en": raw_text.strip(),
+                "prompt_ru": "ИИ вернул ответ в свободном формате. Используйте английский prompt выше или повторите анализ.",
+                "negative_prompt": "blurry, low quality, distorted anatomy, bad face, extra fingers, watermark, text, overexposed, underexposed",
+                "model_hint": "Nano Banana Pro для похожей генерации, Seedream 4.5 Edit для работы по исходнику",
+            }
+
+        return web.json_response(
+            {
+                "ok": True,
+                "prompt_en": str(parsed.get("prompt_en", "")).strip(),
+                "prompt_ru": str(parsed.get("prompt_ru", "")).strip(),
+                "negative_prompt": str(parsed.get("negative_prompt", "")).strip(),
+                "model_hint": str(parsed.get("model_hint", "")).strip(),
+            }
+        )
+    except Exception as e:
+        logger.exception("Mini App photo-to-prompt failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def miniapp_generate_image(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -1485,6 +1559,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
     app.router.add_post(miniapp_root + "/api/upload", miniapp_upload)
+    app.router.add_post(miniapp_root + "/api/photo-to-prompt", miniapp_photo_to_prompt)
     app.router.add_post(miniapp_root + "/api/generate-image", miniapp_generate_image)
     app.router.add_post(miniapp_root + "/api/generate-video", miniapp_generate_video)
     app.router.add_post(miniapp_root + "/api/generate-motion", miniapp_generate_motion)

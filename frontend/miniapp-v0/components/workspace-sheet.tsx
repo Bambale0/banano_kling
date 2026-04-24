@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { askAIAssistant } from '@/lib/api'
+import { askAIAssistant, photoToPrompt, uploadFile } from '@/lib/api'
 import type { WorkspacePanel } from '@/lib/types'
 
 type ChatRole = 'assistant' | 'user'
@@ -285,76 +285,220 @@ function buildFallbackReply(input: string, credits: number) {
 }
 
 function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
+  const [reference, setReference] = useState<{ name: string; url: string } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [subject, setSubject] = useState('Премиальный портрет')
-  const [mood, setMood] = useState('кинематографично и дорого')
-  const [focus, setFocus] = useState('свет, лицо, фактура ткани')
+  const [preserve, setPreserve] = useState('композицию, лицо/объект, свет, цвета и стиль')
+  const [goal, setGoal] = useState('максимально похожее изображение для повторной генерации')
+  const [isUploading, setIsUploading] = useState(false)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [result, setResult] = useState<{
+    prompt_en: string
+    prompt_ru: string
+    negative_prompt: string
+    model_hint: string
+  } | null>(null)
 
-  const generatedPrompt = `Используй изображение как основной референс. Сохрани ${subject.toLowerCase()}, сделай акцент на ${focus}, подай сцену так, чтобы она выглядела ${mood}, с чистым светом, сильной композицией и аккуратной цветокоррекцией.`
+  async function handleUpload(file: File) {
+    setIsUploading(true)
+    setResult(null)
+
+    try {
+      setPreviewUrl(URL.createObjectURL(file))
+      const uploaded = await uploadFile('image_reference', file)
+      setReference({
+        name: uploaded.name,
+        url: uploaded.url,
+      })
+      toast.success('Фото загружено')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить фото'
+      toast.error('Ошибка загрузки', { description: message })
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  async function analyzePhoto() {
+    if (!reference) {
+      toast.error('Сначала загрузите фото')
+      return
+    }
+
+    setIsAnalyzing(true)
+    setResult(null)
+
+    try {
+      const data = await photoToPrompt({
+        imageUrl: reference.url,
+        preserve,
+        goal,
+      })
+      setResult(data)
+      toast.success('Промпт собран')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось собрать промпт'
+      toast.error('Ошибка анализа', { description: message })
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
+  async function copyText(text: string, label: string) {
+    await navigator.clipboard.writeText(text)
+    toast.success(`${label} скопирован`)
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-        <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border/60 bg-background/40 px-4 py-8 text-center">
-          <ImagePlus className="mb-3 h-8 w-8 text-gold" />
-          <span className="text-sm font-medium text-foreground">Загрузить референс</span>
-          <span className="mt-1 text-xs text-muted-foreground">Фото останется здесь и поможет собрать более точное описание.</span>
+    <div className="space-y-5 pb-10">
+      <div className="rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-gold">Prompt Lab</p>
+        <h3 className="mt-2 font-serif text-2xl text-foreground">Фото → точный prompt</h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Загрузите референс. AI разберёт кадр и соберёт промпт для генерации похожего изображения:
+          композиция, объект, свет, стиль, цвета и важные детали.
+        </p>
+      </div>
+
+      <div className="rounded-[1.75rem] border border-border/60 bg-card/45 p-4">
+        <label className="block cursor-pointer">
           <input
             type="file"
             accept="image/*"
-            className="hidden"
+            className="sr-only"
+            disabled={isUploading || isAnalyzing}
             onChange={(event) => {
               const file = event.target.files?.[0]
               if (!file) return
-              setPreviewUrl(URL.createObjectURL(file))
+              handleUpload(file)
+              event.target.value = ''
             }}
           />
+
+          <div className="rounded-2xl border border-dashed border-border/70 bg-background/45 px-4 py-6 text-center transition-colors hover:border-gold/40">
+            <ImagePlus className="mx-auto mb-3 h-8 w-8 text-gold" />
+            <p className="font-medium text-foreground">
+              {isUploading ? 'Загружаю фото…' : reference ? reference.name : 'Загрузить референс'}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Лучше использовать чёткий кадр без сильного блюра и лишних объектов.
+            </p>
+          </div>
         </label>
+
         {previewUrl && (
           <div className="mt-4 overflow-hidden rounded-2xl border border-border/50">
-            <img src={previewUrl} alt="Референс" className="h-56 w-full object-cover" />
+            <img src={previewUrl} alt="Референс" className="h-64 w-full object-cover" />
           </div>
         )}
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <InputCard label="Что важно сохранить" value={subject} onChange={setSubject} />
-        <InputCard label="Какой нужен результат" value={mood} onChange={setMood} />
-      </div>
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+            Что сохранить
+          </p>
+          <textarea
+            value={preserve}
+            onChange={(event) => setPreserve(event.target.value)}
+            rows={3}
+            className="mt-3 w-full resize-none rounded-2xl border border-border/50 bg-background/50 px-4 py-3 text-sm text-foreground outline-none"
+          />
+        </div>
 
-      <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-        <p className="text-xs text-muted-foreground">Главные акценты</p>
-        <textarea
-          value={focus}
-          onChange={(event) => setFocus(event.target.value)}
-          rows={4}
-          className="mt-3 w-full rounded-2xl border border-border/50 bg-background/50 px-4 py-3 text-sm text-foreground outline-none"
-        />
-      </div>
-
-      <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
-        <p className="text-xs text-muted-foreground">Готовое описание</p>
-        <p className="mt-2 text-sm leading-6 text-foreground">{generatedPrompt}</p>
-        <div className="mt-4 flex gap-3">
-          <Button
-            onClick={() => {
-              navigator.clipboard.writeText(generatedPrompt)
-              toast.success('Описание скопировано')
-            }}
-            variant="outline"
-            className="border-border/50 bg-background/40 hover:bg-background/60"
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Копировать
-          </Button>
-          <Button onClick={onOpenPhoto} className="bg-gold text-primary-foreground hover:bg-gold/90">
-            Перейти к фото
-          </Button>
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+            Какой результат нужен
+          </p>
+          <textarea
+            value={goal}
+            onChange={(event) => setGoal(event.target.value)}
+            rows={3}
+            className="mt-3 w-full resize-none rounded-2xl border border-border/50 bg-background/50 px-4 py-3 text-sm text-foreground outline-none"
+          />
         </div>
       </div>
+
+      <Button
+        onClick={analyzePhoto}
+        disabled={!reference || isUploading || isAnalyzing}
+        className="h-14 w-full rounded-2xl bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
+      >
+        {isAnalyzing ? (
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        ) : (
+          <Wand2 className="mr-2 h-5 w-5" />
+        )}
+        {isAnalyzing ? 'Анализирую фото…' : 'Собрать точный промпт'}
+      </Button>
+
+      {result && (
+        <div className="space-y-3">
+          <PromptResultCard
+            title="Prompt EN"
+            text={result.prompt_en}
+            onCopy={() => copyText(result.prompt_en, 'Prompt EN')}
+          />
+          <PromptResultCard
+            title="Prompt RU"
+            text={result.prompt_ru}
+            onCopy={() => copyText(result.prompt_ru, 'Prompt RU')}
+          />
+          <PromptResultCard
+            title="Negative prompt"
+            text={result.negative_prompt}
+            onCopy={() => copyText(result.negative_prompt, 'Negative prompt')}
+          />
+
+          <div className="rounded-2xl border border-cyan/20 bg-cyan/10 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-cyan/80">Рекомендация</p>
+            <p className="mt-2 text-sm leading-6 text-foreground">{result.model_hint}</p>
+          </div>
+
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => copyText(result.prompt_en, 'Prompt EN')}
+              className="flex-1 border-border/50 bg-background/40 hover:bg-background/60"
+            >
+              <Copy className="mr-2 h-4 w-4" />
+              Скопировать
+            </Button>
+            <Button onClick={onOpenPhoto} className="flex-1 bg-gold text-primary-foreground hover:bg-gold/90">
+              Открыть фото
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
+function PromptResultCard({
+  title,
+  text,
+  onCopy,
+}: {
+  title: string
+  text: string
+  onCopy: () => void
+}) {
+  return (
+    <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs uppercase tracking-[0.16em] text-gold/80">{title}</p>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="rounded-full border border-border/50 bg-background/40 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-background/70"
+        >
+          Копировать
+        </button>
+      </div>
+      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground">{text}</p>
+    </div>
+  )
+}
+
 
 function PartnersPanel() {
   const cards = [
