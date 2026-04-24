@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { askAIAssistant, photoToPrompt, uploadFile } from '@/lib/api'
+import { askAIAssistant, fetchPartnerOverview, photoToPrompt, uploadFile } from '@/lib/api'
 import type { WorkspacePanel } from '@/lib/types'
 
 type ChatRole = 'assistant' | 'user'
@@ -501,42 +501,115 @@ function PromptResultCard({
 
 
 function PartnersPanel() {
-  const cards = [
-    { label: 'Вознаграждение', value: '20%', note: 'с оплат приглашённых пользователей' },
-    { label: 'Минимальный вывод', value: '2 000 ₽', note: 'после накопления можно оформить заявку' },
-    { label: 'Готовые материалы', value: 'Да', note: 'тексты, баннеры и короткие объяснения уже подготовлены' },
-  ]
+  const [isLoading, setIsLoading] = useState(false)
+  const [partner, setPartner] = useState<{
+    is_partner: boolean
+    referrals_count: number
+    balance_rub: number
+    referral_link: string
+    status: string
+  } | null>(null)
+
+  async function loadPartnerData() {
+    setIsLoading(true)
+    try {
+      const data = await fetchPartnerOverview()
+      setPartner(data)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить партнёрку'
+      toast.error('Партнёрская программа недоступна', { description: message })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useMemo(() => {
+    if (!partner && !isLoading) {
+      loadPartnerData()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const referralLink = partner?.referral_link || ''
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        {cards.map((card) => (
-          <div key={card.label} className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-            <p className="text-xs text-muted-foreground">{card.label}</p>
-            <p className="mt-2 font-serif text-2xl text-foreground">{card.value}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{card.note}</p>
+      <div className="rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-gold">
+          Partner program
+        </p>
+        <h3 className="mt-2 font-serif text-2xl text-foreground">
+          Партнёрская программа
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Реальная статистика из backend-партнёрки: статус, приглашённые пользователи,
+          баланс и ваша реферальная ссылка.
+        </p>
+      </div>
+
+      {isLoading && (
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-gold" />
+            Загружаю данные партнёрки…
           </div>
-        ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <p className="text-xs text-muted-foreground">Статус</p>
+          <p className="mt-2 font-serif text-xl text-foreground">
+            {partner?.status === 'partner' ? 'Партнёр' : 'Базовый'}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <p className="text-xs text-muted-foreground">Рефералов</p>
+          <p className="mt-2 font-serif text-xl text-foreground">
+            {partner?.referrals_count ?? '—'}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
+          <p className="text-xs text-muted-foreground">Баланс</p>
+          <p className="mt-2 font-serif text-xl text-foreground">
+            {partner ? `${partner.balance_rub} ₽` : '—'}
+          </p>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
-        <p className="text-xs text-muted-foreground">Как начать</p>
-        <p className="mt-2 text-sm leading-6 text-foreground">
-          Получаете ссылку, приглашаете авторов и отслеживаете результат в одном месте. Ничего не нужно искать по разным разделам.
+        <p className="text-xs uppercase tracking-[0.16em] text-gold/80">
+          Реферальная ссылка
         </p>
+
+        <div className="mt-3 rounded-2xl border border-border/50 bg-background/45 p-3">
+          <p className="break-all text-sm leading-6 text-foreground">
+            {referralLink || 'Ссылка пока недоступна'}
+          </p>
+        </div>
+
         <div className="mt-4 flex gap-3">
           <Button
-            onClick={() => toast.success('Ссылка готова', { description: 'Можно скопировать её и отправить партнёрам.' })}
-            className="bg-gold text-primary-foreground hover:bg-gold/90"
+            disabled={!referralLink}
+            onClick={() => {
+              navigator.clipboard.writeText(referralLink)
+              toast.success('Реферальная ссылка скопирована')
+            }}
+            className="flex-1 bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
           >
-            Получить ссылку
+            <Copy className="mr-2 h-4 w-4" />
+            Скопировать
           </Button>
+
           <Button
             variant="outline"
-            onClick={() => toast.success('Материалы открыты')}
+            onClick={loadPartnerData}
+            disabled={isLoading}
             className="border-border/50 bg-background/40 hover:bg-background/60"
           >
-            Материалы
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Обновить'}
           </Button>
         </div>
       </div>

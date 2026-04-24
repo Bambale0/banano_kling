@@ -1505,6 +1505,38 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def miniapp_partner_overview(request: web.Request) -> web.Response:
+    """Return real partner program data for Mini App."""
+    try:
+        body = await request.json()
+        init_data = body.get("init_data", "")
+
+        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        stats = await get_partner_overview(telegram_id)
+        user = await get_or_create_user(telegram_id)
+        me = await request.app["bot"].get_me()
+
+        referral_link = (
+            f"https://t.me/{me.username}?start=ref_{user.referral_code}"
+            if user.referral_code
+            else ""
+        )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "is_partner": bool(stats.get("is_partner")),
+                "referrals_count": int(stats.get("referrals_count", 0) or 0),
+                "balance_rub": float(stats.get("balance_rub", 0) or 0),
+                "referral_link": referral_link,
+                "status": "partner" if stats.get("is_partner") else "basic",
+            }
+        )
+    except Exception as e:
+        logger.exception("Mini App partner overview failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def miniapp_task_detail(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -1587,6 +1619,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/generate-image", miniapp_generate_image)
     app.router.add_post(miniapp_root + "/api/generate-video", miniapp_generate_video)
     app.router.add_post(miniapp_root + "/api/generate-motion", miniapp_generate_motion)
+    app.router.add_post(miniapp_root + "/api/partner-overview", miniapp_partner_overview)
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
     app.router.add_get(miniapp_root + "/{tail:.*}", miniapp_asset)
