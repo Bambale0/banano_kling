@@ -803,42 +803,6 @@ async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMCo
     await state.set_state(GenerationStates.uploading_reference_videos)
 
 
-@router.callback_query(F.data == "motion_control")
-async def start_motion_control(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    """Запуск Motion Control Kling 2.6"""
-    from bot.database import get_user_credits
-
-    user_credits = await get_user_credits(callback.from_user.id)
-
-    await state.update_data(
-        generation_type="motion_control",
-        motion_mode="720p",
-        motion_orientation="video",
-        motion_image_url=None,
-        motion_video_url=None,
-        motion_prompt="",
-    )
-
-    text = (
-        "🎯 <b>Kling 2.6 Motion Control</b>\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        "<b>Шаг 1. Фото персонажа</b>\n"
-        "Загрузите чёткое фото, которое нужно оживить.\n\n"
-        "Подойдёт:\n"
-        "• портрет или персонаж по пояс\n"
-        "• иллюстрация или рендер\n"
-        "• JPEG/PNG до 10 MB\n\n"
-        "<i>Движение потом будет перенесено с видео на это изображение.</i>"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_back_keyboard("back_main"),
-        parse_mode="HTML",
-    )
-    await state.set_state(GenerationStates.waiting_for_motion_character_image)
-
 
 @router.callback_query(F.data == "photo_prompt")
 async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
@@ -4642,114 +4606,92 @@ async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Продолжаем без референсов")
 
 
+
+
+
+def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
+    builder = InlineKeyboardBuilder()
+    rows = [
+        ("motion_control_v26", "🎯 Kling 2.6 Motion Control", preset_manager.get_video_cost("motion_control_v26", 5)),
+        ("motion_control_v30", "🚀 Kling 3.0 Motion Control", preset_manager.get_video_cost("motion_control_v30", 5)),
+    ]
+    for model_key, label, cost in rows:
+        check = "✅ " if current_model == model_key else ""
+        builder.button(
+            text=f"{check}{label} • Pro • {cost}🍌",
+            callback_data=f"motion_model_{model_key}",
+        )
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
 # =============================================================================
-# FINAL KLING AVATAR / MOTION BUTTON FIXES
+# MOTION CONTROL DEDICATED MENU
 # =============================================================================
 
 @router.callback_query(F.data == "motion_control")
-async def open_motion_control_from_main(callback: types.CallbackQuery, state: FSMContext):
-    """Standalone Motion Control entry from main menu."""
+async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Open dedicated Motion Control version chooser."""
     await state.clear()
+    user_credits = await get_user_credits(callback.from_user.id)
     await state.update_data(
         generation_type="video",
-        v_model="motion_control_v26",
         v_type="motion",
+        v_model="motion_control_v26",
         v_duration=5,
         v_ratio="motion",
         v_image_url=None,
         v_reference_videos=[],
-        motion_mode="720p",
+        motion_mode="1080p",
         motion_orientation="video",
     )
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
-    user_credits = await get_user_credits(callback.from_user.id)
-    await callback.message.edit_text(
+    text = (
         "🎯 <b>Motion Control</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
-        "Выберите версию Kling, затем загрузите фото персонажа и видео движения.",
-        reply_markup=get_video_media_step_keyboard(
-            current_v_type="motion",
-            current_model="motion_control_v26",
-            has_start_image=False,
-            reference_video_count=0,
-        ),
+        "Выберите версию Kling. Обе версии запускаются в <b>Pro-режиме</b> по умолчанию."
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_motion_control_model_keyboard("motion_control_v26"),
         parse_mode="HTML",
     )
     await callback.answer()
 
 
-@router.callback_query(F.data == "v_model_motion_control_v26")
-async def select_motion_v26(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(v_model="motion_control_v26", v_type="motion", v_ratio="motion", v_duration=5)
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
-    data = await state.get_data()
-    await callback.message.edit_text(
-        "🎯 <b>Kling 2.6 Motion Control</b>\n\n"
-        "Загрузите фото персонажа и видео движения.",
-        reply_markup=get_video_media_step_keyboard(
-            current_v_type="motion",
-            current_model="motion_control_v26",
-            has_start_image=bool(data.get("v_image_url")),
-            reference_video_count=len(data.get("v_reference_videos") or []),
-        ),
-        parse_mode="HTML",
+@router.callback_query(F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"}))
+async def select_motion_control_model(callback: types.CallbackQuery, state: FSMContext):
+    """Select Motion Control model and ask for character photo."""
+    model = callback.data.replace("motion_model_", "")
+    label = "Kling 3.0 Motion Control" if model == "motion_control_v30" else "Kling 2.6 Motion Control"
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="video",
+        v_type="motion",
+        v_model=model,
+        v_duration=5,
+        v_ratio="motion",
+        v_image_url=None,
+        v_reference_videos=[],
+        motion_mode="1080p",
+        motion_orientation="video",
     )
-    await callback.answer("Kling 2.6 Motion Control")
-
-
-@router.callback_query(F.data == "v_model_motion_control_v30")
-async def select_motion_v30(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(v_model="motion_control_v30", v_type="motion", v_ratio="motion", v_duration=5)
     await state.set_state(GenerationStates.waiting_for_video_start_image)
-    data = await state.get_data()
-    await callback.message.edit_text(
-        "🎯 <b>Kling 3.0 Motion Control</b>\n\n"
-        "Загрузите фото персонажа и видео движения.",
-        reply_markup=get_video_media_step_keyboard(
-            current_v_type="motion",
-            current_model="motion_control_v30",
-            has_start_image=bool(data.get("v_image_url")),
-            reference_video_count=len(data.get("v_reference_videos") or []),
-        ),
-        parse_mode="HTML",
+    text = (
+        f"🎯 <b>{label}</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
+        "⚙️ Режим: <b>Pro / 1080p</b>\n\n"
+        "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
     )
-    await callback.answer("Kling 3.0 Motion Control")
-
-
-@router.callback_query(F.data == "avatar_upload_image")
-async def avatar_upload_image(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
-    await callback.answer("Отправьте фото аватара")
-    await callback.message.answer("🖼 Отправьте фото аватара одним сообщением.")
-
-
-@router.callback_query(F.data == "avatar_upload_audio")
-async def avatar_upload_audio(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(GenerationStates.waiting_for_avatar_audio)
-    await callback.answer("Отправьте аудио")
-    await callback.message.answer("🎵 Отправьте аудиофайл, голосовое или документ с аудио.")
-
-
-@router.callback_query(F.data == "motion_upload_image")
-async def motion_upload_image(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
-    await callback.answer("Отправьте фото персонажа")
-    await callback.message.answer("🖼 Отправьте фото персонажа для Motion Control.")
-
-
-@router.callback_query(F.data == "motion_upload_video")
-async def motion_upload_video(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(GenerationStates.uploading_reference_videos)
-    await callback.answer("Отправьте видео движения")
-    await callback.message.answer("🎬 Отправьте видео движения для Motion Control.")
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer(label)
 
 
 @router.message(GenerationStates.waiting_for_video_start_image, F.photo)
-async def final_video_start_image_upload(message: types.Message, state: FSMContext):
-    """Fallback upload for Avatar/Motion start image when old handlers do not catch it."""
+async def motion_control_character_photo_upload(message: types.Message, state: FSMContext):
+    """Upload character photo for dedicated Motion Control flow."""
     data = await state.get_data()
-    v_type = data.get("v_type")
-    if v_type not in {"avatar", "motion", "imgtxt"}:
+    if data.get("v_type") != "motion":
         return
 
     photo = message.photo[-1]
@@ -4757,36 +4699,17 @@ async def final_video_start_image_upload(message: types.Message, state: FSMConte
     downloaded = await message.bot.download_file(file.file_path)
     image_url = save_uploaded_file(downloaded.read(), "jpg")
     await state.update_data(v_image_url=image_url)
-
-    if v_type == "avatar":
-        await message.answer(
-            "✅ Фото аватара загружено. Теперь загрузите аудиофайл.",
-            reply_markup=get_video_media_step_keyboard(
-                current_v_type="avatar",
-                current_model=data.get("v_model", "avatar_std"),
-                has_start_image=True,
-                has_avatar_audio=bool(data.get("avatar_audio_url")),
-            ),
-        )
-        await state.set_state(GenerationStates.waiting_for_avatar_audio)
-    elif v_type == "motion":
-        await message.answer(
-            "✅ Фото персонажа загружено. Теперь загрузите видео движения.",
-            reply_markup=get_video_media_step_keyboard(
-                current_v_type="motion",
-                current_model=data.get("v_model", "motion_control_v26"),
-                has_start_image=True,
-                reference_video_count=len(data.get("v_reference_videos") or []),
-            ),
-        )
-        await state.set_state(GenerationStates.uploading_reference_videos)
-    else:
-        await message.answer("✅ Стартовое фото загружено. Можно продолжать.")
+    await state.set_state(GenerationStates.uploading_reference_videos)
+    await message.answer(
+        "✅ Фото персонажа загружено.\n\n"
+        "Шаг 2. Теперь отправьте <b>видео движения</b>.",
+        parse_mode="HTML",
+    )
 
 
 @router.message(GenerationStates.uploading_reference_videos, F.video)
-async def final_motion_video_upload(message: types.Message, state: FSMContext):
-    """Fallback video upload for Motion Control."""
+async def motion_control_reference_video_upload(message: types.Message, state: FSMContext):
+    """Upload movement video for dedicated Motion Control flow."""
     data = await state.get_data()
     if data.get("v_type") != "motion":
         return
@@ -4798,39 +4721,8 @@ async def final_motion_video_upload(message: types.Message, state: FSMContext):
     await state.update_data(v_reference_videos=[video_url])
     await state.set_state(GenerationStates.waiting_for_video_prompt)
     await message.answer(
-        "✅ Видео движения загружено. Теперь отправьте промпт или короткое описание результата.",
-        reply_markup=get_video_media_step_keyboard(
-            current_v_type="motion",
-            current_model=data.get("v_model", "motion_control_v26"),
-            has_start_image=bool(data.get("v_image_url")),
-            reference_video_count=1,
-        ),
-    )
-
-
-@router.message(GenerationStates.waiting_for_avatar_audio, F.audio | F.voice | F.document)
-async def final_avatar_audio_upload(message: types.Message, state: FSMContext):
-    """Upload audio for Kling Avatar."""
-    data = await state.get_data()
-    if data.get("v_type") != "avatar":
-        return
-
-    media = message.audio or message.voice or message.document
-    file = await message.bot.get_file(media.file_id)
-    downloaded = await message.bot.download_file(file.file_path)
-    ext = "ogg" if message.voice else "mp3"
-    if message.document and getattr(message.document, "file_name", ""):
-        ext = message.document.file_name.rsplit(".", 1)[-1].lower() if "." in message.document.file_name else "mp3"
-    audio_url = save_uploaded_file(downloaded.read(), ext)
-    await state.update_data(avatar_audio_url=audio_url, audio_url=audio_url)
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-    await message.answer(
-        "✅ Аудио загружено. Теперь отправьте промпт или короткую инструкцию для аватара.",
-        reply_markup=get_video_media_step_keyboard(
-            current_v_type="avatar",
-            current_model=data.get("v_model", "avatar_std"),
-            has_start_image=bool(data.get("v_image_url")),
-            has_avatar_audio=True,
-        ),
+        "✅ Видео движения загружено.\n\n"
+        "Шаг 3. Отправьте короткое описание результата.\n"
+        "Например: <i>сохранить лицо, плавное движение, кинематографичный свет</i>.",
+        parse_mode="HTML",
     )

@@ -100,6 +100,38 @@ def get_animate_hub_keyboard():
     return builder.as_markup()
 
 
+def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
+    """Отдельный выбор версии Motion Control."""
+    builder = InlineKeyboardBuilder()
+
+    options = [
+        (
+            "motion_control_v26",
+            "🎯 Kling 2.6 Motion Control",
+            "Стабильный перенос движения",
+            preset_manager.get_video_cost("motion_control_v26", 5),
+        ),
+        (
+            "motion_control_v30",
+            "🚀 Kling 3.0 Motion Control",
+            "Новая версия с улучшенной стабильностью",
+            preset_manager.get_video_cost("motion_control_v30", 5),
+        ),
+    ]
+
+    for model_key, title, description, cost in options:
+        check = "✅ " if current_model == model_key else ""
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{check}{title} • {cost}🍌",
+                callback_data=f"v_model_{model_key}",
+            )
+        )
+
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
+    return builder.as_markup()
+
+
 def get_more_menu_keyboard():
     """Вторичные разделы, чтобы не перегружать главный экран."""
     builder = InlineKeyboardBuilder()
@@ -223,8 +255,6 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
             preset_manager.get_video_cost("veo3_lite", 6),
         ),
         ("glow", "✨ Kling Glow", preset_manager.get_video_cost("glow", 5)),
-        ("motion_control_v26", "🎯 Kling 2.6 Motion", preset_manager.get_video_cost("motion_control_v26", 5)),
-        ("motion_control_v30", "🚀 Kling 3.0 Motion", preset_manager.get_video_cost("motion_control_v30", 5)),
     ]
 
     for model_key, label, cost in model_rows:
