@@ -206,12 +206,9 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
+@router.message(CommandStart(), StateFilter(None))
+async def cmd_start(message: types.Message):
     """Обработчик команды /start"""
-    # /start всегда прерывает текущий сценарий/FSM и возвращает в главное меню
-    await state.clear()
-
     # Создаём или получаем пользователя
     user = await get_or_create_user(message.from_user.id)
 
