@@ -51,14 +51,26 @@ class GrokService(KlingService):
         nsfw_checker: bool = False,
         callBackUrl: Optional[str] = None,
     ) -> Optional[Dict]:
-        """Generate image from image + prompt using Grok Imagine i2i"""
+        """Generate image from image + prompt using Grok Imagine i2i."""
         if len(image_urls) == 0:
             logger.error("No image_urls provided for Grok i2i")
             return None
+
+        safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls)
+
+        image_refs = " ".join(
+            f"@image{i + 1}" for i in range(len(safe_image_urls))
+        )
+        clean_prompt = str(prompt or "").strip()
+        if image_refs and not clean_prompt.startswith("@image"):
+            clean_prompt = f"{image_refs} {clean_prompt}".strip()
+
         input_data = {
-            "prompt": prompt,
-            "image_urls": image_sources_to_provider_safe_png_urls(image_urls),
-            "nsfw_checker": nsfw_checker,
+            "prompt": clean_prompt,
+            "image_urls": safe_image_urls,
+            # Kie checker must stay disabled for Grok i2i.
+            # The model/provider will handle generation rules itself.
+            "nsfw_checker": False,
         }
         payload = {
             "model": "grok-imagine/image-to-image",
@@ -66,6 +78,12 @@ class GrokService(KlingService):
         }
         if callBackUrl:
             payload["callBackUrl"] = callBackUrl
+
+        logger.info(
+            "Grok i2i payload prepared: refs=%s nsfw_checker=false prompt_prefix=%s",
+            len(safe_image_urls),
+            clean_prompt[:80],
+        )
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 
 
