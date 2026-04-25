@@ -90,6 +90,17 @@ IMAGE_MODELS = (
         "supports_nsfw_checker": True,
     },
     {
+        "id": "wan_27",
+        "label": "Wan 2.7 Pro",
+        "description": "Генерация и редактирование через Wan 2.7",
+        "cost": preset_manager.get_generation_cost("wan_27"),
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"],
+        "requires_reference": False,
+        "max_references": 9,
+        "supports_nsfw_checker": False,
+        "supports_wan_options": True,
+    },
+    {
         "id": "grok_imagine_i2i",
         "label": "Grok Imagine",
         "description": "I2I-сценарий для ярких переработок",
