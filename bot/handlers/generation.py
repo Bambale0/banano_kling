@@ -2119,22 +2119,6 @@ async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMCo
 
 
 
-@router.callback_query(F.data == "model_wan_27")
-async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
-    logger.info("Wan 2.7 test model selected by user_id=%s", callback.from_user.id)
-    await state.update_data(
-        img_service="wan_27",
-        img_ratio="1:1",
-        img_count=1,
-        reference_images=[],
-        img_quality="basic",
-        img_nsfw_checker=False,
-        nsfw_enabled=False,
-    )
-    await _show_image_creation_screen(callback, state)
-    await callback.answer("Выбрана тестовая модель Wan 2.7 Pro")
-
-
 @router.callback_query(F.data == "model_grok_i2i")
 async def handle_model_grok_i2i(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Grok Imagine i2i (фото + текст)"""
@@ -4527,3 +4511,107 @@ async def run_no_preset_video_from_message(
 async def ignore_callback(callback: types.CallbackQuery):
     await callback.answer()
 
+
+
+# =============================================================================
+# WAN 2.7 TEST FLOW
+# =============================================================================
+
+@router.callback_query(F.data == "model_wan_27")
+async def select_model_wan_27_test(callback: types.CallbackQuery, state: FSMContext):
+    """Isolated Wan 2.7 test flow: optional refs -> prompt -> generation."""
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="image",
+        img_service="wan_27",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        img_quality="basic",
+        img_nsfw_checker=False,
+        nsfw_enabled=False,
+        preset_id="wan_27",
+    )
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+    text = (
+        "🧪 <b>Wan 2.7 Pro — тест</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        "<b>Шаг 1. Референсы</b>\n"
+        "Можно загрузить до 9 фото или сразу продолжить без референсов.\n\n"
+        "Когда всё готово — нажмите <b>▶️ Продолжить</b>."
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_reference_images_upload_keyboard(0, 9, "wan_27"),
+        parse_mode="HTML",
+    )
+    await callback.answer("Wan 2.7 Pro выбран")
+
+
+@router.message(GenerationStates.uploading_reference_images, F.photo)
+async def upload_reference_image_for_any_image_flow(message: types.Message, state: FSMContext):
+    """Universal reference upload fallback for image flows, including Wan 2.7."""
+    data = await state.get_data()
+    img_service = data.get("img_service", "banana_pro")
+    preset_id = data.get("preset_id", "new")
+    max_refs = 9 if img_service == "wan_27" else 14
+
+    reference_images = list(data.get("reference_images") or [])
+    if len(reference_images) >= max_refs:
+        await message.answer(
+            f"Уже загружено максимум: {max_refs} фото.",
+            reply_markup=get_reference_images_upload_keyboard(len(reference_images), max_refs, preset_id),
+        )
+        return
+
+    try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        image_bytes = downloaded.read()
+
+        public_url = save_uploaded_file(image_bytes, "jpg")
+        if not public_url:
+            await message.answer("Не удалось сохранить фото. Попробуйте другое изображение.")
+            return
+
+        reference_images.append(public_url)
+        await state.update_data(reference_images=reference_images)
+
+        title = "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
+        await message.answer(
+            f"{title}\n\n"
+            f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
+            "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
+            reply_markup=get_reference_images_upload_keyboard(len(reference_images), max_refs, preset_id),
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("Reference image upload failed")
+        await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
+
+
+@router.callback_query(F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"}))
+async def continue_wan27_after_refs(callback: types.CallbackQuery, state: FSMContext):
+    """Continue Wan 2.7 after optional references."""
+    await state.update_data(
+        img_service="wan_27",
+        img_flow_step="settings",
+        preset_id="wan_27",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ref_skip_wan_27")
+async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(
+        img_service="wan_27",
+        reference_images=[],
+        img_flow_step="settings",
+        preset_id="wan_27",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Продолжаем без референсов")
