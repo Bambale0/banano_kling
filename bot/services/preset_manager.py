@@ -21,6 +21,9 @@ CANONICAL_IMAGE_ALIASES = {
     "seedream_edit": "seedream_edit",
     "flux_pro": "flux_pro",
     "grok_imagine_i2i": "grok_imagine_i2i",
+    "wan_27": "wan_27",
+    "wan27": "wan_27",
+    "wan-2.7": "wan_27",
     "z_image_turbo": "z_image_turbo",
     "z-image-turbo": "z_image_turbo",
 }

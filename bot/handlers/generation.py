@@ -51,6 +51,7 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_service
+from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
@@ -105,6 +106,8 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
         return "google/gemini-pro"
     if img_service == "grok_imagine_i2i":
         return "grok-imagine-image-to-image"
+    if img_service == "wan_27":
+        return "wan/2-7-image-pro"
     return img_service
 
 
@@ -127,7 +130,7 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     prompt = (prompt or "").strip()
     if not prompt:
         return prompt
-    if img_service not in {"banana_pro", "banana_2", "nanobanana", "grok_imagine_i2i"}:
+    if img_service not in {"banana_pro", "banana_2", "nanobanana", "grok_imagine_i2i", "wan_27"}:
         return prompt
 
     replacements = {
@@ -280,6 +283,21 @@ async def _start_image_generation_task(
             image_urls=reference_images,
             prompt=effective_prompt,
             nsfw_checker=nsfw_enabled,
+            callBackUrl=callback_url,
+        )
+    elif runtime_img_service == "wan_27":
+        result = await wan27_service.generate_image(
+            prompt=effective_prompt,
+            aspect_ratio=img_ratio,
+            input_urls=reference_images,
+            n=1,
+            resolution="2K",
+            pro=True,
+            enable_sequential=False,
+            thinking_mode=False,
+            watermark=False,
+            seed=random.randint(1, 2147483647),
+            nsfw_checker=False,
             callBackUrl=callback_url,
         )
     else:
@@ -561,6 +579,11 @@ async def show_main_img_grok(callback: types.CallbackQuery, state: FSMContext):
     await _open_image_model_from_main(
         callback, state, model="grok_imagine_i2i", upload_first=True
     )
+
+
+@router.callback_query(F.data == "main_img_wan_27")
+async def show_main_img_wan_27(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="wan_27")
 
 
 @router.callback_query(F.data == "main_vid_v3_std")
@@ -2093,6 +2116,23 @@ async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMCo
     else:
         await _show_image_creation_screen(callback, state)
     await callback.answer()
+
+
+
+@router.callback_query(F.data == "model_wan_27")
+async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
+    logger.info("Wan 2.7 test model selected by user_id=%s", callback.from_user.id)
+    await state.update_data(
+        img_service="wan_27",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        img_quality="basic",
+        img_nsfw_checker=False,
+        nsfw_enabled=False,
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Выбрана тестовая модель Wan 2.7 Pro")
 
 
 @router.callback_query(F.data == "model_grok_i2i")
@@ -4486,3 +4526,4 @@ async def run_no_preset_video_from_message(
 @router.callback_query(F.data == "ignore")
 async def ignore_callback(callback: types.CallbackQuery):
     await callback.answer()
+
