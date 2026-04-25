@@ -1012,7 +1012,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
 
 
 async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
-    """Analyze a reference image and return generation prompts."""
+    """Analyze a reference image and return generation prompts via GPT 5.4."""
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -1028,80 +1028,22 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        import aiohttp
-        from bot.services.image_analyzer_service import image_analyzer_service
+        from bot.services.photo_prompt_service import photo_prompt_service
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                if resp.status != 200:
-                    return web.json_response(
-                        {
-                            "ok": False,
-                            "error": f"Не удалось скачать фото для анализа: HTTP {resp.status}",
-                        },
-                        status=400,
-                    )
-                image_bytes = await resp.read()
-
-        if not image_bytes:
-            return web.json_response(
-                {"ok": False, "error": "Фото пустое или недоступно"},
-                status=400,
-            )
-
-        if len(image_bytes) > 50 * 1024 * 1024:
-            return web.json_response(
-                {"ok": False, "error": "Фото слишком большое, максимум 50MB"},
-                status=400,
-            )
-
-        raw_prompt = image_analyzer_service.analyze_image(image_bytes)
-
-        if not raw_prompt:
-            return web.json_response(
-                {"ok": False, "error": "AI не смог собрать промпт по фото"},
-                status=500,
-            )
-
-        preserve_note = (
-            f"\n\nImportant to preserve: {preserve}."
-            if preserve
-            else ""
-        )
-        goal_note = (
-            f"\nDesired result: {goal}."
-            if goal
-            else ""
-        )
-
-        prompt_en = str(raw_prompt).strip() + preserve_note + goal_note
-
-        prompt_ru = (
-            "Промпт собран по загруженному изображению. "
-            "Основной вариант лучше использовать на английском, так модели точнее держат визуальные детали. "
-            f"Важно сохранить: {preserve or 'композицию, объект, свет, цвета и стиль'}. "
-            f"Нужный результат: {goal or 'максимально похожее изображение для повторной генерации'}."
-        )
-
-        negative_prompt = (
-            "blurry, low quality, distorted face, bad anatomy, extra fingers, "
-            "deformed hands, duplicated limbs, watermark, text, logo, overexposed, "
-            "underexposed, plastic skin, unnatural eyes, asymmetry"
-        )
-
-        model_hint = (
-            "Nano Banana Pro — для быстрой похожей генерации. "
-            "Seedream 4.5 Edit — если нужно работать по исходнику/референсам. "
-            "GPT Image 2 — если нужен более детальный и мягкий фотореализм."
+        result = await photo_prompt_service.analyze_photo(
+            image_url=image_url,
+            preserve=preserve,
+            goal=goal,
         )
 
         return web.json_response(
             {
                 "ok": True,
-                "prompt_en": prompt_en,
-                "prompt_ru": prompt_ru,
-                "negative_prompt": negative_prompt,
-                "model_hint": model_hint,
+                "prompt_en": result["prompt_en"],
+                "prompt_ru": result["prompt_ru"],
+                "negative_prompt": result["negative_prompt"],
+                "model_hint": result["model_hint"],
+                "key_details": result.get("key_details", []),
             }
         )
     except Exception as e:
