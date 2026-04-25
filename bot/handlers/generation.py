@@ -155,6 +155,22 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     return f"{safety_prefix}{normalized}"
 
 
+def _build_image_variant_prompt(prompt: str, variant_index: int, total_count: int) -> str:
+    """Add controlled variation for multi-image batches while keeping references."""
+    prompt = (prompt or "").strip()
+    if total_count <= 1:
+        return prompt
+
+    variants = [
+        "Create a distinct variation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Use a slightly different composition and micro-pose.",
+        "Create another distinct interpretation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Change camera angle, crop, and natural expression slightly.",
+        "Create a new variation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Vary lighting balance, framing, and background depth slightly.",
+        "Create an alternate editorial take while preserving the same referenced person/object, identity, key features, outfit, and visual style. Use a different crop, pose nuance, and mood.",
+    ]
+    instruction = variants[variant_index % len(variants)]
+    return f"{prompt}\n\nVariant {variant_index + 1} of {total_count}: {instruction} Do not copy previous outputs exactly."
+
+
 async def _start_image_generation_task(
     *,
     user,
@@ -199,13 +215,15 @@ async def _start_image_generation_task(
         request_data=request_snapshot,
     )
     logger.info(
-        "Image route: local_task_id=%s selected_model=%s runtime_model=%s provider_model=%s references=%s ratio=%s",
+        "Image route: local_task_id=%s selected_model=%s runtime_model=%s provider_model=%s references=%s ratio=%s ref_sample=%s prompt_len=%s",
         local_task_id,
         img_service,
         runtime_img_service,
         provider_model,
         len(reference_images),
         img_ratio,
+        reference_images[:3],
+        len(prompt or ""),
     )
 
     if runtime_img_service == "banana_2":
@@ -458,9 +476,9 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             user=user,
             telegram_id=callback.from_user.id,
             img_service=img_service,
-            prompt=prompt,
+            prompt=_build_image_variant_prompt(prompt, index if 'index' in locals() else 0, img_count if 'img_count' in locals() else 1),
             img_ratio=img_ratio,
-            reference_images=reference_images,
+            reference_images=list(stable_reference_images if 'stable_reference_images' in locals() else (reference_images or [])),
             unit_cost=unit_cost,
             img_quality=img_quality,
             img_nsfw_checker=img_nsfw_checker,
@@ -3602,14 +3620,18 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+        stable_reference_images = list(reference_images or [])
+
         for index in range(img_count):
+            variant_prompt = _build_image_variant_prompt(prompt, index, img_count)
+
             launch_result = await _start_image_generation_task(
                 user=user,
                 telegram_id=message.from_user.id,
                 img_service=img_service,
-                prompt=prompt,
+                prompt=variant_prompt,
                 img_ratio=img_ratio,
-                reference_images=reference_images,
+                reference_images=list(stable_reference_images),
                 unit_cost=unit_cost,
                 img_quality=img_quality,
                 img_nsfw_checker=img_nsfw_checker,
