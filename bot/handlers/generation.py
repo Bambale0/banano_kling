@@ -443,6 +443,45 @@ async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMC
     await callback.answer()
 
 
+
+@router.callback_query(F.data == "model_wan_27")
+async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
+    """Select Wan 2.7 Pro and open reference upload step."""
+    logger.info("Wan 2.7 selected by user_id=%s", callback.from_user.id)
+    user_credits = await get_user_credits(callback.from_user.id)
+
+    await state.update_data(
+        generation_type="image",
+        img_service="wan_27",
+        img_ratio="1:1",
+        img_count=1,
+        reference_images=[],
+        img_quality="basic",
+        img_nsfw_checker=False,
+        nsfw_enabled=False,
+        preset_id="new",
+        img_flow_step="refs",
+    )
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+    text = (
+        "🧪 <b>Wan 2.7 Pro — тест</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "<b>Шаг 1. Референсы</b>\n"
+        "Загрузите фото, если хотите проверить редактирование или генерацию по исходнику.\n"
+        "Можно загрузить до 9 фото.\n\n"
+        "Если референсы не нужны — нажмите <b>⏭ Пропустить</b>.\n"
+        "Когда всё готово — нажмите <b>✅ Продолжить</b>."
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        parse_mode="HTML",
+    )
+    await callback.answer("Wan 2.7 Pro выбран")
+
+
 @router.callback_query(F.data.startswith("repeat_image_"))
 async def repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
     """Повторяет фото-задачу с тем же промптом, моделью и исходниками."""
@@ -583,7 +622,9 @@ async def show_main_img_grok(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "main_img_wan_27")
 async def show_main_img_wan_27(callback: types.CallbackQuery, state: FSMContext):
-    await _open_image_model_from_main(callback, state, model="wan_27")
+    await state.update_data(img_service="wan_27", preset_id="new", img_flow_step="settings")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Выбрана тестовая модель Wan 2.7 Pro")
 
 
 @router.callback_query(F.data == "main_vid_v3_std")
@@ -4516,23 +4557,6 @@ async def ignore_callback(callback: types.CallbackQuery):
 # =============================================================================
 # WAN 2.7 TEST FLOW
 # =============================================================================
-
-@router.callback_query(F.data == "model_wan_27")
-async def select_model_wan_27_test(callback: types.CallbackQuery, state: FSMContext):
-    """Isolated Wan 2.7 test flow: optional refs -> prompt -> generation."""
-    user_credits = await get_user_credits(callback.from_user.id)
-    await state.update_data(
-        generation_type="image",
-        img_service="wan_27",
-        img_ratio="1:1",
-        img_count=1,
-        reference_images=[],
-        img_quality="basic",
-        img_nsfw_checker=False,
-        nsfw_enabled=False,
-        preset_id="wan_27",
-    )
-    await state.set_state(GenerationStates.uploading_reference_images)
 
     text = (
         "🧪 <b>Wan 2.7 Pro — тест</b>\n"
