@@ -91,11 +91,19 @@ async def analyze_photo(message: Message, state: FSMContext):
             f"{model_hint}"
         )
 
-        await processing.edit_text(
+        try:
+            await processing.delete()
+        except Exception:
+            pass
+
+        await message.answer(
             text,
-            reply_markup=get_main_menu_button_keyboard(),
             parse_mode="HTML",
             disable_web_page_preview=True,
+        )
+        await message.answer(
+            "Готово. Промпт выше останется в чате — можно скопировать его или использовать для генерации.",
+            reply_markup=get_main_menu_button_keyboard(),
         )
         await state.clear()
 
