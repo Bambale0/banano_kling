@@ -171,12 +171,61 @@ VIDEO_MODELS = (
         "supports_seed": True,
         "supports_watermark": True,
         "max_image_references": 3,
+    },    {
+        "id": "motion_control_v26",
+        "label": "Kling 2.6 Motion Control",
+        "description": "Перенос движения по фото персонажа и видео движения",
+        "durations": [5],
+        "ratios": ["motion"],
+        "supports": ["motion"],
+        "motion_versions": ["2.6"],
+        "motion_modes": ["720p", "1080p"],
+        "max_image_references": 1,
+        "max_video_references": 1,
     },
+    {
+        "id": "motion_control_v30",
+        "label": "Kling 3.0 Motion Control",
+        "description": "Улучшенный перенос движения и стабильность лица",
+        "durations": [5],
+        "ratios": ["motion"],
+        "supports": ["motion"],
+        "motion_versions": ["3.0"],
+        "motion_modes": ["720p", "1080p"],
+        "max_image_references": 1,
+        "max_video_references": 1,
+    },
+    {
+        "id": "avatar_std",
+        "label": "Kling Avatar Standard",
+        "description": "Говорящий аватар по фото и аудио",
+        "durations": [5],
+        "ratios": ["avatar"],
+        "supports": ["avatar"],
+        "requires_audio": True,
+        "requires_image": True,
+        "max_image_references": 1,
+        "max_audio_references": 1,
+    },
+    {
+        "id": "avatar_pro",
+        "label": "Kling Avatar Pro",
+        "description": "Качественный говорящий аватар по фото и аудио",
+        "durations": [5],
+        "ratios": ["avatar"],
+        "supports": ["avatar"],
+        "requires_audio": True,
+        "requires_image": True,
+        "max_image_references": 1,
+        "max_audio_references": 1,
+    },
+
 )
 
 FILE_KIND_MAP = {
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
+    "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
 }
 
 
@@ -391,6 +440,7 @@ async def _launch_video_generation_task(
     image_url: str | None,
     image_references: list[str],
     video_references: list[str],
+    audio_url: str | None = None,
     grok_mode: str = "normal",
     veo_generation_type: str = "TEXT_2_VIDEO",
     veo_translation: bool = True,
@@ -407,7 +457,27 @@ async def _launch_video_generation_task(
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
     callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
 
-    if model == "grok_imagine":
+    if model in {"avatar_std", "avatar_pro"}:
+        result = await kling_service.generate_video(
+            prompt=prompt,
+            model=model,
+            duration=duration,
+            aspect_ratio=normalized_ratio,
+            image_url=image_url,
+            video_urls=[audio_url] if audio_url else [],
+            webhook_url=callback_url,
+        )
+    elif model in {"motion_control_v26", "motion_control_v30"}:
+        result = await kling_service.generate_video(
+            prompt=prompt,
+            model=model,
+            duration=duration,
+            aspect_ratio=normalized_ratio,
+            image_url=image_url,
+            video_urls=video_references[:1],
+            webhook_url=callback_url,
+        )
+    elif model == "grok_imagine":
         result = await grok_service.generate_image_to_video(
             image_urls=[image_url] + image_references[:6],
             prompt=prompt,
@@ -487,6 +557,7 @@ async def _launch_video_generation_task(
                 "v_image_url": image_url,
                 "reference_images": image_references,
                 "v_reference_videos": video_references,
+                "audio_url": audio_url,
                 "grok_mode": grok_mode,
                 "veo_generation_type": veo_generation_type,
                 "veo_translation": veo_translation,
@@ -1178,6 +1249,10 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         image_url = str(body.get("v_image_url", "") or "") or None
         image_references = list(body.get("reference_images", []) or [])
         video_references = list(body.get("v_reference_videos", []) or [])
+        audio_url = str(body.get("audio_url", "") or "") or None
+        audio_references = list(body.get("audio_references", []) or [])
+        if not audio_url and audio_references:
+            audio_url = str(audio_references[0] or "") or None
         grok_mode = str(body.get("grok_mode", "normal") or "normal")
         veo_generation_type = str(
             body.get("veo_generation_type", "TEXT_2_VIDEO") or "TEXT_2_VIDEO"
@@ -1239,6 +1314,38 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        if generation_type == "motion" and (not image_url or not video_references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для Motion Control загрузите фото персонажа и видео движения",
+                },
+                status=400,
+            )
+        if generation_type == "avatar" and (not image_url or not audio_url):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для Kling Avatar загрузите фото персонажа и аудиофайл",
+                },
+                status=400,
+            )
+        if generation_type == "motion" and (not image_url or not video_references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для Motion Control загрузите фото персонажа и видео движения",
+                },
+                status=400,
+            )
+        if generation_type == "avatar" and (not image_url or not audio_url):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для Kling Avatar загрузите фото персонажа и аудиофайл",
+                },
+                status=400,
+            )
 
         cost = preset_manager.get_video_cost(model, duration)
         is_admin = config.is_admin(telegram_id)
@@ -1265,6 +1372,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             image_url=image_url,
             image_references=image_references,
             video_references=video_references,
+            audio_url=audio_url,
             grok_mode=grok_mode,
             veo_generation_type=veo_generation_type,
             veo_translation=veo_translation,

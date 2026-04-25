@@ -11,6 +11,7 @@ import { РезультатCard } from '../result-card'
 import { cn } from '@/lib/utils'
 
 type MotionMode = '720p' | '1080p'
+type MotionModel = 'motion_control_v26' | 'motion_control_v30'
 type MotionDirection = 'video' | 'image'
 
 function MotionUploadCard({
@@ -100,6 +101,7 @@ export function MotionTab() {
 
   const [characterImage, setCharacterImage] = useState<UploadedFile | null>(null)
   const [motionVideo, setMotionVideo] = useState<UploadedFile | null>(null)
+  const [motionModel, setMotionModel] = useState<MotionModel>('motion_control_v26')
   const [mode, setMode] = useState<MotionMode>('720p')
   const [direction, setDirection] = useState<MotionDirection>('video')
   const [prompt, setPrompt] = useState('')
@@ -160,6 +162,7 @@ export function MotionTab() {
           prompt,
           mode,
           direction,
+          model: motionModel,
         })
 
         addTask(result.task)
@@ -247,6 +250,32 @@ export function MotionTab() {
             <p className="font-serif text-lg text-foreground mb-4">Настройки</p>
 
             <div className="space-y-3">
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  Версия Kling
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'motion_control_v26' as const, label: 'Kling 2.6' },
+                    { id: 'motion_control_v30' as const, label: 'Kling 3.0' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setMotionModel(item.id)}
+                      className={cn(
+                        'rounded-2xl border px-4 py-3 text-sm font-medium transition-all',
+                        motionModel === item.id
+                          ? 'border-gold/60 bg-gold/10 text-gold'
+                          : 'border-border/70 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
                   Качество
@@ -337,7 +366,7 @@ export function MotionTab() {
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Модель</span>
-                <strong>Kling Motion</strong>
+                <strong>{motionModel === 'motion_control_v30' ? 'Kling 3.0 Motion' : 'Kling 2.6 Motion'}</strong>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground">Качество</span>

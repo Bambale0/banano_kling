@@ -38,6 +38,8 @@ CANONICAL_VIDEO_ALIASES = {
     "v26_pro": "v26_pro",
     "grok_imagine": "grok_imagine",
     "glow": "glow",
+    "motion_control_v26": "motion_control_v26",
+    "motion_control_v30": "motion_control_v30",
     "veo3": "veo3",
     "veo3_fast": "veo3_fast",
     "veo3_lite": "veo3_lite",

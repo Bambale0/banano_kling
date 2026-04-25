@@ -44,6 +44,7 @@ def get_main_menu_keyboard(user_credits: int = 0):
         )
     builder.button(text="🖼 Создать фото", callback_data="create_image_text_new")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
+    builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
     builder.button(text="📚 Промпт-канал", url="https://t.me/only_tm_ii")
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
@@ -53,9 +54,9 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 2, 1, 1)
     else:
-        builder.adjust(2, 2, 2, 2, 1)
+        builder.adjust(2, 2, 2, 2, 1, 1)
 
     return builder.as_markup()
 
@@ -136,6 +137,8 @@ SUPPORTED_RATIOS = {
     "v3_omni_std": ["16:9", "9:16", "1:1"],
     "v3_omni_pro": ["16:9", "9:16", "1:1"],
     "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
+    "motion_control_v26": ["motion"],
+    "motion_control_v30": ["motion"],
     "glow": ["16:9", "9:16", "1:1"],
     "veo3": ["16:9", "9:16", "Auto"],
     "veo3_fast": ["16:9", "9:16", "Auto"],
@@ -148,6 +151,8 @@ VIDEO_MODEL_LABELS = {
     "v26_pro": "Kling 2.5 Turbo Pro",
     "avatar_std": "Kling AI Avatar Standard",
     "avatar_pro": "Kling AI Avatar Pro",
+    "motion_control_v26": "Kling 2.6 Motion Control",
+    "motion_control_v30": "Kling 3.0 Motion Control",
     "grok_imagine": "Grok Imagine",
     "glow": "Kling Glow",
     "veo3": "Veo 3.1 Quality",
@@ -178,6 +183,7 @@ def get_video_type_label(v_type: str) -> str:
         "imgtxt": "Фото + Текст -> Видео",
         "video": "Видео + Текст -> Видео",
         "avatar": "Аватар + Аудио -> Видео",
+        "motion": "Motion Control",
     }
     return mapping.get(v_type, v_type)
 
@@ -217,6 +223,8 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
             preset_manager.get_video_cost("veo3_lite", 6),
         ),
         ("glow", "✨ Kling Glow", preset_manager.get_video_cost("glow", 5)),
+        ("motion_control_v26", "🎯 Kling 2.6 Motion", preset_manager.get_video_cost("motion_control_v26", 5)),
+        ("motion_control_v30", "🚀 Kling 3.0 Motion", preset_manager.get_video_cost("motion_control_v30", 5)),
     ]
 
     for model_key, label, cost in model_rows:
@@ -243,11 +251,22 @@ def get_video_media_step_keyboard(
     """Второй шаг: тип генерации и загрузка нужного медиа."""
     builder = InlineKeyboardBuilder()
 
+    if current_v_type == "motion":
+        image_status = "загружено" if has_start_image else "не загружено"
+        video_status = "загружено" if reference_video_count else "не загружено"
+        builder.button(text=f"🖼 Фото персонажа: {image_status}", callback_data="motion_upload_image")
+        builder.button(text=f"🎬 Видео движения: {video_status}", callback_data="motion_upload_video")
+        builder.button(text="▶️ К промпту", callback_data="video_media_continue")
+        builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
+        builder.button(text="🏠 Главное меню", callback_data="back_main")
+        builder.adjust(2, 1, 2)
+        return builder.as_markup()
+
     if current_v_type == "avatar":
         image_status = "загружено" if has_start_image else "не загружено"
         audio_status = "загружено" if has_avatar_audio else "не загружено"
-        builder.button(text=f"🖼 Аватар: {image_status}", callback_data="ignore")
-        builder.button(text=f"🎵 Аудио: {audio_status}", callback_data="ignore")
+        builder.button(text=f"🖼 Аватар: {image_status}", callback_data="avatar_upload_image")
+        builder.button(text=f"🎵 Аудио: {audio_status}", callback_data="avatar_upload_audio")
         builder.button(text="▶️ К промпту", callback_data="video_media_continue")
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")

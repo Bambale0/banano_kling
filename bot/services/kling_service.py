@@ -41,8 +41,8 @@ class KlingService:
 
     KLING_3_MODELS = {"v3_std", "v3_pro", "kling_v3", "kling_3", "kling_3_pro"}
     KLING_25_MODELS = {"v26_pro", "kling_25_turbo_pro"}
-    AVATAR_MODELS = {"avatar_std", "avatar_pro"}
-    MOTION_MODELS = {"kling-2.6/motion-control", "motion_control"}
+    AVATAR_MODELS = {"avatar_std", "avatar_pro", "kling_avatar_std", "kling_avatar_pro"}
+    MOTION_MODELS = {"kling-2.6/motion-control", "kling-3.0/motion-control", "motion_control", "motion_control_v26", "motion_control_v30"}
     GLOW_MODELS = {"glow"}
 
     NON_KLING_MODELS = {
@@ -427,10 +427,11 @@ class KlingService:
         self,
         input_data: Dict[str, Any],
         webhook: Optional[str] = None,
+        model: str = "kling-2.6/motion-control",
     ) -> Dict[str, Any]:
-        """Create Kie.ai Kling 2.6 Motion Control task."""
+        """Create Kie.ai Kling Motion Control task."""
         payload: Dict[str, Any] = {
-            "model": "kling-2.6/motion-control",
+            "model": model,
             "input": input_data,
         }
         if webhook:
@@ -446,6 +447,7 @@ class KlingService:
         prompt: Optional[str] = None,
         motion_direction: str = "video",
         mode: str = "std",
+        motion_model: str = "kling-2.6/motion-control",
         webhook_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate motion control animation."""
@@ -473,7 +475,18 @@ class KlingService:
         if preset_motion:
             input_data["preset_motion"] = preset_motion
 
-        return await self.create_kie_motion_task(input_data, webhook_url)
+        if motion_model not in {"kling-2.6/motion-control", "kling-3.0/motion-control"}:
+            motion_model = "kling-2.6/motion-control"
+
+        logger.info(
+            "Motion Control payload prepared: model=%s image=%s videos=%s mode=%s direction=%s",
+            motion_model,
+            bool(image_url),
+            len(cleaned_video_urls),
+            input_data.get("mode"),
+            input_data.get("character_orientation"),
+        )
+        return await self.create_kie_motion_task(input_data, webhook_url, model=motion_model)
 
     # ------------------------------------------------------------------
     # Public high-level router
@@ -554,19 +567,25 @@ class KlingService:
                 prompt=prompt or "",
                 model=(
                     "kling/ai-avatar-standard"
-                    if model == "avatar_std"
+                    if model in {"avatar_std", "kling_avatar_std"}
                     else "kling/ai-avatar-pro"
                 ),
                 webhook=webhook_url,
             )
 
         if model in self.MOTION_MODELS or "motion" in model.lower():
+            motion_model = (
+                "kling-3.0/motion-control"
+                if model in {"motion_control_v30", "kling-3.0/motion-control"}
+                else "kling-2.6/motion-control"
+            )
             return await self.generate_motion_control(
                 image_url=image_url or "",
                 video_urls=video_urls or [],
                 prompt=prompt,
                 motion_direction="video",
                 mode="std",
+                motion_model=motion_model,
                 webhook_url=webhook_url,
             )
 
