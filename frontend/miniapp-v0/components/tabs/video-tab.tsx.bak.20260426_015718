@@ -30,7 +30,6 @@ export function VideoTab() {
     startImage: string | null
     references: string[]
     videoReferences: string[]
-    audioReference: string | null
   }) => {
     setIsSubmitting(true)
     setError(null)
@@ -97,20 +96,6 @@ export function VideoTab() {
     return uploadFile('video_reference', file)
   }
 
-
-  const handleUploadAudioReference = async (file: File): Promise<UploadedFile> => {
-    if (state.mode !== 'live') {
-      return {
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: '',
-        type: 'audio',
-        size: file.size,
-      }
-    }
-    return uploadFile('audio_reference', file)
-  }
-
   return (
     <div className="px-4 space-y-6">
       <div className="text-center mb-6">
@@ -128,7 +113,6 @@ export function VideoTab() {
           onSubmit={handleSubmit}
           onUploadImageReference={handleUploadImageReference}
           onUploadVideoReference={handleUploadVideoReference}
-          onUploadAudioReference={handleUploadAudioReference}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
         />

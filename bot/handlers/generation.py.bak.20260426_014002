@@ -159,18 +159,6 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     return f"{safety_prefix}{normalized}"
 
 
-
-def _apply_reference_detail_preservation(img_service: str, prompt: str, reference_images: list[str]) -> str:
-    """For Banana models, ask provider to keep reference details stable."""
-    prompt = (prompt or "").strip()
-    if not reference_images or img_service not in {"banana_pro", "banana_2", "nanobanana"}:
-        return prompt
-    instruction = (
-        "Preserve the reference image details exactly: identity, face, proportions, hairstyle, outfit, accessories, colors, textures, labels, markings, object shape, material, and visual style. "
-        "Do not redesign or replace unchanged elements. Apply only the requested user changes."
-    )
-    return f"{instruction}\n\nUser request: {prompt}" if prompt else instruction
-
 def _build_image_variant_prompt(prompt: str, variant_index: int, total_count: int) -> str:
     """Add controlled variation for multi-image batches while keeping references."""
     prompt = (prompt or "").strip()
@@ -206,7 +194,7 @@ async def _start_image_generation_task(
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-    effective_prompt = _apply_safe_prompt_framing(runtime_img_service, _apply_reference_detail_preservation(runtime_img_service, prompt, reference_images))
+    effective_prompt = _apply_safe_prompt_framing(runtime_img_service, prompt)
     request_snapshot = {
         "img_service": img_service,
         "prompt": prompt,
