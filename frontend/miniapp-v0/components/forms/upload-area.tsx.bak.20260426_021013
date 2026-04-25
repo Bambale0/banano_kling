@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Upload, X, Loader2, Image as ImageIcon, Video, Music } from 'lucide-react'
+import { Upload, X, Loader2, Image as ImageIcon, Video } from 'lucide-react'
 
 interface UploadAreaProps {
   files: UploadedFile[]
@@ -45,7 +45,7 @@ export function UploadArea({
         id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         name: file.name,
         url: file.type.startsWith('image') ? URL.createObjectURL(file) : '',
-        type: file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image',
+        type: file.type.startsWith('video') ? 'video' : 'image',
         size: file.size,
         uploading: true,
       }
@@ -193,7 +193,7 @@ export function UploadArea({
       <p className="text-xs text-muted-foreground">
         {accept.startsWith('image/')
           ? 'PNG, JPG, WEBP. Удаляйте лишние референсы прямо из списка.'
-          : 'MP3, WAV, M4A или MP4/MOV для видео-референсов. Держите референсы короткими и чистыми.'}
+          : 'MP4, MOV и другие video-файлы. Держите короткие и чистые референсы для лучшего результата.'}
       </p>
     </div>
   )
