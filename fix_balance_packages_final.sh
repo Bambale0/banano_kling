@@ -16,58 +16,82 @@ PACKAGES = [
     (1000, 2900, "Максимум"),
 ]
 
-# 1) Patch keyboards/payment package source.
-for rel in [
-    "bot/keyboards.py",
-    "bot/handlers/common.py",
-    "bot/handlers/payment.py",
-    "bot/handlers/payments.py",
-    "bot/main.py",
-    "bot/miniapp.py",
-]:
+LABELS = [
+    "🍌 Мини: 15🍌 за 65₽",
+    "🍌 Старт: 25🍌 за 90₽",
+    "🍌🍌 Оптимальный: 50🍌 за 160₽ 🔥",
+    "🍌🍌🍌 Про: 100🍌 за 310₽",
+    "🍌🍌🍌🍌 Студия: 200🍌 за 605₽",
+    "🍌🍌🍌🍌🍌 Бизнес: 500🍌 за 1500₽",
+    "🍌🍌🍌🍌🍌🍌 Максимум: 1000🍌 за 2900₽",
+]
+
+# Repair bot/keyboards.py specifically if old script broke package list syntax.
+p = Path("bot/keyboards.py")
+if p.exists():
+    s = p.read_text(encoding="utf-8")
+
+    # If a packages list was injected inside imports/top-level incorrectly, remove the broken tuple-only block.
+    s = re.sub(
+        r'\n\s*\(15,\s*65,\s*"Мини"\),[\s\S]*?\(1000,\s*2900,\s*"Максимум"\),\s*\]\s*',
+        '\n',
+        s,
+        count=1,
+    )
+
+    # Directly replace visible old button labels.
+    replacements = {
+        "🍌 Мини: 15🍌 за 150₽": LABELS[0],
+        "🍌🍌 Стандарт: 30🍌 за 250₽": LABELS[1],
+        "🍌🍌🍌 Оптимальный: 50🍌 за 400₽ 🔥": LABELS[2],
+        "🍌🍌🍌🍌 Про: 100🍌 за 700₽": LABELS[3],
+        "🍌🍌🍌🍌🍌 Студия: 200🍌 за 1400₽": LABELS[4],
+    }
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+
+    # Patch old callback payload amounts/credits if they are embedded in callback_data.
+    for old, new in [
+        ("buy_15_150", "buy_15_65"),
+        ("buy_30_250", "buy_25_90"),
+        ("buy_50_400", "buy_50_160"),
+        ("buy_100_700", "buy_100_310"),
+        ("buy_200_1400", "buy_200_605"),
+        ("pay_15_150", "pay_15_65"),
+        ("pay_30_250", "pay_25_90"),
+        ("pay_50_400", "pay_50_160"),
+        ("pay_100_700", "pay_100_310"),
+        ("pay_200_1400", "pay_200_605"),
+    ]:
+        s = s.replace(old, new)
+
+    # If a list of payment buttons exists, replace its body conservatively by labels only when old labels are still present.
+    p.write_text(s, encoding="utf-8")
+
+# Patch remaining Python files: only simple safe replacements, no generic package-list regex.
+for rel in ["bot/handlers/common.py", "bot/handlers/payment.py", "bot/handlers/payments.py", "bot/main.py", "bot/miniapp.py"]:
     p = Path(rel)
     if not p.exists():
         continue
     s = p.read_text(encoding="utf-8")
     original = s
-
-    # Replace old visible labels from screenshot.
-    old_to_new = {
-        "🍌 Мини: 15🍌 за 150₽": "🍌 Мини: 15🍌 за 65₽",
-        "🍌🍌 Стандарт: 30🍌 за 250₽": "🍌 Старт: 25🍌 за 90₽",
-        "🍌🍌🍌 Оптимальный: 50🍌 за 400₽ 🔥": "🍌🍌 Оптимальный: 50🍌 за 160₽ 🔥",
-        "🍌🍌🍌🍌 Про: 100🍌 за 700₽": "🍌🍌🍌 Про: 100🍌 за 310₽",
-        "🍌🍌🍌🍌🍌 Студия: 200🍌 за 1400₽": "🍌🍌🍌🍌 Студия: 200🍌 за 605₽",
-    }
-    for old, new in old_to_new.items():
+    for old, new in {
+        "15🍌 за 150₽": "15🍌 за 65₽",
+        "30🍌 за 250₽": "25🍌 за 90₽",
+        "50🍌 за 400₽": "50🍌 за 160₽",
+        "100🍌 за 700₽": "100🍌 за 310₽",
+        "200🍌 за 1400₽": "200🍌 за 605₽",
+        "15 бананов = 150₽": "15 бананов = 65₽",
+        "30 бананов = 250₽": "25 бананов = 90₽",
+        "50 бананов = 400₽": "50 бананов = 160₽",
+        "100 бананов = 700₽": "100 бананов = 310₽",
+        "200 бананов = 1400₽": "200 бананов = 605₽",
+    }.items():
         s = s.replace(old, new)
-
-    # Replace common package tuple/list patterns.
-    package_tuples = "[\n" + ",\n".join(
-        f'        ({credits}, {rub}, "{name}"),' for credits, rub, name in PACKAGES
-    ) + "\n    ]"
-    package_dicts = "[\n" + ",\n".join(
-        f'        {{"credits": {credits}, "amount_rub": {rub}, "price": {rub}, "title": "{name}"}},' for credits, rub, name in PACKAGES
-    ) + "\n    ]"
-
-    s = re.sub(r'(packages\s*=\s*)\[[\s\S]*?\]', r'\1' + package_tuples, s, count=1, flags=re.I)
-    s = re.sub(r'(PAYMENT_PACKAGES\s*=\s*)\[[\s\S]*?\]', r'\1' + package_dicts, s, count=1)
-    s = re.sub(r'(BANANA_PACKAGES\s*=\s*)\[[\s\S]*?\]', r'\1' + package_dicts, s, count=1)
-    s = re.sub(r'(CREDIT_PACKAGES\s*=\s*)\[[\s\S]*?\]', r'\1' + package_dicts, s, count=1)
-
-    # If old amounts are hardcoded near old credit counts, patch directly.
-    pairs = [(15,65),(25,90),(30,90),(50,160),(100,310),(200,605),(500,1500),(1000,2900)]
-    for credits, rub in pairs:
-        s = re.sub(rf'({credits}\s*🍌\s*за\s*)\d+\s*₽', rf'\g<1>{rub}₽', s)
-        s = re.sub(rf'({credits}\s*банан\w*\s*[=:—-]\s*)\d+\s*₽', rf'\g<1>{rub}₽', s, flags=re.I)
-
-    # Add/refresh value line.
-    s = s.replace("Чем больше пакет, тем выгоднее цена за банан.", "Чем больше пакет, тем выгоднее цена за банан.")
-
     if s != original:
         p.write_text(s, encoding="utf-8")
 
-# 2) Mini App package pricing.
+# Mini App simple safe replacements.
 for rel in [
     "frontend/miniapp-v0/lib/api.ts",
     "frontend/miniapp-v0/lib/mock-data.ts",
@@ -80,23 +104,27 @@ for rel in [
         continue
     s = p.read_text(encoding="utf-8")
     original = s
-
-    # visible labels
-    s = s.replace("15🍌 за 150₽", "15🍌 за 65₽")
-    s = s.replace("30🍌 за 250₽", "25🍌 за 90₽")
-    s = s.replace("50🍌 за 400₽", "50🍌 за 160₽")
-    s = s.replace("100🍌 за 700₽", "100🍌 за 310₽")
-    s = s.replace("200🍌 за 1400₽", "200🍌 за 605₽")
-
-    ts_packages = "[\n" + ",\n".join(
-        f'  {{ credits: {credits}, amountRub: {rub}, amount_rub: {rub}, price: {rub}, title: "{name}" }},' for credits, rub, name in PACKAGES
-    ) + "\n]"
-    s = re.sub(r'(const\s+(?:packages|bananaPackages|paymentPackages|creditPackages)\s*=\s*)\[[\s\S]*?\]', r'\1' + ts_packages, s, count=1)
-
+    for old, new in {
+        "15🍌 за 150₽": "15🍌 за 65₽",
+        "30🍌 за 250₽": "25🍌 за 90₽",
+        "50🍌 за 400₽": "50🍌 за 160₽",
+        "100🍌 за 700₽": "100🍌 за 310₽",
+        "200🍌 за 1400₽": "200🍌 за 605₽",
+        "amountRub: 150": "amountRub: 65",
+        "amountRub: 250": "amountRub: 90",
+        "amountRub: 400": "amountRub: 160",
+        "amountRub: 700": "amountRub: 310",
+        "amountRub: 1400": "amountRub: 605",
+        "amount_rub: 150": "amount_rub: 65",
+        "amount_rub: 250": "amount_rub: 90",
+        "amount_rub: 400": "amount_rub: 160",
+        "amount_rub: 700": "amount_rub: 310",
+        "amount_rub: 1400": "amount_rub: 605",
+    }.items():
+        s = s.replace(old, new)
     if s != original:
         p.write_text(s, encoding="utf-8")
 
-# 3) Canonical Python package file for future imports.
 Path("bot/banana_packages.py").write_text(
     "BANANA_PACKAGES = [\n"
     "    {\"credits\": 15, \"amount_rub\": 65, \"title\": \"Мини\"},\n"
@@ -119,7 +147,7 @@ for rel in ["bot/keyboards.py", "bot/handlers/common.py", "bot/miniapp.py", "bot
     p = Path(rel)
     if p.exists():
         py_compile.compile(str(p), doraise=True)
-print("Balance packages patched.")
+print("Balance packages patched safely.")
 PY
 
 echo "Check: grep -R '150₽\|250₽\|400₽\|700₽\|1400₽\|65₽\|90₽\|160₽\|310₽\|605₽' -n bot frontend/miniapp-v0 | head -120"
