@@ -72,7 +72,7 @@ def _get_user_menu(user_id: int) -> str:
 def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
-        "🏠 <b>NEUROMIX</b>\n"
+        "🏠 <b>Banano AI Studio</b>\n"
         "Выберите, что хотите сделать. Бот сам проведёт вас по шагам.\n\n"
         "<b>Что можно сделать</b>\n"
         "• Создать фото\n"
@@ -567,50 +567,25 @@ async def render_partner_program(target, user_id: int):
     )
 
     text = (
-        "💼 <b>Партнёрам</b>
-
-"
-        "Это практическое руководство по участию в партнёрской программе.
-"
-        "Ваша партнёрская ссылка:
-"
-        f"🔗 <code>{referral_link}</code>
-
-"
-        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.
-"
-        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.
-
-"
-        "<b>Как это работает:</b>
-"
-        "• Пользователь переходит по вашей ссылке
-"
-        "• Регистрируется и закрепляется за вами навсегда
-"
-        "• После оплат рефералов начисляется денежное вознаграждение
-
-"
-        "<b>2 уровень:</b>
-"
-        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.
-
-"
-        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>
-"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота
-"
-        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов
-
-"
-        "<b>Ваша статистика:</b>
-"
-        f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>
-"
-        f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>
-"
-        f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽
-"
+        "💼 <b>Партнёрам</b>\n\n"
+        "Это практическое руководство по участию в партнёрской программе.\n"
+        "Ваша партнёрская ссылка:\n"
+        f"🔗 <code>{referral_link}</code>\n\n"
+        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.\n"
+        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\n\n"
+        "<b>Как это работает:</b>\n"
+        "• Пользователь переходит по вашей ссылке\n"
+        "• Регистрируется и закрепляется за вами навсегда\n"
+        "• После оплат рефералов начисляется денежное вознаграждение\n\n"
+        "<b>2 уровень:</b>\n"
+        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\n\n"
+        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\n"
+        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов\n\n"
+        "<b>Ваша статистика:</b>\n"
+        f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
+        f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\n"
+        f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
         f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽"
     )
 
@@ -623,7 +598,6 @@ async def render_partner_program(target, user_id: int):
         await target.answer(text, reply_markup=markup, parse_mode="HTML")
     else:
         await target.edit_text(text, reply_markup=markup, parse_mode="HTML")
-
 
 @router.callback_query(F.data == "partner_accept")
 async def accept_partner(callback: types.CallbackQuery):
@@ -651,9 +625,7 @@ async def accept_partner(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "✅ <b>Партнёрская программа активирована</b>
-
-"
+        "✅ <b>Партнёрская программа активирована</b>\n\n"
         "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
         parse_mode="HTML",
