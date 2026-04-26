@@ -6,11 +6,10 @@ python3 - <<'PY'
 from pathlib import Path
 import re
 
-# --- common.py: partner screen text only, no risky welcome rewrites ---
 p = Path("bot/handlers/common.py")
 s = p.read_text(encoding="utf-8")
 
-partner_func = r'''async def render_partner_program(target, user_id: int):
+partner_func = '''async def render_partner_program(target, user_id: int):
     """Рендерит экран партнёрской программы."""
     user = await get_or_create_user(user_id)
     stats = await get_partner_overview(user_id)
@@ -25,25 +24,25 @@ partner_func = r'''async def render_partner_program(target, user_id: int):
     )
 
     text = (
-        "💼 <b>Партнёрам</b>\n\n"
-        "Это практическое руководство по участию в партнёрской программе.\n"
-        "Ваша партнёрская ссылка:\n"
-        f"🔗 <code>{referral_link}</code>\n\n"
-        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.\n"
-        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\n\n"
-        "<b>Как это работает:</b>\n"
-        "• Пользователь переходит по вашей ссылке\n"
-        "• Регистрируется и закрепляется за вами навсегда\n"
-        "• После оплат рефералов начисляется денежное вознаграждение\n\n"
-        "<b>2 уровень:</b>\n"
-        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\n\n"
-        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\n"
-        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов\n\n"
-        "<b>Ваша статистика:</b>\n"
-        f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
-        f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\n"
-        f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
+        "💼 <b>Партнёрам</b>\\n\\n"
+        "Это практическое руководство по участию в партнёрской программе.\\n"
+        "Ваша партнёрская ссылка:\\n"
+        f"🔗 <code>{referral_link}</code>\\n\\n"
+        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.\\n"
+        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\\n\\n"
+        "<b>Как это работает:</b>\\n"
+        "• Пользователь переходит по вашей ссылке\\n"
+        "• Регистрируется и закрепляется за вами навсегда\\n"
+        "• После оплат рефералов начисляется денежное вознаграждение\\n\\n"
+        "<b>2 уровень:</b>\\n"
+        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\\n\\n"
+        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\\n"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\\n"
+        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов\\n\\n"
+        "<b>Ваша статистика:</b>\\n"
+        f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\\n"
+        f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\\n"
+        f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\\n"
         f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽"
     )
 
@@ -68,8 +67,8 @@ s = re.sub(
 
 s = re.sub(
     r'await callback\.message\.edit_text\(\n\s*"✅ <b>Партнёрский статус активирован</b>"[\s\S]*?parse_mode="HTML",\n\s*\)',
-    r'''await callback.message.edit_text(
-        "✅ <b>Партнёрская программа активирована</b>\n\n"
+    '''await callback.message.edit_text(
+        "✅ <b>Партнёрская программа активирована</b>\\n\\n"
         "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
         parse_mode="HTML",
@@ -81,11 +80,10 @@ s = re.sub(
 
 p.write_text(s, encoding="utf-8")
 
-# --- database.py: enforce requested referral mechanics ---
 p = Path("bot/database.py")
 s = p.read_text(encoding="utf-8")
 
-process_func = r'''async def process_referral(
+process_func = '''async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
     signup_bonus: int = 25,
@@ -140,7 +138,7 @@ s = re.sub(
     flags=re.S,
 )
 
-commission_func = r'''async def credit_first_payment_referral_bonus(
+commission_func = '''async def credit_first_payment_referral_bonus(
     telegram_id: int,
     transaction_credits: int,
     transaction_amount_rub: Optional[float] = None,
@@ -201,7 +199,7 @@ s = re.sub(
 
 s = re.sub(
     r'def get_partner_percent_by_tier\(tier: str\) -> int:\n[\s\S]*?\n\ndef get_partner_tier_by_total',
-    r'''def get_partner_percent_by_tier(tier: str) -> int:
+    '''def get_partner_percent_by_tier(tier: str) -> int:
     return 30
 
 
@@ -213,7 +211,7 @@ def get_partner_tier_by_total''',
 
 s = re.sub(
     r'def get_partner_tier_by_total\(total_revenue_rub: float\) -> str:\n[\s\S]*?\n\nasync def accept_partner_agreement',
-    r'''def get_partner_tier_by_total(total_revenue_rub: float) -> str:
+    '''def get_partner_tier_by_total(total_revenue_rub: float) -> str:
     return "basic"
 
 
