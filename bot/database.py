@@ -589,7 +589,7 @@ async def process_referral(
     signup_bonus: int = 25,
     inviter_bonus: int = 5,
 ) -> bool:
-    """Обрабатывает реферальный переход: новый пользователь +25🍌, пригласивший +5🍌."""
+    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +5🍌."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False
@@ -647,7 +647,7 @@ async def credit_first_payment_referral_bonus(
     transaction_amount_rub: Optional[float] = None,
     bonus_percent: int = 30,
 ) -> dict:
-    """Начисляет партнёрское вознаграждение: 30% первому уровню, 7% второму."""
+    """Начисляет 30% партнёру 1 уровня и 7% партнёру 2 уровня."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -683,16 +683,20 @@ async def credit_first_payment_referral_bonus(
             (user["id"],),
         )
         await db.commit()
-        return {"mode": "partner", "value": level1_bonus, "percent": 30, "level2_value": level2_bonus, "level2_percent": 7}
+        return {
+            "mode": "partner",
+            "value": level1_bonus,
+            "percent": 30,
+            "level2_value": level2_bonus,
+            "level2_percent": 7,
+        }
 
 
 def get_partner_percent_by_tier(tier: str) -> int:
-    """Процент партнёрского вознаграждения 1 уровня."""
     return 30
 
 
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
-    """Единый базовый уровень партнёрки."""
     return "basic"
 
 

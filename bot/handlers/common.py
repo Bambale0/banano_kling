@@ -561,43 +561,62 @@ async def render_partner_program(target, user_id: int):
     me = await bot.get_me()
     referral_code = user.referral_code or ""
     referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+        f"https://t.me/{me.username}?start=ref_{referral_code}"
+        if referral_code
+        else "Ссылка появится после активации"
     )
-
-    tier = stats.get("tier", "basic")
-    percent = stats.get("percent", 30)
-    offer_url = "https://example.com/offer"
-    rules_url = "https://example.com/rules"
-    if hasattr(bot, "offer_url"):
-        offer_url = bot.offer_url
 
     text = (
-        "💼 <b>Партнёрам</b>"
-        "Это практическое руководство по участию в партнёрской программе.\n"
-        "Юридически значимые условия содержатся в Публичной оферте."
-        f"🔗 Ваша личная ссылка: <code>{referral_link or 'Ссылка появится после активации'} </code>\n"
-        f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
-        f"💰 Заработано: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
-        f"🧮 Текущий баланс: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"🏷 Уровень: <code>{tier}</code> • <code>{percent}%</code>"
-        "<b>Уровни вознаграждения:</b>\n"
-        "• 30% — базовый уровень\n"
-        "• 35% — от 100 000 ₽ оборота рефералов\n"
-        "• 50% — от 1 000 000 ₽ оборота рефералов"
-        "<b>Как это работает:</b>\n"
-        "• Пользователь переходит по вашей ссылке\n"
-        "• Регистрируется и закрепляется за вами навсегда\n"
-        "• После оплат рефералов начисляется денежное вознаграждение\n"
-        "• Вывод доступен после достижения минимальной суммы\n"
+        "💼 <b>Партнёрам</b>
+
+"
+        "Это практическое руководство по участию в партнёрской программе.
+"
+        "Ваша партнёрская ссылка:
+"
+        f"🔗 <code>{referral_link}</code>
+
+"
+        "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.
+"
+        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.
+
+"
+        "<b>Как это работает:</b>
+"
+        "• Пользователь переходит по вашей ссылке
+"
+        "• Регистрируется и закрепляется за вами навсегда
+"
+        "• После оплат рефералов начисляется денежное вознаграждение
+
+"
+        "<b>2 уровень:</b>
+"
+        "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.
+
+"
+        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>
+"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота
+"
+        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов
+
+"
+        "<b>Ваша статистика:</b>
+"
+        f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>
+"
+        f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>
+"
+        f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽
+"
+        f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽"
     )
 
-    markup = (
-        get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        )
-        if referral_link
-        else get_partner_consent_keyboard()
+    markup = get_partner_program_keyboard(
+        referral_link if referral_code else "",
+        is_partner=stats.get("is_partner", False),
     )
 
     if isinstance(target, types.Message):
@@ -632,9 +651,10 @@ async def accept_partner(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "✅ <b>Партнёрский статус активирован</b>"
-        "Теперь вы получаете денежное вознаграждение за оплату рефералов.\n"
-        "Ваш процент зависит от оборота рефералов и обновляется автоматически.",
+        "✅ <b>Партнёрская программа активирована</b>
+
+"
+        "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
         parse_mode="HTML",
     )
