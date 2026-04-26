@@ -81,10 +81,10 @@ def get_upscale_options_keyboard(job_id: str, item_index: int):
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="📐 2K (5🍌)", callback_data=f"upscale_{job_id}_{item_index}_2K_5"
+        text="📐 2K (5 🍌)", callback_data=f"upscale_{job_id}_{item_index}_2K_5"
     )
     builder.button(
-        text="🖼 4K (10🍌)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
+        text="🖼 4K (7 🍌)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
     )
     builder.button(text="🔙 Назад к результатам", callback_data=f"batchback_{job_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")

@@ -349,7 +349,7 @@ async def cmd_help(message: types.Message):
         "• добавляйте стиль, свет, ракурс и настроение\n"
         "• используйте референсы, если важно сохранить человека или стиль\n\n"
         "<b>Поддержка</b>\n"
-        "@chillcreative"
+        "@only_tany"
     )
 
     await message.answer(help_text, reply_markup=get_back_keyboard(), parse_mode="HTML")
@@ -374,7 +374,7 @@ async def show_help(callback: types.CallbackQuery):
         "• как работает Motion Control\n"
         "• сколько стоит нужный сценарий\n\n"
         "<b>Поддержка</b>\n"
-        "@chillcreative"
+        "@only_tany"
     )
 
     try:
@@ -754,7 +754,7 @@ async def show_support(callback: types.CallbackQuery):
         "• оплатой и балансом\n"
         "• любыми непонятными шагами в боте\n\n"
         "<b>Если нужен человек:</b>\n"
-        "@chillcreative"
+        "@only_tany"
     )
 
     await callback.message.edit_text(
@@ -1083,7 +1083,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         else:
             # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @chillcreative",
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1091,7 +1091,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @chillcreative",
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )
@@ -1363,7 +1363,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         else:
             # Fallback если ИИ не ответил
             await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @chillcreative",
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1371,7 +1371,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
     except Exception as e:
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @chillcreative",
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
             reply_markup=get_ai_assistant_keyboard(),
             parse_mode="HTML",
         )

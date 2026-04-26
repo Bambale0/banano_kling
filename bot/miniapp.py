@@ -763,7 +763,7 @@ async def _send_support(app: web.Application, telegram_id: int):
         "• оплатой и балансом\n"
         "• любыми непонятными шагами в боте\n\n"
         "<b>Если нужен человек:</b>\n"
-        "@chillcreative"
+        "@only_tany"
     )
     await app["bot"].send_message(
         telegram_id,
