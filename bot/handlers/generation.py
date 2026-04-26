@@ -2667,8 +2667,8 @@ async def run_no_preset_video_from_message(
     if v_type == "video":
         v_model = "aleph"
     v_duration = int(data.get("v_duration", 5))
-    # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
-    if v_type == "imgtxt" and v_model != "grok_imagine":
+    # Cap duration for imgtxt except for Grok Imagine (30s) and Seedance 2 (15s)
+    if v_type == "imgtxt" and v_model not in ("grok_imagine", "seedance2"):
         v_duration = min(v_duration, 10)
     v_ratio = data.get("v_ratio", "16:9")
     v_image_url = data.get("v_image_url")
