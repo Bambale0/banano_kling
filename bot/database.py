@@ -586,12 +586,10 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
 async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
-    signup_bonus: int = 5,
+    signup_bonus: int = 25,
+    inviter_bonus: int = 5,
 ) -> bool:
-    """Обрабатывает реферальный переход и закрепляет его за главным партнёром.
-
-    Все начисления централизуются на пользователя 339795159.
-    """
+    """Обрабатывает реферальный переход: новый пользователь +25🍌, пригласивший +5🍌."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False
@@ -600,7 +598,7 @@ async def process_referral(
         db.row_factory = aiosqlite.Row
 
         referrer_cursor = await db.execute(
-            "SELECT id FROM users WHERE referral_code = ?", (referral_code,)
+            "SELECT id FROM users WHERE referral_code = ?", (referral_code,),
         )
         referrer = await referrer_cursor.fetchone()
         if not referrer:
@@ -616,28 +614,19 @@ async def process_referral(
         if referred["id"] == referrer["id"]:
             return False
 
-        master_partner = await get_master_partner_user()
-
         await db.execute(
             "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (master_partner.id, signup_bonus, referred_telegram_id),
+            (referrer["id"], signup_bonus, referred_telegram_id),
         )
         await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, ?)",
-            (master_partner.id, referred["id"], signup_bonus),
+            (referrer["id"], referred["id"], signup_bonus),
         )
         await db.execute(
-            "UPDATE users SET referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (signup_bonus, master_partner.id),
+            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (inviter_bonus, inviter_bonus, referrer["id"]),
         )
         await db.commit()
-
-        logger.info(
-            "Referral processed centrally: referred=%s, master_partner=%s, bonus=%s",
-            referred_telegram_id,
-            master_partner.telegram_id,
-            signup_bonus,
-        )
         return True
 
 
@@ -656,13 +645,9 @@ async def credit_first_payment_referral_bonus(
     telegram_id: int,
     transaction_credits: int,
     transaction_amount_rub: Optional[float] = None,
-    bonus_percent: int = 10,
+    bonus_percent: int = 30,
 ) -> dict:
-    """Начисляет бонус по приглашённому пользователю.
-
-    Для обычного реферера начисляет бананы за первую оплату.
-    Для партнёра начисляет денежное вознаграждение за оплату реферала.
-    """
+    """Начисляет партнёрское вознаграждение: 30% первому уровню, 7% второму."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -673,66 +658,41 @@ async def credit_first_payment_referral_bonus(
         if not user or not user["referred_by"] or user["has_paid"]:
             return {"mode": "none", "value": 0, "percent": 0}
 
-        master_partner = await get_master_partner_user()
-        if not master_partner.partner_agreed_at:
-            await accept_partner_agreement(master_partner.telegram_id)
-            master_partner = await get_master_partner_user()
+        base_value = float(transaction_amount_rub if transaction_amount_rub is not None else transaction_credits)
+        level1_bonus = round(base_value * 30 / 100.0, 2)
+        level2_bonus = 0.0
 
-        ref_cursor = await db.execute(
-            "SELECT partner_tier, partner_total_revenue_rub FROM users WHERE id = ?",
-            (master_partner.id,),
-        )
-        referrer = await ref_cursor.fetchone()
-        current_total = (
-            float(referrer["partner_total_revenue_rub"] or 0) if referrer else 0.0
-        )
-        current_tier = (
-            referrer["partner_tier"]
-            if referrer and referrer["partner_tier"]
-            else "basic"
-        )
-
-        percent = get_partner_percent_by_tier(current_tier)
-        if transaction_amount_rub is not None:
-            base_value = float(transaction_amount_rub)
-            bonus_rub = round(base_value * percent / 100.0, 2)
-        else:
-            base_value = float(transaction_credits)
-            bonus_rub = round(base_value * bonus_percent / 100.0, 2)
-
+        ref1_id = user["referred_by"]
         await db.execute(
-            "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (
-                base_value,
-                bonus_rub,
-                get_partner_tier_by_total(current_total + base_value),
-                master_partner.id,
-            ),
+            "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = 'basic', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (base_value, level1_bonus, ref1_id),
         )
+
+        ref_cursor = await db.execute("SELECT referred_by FROM users WHERE id = ?", (ref1_id,))
+        ref1 = await ref_cursor.fetchone()
+        if ref1 and ref1["referred_by"]:
+            ref2_id = ref1["referred_by"]
+            level2_bonus = round(base_value * 7 / 100.0, 2)
+            await db.execute(
+                "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = 'basic', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (base_value, level2_bonus, ref2_id),
+            )
+
         await db.execute(
             "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (user["id"],),
         )
         await db.commit()
-        return {"mode": "partner", "value": bonus_rub, "percent": percent}
+        return {"mode": "partner", "value": level1_bonus, "percent": 30, "level2_value": level2_bonus, "level2_percent": 7}
 
 
 def get_partner_percent_by_tier(tier: str) -> int:
-    """Процент партнёрского вознаграждения по текущему уровню."""
-    tier = (tier or "basic").lower()
-    if tier == "pro":
-        return 50
-    if tier == "gold":
-        return 35
+    """Процент партнёрского вознаграждения 1 уровня."""
     return 30
 
 
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
-    """Возвращает уровень партнёра по обороту рефералов."""
-    if total_revenue_rub >= 1_000_000:
-        return "pro"
-    if total_revenue_rub >= 100_000:
-        return "gold"
+    """Единый базовый уровень партнёрки."""
     return "basic"
 
 
@@ -796,9 +756,7 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
         # Если пользователь сам активировал партнёрку, показываем его статистику,
         # иначе показываем статистику master-партнёра (текущее поведение по умолчанию)
-        target_user = (
-            requested_user if requested_user.partner_agreed_at else master_partner
-        )
+        target_user = requested_user
         target_user_id = target_user.id
 
         ref_cursor = await db.execute(
@@ -822,6 +780,14 @@ async def get_partner_overview(telegram_id: int) -> dict:
         )
         pay_row = await pay_cursor.fetchone()
 
+        level2_cursor = await db.execute("""
+            SELECT COUNT(*) as count
+            FROM users u2
+            JOIN users u1 ON u2.referred_by = u1.id
+            WHERE u1.referred_by = ?
+            """, (target_user_id,))
+        level2_row = await level2_cursor.fetchone()
+
         withdrawal_cursor = await db.execute(
             "SELECT COALESCE(SUM(amount_rub), 0) as total FROM partner_withdrawals WHERE user_id = ? AND status = 'completed'",
             (target_user_id,),
@@ -840,6 +806,8 @@ async def get_partner_overview(telegram_id: int) -> dict:
                 else None
             ),
             "referrals_count": referrals_row["count"] or 0,
+            "level1_count": referrals_row["count"] or 0,
+            "level2_count": level2_row["count"] or 0,
             "total_revenue_rub": round(target_user.partner_total_revenue_rub or 0, 2),
             "balance_rub": round(target_user.partner_balance_rub or 0, 2),
             "withdrawn_rub": round(withdrawal_row["total"] or 0, 2),

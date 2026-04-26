@@ -72,7 +72,7 @@ def _get_user_menu(user_id: int) -> str:
 def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
-        "🏠 <b>Banano AI Studio</b>\n"
+        "🏠 <b>NEUROMIX</b>\n"
         "Выберите, что хотите сделать. Бот сам проведёт вас по шагам.\n\n"
         "<b>Что можно сделать</b>\n"
         "• Создать фото\n"

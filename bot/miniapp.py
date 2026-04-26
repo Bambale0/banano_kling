@@ -184,18 +184,6 @@ VIDEO_MODELS = (
         "max_video_references": 1,
     },
     {
-        "id": "motion_control_v30",
-        "label": "Kling 3.0 Motion Control",
-        "description": "Улучшенный перенос движения и стабильность лица",
-        "durations": [5],
-        "ratios": ["motion"],
-        "supports": ["motion"],
-        "motion_versions": ["3.0"],
-        "motion_modes": ["720p", "1080p"],
-        "max_image_references": 1,
-        "max_video_references": 1,
-    },
-    {
         "id": "avatar_std",
         "label": "Kling Avatar Standard",
         "description": "Говорящий аватар по фото и аудио",

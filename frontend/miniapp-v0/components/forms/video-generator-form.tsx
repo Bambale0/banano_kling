@@ -50,7 +50,7 @@ export function VideoGeneratorForm({
   isSubmitting,
   credits,
 }: VideoGeneratorFormProps) {
-  const [selectedModel, setSelectedModel] = useState(models.find((item) => !['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
+  const [selectedModel, setSelectedModel] = useState(models.find((item) => !['motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
   const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('text')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
@@ -68,7 +68,7 @@ export function VideoGeneratorForm({
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
   const [audioReference, setAudioReference] = useState<UploadedFile[]>([])
 
-  const hiddenFromCommonVideoList = new Set(['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30'])
+  const hiddenFromCommonVideoList = new Set(['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30', 'motion_control', 'motion_control_v26', 'motion_control_v30'])
   const regularVideoModels = useMemo(
     () => models.filter((item) => !hiddenFromCommonVideoList.has(item.id)),
     [models]
@@ -114,6 +114,14 @@ export function VideoGeneratorForm({
       window.localStorage.removeItem('miniapp_requested_video_scenario')
     }
   }, [models])
+
+  // selected model is hidden motion: switch to first visible video model
+  useEffect(() => {
+    if (hiddenFromCommonVideoList.has(selectedModel)) {
+      const nextModel = visibleModels[0]
+      if (nextModel) setSelectedModel(nextModel.id)
+    }
+  }, [selectedModel, visibleModels])
 
   // Reset scenario if not supported
   useEffect(() => {
