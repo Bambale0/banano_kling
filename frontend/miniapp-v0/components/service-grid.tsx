@@ -9,6 +9,7 @@ import {
   Users,
   MoreHorizontal,
   ArrowRight,
+  Mic2,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -21,6 +22,14 @@ const primaryServices = [
     description: 'Загрузите референс — AI соберёт точный prompt для похожей генерации.',
     badge: 'Разбор фото',
     tone: 'gold',
+  },
+  {
+    id: 'avatar',
+    icon: Mic2,
+    title: 'Avatar',
+    description: 'Говорящий аватар: загрузите фото персонажа и аудио.',
+    badge: 'Фото + аудио',
+    tone: 'cyan',
   },
   {
     id: 'edit-photo',
@@ -104,7 +113,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-serif text-lg text-foreground">Основные</h3>
-          <span className="text-xs text-muted-foreground">4 сценария</span>
+          <span className="text-xs text-muted-foreground">5 сценариев</span>
         </div>
 
         <div className="grid gap-3">

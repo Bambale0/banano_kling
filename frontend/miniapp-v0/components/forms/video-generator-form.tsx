@@ -50,7 +50,7 @@ export function VideoGeneratorForm({
   isSubmitting,
   credits,
 }: VideoGeneratorFormProps) {
-  const [selectedModel, setSelectedModel] = useState(models[0]?.id || '')
+  const [selectedModel, setSelectedModel] = useState(models.find((item) => !['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
   const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('text')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
@@ -68,6 +68,18 @@ export function VideoGeneratorForm({
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
   const [audioReference, setAudioReference] = useState<UploadedFile[]>([])
 
+  const hiddenFromCommonVideoList = new Set(['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30'])
+  const regularVideoModels = useMemo(
+    () => models.filter((item) => !hiddenFromCommonVideoList.has(item.id)),
+    [models]
+  )
+  const requestedServiceModel = hiddenFromCommonVideoList.has(selectedModel)
+    ? models.filter((item) => item.id === selectedModel)
+    : []
+  const visibleModels = requestedServiceModel.length
+    ? [...requestedServiceModel, ...regularVideoModels]
+    : regularVideoModels
+
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
   
   const cost = model?.costs[selectedDuration.toString()] || 5
@@ -79,12 +91,29 @@ export function VideoGeneratorForm({
   // Validation
   const needsStartImage = selectedScenario === 'imgtxt' && startImage.length === 0
   const needsVideoRef = selectedScenario === 'video' && videoReferences.length === 0
+  const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
+  const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
   
   const isValid = prompt.trim().length > 0 && 
     canAfford && 
     scenarioSupported && 
     !needsStartImage && 
-    !needsVideoRef
+    !needsVideoRef &&
+    !needsAvatarImage &&
+    !needsAvatarAudio
+
+  // consume requested Avatar service
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const requestedModel = window.localStorage.getItem('miniapp_requested_video_model')
+    const requestedScenario = window.localStorage.getItem('miniapp_requested_video_scenario')
+    if (requestedModel && models.some((item) => item.id === requestedModel)) {
+      setSelectedModel(requestedModel)
+      if (requestedScenario) setSelectedScenario(requestedScenario as ScenarioType)
+      window.localStorage.removeItem('miniapp_requested_video_model')
+      window.localStorage.removeItem('miniapp_requested_video_scenario')
+    }
+  }, [models])
 
   // Reset scenario if not supported
   useEffect(() => {
@@ -158,7 +187,7 @@ export function VideoGeneratorForm({
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Модель</label>
           <ModelSelect
-            models={models.map(m => ({
+            models={visibleModels.map(m => ({
               id: m.id,
               label: m.label,
               description: m.description,
@@ -186,7 +215,7 @@ export function VideoGeneratorForm({
                 key={scenario}
                 className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground"
               >
-                {scenario === 'text' ? 'Текст → Видео' : scenario === 'imgtxt' ? 'Фото + Текст' : 'Видео + Текст'}
+                {scenario === 'text' ? 'Текст → Видео' : scenario === 'imgtxt' ? 'Фото + Текст' : scenario === 'avatar' ? 'Avatar' : 'Видео + Текст'}
               </span>
             ))}
             {model?.grok_modes?.length ? (
@@ -422,8 +451,8 @@ export function VideoGeneratorForm({
 
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
-            Аудио-референс
-            <span className="text-xs text-muted-foreground ml-2">(опционально для Avatar Video)</span>
+            {selectedScenario === 'avatar' ? 'Аудио для аватара' : 'Аудио-референс'}
+            {selectedScenario === 'avatar' ? <span className="text-destructive ml-1">*</span> : <span className="text-xs text-muted-foreground ml-2">(опционально)</span>}
           </label>
           <UploadArea
             files={audioReference}
@@ -476,7 +505,7 @@ export function VideoGeneratorForm({
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="rounded-xl bg-secondary/40 p-3">
             <p className="text-muted-foreground mb-1">Сводка</p>
-            <p className="text-foreground font-medium">{selectedScenario === 'text' ? 'Текст → Видео' : selectedScenario === 'imgtxt' ? 'Фото + Текст' : 'Видео + Текст'}</p>
+            <p className="text-foreground font-medium">{selectedScenario === 'text' ? 'Текст → Видео' : selectedScenario === 'imgtxt' ? 'Фото + Текст' : selectedScenario === 'avatar' ? 'Avatar' : 'Видео + Текст'}</p>
             <p className="text-muted-foreground mt-1">{selectedRatio} • {selectedDuration} сек.</p>
           </div>
           <div className="rounded-xl bg-secondary/40 p-3">
@@ -533,6 +562,20 @@ export function VideoGeneratorForm({
             <p className="text-xs text-cyan">
               Загрузите видео-референс
             </p>
+          </div>
+        )}
+
+        {needsAvatarImage && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
+            <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
+            <p className="text-xs text-cyan">Загрузите фото аватара</p>
+          </div>
+        )}
+
+        {needsAvatarAudio && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
+            <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
+            <p className="text-xs text-cyan">Загрузите аудио для аватара</p>
           </div>
         )}
 

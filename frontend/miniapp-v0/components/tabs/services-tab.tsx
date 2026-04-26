@@ -19,6 +19,11 @@ const serviceMap: Record<string, ServiceConfig> = {
     workspace: 'photo-prompt',
     message: 'Загрузите референс, чтобы собрать точный prompt.',
   },
+  avatar: {
+    title: 'Avatar',
+    tab: 2,
+    message: 'Открываю Avatar: фото персонажа + аудио.',
+  },
   'edit-photo': {
     title: 'Изменить фото',
     tab: 1,
@@ -58,6 +63,11 @@ export function ServicesTab() {
   function runService(serviceId: string) {
     const config = serviceMap[serviceId] || serviceMap['prompt-by-photo']
     setActiveService(serviceId)
+
+    if (serviceId === 'avatar' && typeof window !== 'undefined') {
+      window.localStorage.setItem('miniapp_requested_video_model', 'avatar_pro')
+      window.localStorage.setItem('miniapp_requested_video_scenario', 'avatar')
+    }
 
     if (typeof config.tab === 'number') {
       setActiveTab(config.tab)

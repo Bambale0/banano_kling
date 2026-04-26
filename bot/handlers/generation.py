@@ -4739,3 +4739,33 @@ async def motion_control_reference_video_upload(message: types.Message, state: F
         "Например: <i>сохранить лицо, плавное движение, кинематографичный свет</i>.",
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "avatar_service")
+async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.update_data(
+        generation_type="video",
+        v_model="avatar_pro",
+        v_type="avatar",
+        v_duration=5,
+        v_ratio="avatar",
+        v_image_url=None,
+        avatar_audio_url=None,
+        audio_url=None,
+    )
+    await callback.message.edit_text(
+        "🗣 <b>Kling Avatar</b>\n\n"
+        "Создаёт говорящий аватар по фото и аудио.\n\n"
+        "1. Загрузите фото персонажа\n"
+        "2. Загрузите аудио или голосовое\n"
+        "3. Отправьте короткую инструкцию",
+        reply_markup=get_video_media_step_keyboard(
+            current_v_type="avatar",
+            current_model="avatar_pro",
+            has_start_image=False,
+            has_avatar_audio=False,
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()

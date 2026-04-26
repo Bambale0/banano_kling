@@ -3,5 +3,5 @@
 3:I[7121,[],""]
 4:I[4581,[],""]
 5:I[4317,["177","static/chunks/app/layout-253a400e2d889cd5.js"],"Analytics"]
-:HL["/mini-app/_next/static/css/ae72d98d3c77c1aa.css","style"]
-0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/ae72d98d3c77c1aa.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","$L2",null,{"src":"https://telegram.org/js/telegram-web-app.js","strategy":"beforeInteractive"}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"HAv805RnuRkEZ8akeXE0q"}
+:HL["/mini-app/_next/static/css/49f83bd83b1cc159.css","style"]
+0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/49f83bd83b1cc159.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","$L2",null,{"src":"https://telegram.org/js/telegram-web-app.js","strategy":"beforeInteractive"}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"OfiVWeRYpfvAy73X7K6dU"}
