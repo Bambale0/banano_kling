@@ -12,7 +12,6 @@ NEW_WELCOME = '''Привет 👋
 
 👇 Пользуйся текстовым вариантом генераций или открой приложение, чтобы начать творить 🚀'''
 
-# Patch visible bot welcome/menu copy wherever it is commonly rendered.
 for rel in [
     "bot/main.py",
     "bot/handlers/generation.py",
@@ -36,7 +35,6 @@ for rel in [
     for pat in patterns:
         s = re.sub(pat, NEW_WELCOME, s, flags=re.S)
 
-    # Conservative replacements for leftover brand mentions in user-facing text.
     s = s.replace("🏠 Banano AI Studio", "NEUROMIX")
     s = s.replace("<b>Banano AI Studio</b>", "<b>NEUROMIX</b>")
     s = s.replace("Banano AI Studio", "NEUROMIX")
@@ -44,15 +42,12 @@ for rel in [
     if s != original:
         p.write_text(s, encoding="utf-8")
 
-# Add a tiny helper with the canonical welcome text for future reuse.
-p = Path("bot/neuromix_copy.py")
-p.write_text(
-    'WELCOME_TEXT = ''' + repr(NEW_WELCOME) + '''\n',
+Path("bot/neuromix_copy.py").write_text(
+    "WELCOME_TEXT = " + repr(NEW_WELCOME) + "\n",
     encoding="utf-8",
 )
 PY
 
-# Verify changed Python files that exist.
 python3 - <<'PY'
 from pathlib import Path
 import py_compile
