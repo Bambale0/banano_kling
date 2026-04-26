@@ -2,23 +2,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "1) Restore common.py/database.py from git to remove broken local regex edits"
+echo "1) Restore common.py/database.py from git to remove broken local edits"
 git checkout -- bot/handlers/common.py bot/database.py || true
 
 python3 - <<'PY'
 from pathlib import Path
 import re
 
-# ---------------- common.py: safe exact partner render + welcome ----------------
-p = Path("bot/handlers/common.py")
-s = p.read_text(encoding="utf-8")
+common = Path("bot/handlers/common.py")
+s = common.read_text(encoding="utf-8")
 
-main_menu_func = '''def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
-    bonus_block = f"\\n{referral_bonus_text.strip()}\\n" if referral_bonus_text else "\\n"
+main_menu_func = r'''def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
+    bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
-        "Привет 👋\\n\\n"
-        "Я <b>NEUROMIX</b> — самый выгодный и очень удобный бот для генерации изображений и видео.\\n\\n"
-        "👇 Пользуйся текстовым вариантом генераций или открой приложение, чтобы начать творить 🚀\\n\\n"
+        "Привет 👋\n\n"
+        "Я <b>NEUROMIX</b> — самый выгодный и очень удобный бот для генерации изображений и видео.\n\n"
+        "👇 Пользуйся текстовым вариантом генераций или открой приложение, чтобы начать творить 🚀\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
     )
@@ -33,7 +32,7 @@ s = re.sub(
     flags=re.S,
 )
 
-partner_func = '''async def render_partner_program(target, user_id: int):
+partner_func = r'''async def render_partner_program(target, user_id: int):
     """Рендерит экран партнёрской программы."""
     user = await get_or_create_user(user_id)
     stats = await get_partner_overview(user_id)
@@ -48,24 +47,24 @@ partner_func = '''async def render_partner_program(target, user_id: int):
     )
 
     text = (
-        "💼 <b>Партнёрам</b>\\n\\n"
-        "Это практическое руководство по участию в партнёрской программе.\\n\\n"
-        f"Ваша партнёрская ссылка:\\n🔗 <code>{referral_link}</code>\\n\\n"
-        "<b>1 уровень</b> — <code>30%</code> от всех покупок ваших рефералов.\\n"
-        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\\n\\n"
-        "<b>Как это работает:</b>\\n"
-        "• Пользователь переходит по вашей ссылке\\n"
-        "• Регистрируется и закрепляется за вами навсегда\\n"
-        "• После оплат рефералов начисляется денежное вознаграждение\\n\\n"
-        "<b>2 уровень:</b>\\n"
-        "Ваш реферал привёл ещё рефералов — за все их покупки вам также начисляется денежное вознаграждение <code>7%</code>.\\n\\n"
-        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\\n"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\\n"
-        "• За каждого приглашённого вами реферала вам начисляется 🍌 <code>5</code> бананов\\n\\n"
-        "<b>Ваша статистика:</b>\\n"
-        f"👥 Рефералов 1 уровня: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\\n"
-        f"👥 Рефералов 2 уровня: <code>{stats.get('level2_count', 0)}</code>\\n"
-        f"💰 Баланс к выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\\n"
+        "💼 <b>Партнёрам</b>\n\n"
+        "Это практическое руководство по участию в партнёрской программе.\n\n"
+        f"Ваша партнёрская ссылка:\n🔗 <code>{referral_link}</code>\n\n"
+        "<b>1 уровень</b> — <code>30%</code> от всех покупок ваших рефералов.\n"
+        "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\n\n"
+        "<b>Как это работает:</b>\n"
+        "• Пользователь переходит по вашей ссылке\n"
+        "• Регистрируется и закрепляется за вами навсегда\n"
+        "• После оплат рефералов начисляется денежное вознаграждение\n\n"
+        "<b>2 уровень:</b>\n"
+        "Ваш реферал привёл ещё рефералов — за все их покупки вам также начисляется денежное вознаграждение <code>7%</code>.\n\n"
+        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\n"
+        "• За каждого приглашённого вами реферала вам начисляется 🍌 <code>5</code> бананов\n\n"
+        "<b>Ваша статистика:</b>\n"
+        f"👥 Рефералов 1 уровня: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
+        f"👥 Рефералов 2 уровня: <code>{stats.get('level2_count', 0)}</code>\n"
+        f"💰 Баланс к выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
         f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽"
     )
 
@@ -89,8 +88,8 @@ s = re.sub(
 
 s = re.sub(
     r'await callback\.message\.edit_text\(\n\s*"✅ <b>Партнёрский статус активирован</b>"[\s\S]*?parse_mode="HTML",\n\s*\)',
-    '''await callback.message.edit_text(
-        "✅ <b>Партнёрская программа активирована</b>\\n\\n"
+    r'''await callback.message.edit_text(
+        "✅ <b>Партнёрская программа активирована</b>\n\n"
         "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
         reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
         parse_mode="HTML",
@@ -99,13 +98,13 @@ s = re.sub(
     flags=re.S,
 )
 
-p.write_text(s, encoding="utf-8")
+common.write_text(s, encoding="utf-8")
 
-# ---------------- database.py: actual 2-level partner logic ----------------
+# database.py logic
 p = Path("bot/database.py")
 s = p.read_text(encoding="utf-8")
 
-process_func = '''async def process_referral(
+process_func = r'''async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
     signup_bonus: int = 25,
@@ -159,7 +158,7 @@ s = re.sub(
     flags=re.S,
 )
 
-commission_func = '''async def credit_first_payment_referral_bonus(
+commission_func = r'''async def credit_first_payment_referral_bonus(
     telegram_id: int,
     transaction_credits: int,
     transaction_amount_rub: Optional[float] = None,
@@ -213,7 +212,7 @@ s = re.sub(
 
 s = re.sub(
     r'def get_partner_percent_by_tier\(tier: str\) -> int:\n[\s\S]*?\n\ndef get_partner_tier_by_total',
-    '''def get_partner_percent_by_tier(tier: str) -> int:
+    r'''def get_partner_percent_by_tier(tier: str) -> int:
     """Процент партнёрского вознаграждения 1 уровня."""
     return 30
 
@@ -225,7 +224,7 @@ def get_partner_tier_by_total''',
 
 s = re.sub(
     r'def get_partner_tier_by_total\(total_revenue_rub: float\) -> str:\n[\s\S]*?\n\nasync def accept_partner_agreement',
-    '''def get_partner_tier_by_total(total_revenue_rub: float) -> str:
+    r'''def get_partner_tier_by_total(total_revenue_rub: float) -> str:
     """Единый базовый уровень партнёрки."""
     return "basic"
 
@@ -235,7 +234,6 @@ async def accept_partner_agreement''',
     flags=re.S,
 )
 
-# get_partner_overview should show the current user's own partner stats, not central master stats.
 s = re.sub(
     r'target_user = \(\n\s*requested_user if requested_user\.partner_agreed_at else master_partner\n\s*\)',
     'target_user = requested_user',
