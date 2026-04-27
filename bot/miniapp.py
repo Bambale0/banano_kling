@@ -1659,6 +1659,15 @@ def setup_miniapp_routes(app: web.Application):
     async def _redirect_to_slash(request: web.Request) -> web.Response:
         raise web.HTTPFound(f"{miniapp_root}/")
 
+
+    # miniapp_static_mount_v1
+    from pathlib import Path as _MiniAppPath
+    miniapp_out_dir = _MiniAppPath(__file__).resolve().parent.parent / "frontend" / "miniapp-v0" / "out"
+    miniapp_next_static_dir = miniapp_out_dir / "_next" / "static"
+    if miniapp_next_static_dir.exists():
+        app.router.add_static("/mini-app/_next/static/", path=str(miniapp_next_static_dir), name="miniapp_next_static")
+    if miniapp_out_dir.exists():
+        app.router.add_static("/mini-app/", path=str(miniapp_out_dir), name="miniapp_static", show_index=False)
     app.router.add_get(miniapp_root, _redirect_to_slash)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
