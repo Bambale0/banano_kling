@@ -68,3 +68,4 @@ temp/
 static/
 static/uploads/
 *.conf0
+gpt.txt
