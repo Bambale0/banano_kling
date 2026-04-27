@@ -46,17 +46,17 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
+    builder.button(text="📚 Промпт-канал", url="https://t.me/only_tm_ii")
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
     builder.button(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance")
-    builder.button(text="🗣 Avatar", callback_data="avatar_service")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
     builder.button(text="🤝 Партнёрам", callback_data="menu_partner")
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 2, 1, 1)
     else:
-        builder.adjust(2, 2, 2, 2, 1)
+        builder.adjust(2, 2, 2, 2, 1, 1)
 
     return builder.as_markup()
 
@@ -105,6 +105,18 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
     builder = InlineKeyboardBuilder()
 
     options = [
+        (
+            "motion_control_v26",
+            "🎯 Kling 2.6 Motion Control",
+            "Стабильный перенос движения",
+            preset_manager.get_video_cost("motion_control_v26", 5),
+        ),
+        (
+            "motion_control_v30",
+            "🚀 Kling 3.0 Motion Control",
+            "Новая версия с улучшенной стабильностью",
+            preset_manager.get_video_cost("motion_control_v30", 5),
+        ),
     ]
 
     for model_key, title, description, cost in options:
@@ -221,6 +233,16 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
         ("v3_pro", "💎 Kling 3.0", preset_manager.get_video_cost("v3_pro", 5)),
         ("v3_std", "⚡ Kling v3", preset_manager.get_video_cost("v3_std", 5)),
         ("v26_pro", "🌀 Kling 2.5 Turbo", preset_manager.get_video_cost("v26_pro", 5)),
+        (
+            "avatar_std",
+            "🗣 Avatar Standard",
+            preset_manager.get_video_cost("avatar_std", 5),
+        ),
+        (
+            "avatar_pro",
+            "🎙 Avatar Pro",
+            preset_manager.get_video_cost("avatar_pro", 5),
+        ),
         ("veo3", "🎥 Veo 3.1 Quality", preset_manager.get_video_cost("veo3", 6)),
         (
             "veo3_fast",
