@@ -3,64 +3,80 @@
   "credit_name": "банан",
   "credit_name_plural": "бананов",
   "credit_emoji": "🍌",
-  "credit_value": "11 генерация стандартного качества банан = ",
+  "credit_value": "Чем больше 🍌 — тем дешевле генерация",
   "packages": [
     {
       "id": "mini",
       "name": "🍌 Мини",
       "credits": 15,
-      "price_rub": 150,
+      "price_rub": 65,
       "bonus_credits": 0,
       "description": "Для пробы"
     },
     {
-      "id": "standard",
-      "name": "🍌🍌 Стандарт",
-      "credits": 30,
-      "price_rub": 250,
+      "id": "start",
+      "name": "🍌 Старт",
+      "credits": 25,
+      "price_rub": 90,
       "bonus_credits": 0,
-      "description": "Популярный выбор"
+      "description": "Удобный старт"
     },
     {
       "id": "optimal",
-      "name": "🍌🍌🍌 Оптимальный",
+      "name": "🍌🍌 Оптимальный",
       "credits": 50,
-      "price_rub": 400,
+      "price_rub": 160,
       "bonus_credits": 0,
       "popular": true,
       "description": "Лучшее соотношение цена/количество"
     },
     {
       "id": "pro",
-      "name": "🍌🍌🍌🍌 Про",
+      "name": "🍌🍌🍌 Про",
       "credits": 100,
-      "price_rub": 700,
+      "price_rub": 310,
       "bonus_credits": 0,
       "description": "Для активных пользователей"
     },
     {
       "id": "studio",
-      "name": "🍌🍌🍌🍌🍌 Студия",
+      "name": "🍌🍌🍌🍌 Студия",
       "credits": 200,
-      "price_rub": 1400,
+      "price_rub": 605,
       "bonus_credits": 0,
-      "description": "Максимальная выгода"
+      "description": "Для частой генерации"
+    },
+    {
+      "id": "business",
+      "name": "🍌🍌🍌🍌🍌 Бизнес",
+      "credits": 500,
+      "price_rub": 1500,
+      "bonus_credits": 0,
+      "description": "Выгодно для регулярной работы"
+    },
+    {
+      "id": "max",
+      "name": "🍌🍌🍌🍌🍌🍌 Максимум",
+      "credits": 1000,
+      "price_rub": 2900,
+      "bonus_credits": 0,
+      "description": "Самая выгодная цена за банан"
     }
   ],
   "costs_reference": {
     "image_models": {
       "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
-      "banana_2": 7,
+      "banana_2": 5,
       "z_image_turbo": 5,
-      "seedream": 5,
-      "seedream_45": 5,
+      "seedream": 4,
+      "seedream_45": 4,
       "flux_pro": 5,
       "nano-banana-pro": 5,
-      "seedream_edit": 7,
-      "grok_imagine_i2i": 7
+      "seedream_edit": 4,
+      "grok_imagine_i2i": 3,
+      "wan_27": 5
     },
-
     "video_models": {
       "v3_std": {
         "base": 15,
@@ -112,7 +128,6 @@
       "veo3_lite": {
         "base": 10
       },
-
       "glow": {
         "base": 25,
         "duration_costs": {
@@ -120,7 +135,6 @@
           "10": 40
         }
       }
-
     },
     "video_duration_costs": {
       "3": 9,
@@ -129,37 +143,70 @@
       "15": 45
     },
     "legacy_keys": {
-      "gemini_2_5_flash": 3,
+      "gemini_2_5_flash": 5,
       "gemini_3_pro": 5,
       "kling_v3_std": 6,
       "kling_v3_pro": 8,
       "kling_v3_omni": 8,
       "z_image_turbo_lora": 3,
-      "wanx_lora": 15
+      "wanx_lora": 15,
+      "nanobanana": 5,
+      "banana_pro": 5,
+      "banana_2": 5,
+      "seedream": 4,
+      "seedream_edit": 4,
+      "grok_imagine_i2i": 3,
+      "wan_27": 5
     }
   },
   "batch_pricing": {
     "base_costs": {
-      "gemini_2_5_flash": 3,
-      "gemini_3_pro": 5
+      "gemini_2_5_flash": 5,
+      "gemini_3_pro": 5,
+      "banana_2": 5,
+      "nano-banana-pro": 5,
+      "seedream": 4,
+      "seedream_edit": 4,
+      "grok_imagine_i2i": 3,
+      "wan_27": 5
     },
     "discount_tiers": [
-      {"min_items": 3, "discount": 10},
-      {"min_items": 4, "discount": 15},
-      {"min_items": 6, "discount": 20},
-      {"min_items": 10, "discount": 25}
+      {
+        "min_items": 3,
+        "discount": 10
+      },
+      {
+        "min_items": 4,
+        "discount": 15
+      },
+      {
+        "min_items": 6,
+        "discount": 20
+      },
+      {
+        "min_items": 10,
+        "discount": 25
+      }
     ],
     "pro_features": {
       "batch_generation": true,
       "priority_queue": true,
       "4k_upscale": true,
-      "custom_aspect_ratios": ["21:9", "9:21", "4:5", "5:4"]
+      "custom_aspect_ratios": [
+        "21:9",
+        "9:21",
+        "4:5",
+        "5:4"
+      ]
     },
     "upscale_costs": {
       "2K": 5,
-      "4K": 10
+      "4K": 7
     }
   },
-  "admin_ids": [939259764, 339795159],
-  "support_contact": "@chillcreative"
+  "admin_ids": [
+    939259764,
+    339795159
+  ],
+  "support_contact": "@only_tany"
 }
