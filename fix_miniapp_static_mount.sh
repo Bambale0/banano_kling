@@ -9,17 +9,14 @@ EOF
 
 python3 - <<'PY'
 from pathlib import Path
-import re
 
 p = Path('bot/miniapp.py')
 s = p.read_text(encoding='utf-8')
-orig = s
 
-# Ensure both /mini-app and /mini-app/_next/static are served from the exported frontend.
-# aiohttp route order matters: static assets must be mounted before catch-all /mini-app handlers.
 static_block = '''
     # miniapp_static_mount_v1
-    miniapp_out_dir = Path(__file__).resolve().parent.parent / "frontend" / "miniapp-v0" / "out"
+    from pathlib import Path as _MiniAppPath
+    miniapp_out_dir = _MiniAppPath(__file__).resolve().parent.parent / "frontend" / "miniapp-v0" / "out"
     miniapp_next_static_dir = miniapp_out_dir / "_next" / "static"
     if miniapp_next_static_dir.exists():
         app.router.add_static("/mini-app/_next/static/", path=str(miniapp_next_static_dir), name="miniapp_next_static")
@@ -28,16 +25,18 @@ static_block = '''
 '''
 
 if 'miniapp_static_mount_v1' not in s:
-    # Prefer inserting right after app creation inside setup function.
-    m = re.search(r'(app\s*=\s*web\.Application\([^\n]*\)\n)', s)
-    if m:
-        s = s[:m.end()] + static_block + s[m.end():]
+    app_marker = 'app = web.Application()\n'
+    pos = s.find(app_marker)
+    if pos != -1:
+        insert_at = pos + len(app_marker)
+        s = s[:insert_at] + static_block + s[insert_at:]
     else:
-        # Fallback: insert before first add_routes/add_static if present.
-        m = re.search(r'(\s*app\.router\.add_', s)
-        if not m:
+        router_marker = 'app.router.add_'
+        pos = s.find(router_marker)
+        if pos == -1:
             raise SystemExit('Could not find aiohttp app/router mount point in bot/miniapp.py')
-        s = s[:m.start()] + static_block + s[m.start():]
+        line_start = s.rfind('\n', 0, pos) + 1
+        s = s[:line_start] + static_block + s[line_start:]
 
 p.write_text(s, encoding='utf-8')
 PY
