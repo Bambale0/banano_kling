@@ -657,7 +657,7 @@ def get_create_image_keyboard(
     current_count: int = 1,
     num_refs: int = 0,
     nsfw_enabled: bool = False,
-    img_quality: str = "basic",
+    img_quality: str = "2K",
     img_nsfw_checker: bool = False,
 ):
     """Шаг настроек фото после выбора модели и референсов."""
@@ -697,6 +697,20 @@ def get_create_image_keyboard(
         builder.row(*ratio_buttons[:3])
         builder.row(*ratio_buttons[3:6])
         builder.row(*ratio_buttons[6:])
+
+    # nano_quality_buttons_inserted_v2
+    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+        q = str(img_quality or "2K").upper()
+        builder.row(
+            InlineKeyboardButton(
+                text=("◉ 2K" if q == "2K" else "○ 2K"),
+                callback_data="img_quality_2k",
+            ),
+            InlineKeyboardButton(
+                text=("◉ 4K" if q == "4K" else "○ 4K"),
+                callback_data="img_quality_4k",
+            ),
+        )
 
     count_buttons = []
     for count in [1, 2, 4, 6]:
@@ -1069,19 +1083,3 @@ def get_advanced_options_keyboard():
     return builder.as_markup()
 
 
-
-def get_nano_banana_quality_keyboard(current_quality: str = "2K"):
-    """Клавиатура качества для Nano Banana: 2K/4K."""
-    builder = InlineKeyboardBuilder()
-    q = (current_quality or "2K").upper()
-    builder.button(
-        text=("✅ 2K качество — 5🍌" if q == "2K" else "○ 2K качество — 5🍌"),
-        callback_data="img_quality_2k",
-    )
-    builder.button(
-        text=("✅ 4K качество — 7🍌" if q == "4K" else "○ 4K качество — 7🍌"),
-        callback_data="img_quality_4k",
-    )
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1)
-    return builder.as_markup()

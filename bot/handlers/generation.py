@@ -446,7 +446,7 @@ async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMC
         img_service="banana_pro",
         img_ratio="1:1",
         img_count=1,
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
         reference_images=[],
         img_flow_step="select_model",
@@ -469,7 +469,7 @@ async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
         img_ratio="1:1",
         img_count=1,
         reference_images=[],
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
         nsfw_enabled=False,
         preset_id="new",
@@ -527,7 +527,7 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     prompt = request_data.get("prompt", task.prompt or "")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     reference_images = request_data.get("reference_images", [])
-    img_quality = request_data.get("img_quality", "basic")
+    img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
     callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -720,7 +720,7 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         img_service="seedream_edit",
         img_ratio="1:1",
         img_count=1,
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
         reference_images=[],
         preset_id="new",
@@ -910,7 +910,7 @@ async def _open_image_model_from_main(
         img_service=model,
         img_ratio="auto" if model == "flux_pro" else "1:1",
         img_count=1,
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
         reference_images=[],
         preset_id="new",
@@ -1276,11 +1276,19 @@ def _build_image_creation_text(data: dict) -> str:
     current_count = data.get("img_count", 1)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
-    img_quality = data.get("img_quality", "basic")
+    img_quality = data.get("img_quality", "2K")
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     ratio_label = current_ratio.replace(":", "∶")
+    # nano_quality_cost_display_v1
     unit_cost = preset_manager.get_generation_cost(current_service)
+    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+        unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
     total_cost = unit_cost * current_count
+
+    # nano_quality_cost_info_v2
+    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+        unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
+        total_cost = unit_cost * current_count
 
     info_lines = [
         f"• Модель: <code>{get_image_model_label(current_service)}</code>",
@@ -1441,7 +1449,7 @@ async def _show_image_creation_screen(message_or_callback, state: FSMContext):
         current_count=data.get("img_count", 1),
         num_refs=len(data.get("reference_images", [])),
         nsfw_enabled=data.get("nsfw_enabled", False),
-        img_quality=data.get("img_quality", "basic"),
+        img_quality=data.get("img_quality", "2K"),
         img_nsfw_checker=data.get("img_nsfw_checker", False),
     )
 
@@ -2124,7 +2132,7 @@ async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMCo
     await state.update_data(
         img_service="seedream_edit",
         img_ratio="1:1",
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
     )
     data = await state.get_data()
@@ -2247,7 +2255,7 @@ async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "img_quality_basic")
 async def handle_img_quality_basic(callback: types.CallbackQuery, state: FSMContext):
     """Seedream quality: basic."""
-    await state.update_data(img_quality="basic")
+    await state.update_data(img_quality="2K")
     await _show_image_creation_screen(callback, state)
     await callback.answer("Quality: basic")
 
@@ -2255,7 +2263,7 @@ async def handle_img_quality_basic(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(F.data == "img_quality_high")
 async def handle_img_quality_high(callback: types.CallbackQuery, state: FSMContext):
     """Seedream quality: high."""
-    await state.update_data(img_quality="high")
+    await state.update_data(img_quality="4K")
     await _show_image_creation_screen(callback, state)
     await callback.answer("Quality: high")
 
@@ -3610,7 +3618,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     img_service = data.get("img_service", "nanobanana")
     img_ratio = data.get("img_ratio", "1:1")
     img_count = data.get("img_count", 1)
-    img_quality = data.get("img_quality", "basic")
+    img_quality = data.get("img_quality", "2K")
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
@@ -4775,21 +4783,16 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
 
 
 
+
 @router.callback_query(F.data == "img_quality_2k")
 async def set_image_quality_2k(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(img_quality="2K")
-    await callback.answer("Выбрано 2K качество — 5🍌")
-    try:
-        await _show_image_settings_screen(callback, state)
-    except Exception:
-        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Выбрано 2K")
+    await _show_image_settings_screen(callback, state)
 
 
 @router.callback_query(F.data == "img_quality_4k")
 async def set_image_quality_4k(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(img_quality="4K")
-    await callback.answer("Выбрано 4K качество — 7🍌")
-    try:
-        await _show_image_settings_screen(callback, state)
-    except Exception:
-        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Выбрано 4K")
+    await _show_image_settings_screen(callback, state)

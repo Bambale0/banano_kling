@@ -76,7 +76,7 @@ IMAGE_MODELS = (
         "ratios": ["1:1", "9:16", "16:9", "3:4", "4:3", "2:3", "3:2", "21:9"],
         "requires_reference": True,
         "max_references": 14,
-        "qualities": ["basic", "high"],
+        "qualities": ["2K", "4K"],
         "supports_nsfw_checker": True,
     },
     {

@@ -1,0 +1,4 @@
+updated data/price.json quality prices
+inserted 2K and 4K buttons into get_create_image_keyboard
+added image quality callback handlers
+updated miniapp quality metadata
