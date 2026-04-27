@@ -2,7 +2,7 @@
 ============================================================
 SYSTEM
 ============================================================
-Mon Apr 27 11:32:17 AM MSK 2026
+Mon Apr 27 11:43:08 AM MSK 2026
 /root/banano_kling
 Python 3.10.12
 v22.22.2
@@ -26,6 +26,7 @@ EXIT_CODE=0
 GIT LOG
 ============================================================
 $ git log --oneline -30
+b88391b gpt txt
 6e4e808 Update GPT debug collector with focused pricing diagnostics
 47e9de8 txt gpt
 1e4f752 txt gpt
@@ -55,7 +56,6 @@ f932423 Add NEUROMIX bot welcome rebrand script
 936ced3 Add script to remove Motion Control from Mini App video model list
 22c232b link out
 df1bf77 Add script to remove prompt channel from bot menu
-e04ee90 Add script to move avatar to Mini App services
 EXIT_CODE=0
 
 ============================================================
@@ -2535,10 +2535,6 @@ frontend/miniapp-v0/package-lock.json:4050:      "integrity": "sha512-kivNFO+0Oc
 RECENT LOGS LIMITED
 ============================================================
 --- tail logs/bot_output.log ---
-2026-04-27 11:01:12,444 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:01:12 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
-2026-04-27 11:01:12,546 - aiogram.event - INFO - Update id=763918398 is handled. Duration 55 ms by bot id=8466233055
-2026-04-27 11:01:12,547 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:01:12 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
-2026-04-27 11:01:48,848 - __main__ - INFO - Initializing database before bot startup...
 2026-04-27 11:01:48,853 - bot.database - INFO - Database initialized successfully
 2026-04-27 11:01:48,854 - __main__ - INFO - Database initialized successfully
 2026-04-27 11:01:48,898 - __main__ - INFO - Starting in webhook mode...
@@ -2615,11 +2611,11 @@ RECENT LOGS LIMITED
 2026-04-27 11:25:42,270 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:25:42 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
 2026-04-27 11:25:44,621 - aiogram.event - INFO - Update id=763918430 is handled. Duration 53 ms by bot id=8466233055
 2026-04-27 11:25:44,622 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:25:44 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
+2026-04-27 11:42:04,997 - aiogram.event - INFO - Update id=763918431 is handled. Duration 340 ms by bot id=8466233055
+2026-04-27 11:42:04,997 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:42:04 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
+2026-04-27 11:42:05,880 - aiogram.event - INFO - Update id=763918432 is handled. Duration 65 ms by bot id=8466233055
+2026-04-27 11:42:05,881 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:42:05 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
 --- tail logs/bot.log ---
-2026-04-27 11:01:12,444 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:01:12 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
-2026-04-27 11:01:12,546 - aiogram.event - INFO - Update id=763918398 is handled. Duration 55 ms by bot id=8466233055
-2026-04-27 11:01:12,547 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:01:12 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
-2026-04-27 11:01:48,848 - __main__ - INFO - Initializing database before bot startup...
 2026-04-27 11:01:48,853 - bot.database - INFO - Database initialized successfully
 2026-04-27 11:01:48,854 - __main__ - INFO - Database initialized successfully
 2026-04-27 11:01:48,898 - __main__ - INFO - Starting in webhook mode...
@@ -2696,9 +2692,13 @@ RECENT LOGS LIMITED
 2026-04-27 11:25:42,270 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:25:42 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
 2026-04-27 11:25:44,621 - aiogram.event - INFO - Update id=763918430 is handled. Duration 53 ms by bot id=8466233055
 2026-04-27 11:25:44,622 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:25:44 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
+2026-04-27 11:42:04,997 - aiogram.event - INFO - Update id=763918431 is handled. Duration 340 ms by bot id=8466233055
+2026-04-27 11:42:04,997 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:42:04 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
+2026-04-27 11:42:05,880 - aiogram.event - INFO - Update id=763918432 is handled. Duration 65 ms by bot id=8466233055
+2026-04-27 11:42:05,881 - aiohttp.access - INFO - 127.0.0.1 [27/Apr/2026:11:42:05 +0300] "POST /telegram/webhook HTTP/1.0" 200 154 "-" "-"
 
 ============================================================
 DONE
 ============================================================
-1256103 gpt_short.txt
+1256124 gpt_short.txt
 Created gpt_short.txt
