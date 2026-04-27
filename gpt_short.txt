@@ -2,7 +2,7 @@
 ============================================================
 SYSTEM
 ============================================================
-Mon Apr 27 11:43:08 AM MSK 2026
+Mon Apr 27 11:45:32 AM MSK 2026
 /root/banano_kling
 Python 3.10.12
 v22.22.2
@@ -26,6 +26,7 @@ EXIT_CODE=0
 GIT LOG
 ============================================================
 $ git log --oneline -30
+306ae3d gpt txt
 b88391b gpt txt
 6e4e808 Update GPT debug collector with focused pricing diagnostics
 47e9de8 txt gpt
@@ -55,7 +56,6 @@ eff568b Make NEUROMIX welcome string fixer robust
 f932423 Add NEUROMIX bot welcome rebrand script
 936ced3 Add script to remove Motion Control from Mini App video model list
 22c232b link out
-df1bf77 Add script to remove prompt channel from bot menu
 EXIT_CODE=0
 
 ============================================================
@@ -2700,5 +2700,5 @@ RECENT LOGS LIMITED
 ============================================================
 DONE
 ============================================================
-1256124 gpt_short.txt
+1256082 gpt_short.txt
 Created gpt_short.txt
