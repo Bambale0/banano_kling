@@ -1067,3 +1067,21 @@ def get_advanced_options_keyboard():
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
+
+
+
+def get_nano_banana_quality_keyboard(current_quality: str = "2K"):
+    """Клавиатура качества для Nano Banana: 2K/4K."""
+    builder = InlineKeyboardBuilder()
+    q = (current_quality or "2K").upper()
+    builder.button(
+        text=("✅ 2K качество — 5🍌" if q == "2K" else "○ 2K качество — 5🍌"),
+        callback_data="img_quality_2k",
+    )
+    builder.button(
+        text=("✅ 4K качество — 7🍌" if q == "4K" else "○ 4K качество — 7🍌"),
+        callback_data="img_quality_4k",
+    )
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()

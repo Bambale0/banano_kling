@@ -3632,6 +3632,9 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     user = await get_or_create_user(message.from_user.id)
     unit_cost = preset_manager.get_generation_cost(img_service)
+    img_quality_upper = str(img_quality or "2K").upper()
+    if img_service in {"banana_pro", "nano_banana_pro", "nano-banana-pro", "banana_2", "nanobanana"}:
+        unit_cost = 7 if img_quality_upper == "4K" else 5
     total_cost = unit_cost * img_count
 
     if user.credits < total_cost:
@@ -4769,3 +4772,24 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+
+@router.callback_query(F.data == "img_quality_2k")
+async def set_image_quality_2k(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(img_quality="2K")
+    await callback.answer("Выбрано 2K качество — 5🍌")
+    try:
+        await _show_image_settings_screen(callback, state)
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+
+@router.callback_query(F.data == "img_quality_4k")
+async def set_image_quality_4k(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(img_quality="4K")
+    await callback.answer("Выбрано 4K качество — 7🍌")
+    try:
+        await _show_image_settings_screen(callback, state)
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=None)
