@@ -131,7 +131,13 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     prompt = (prompt or "").strip()
     if not prompt:
         return prompt
-    if img_service not in {"banana_pro", "banana_2", "nanobanana", "grok_imagine_i2i", "wan_27"}:
+    if img_service not in {
+        "banana_pro",
+        "banana_2",
+        "nanobanana",
+        "grok_imagine_i2i",
+        "wan_27",
+    }:
         return prompt
 
     replacements = {
@@ -159,11 +165,16 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     return f"{safety_prefix}{normalized}"
 
 
-
-def _apply_reference_detail_preservation(img_service: str, prompt: str, reference_images: list[str]) -> str:
+def _apply_reference_detail_preservation(
+    img_service: str, prompt: str, reference_images: list[str]
+) -> str:
     """For Banana models, ask provider to keep reference details stable."""
     prompt = (prompt or "").strip()
-    if not reference_images or img_service not in {"banana_pro", "banana_2", "nanobanana"}:
+    if not reference_images or img_service not in {
+        "banana_pro",
+        "banana_2",
+        "nanobanana",
+    }:
         return prompt
     instruction = (
         "Preserve the reference image details exactly: identity, face, proportions, hairstyle, outfit, accessories, colors, textures, labels, markings, object shape, material, and visual style. "
@@ -171,7 +182,10 @@ def _apply_reference_detail_preservation(img_service: str, prompt: str, referenc
     )
     return f"{instruction}\n\nUser request: {prompt}" if prompt else instruction
 
-def _build_image_variant_prompt(prompt: str, variant_index: int, total_count: int) -> str:
+
+def _build_image_variant_prompt(
+    prompt: str, variant_index: int, total_count: int
+) -> str:
     """Add controlled variation for multi-image batches while keeping references."""
     prompt = (prompt or "").strip()
     if total_count <= 1:
@@ -206,7 +220,12 @@ async def _start_image_generation_task(
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-    effective_prompt = _apply_safe_prompt_framing(runtime_img_service, _apply_reference_detail_preservation(runtime_img_service, prompt, reference_images))
+    effective_prompt = _apply_safe_prompt_framing(
+        runtime_img_service,
+        _apply_reference_detail_preservation(
+            runtime_img_service, prompt, reference_images
+        ),
+    )
     request_snapshot = {
         "img_service": img_service,
         "prompt": prompt,
@@ -456,7 +475,6 @@ async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMC
     await callback.answer()
 
 
-
 @router.callback_query(F.data == "model_wan_27")
 async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
     """Select Wan 2.7 Pro and open reference upload step."""
@@ -546,9 +564,17 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             user=user,
             telegram_id=callback.from_user.id,
             img_service=img_service,
-            prompt=_build_image_variant_prompt(prompt, index if 'index' in locals() else 0, img_count if 'img_count' in locals() else 1),
+            prompt=_build_image_variant_prompt(
+                prompt,
+                index if "index" in locals() else 0,
+                img_count if "img_count" in locals() else 1,
+            ),
             img_ratio=img_ratio,
-            reference_images=list(stable_reference_images if 'stable_reference_images' in locals() else (reference_images or [])),
+            reference_images=list(
+                stable_reference_images
+                if "stable_reference_images" in locals()
+                else (reference_images or [])
+            ),
             unit_cost=unit_cost,
             img_quality=img_quality,
             img_nsfw_checker=img_nsfw_checker,
@@ -635,7 +661,9 @@ async def show_main_img_grok(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "main_img_wan_27")
 async def show_main_img_wan_27(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(img_service="wan_27", preset_id="new", img_flow_step="settings")
+    await state.update_data(
+        img_service="wan_27", preset_id="new", img_flow_step="settings"
+    )
     await _show_image_creation_screen(callback, state)
     await callback.answer("Выбрана тестовая модель Wan 2.7 Pro")
 
@@ -814,7 +842,6 @@ async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMCo
     )
     await callback.answer()
     await state.set_state(GenerationStates.uploading_reference_videos)
-
 
 
 @router.callback_query(F.data == "photo_prompt")
@@ -1281,12 +1308,24 @@ def _build_image_creation_text(data: dict) -> str:
     ratio_label = current_ratio.replace(":", "∶")
     # nano_quality_cost_display_v1
     unit_cost = preset_manager.get_generation_cost(current_service)
-    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+    if current_service in {
+        "banana_pro",
+        "banana_2",
+        "nanobanana",
+        "nano_banana_pro",
+        "nano-banana-pro",
+    }:
         unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
     total_cost = unit_cost * current_count
 
     # nano_quality_cost_info_v2
-    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+    if current_service in {
+        "banana_pro",
+        "banana_2",
+        "nanobanana",
+        "nano_banana_pro",
+        "nano-banana-pro",
+    }:
         unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
         total_cost = unit_cost * current_count
 
@@ -2142,7 +2181,6 @@ async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMCo
     else:
         await _show_image_creation_screen(callback, state)
     await callback.answer()
-
 
 
 @router.callback_query(F.data == "model_grok_i2i")
@@ -3641,7 +3679,13 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     user = await get_or_create_user(message.from_user.id)
     unit_cost = preset_manager.get_generation_cost(img_service)
     img_quality_upper = str(img_quality or "2K").upper()
-    if img_service in {"banana_pro", "nano_banana_pro", "nano-banana-pro", "banana_2", "nanobanana"}:
+    if img_service in {
+        "banana_pro",
+        "nano_banana_pro",
+        "nano-banana-pro",
+        "banana_2",
+        "nanobanana",
+    }:
         unit_cost = 7 if img_quality_upper == "4K" else 5
     total_cost = unit_cost * img_count
 
@@ -4541,11 +4585,9 @@ async def ignore_callback(callback: types.CallbackQuery):
     user_credits = await get_user_credits(callback.from_user.id)
     await callback.answer()
 
-
-
-# =============================================================================
-# WAN 2.7 TEST FLOW
-# =============================================================================
+    # =============================================================================
+    # WAN 2.7 TEST FLOW
+    # =============================================================================
 
     text = (
         "🧪 <b>Wan 2.7 Pro — тест</b>\n"
@@ -4564,7 +4606,9 @@ async def ignore_callback(callback: types.CallbackQuery):
 
 
 @router.message(GenerationStates.uploading_reference_images, F.photo)
-async def upload_reference_image_for_any_image_flow(message: types.Message, state: FSMContext):
+async def upload_reference_image_for_any_image_flow(
+    message: types.Message, state: FSMContext
+):
     """Universal reference upload fallback for image flows, including Wan 2.7."""
     data = await state.get_data()
     img_service = data.get("img_service", "banana_pro")
@@ -4575,7 +4619,9 @@ async def upload_reference_image_for_any_image_flow(message: types.Message, stat
     if len(reference_images) >= max_refs:
         await message.answer(
             f"Уже загружено максимум: {max_refs} фото.",
-            reply_markup=get_reference_images_upload_keyboard(len(reference_images), max_refs, preset_id),
+            reply_markup=get_reference_images_upload_keyboard(
+                len(reference_images), max_refs, preset_id
+            ),
         )
         return
 
@@ -4587,7 +4633,9 @@ async def upload_reference_image_for_any_image_flow(message: types.Message, stat
 
         public_url = save_uploaded_file(image_bytes, "jpg")
         if not public_url:
-            await message.answer("Не удалось сохранить фото. Попробуйте другое изображение.")
+            await message.answer(
+                "Не удалось сохранить фото. Попробуйте другое изображение."
+            )
             return
 
         reference_images.append(public_url)
@@ -4598,7 +4646,9 @@ async def upload_reference_image_for_any_image_flow(message: types.Message, stat
             f"{title}\n\n"
             f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
             "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
-            reply_markup=get_reference_images_upload_keyboard(len(reference_images), max_refs, preset_id),
+            reply_markup=get_reference_images_upload_keyboard(
+                len(reference_images), max_refs, preset_id
+            ),
             parse_mode="HTML",
         )
     except Exception:
@@ -4606,7 +4656,9 @@ async def upload_reference_image_for_any_image_flow(message: types.Message, stat
         await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
 
 
-@router.callback_query(F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"}))
+@router.callback_query(
+    F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"})
+)
 async def continue_wan27_after_refs(callback: types.CallbackQuery, state: FSMContext):
     """Continue Wan 2.7 after optional references."""
     await state.update_data(
@@ -4630,14 +4682,19 @@ async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Продолжаем без референсов")
 
 
-
-
-
 def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
     builder = InlineKeyboardBuilder()
     rows = [
-        ("motion_control_v26", "🎯 Kling 2.6 Motion Control", preset_manager.get_video_cost("motion_control_v26", 5)),
-        ("motion_control_v30", "🚀 Kling 3.0 Motion Control", preset_manager.get_video_cost("motion_control_v30", 5)),
+        (
+            "motion_control_v26",
+            "🎯 Kling 2.6 Motion Control",
+            preset_manager.get_video_cost("motion_control_v26", 5),
+        ),
+        (
+            "motion_control_v30",
+            "🚀 Kling 3.0 Motion Control",
+            preset_manager.get_video_cost("motion_control_v30", 5),
+        ),
     ]
     for model_key, label, cost in rows:
         check = "✅ " if current_model == model_key else ""
@@ -4653,6 +4710,7 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
 # =============================================================================
 # MOTION CONTROL DEDICATED MENU
 # =============================================================================
+
 
 @router.callback_query(F.data == "motion_control")
 async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMContext):
@@ -4683,11 +4741,17 @@ async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMCont
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"}))
+@router.callback_query(
+    F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"})
+)
 async def select_motion_control_model(callback: types.CallbackQuery, state: FSMContext):
     """Select Motion Control model and ask for character photo."""
     model = callback.data.replace("motion_model_", "")
-    label = "Kling 3.0 Motion Control" if model == "motion_control_v30" else "Kling 2.6 Motion Control"
+    label = (
+        "Kling 3.0 Motion Control"
+        if model == "motion_control_v30"
+        else "Kling 2.6 Motion Control"
+    )
     user_credits = await get_user_credits(callback.from_user.id)
     await state.update_data(
         generation_type="video",
@@ -4712,7 +4776,9 @@ async def select_motion_control_model(callback: types.CallbackQuery, state: FSMC
 
 
 @router.message(GenerationStates.waiting_for_video_start_image, F.photo)
-async def motion_control_character_photo_upload(message: types.Message, state: FSMContext):
+async def motion_control_character_photo_upload(
+    message: types.Message, state: FSMContext
+):
     """Upload character photo for dedicated Motion Control flow."""
     data = await state.get_data()
     if data.get("v_type") != "motion":
@@ -4732,7 +4798,9 @@ async def motion_control_character_photo_upload(message: types.Message, state: F
 
 
 @router.message(GenerationStates.uploading_reference_videos, F.video)
-async def motion_control_reference_video_upload(message: types.Message, state: FSMContext):
+async def motion_control_reference_video_upload(
+    message: types.Message, state: FSMContext
+):
     """Upload movement video for dedicated Motion Control flow."""
     data = await state.get_data()
     if data.get("v_type") != "motion":
@@ -4780,8 +4848,6 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.answer()
-
-
 
 
 @router.callback_query(F.data == "img_quality_2k")

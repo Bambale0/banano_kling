@@ -42,7 +42,13 @@ class KlingService:
     KLING_3_MODELS = {"v3_std", "v3_pro", "kling_v3", "kling_3", "kling_3_pro"}
     KLING_25_MODELS = {"v26_pro", "kling_25_turbo_pro"}
     AVATAR_MODELS = {"avatar_std", "avatar_pro", "kling_avatar_std", "kling_avatar_pro"}
-    MOTION_MODELS = {"kling-2.6/motion-control", "kling-3.0/motion-control", "motion_control", "motion_control_v26", "motion_control_v30"}
+    MOTION_MODELS = {
+        "kling-2.6/motion-control",
+        "kling-3.0/motion-control",
+        "motion_control",
+        "motion_control_v26",
+        "motion_control_v30",
+    }
     GLOW_MODELS = {"glow"}
 
     NON_KLING_MODELS = {
@@ -486,7 +492,9 @@ class KlingService:
             input_data.get("mode"),
             input_data.get("character_orientation"),
         )
-        return await self.create_kie_motion_task(input_data, webhook_url, model=motion_model)
+        return await self.create_kie_motion_task(
+            input_data, webhook_url, model=motion_model
+        )
 
     # ------------------------------------------------------------------
     # Public high-level router

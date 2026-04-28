@@ -599,6 +599,7 @@ async def render_partner_program(target, user_id: int):
     else:
         await target.edit_text(text, reply_markup=markup, parse_mode="HTML")
 
+
 @router.callback_query(F.data == "partner_accept")
 async def accept_partner(callback: types.CallbackQuery):
     """Подтверждение участия в партнёрской программе."""

@@ -171,7 +171,8 @@ VIDEO_MODELS = (
         "supports_seed": True,
         "supports_watermark": True,
         "max_image_references": 3,
-    },    {
+    },
+    {
         "id": "motion_control_v26",
         "label": "Kling 2.6 Motion Control",
         "description": "Перенос движения по фото персонажа и видео движения",
@@ -207,7 +208,6 @@ VIDEO_MODELS = (
         "max_image_references": 1,
         "max_audio_references": 1,
     },
-
 )
 
 FILE_KIND_MAP = {
@@ -1659,15 +1659,29 @@ def setup_miniapp_routes(app: web.Application):
     async def _redirect_to_slash(request: web.Request) -> web.Response:
         raise web.HTTPFound(f"{miniapp_root}/")
 
-
     # miniapp_static_mount_v1
     from pathlib import Path as _MiniAppPath
-    miniapp_out_dir = _MiniAppPath(__file__).resolve().parent.parent / "frontend" / "miniapp-v0" / "out"
+
+    miniapp_out_dir = (
+        _MiniAppPath(__file__).resolve().parent.parent
+        / "frontend"
+        / "miniapp-v0"
+        / "out"
+    )
     miniapp_next_static_dir = miniapp_out_dir / "_next" / "static"
     if miniapp_next_static_dir.exists():
-        app.router.add_static("/mini-app/_next/static/", path=str(miniapp_next_static_dir), name="miniapp_next_static")
+        app.router.add_static(
+            "/mini-app/_next/static/",
+            path=str(miniapp_next_static_dir),
+            name="miniapp_next_static",
+        )
     if miniapp_out_dir.exists():
-        app.router.add_static("/mini-app/", path=str(miniapp_out_dir), name="miniapp_static", show_index=False)
+        app.router.add_static(
+            "/mini-app/",
+            path=str(miniapp_out_dir),
+            name="miniapp_static",
+            show_index=False,
+        )
     app.router.add_get(miniapp_root, _redirect_to_slash)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
@@ -1677,7 +1691,9 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/generate-image", miniapp_generate_image)
     app.router.add_post(miniapp_root + "/api/generate-video", miniapp_generate_video)
     app.router.add_post(miniapp_root + "/api/generate-motion", miniapp_generate_motion)
-    app.router.add_post(miniapp_root + "/api/partner-overview", miniapp_partner_overview)
+    app.router.add_post(
+        miniapp_root + "/api/partner-overview", miniapp_partner_overview
+    )
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
     app.router.add_get(miniapp_root + "/{tail:.*}", miniapp_asset)

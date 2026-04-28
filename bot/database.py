@@ -598,7 +598,8 @@ async def process_referral(
         db.row_factory = aiosqlite.Row
 
         referrer_cursor = await db.execute(
-            "SELECT id FROM users WHERE referral_code = ?", (referral_code,),
+            "SELECT id FROM users WHERE referral_code = ?",
+            (referral_code,),
         )
         referrer = await referrer_cursor.fetchone()
         if not referrer:
@@ -658,7 +659,11 @@ async def credit_first_payment_referral_bonus(
         if not user or not user["referred_by"] or user["has_paid"]:
             return {"mode": "none", "value": 0, "percent": 0}
 
-        base_value = float(transaction_amount_rub if transaction_amount_rub is not None else transaction_credits)
+        base_value = float(
+            transaction_amount_rub
+            if transaction_amount_rub is not None
+            else transaction_credits
+        )
         level1_bonus = round(base_value * 30 / 100.0, 2)
         level2_bonus = 0.0
 
@@ -668,7 +673,9 @@ async def credit_first_payment_referral_bonus(
             (base_value, level1_bonus, ref1_id),
         )
 
-        ref_cursor = await db.execute("SELECT referred_by FROM users WHERE id = ?", (ref1_id,))
+        ref_cursor = await db.execute(
+            "SELECT referred_by FROM users WHERE id = ?", (ref1_id,)
+        )
         ref1 = await ref_cursor.fetchone()
         if ref1 and ref1["referred_by"]:
             ref2_id = ref1["referred_by"]
@@ -784,12 +791,15 @@ async def get_partner_overview(telegram_id: int) -> dict:
         )
         pay_row = await pay_cursor.fetchone()
 
-        level2_cursor = await db.execute("""
+        level2_cursor = await db.execute(
+            """
             SELECT COUNT(*) as count
             FROM users u2
             JOIN users u1 ON u2.referred_by = u1.id
             WHERE u1.referred_by = ?
-            """, (target_user_id,))
+            """,
+            (target_user_id,),
+        )
         level2_row = await level2_cursor.fetchone()
 
         withdrawal_cursor = await db.execute(

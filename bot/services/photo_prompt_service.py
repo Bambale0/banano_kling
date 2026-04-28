@@ -180,7 +180,9 @@ Return valid JSON only according to the required schema.
                 try:
                     data = json.loads(text)
                 except Exception:
-                    logger.error("Photo prompt GPT 5.4 returned non-JSON: %s", text[:2000])
+                    logger.error(
+                        "Photo prompt GPT 5.4 returned non-JSON: %s", text[:2000]
+                    )
                     raise RuntimeError("AI вернул некорректный ответ")
 
         raw_output = _extract_output_text(data)

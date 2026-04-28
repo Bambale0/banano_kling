@@ -284,8 +284,14 @@ def get_video_media_step_keyboard(
     if current_v_type == "motion":
         image_status = "загружено" if has_start_image else "не загружено"
         video_status = "загружено" if reference_video_count else "не загружено"
-        builder.button(text=f"🖼 Фото персонажа: {image_status}", callback_data="motion_upload_image")
-        builder.button(text=f"🎬 Видео движения: {video_status}", callback_data="motion_upload_video")
+        builder.button(
+            text=f"🖼 Фото персонажа: {image_status}",
+            callback_data="motion_upload_image",
+        )
+        builder.button(
+            text=f"🎬 Видео движения: {video_status}",
+            callback_data="motion_upload_video",
+        )
         builder.button(text="▶️ К промпту", callback_data="video_media_continue")
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")
@@ -295,8 +301,12 @@ def get_video_media_step_keyboard(
     if current_v_type == "avatar":
         image_status = "загружено" if has_start_image else "не загружено"
         audio_status = "загружено" if has_avatar_audio else "не загружено"
-        builder.button(text=f"🖼 Аватар: {image_status}", callback_data="avatar_upload_image")
-        builder.button(text=f"🎵 Аудио: {audio_status}", callback_data="avatar_upload_audio")
+        builder.button(
+            text=f"🖼 Аватар: {image_status}", callback_data="avatar_upload_image"
+        )
+        builder.button(
+            text=f"🎵 Аудио: {audio_status}", callback_data="avatar_upload_audio"
+        )
         builder.button(text="▶️ К промпту", callback_data="video_media_continue")
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")
@@ -699,7 +709,13 @@ def get_create_image_keyboard(
         builder.row(*ratio_buttons[6:])
 
     # nano_quality_buttons_inserted_v2
-    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+    if current_service in {
+        "banana_pro",
+        "banana_2",
+        "nanobanana",
+        "nano_banana_pro",
+        "nano-banana-pro",
+    }:
         q = str(img_quality or "2K").upper()
         builder.row(
             InlineKeyboardButton(
@@ -1081,5 +1097,3 @@ def get_advanced_options_keyboard():
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
-
-

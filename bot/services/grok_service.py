@@ -58,9 +58,7 @@ class GrokService(KlingService):
 
         safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls)
 
-        image_refs = " ".join(
-            f"@image{i + 1}" for i in range(len(safe_image_urls))
-        )
+        image_refs = " ".join(f"@image{i + 1}" for i in range(len(safe_image_urls)))
         clean_prompt = str(prompt or "").strip()
         if image_refs and not clean_prompt.startswith("@image"):
             clean_prompt = f"{image_refs} {clean_prompt}".strip()
