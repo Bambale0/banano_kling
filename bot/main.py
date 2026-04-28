@@ -32,7 +32,7 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_cryptobot_webhook
+from bot.handlers.payments import handle_cryptobot_webhook, handle_lava_webhook
 from bot.miniapp import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
@@ -184,6 +184,13 @@ async def on_shutdown(bot: Bot):
         await cryptobot_service.close()
     except Exception:
         logger.exception("Failed to close CryptoBot session")
+
+    try:
+        from bot.services.lava_service import lava_service
+
+        await lava_service.close()
+    except Exception:
+        logger.exception("Failed to close Lava session")
     await bot.delete_webhook()
     await bot.session.close()
 
@@ -1918,3 +1925,5 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.exception(f"Bot crashed: {e}")
+
+# TODO: register Lava webhook route manually: app.router.add_post(config.LAVA_WEBHOOK_PATH, handle_lava_webhook)

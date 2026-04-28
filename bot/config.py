@@ -36,6 +36,18 @@ class Config:
         "CRYPTOBOT_WEBHOOK_PATH", "/cryptobot/webhook"
     )
 
+    # Lava.top payments
+    LAVA_API_KEY: str = os.getenv("LAVA_API_KEY", "")
+    LAVA_API_BASE_URL: str = os.getenv("LAVA_API_BASE_URL", "https://gate.lava.top")
+    LAVA_WEBHOOK_PATH: str = os.getenv("LAVA_WEBHOOK_PATH", "/lava/webhook")
+    LAVA_DEFAULT_EMAIL: str = os.getenv("LAVA_DEFAULT_EMAIL", "buyer@example.com")
+    LAVA_OFFER_ID_MINI: str = os.getenv("LAVA_OFFER_ID_MINI", "")
+    LAVA_OFFER_ID_START: str = os.getenv("LAVA_OFFER_ID_START", "")
+    LAVA_OFFER_ID_OPTIMAL: str = os.getenv("LAVA_OFFER_ID_OPTIMAL", "")
+    LAVA_OFFER_ID_PRO: str = os.getenv("LAVA_OFFER_ID_PRO", "")
+    LAVA_OFFER_ID_STUDIO: str = os.getenv("LAVA_OFFER_ID_STUDIO", "")
+    LAVA_OFFER_ID_BUSINESS: str = os.getenv("LAVA_OFFER_ID_BUSINESS", "")
+
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
 
@@ -139,7 +151,7 @@ class Config:
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"cryptobot", "yookassa", "tbank"}:
+        if self.PAYMENT_PROVIDER in {"cryptobot", "lava", "yookassa", "tbank"}:
             return self.PAYMENT_PROVIDER
         return "cryptobot"
 
@@ -149,6 +161,24 @@ class Config:
         if not path.startswith("/"):
             path = "/" + path
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    @property
+    def lava_notification_url(self) -> str:
+        path = self.LAVA_WEBHOOK_PATH
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    def lava_offer_id_for_package(self, package_id: str) -> str:
+        mapping = {
+            "mini": self.LAVA_OFFER_ID_MINI,
+            "start": self.LAVA_OFFER_ID_START,
+            "optimal": self.LAVA_OFFER_ID_OPTIMAL,
+            "pro": self.LAVA_OFFER_ID_PRO,
+            "studio": self.LAVA_OFFER_ID_STUDIO,
+            "business": self.LAVA_OFFER_ID_BUSINESS,
+        }
+        return mapping.get(package_id, "")
 
     @property
     def has_yookassa(self) -> bool:

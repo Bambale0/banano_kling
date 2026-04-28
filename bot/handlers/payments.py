@@ -23,6 +23,7 @@ from bot.keyboards import (
     get_payment_packages_keyboard,
 )
 from bot.services.cryptobot_service import cryptobot_service
+from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ async def _render_topup_menu(message: types.Message):
     packages = preset_manager.get_packages()
     text = (
         "🍌 <b>Пополнение баланса</b>\n\n"
-        "Оплата выполняется через CryptoBot.\n"
+        "Оплата выполняется через выбранного платёжного провайдера.\n"
         "Выберите пакет бананов ниже.\n\n"
         "<i>Чем больше пакет, тем выгоднее цена за банан.</i>"
     )
@@ -78,8 +79,19 @@ async def show_packages(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("buy_"))
 async def initiate_payment(callback: types.CallbackQuery):
-    """Создаёт инвойс в CryptoBot."""
-    if not cryptobot_service.enabled:
+    """Создаёт инвойс у выбранного платёжного провайдера."""
+    provider = config.payment_provider
+
+    if provider == "lava" and not lava_service.enabled:
+        await callback.message.edit_text(
+            "Не удалось создать оплату: Lava не настроена.\n"
+            "Проверьте переменную окружения <code>LAVA_API_KEY</code>.",
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+        return
+
+    if provider != "lava" and not cryptobot_service.enabled:
         await callback.message.edit_text(
             "Не удалось создать оплату: CryptoBot не настроен.\n"
             "Проверьте переменную окружения <code>CRYPTOBOT_API_TOKEN</code>.",
@@ -108,17 +120,42 @@ async def initiate_payment(callback: types.CallbackQuery):
     total_credits = package["credits"] + package.get("bonus_credits", 0)
     description = f"Покупка {total_credits} бананов ({package['name']})"
 
-    result = await cryptobot_service.create_invoice(
-        amount_rub=float(package["price_rub"]),
-        description=description,
-        order_id=order_id,
-        paid_btn_url=success_url,
-    )
+    if provider == "lava":
+        offer_id = config.lava_offer_id_for_package(package_id)
+        if not offer_id:
+            await callback.message.edit_text(
+                "Не удалось создать оплату: для пакета не задан Lava offerId.\n"
+                f"Проверьте переменную окружения <code>LAVA_OFFER_ID_{package_id.upper()}</code>.",
+                reply_markup=get_back_keyboard("menu_topup"),
+                parse_mode="HTML",
+            )
+            return
+
+        result = await lava_service.create_invoice(
+            email=config.LAVA_DEFAULT_EMAIL,
+            offer_id=offer_id,
+            currency="RUB",
+            amount=float(package["price_rub"]),
+            buyer_language="RU",
+            client_utm={
+                "telegram_id": str(callback.from_user.id),
+                "order_id": order_id,
+                "package_id": package_id,
+            },
+        )
+    else:
+        result = await cryptobot_service.create_invoice(
+            amount_rub=float(package["price_rub"]),
+            description=description,
+            order_id=order_id,
+            paid_btn_url=success_url,
+        )
 
     if not result or not result.get("ok"):
         error_msg = (
             (result or {}).get("error")
             or (result or {}).get("message")
+            or (result or {}).get("raw")
             or "Не удалось создать инвойс"
         )
         await callback.message.edit_text(
@@ -128,17 +165,21 @@ async def initiate_payment(callback: types.CallbackQuery):
         )
         return
 
-    invoice = result.get("result") or {}
-    invoice_id = str(invoice.get("invoice_id"))
-    payment_url = (
-        invoice.get("bot_invoice_url")
-        or invoice.get("mini_app_invoice_url")
-        or invoice.get("web_app_invoice_url")
-    )
+    if provider == "lava":
+        invoice_id = lava_service.extract_invoice_id(result)
+        payment_url = lava_service.extract_payment_url(result)
+    else:
+        invoice = result.get("result") or {}
+        invoice_id = str(invoice.get("invoice_id"))
+        payment_url = (
+            invoice.get("bot_invoice_url")
+            or invoice.get("mini_app_invoice_url")
+            or invoice.get("web_app_invoice_url")
+        )
 
     if not invoice_id or not payment_url:
         await callback.message.edit_text(
-            "Не удалось получить ссылку на оплату от CryptoBot.",
+            f"Не удалось получить ссылку на оплату от {provider}.",
             reply_markup=get_back_keyboard("menu_topup"),
             parse_mode="HTML",
         )
@@ -149,7 +190,7 @@ async def initiate_payment(callback: types.CallbackQuery):
         order_id=order_id,
         user_id=user.id,
         payment_id=invoice_id,
-        provider="cryptobot",
+        provider=provider,
         credits=total_credits,
         amount_rub=float(package["price_rub"]),
         status="pending",
@@ -160,11 +201,11 @@ async def initiate_payment(callback: types.CallbackQuery):
         bonus_text = f"\n• Бонус: <code>{package['bonus_credits']}</code> бананов"
 
     await callback.message.edit_text(
-        "💳 <b>Оплата через CryptoBot</b>\n"
+        f"💳 <b>Оплата через {'Lava' if provider == 'lava' else 'CryptoBot'}</b>\n"
         f"• Пакет: <code>{package['name']}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package['price_rub']}</code> ₽\n\n"
-        "Нажмите кнопку ниже и завершите оплату в CryptoBot.",
+        "Нажмите кнопку ниже и завершите оплату.",
         reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
         parse_mode="HTML",
     )
@@ -190,13 +231,22 @@ async def check_payment_status(callback: types.CallbackQuery):
         )
         return
 
-    if not cryptobot_service.enabled:
-        await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
-        return
+    if transaction.provider == "lava":
+        if not lava_service.enabled:
+            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            return
 
-    invoice = await cryptobot_service.get_invoice(transaction.payment_id)
-    status = (invoice or {}).get("status", "")
-    paid = status == "paid"
+        invoice = await lava_service.get_invoice(transaction.payment_id)
+        status = (invoice or {}).get("status", "")
+        paid = status == "completed"
+    else:
+        if not cryptobot_service.enabled:
+            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            return
+
+        invoice = await cryptobot_service.get_invoice(transaction.payment_id)
+        status = (invoice or {}).get("status", "")
+        paid = status == "paid"
 
     if not paid:
         await callback.answer("Платёж ещё в обработке", show_alert=True)
@@ -312,4 +362,87 @@ async def handle_cryptobot_webhook(request: web.Request):
 
     except Exception as e:
         logger.exception("Error processing CryptoBot webhook: %s", e)
+        return web.Response(status=200)
+
+
+
+async def handle_lava_webhook(request: web.Request):
+    """Webhook updates from Lava.top."""
+    try:
+        raw_body = await request.read()
+        if not raw_body:
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            logger.warning("Lava webhook received invalid JSON")
+            return web.Response(status=200)
+
+        logger.info("Lava webhook payload: %s", data)
+
+        if not lava_service.is_success_webhook(data):
+            return web.Response(status=200)
+
+        contract_id = lava_service.webhook_contract_id(data)
+        if not contract_id:
+            logger.warning("Lava webhook has no contractId")
+            return web.Response(status=200)
+
+        import aiosqlite
+        from bot.database import DATABASE_PATH
+
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
+                (contract_id, "lava"),
+            )
+            row = await cursor.fetchone()
+
+        if not row:
+            logger.warning("Lava transaction not found for contractId=%s", contract_id)
+            return web.Response(status=200)
+
+        order_id = row["order_id"]
+        transaction = await get_transaction_by_order(order_id)
+        if not transaction or transaction.status == "completed":
+            return web.Response(status=200)
+
+        telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+        if not telegram_id:
+            logger.warning("Cannot resolve telegram_id for user_id=%s", transaction.user_id)
+            return web.Response(status=200)
+
+        await add_credits(telegram_id, transaction.credits)
+        await update_transaction_status(order_id, "completed")
+        referral_bonus = await credit_first_payment_referral_bonus(
+            telegram_id, transaction.credits, transaction.amount_rub
+        )
+
+        bonus_text = ""
+        if referral_bonus.get("mode") == "partner":
+            bonus_text = f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+        elif referral_bonus.get("mode") == "banana":
+            bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+
+        try:
+            await _notify_user(
+                request.app["bot"],
+                telegram_id,
+                "✅ <b>Оплата успешно обработана</b>\n"
+                f"• Начислено: <code>{transaction.credits}</code> бананов\n"
+                f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest as e:
+            if _is_ignored_telegram_error(e):
+                logger.warning("Skipping Lava notification for user %s: %s", telegram_id, e)
+            else:
+                logger.error("Failed to notify user %s: %s", telegram_id, e)
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception("Error processing Lava webhook: %s", e)
         return web.Response(status=200)
