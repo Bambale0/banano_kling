@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Layers, Loader2, PanelTopOpen, Send, Sparkles, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
+import { UploadArea } from '@/components/forms/upload-area'
+import type { UploadedFile } from '@/lib/types'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -672,6 +674,7 @@ function SupportPanel() {
 function BatchEditPanel() {
   const presets = ['Удалить фон', 'Сделать единый стиль', 'Подготовить для карточек товара', 'Собрать набор превью']
   const [selectedPreset, setSelectedPreset] = useState(presets[0])
+  const [files, setFiles] = useState<UploadedFile[]>([])
 
   return (
     <div className="space-y-4">
@@ -697,10 +700,24 @@ function BatchEditPanel() {
       </div>
       <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
         <p className="text-xs text-muted-foreground">Следующий шаг</p>
-        <p className="mt-2 text-sm text-foreground">
-          Выбрано: {selectedPreset}. Дальше можно загрузить серию изображений и применить к ним один аккуратный сценарий.
-        </p>
-        <Button onClick={() => toast.success('Серия подготовлена')} className="mt-4 bg-gold text-primary-foreground hover:bg-gold/90">
+        <p className="mt-2 text-sm text-foreground">Выбрано: {selectedPreset}.</p>
+
+        <div className="mt-4">
+          <UploadArea files={files} onFilesChange={setFiles} maxFiles={20} accept="image/*" />
+        </div>
+
+        <Button
+          onClick={() => {
+            if (files.length === 0) {
+              toast.error('Загрузите хотя бы одно изображение')
+              return
+            }
+            // Здесь можно добавить реальную логику отправки на сервер / создание задач
+            toast.success(`Серия из ${files.length} изображений подготовлена`)
+            setFiles([])
+          }}
+          className="mt-4 bg-gold text-primary-foreground hover:bg-gold/90"
+        >
           Подготовить серию
         </Button>
       </div>
