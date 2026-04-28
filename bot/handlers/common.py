@@ -72,8 +72,8 @@ def _get_user_menu(user_id: int) -> str:
 def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> str:
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
-        "Привет 👋\n"
-        "Я NEUROMIX — самый выгодный и очень удобный бот для генерации изображений и видео\n\n"
+        "🏠 <b>NEUROMIX</b>\n"
+        "Выберите, что хотите сделать. Бот сам проведёт вас по шагам.\n\n"
         "<b>Что можно сделать</b>\n"
         "• Создать фото\n"
         "• Создать видео\n"
@@ -82,7 +82,7 @@ def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> s
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
         "🎁 <b>Welcome-бонус для новых пользователей:</b> <code>25</code> бананов\n"
-        "<i>👇 Пользуйся текстовым вариантом генераций или открой приложение чтобы начать творить 🚀</i>"
+        "<i>Нажмите нужную кнопку ниже.</i>"
     )
 
 
