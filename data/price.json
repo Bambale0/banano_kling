@@ -142,13 +142,13 @@
       "kling_v3_omni": 8,
       "z_image_turbo_lora": 3,
       "wanx_lora": 15,
-      "nanobanana": 5,
-      "banana_pro": 5,
-      "banana_2": 5,
+      "nanobanana": 2.5,
+      "banana_pro": 2.5,
+      "banana_2": 2.5,
       "seedream": 4,
-      "seedream_edit": 4,
+      "seedream_edit": 1.5,
       "grok_imagine_i2i": 3,
-      "wan_27": 5
+      "wan_27": 2.2
     }
   },
   "batch_pricing": {
