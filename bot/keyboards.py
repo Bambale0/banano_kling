@@ -46,7 +46,6 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
-    builder.button(text="📚 Промпт-канал", url="https://t.me/only_tm_ii")
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
     builder.button(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
@@ -54,9 +53,9 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 1, 1)
+        builder.adjust(1, 2, 2, 2, 2, 1)
     else:
-        builder.adjust(2, 2, 2, 2, 1, 1)
+        builder.adjust(2, 2, 2, 2, 1)
 
     return builder.as_markup()
 

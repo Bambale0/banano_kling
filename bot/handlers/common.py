@@ -669,7 +669,7 @@ async def partner_stats(callback: types.CallbackQuery):
 async def partner_withdraw(callback: types.CallbackQuery):
     """Показывает меню вывода."""
     stats = await get_partner_overview(callback.from_user.id)
-    min_withdraw = 2000
+    min_withdraw = 1000
     # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
     user = await get_or_create_user(callback.from_user.id)
     me = await callback.bot.get_me()
