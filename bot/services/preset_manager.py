@@ -213,16 +213,21 @@ class PresetManager:
             return ""
         return CANONICAL_VIDEO_ALIASES.get(model.lower(), model.lower())
 
-    def get_generation_cost(self, model: str, options: dict = None) -> int:
+    def _format_cost(self, value):
+        """Вернуть стоимость без потери дробной части: 2.5 -> 2.5, 2.0 -> 2."""
+        value = float(value)
+        return int(value) if value.is_integer() else value
+
+    def get_generation_cost(self, model: str, options: dict = None):
         """Вернуть стоимость генерации изображения по каноническому ключу модели."""
         image_models = self._image_costs()
         legacy_keys = self._legacy_costs()
         key = self.normalize_image_model_key(model)
 
         if key in image_models:
-            return int(image_models[key])
+            return self._format_cost(image_models[key])
         if key in legacy_keys:
-            return int(legacy_keys[key])
+            return self._format_cost(legacy_keys[key])
         return DEFAULT_IMAGE_COST
 
     def get_video_cost(self, model: str, duration: int = 5) -> int:
