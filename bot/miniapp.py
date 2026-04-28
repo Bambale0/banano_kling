@@ -218,16 +218,25 @@ FILE_KIND_MAP = {
 
 
 def _resolve_miniapp_static_root() -> Path:
-    """Prefer a built Next.js export when available, fallback to bundled static app."""
+    """Prefer a built Next.js export when available, fallback to bundled static app.
+
+    Use repository-relative absolute paths (based on this file location) so
+    resolution does not depend on the process working directory.
+    """
+    base = Path(__file__).resolve().parent.parent
     candidates = [
-        Path("frontend/miniapp-v0/out"),
-        Path("frontend/miniapp-v0/dist"),
-        Path("static/miniapp"),
+        base / "frontend" / "miniapp-v0" / "out",
+        base / "frontend" / "miniapp-v0" / "dist",
+        base / "static" / "miniapp",
     ]
     for candidate in candidates:
-        if (candidate / "index.html").exists():
+        index_file = candidate / "index.html"
+        if index_file.exists():
             return candidate
-    return Path("static/miniapp")
+    # Fallback to repo static path (absolute) even if index missing — callers
+    # will handle missing file and return correct 404. This avoids relying on
+    # the current working directory.
+    return base / "static" / "miniapp"
 
 
 class _MessageTarget:
@@ -927,7 +936,9 @@ ACTIONS = {
 
 
 async def miniapp_index(_request: web.Request) -> web.Response:
-    index_path = _resolve_miniapp_static_root() / "index.html"
+    root = _resolve_miniapp_static_root()
+    index_path = root / "index.html"
+    logger.info("Miniapp index requested, resolved static root=%s index_exists=%s", str(root), str(index_path.exists()))
     response = web.FileResponse(index_path)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -939,6 +950,7 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     static_root = _resolve_miniapp_static_root().resolve()
     tail = request.match_info.get("tail", "").lstrip("/")
     asset_path = (static_root / tail).resolve()
+    logger.info("Miniapp asset request: tail=%s static_root=%s asset_path=%s exists=%s", tail, str(static_root), str(asset_path), str(asset_path.exists()))
 
     try:
         asset_path.relative_to(static_root)
@@ -1675,7 +1687,14 @@ def setup_miniapp_routes(app: web.Application):
             path=str(miniapp_next_static_dir),
             name="miniapp_next_static",
         )
-    if miniapp_out_dir.exists():
+
+    # Only mount the full `out/` directory as `/mini-app/` if it contains a
+    # top-level `index.html`. Partially exported builds (only `_next` static
+    # assets) should not override the dynamic fallback handlers — otherwise
+    # requests to `/mini-app/` will return 403 (no index and directory listing
+    # disabled). If `index.html` is missing, leave serving to `miniapp_index`
+    # which will resolve fallback paths properly.
+    if miniapp_out_dir.exists() and (miniapp_out_dir / "index.html").exists():
         app.router.add_static(
             "/mini-app/",
             path=str(miniapp_out_dir),
