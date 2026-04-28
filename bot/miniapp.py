@@ -1688,19 +1688,12 @@ def setup_miniapp_routes(app: web.Application):
             name="miniapp_next_static",
         )
 
-    # Only mount the full `out/` directory as `/mini-app/` if it contains a
-    # top-level `index.html`. Partially exported builds (only `_next` static
-    # assets) should not override the dynamic fallback handlers — otherwise
-    # requests to `/mini-app/` will return 403 (no index and directory listing
-    # disabled). If `index.html` is missing, leave serving to `miniapp_index`
-    # which will resolve fallback paths properly.
-    if miniapp_out_dir.exists() and (miniapp_out_dir / "index.html").exists():
-        app.router.add_static(
-            "/mini-app/",
-            path=str(miniapp_out_dir),
-            name="miniapp_static",
-            show_index=False,
-        )
+    # Do not mount the full `out/` directory as a static resource here.
+    # Serving of `index.html` and other files is handled explicitly by
+    # `miniapp_index` and `miniapp_asset` so we avoid conflicts where the
+    # static resource would match `/mini-app/` and return 403 for directory
+    # requests when `show_index` is disabled. Keep only `_next/static`
+    # mounted above for Next.js runtime assets.
     app.router.add_get(miniapp_root, _redirect_to_slash)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
