@@ -24,7 +24,9 @@ from bot.keyboards import (
 )
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
+from bot.services.yookassa_service import yookassa_service
 from bot.services.preset_manager import preset_manager
+from bot.database import create_miniapp_notification
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -144,18 +146,47 @@ async def initiate_payment(callback: types.CallbackQuery):
             },
         )
     else:
-        result = await cryptobot_service.create_invoice(
-            amount_rub=float(package["price_rub"]),
-            description=description,
-            order_id=order_id,
-            paid_btn_url=success_url,
-        )
+        if provider == "yookassa":
+            if not yookassa_service.enabled:
+                await callback.message.edit_text(
+                    "Не удалось создать оплату: YooKassa не настроена.\n"
+                    "Проверьте переменные окружения YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY.",
+                    reply_markup=get_back_keyboard("back_main"),
+                    parse_mode="HTML",
+                )
+                return
 
-    if not result or not result.get("ok"):
+            result = await yookassa_service.create_payment(
+                amount_rub=float(package["price_rub"]),
+                order_id=order_id,
+                description=description,
+                return_url=success_url,
+                notification_url=config.yookassa_notification_url,
+            )
+        else:
+            result = await cryptobot_service.create_invoice(
+                amount_rub=float(package["price_rub"]),
+                description=description,
+                order_id=order_id,
+                paid_btn_url=success_url,
+            )
+
+    # Normalize success check for different providers
+    creation_ok = False
+    if provider == "lava":
+        creation_ok = bool(result and result.get("ok"))
+    elif provider == "yookassa":
+        # yookassa_service returns {'Success': True, 'PaymentId': ..., 'PaymentURL': ...}
+        creation_ok = bool(result and (result.get("Success") or result.get("PaymentId")))
+    else:
+        creation_ok = bool(result and result.get("ok"))
+
+    if not creation_ok:
         error_msg = (
             (result or {}).get("error")
             or (result or {}).get("message")
             or (result or {}).get("raw")
+            or (result or {}).get("Message")
             or "Не удалось создать инвойс"
         )
         await callback.message.edit_text(
@@ -168,6 +199,9 @@ async def initiate_payment(callback: types.CallbackQuery):
     if provider == "lava":
         invoice_id = lava_service.extract_invoice_id(result)
         payment_url = lava_service.extract_payment_url(result)
+    elif provider == "yookassa":
+        invoice_id = result.get("PaymentId") if result else None
+        payment_url = result.get("PaymentURL") if result else None
     else:
         invoice = result.get("result") or {}
         invoice_id = str(invoice.get("invoice_id"))
@@ -239,6 +273,14 @@ async def check_payment_status(callback: types.CallbackQuery):
         invoice = await lava_service.get_invoice(transaction.payment_id)
         status = (invoice or {}).get("status", "")
         paid = status == "completed"
+    elif transaction.provider == "yookassa":
+        if not yookassa_service.enabled:
+            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            return
+
+        invoice = await yookassa_service.get_payment(transaction.payment_id)
+        status = (invoice or {}).get("status", "")
+        paid = bool((invoice or {}).get("paid"))
     else:
         if not cryptobot_service.enabled:
             await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
@@ -358,6 +400,13 @@ async def handle_cryptobot_webhook(request: web.Request):
             else:
                 logger.error("Failed to notify user %s: %s", telegram_id, e)
 
+        # Создаём уведомление для мини‑аппа (чтобы UI показал результат при следующем bootstrap)
+        try:
+            note = f"✅ Оплата успешно обработана — {transaction.credits} бананов за {transaction.amount_rub} ₽"
+            await create_miniapp_notification(transaction.user_id, note)
+        except Exception:
+            logger.exception("Failed to create miniapp notification for order %s", order_id)
+
         return web.Response(status=200)
 
     except Exception as e:
@@ -445,4 +494,146 @@ async def handle_lava_webhook(request: web.Request):
 
     except Exception as e:
         logger.exception("Error processing Lava webhook: %s", e)
+        return web.Response(status=200)
+
+
+async def handle_yookassa_webhook(request: web.Request):
+    """Webhook updates from YooKassa."""
+    try:
+        raw_body = await request.read()
+        if not raw_body:
+            return web.Response(status=200)
+
+        # Validate webhook signature if configured
+        try:
+            secret = config.YOOKASSA_WEBHOOK_SECRET
+            if secret:
+                import base64
+                import hashlib
+                import hmac
+
+                verified = False
+                # Common header names YooKassa might send
+                candidate_headers = [
+                    request.headers.get("X-Webhook-Signature"),
+                    request.headers.get("X-Checkout-Signature"),
+                    request.headers.get("X-Signature"),
+                ]
+                # Compute HMAC-SHA256
+                digest = hmac.new(secret.encode(), raw_body, hashlib.sha256)
+                hex_expected = digest.hexdigest()
+                b64_expected = base64.b64encode(digest.digest()).decode()
+
+                for hdr in candidate_headers:
+                    if not hdr:
+                        continue
+                    if hmac.compare_digest(hdr, hex_expected) or hmac.compare_digest(hdr, b64_expected):
+                        verified = True
+                        break
+
+                if not verified:
+                    logger.warning("Rejected YooKassa webhook: invalid signature headers=%s", 
+                                   {k: v for k, v in request.headers.items() if 'yookassa' in k.lower() or 'signature' in k.lower()})
+                    return web.Response(status=200)
+        except Exception:
+            logger.exception("Error while validating YooKassa webhook signature")
+            return web.Response(status=200)
+
+        try:
+            data = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            logger.warning("YooKassa webhook received invalid JSON")
+            return web.Response(status=200)
+
+        # Try to extract payment id from common YooKassa payload shapes
+        payment_id = None
+        obj = data.get("object") or {}
+        if isinstance(obj, dict):
+            payment_id = obj.get("id") or _extract_first(obj, ["id", "payment_id"]) 
+
+        # Fallback: sometimes payload wraps payment under 'payment'
+        if not payment_id:
+            payment_id = _extract_first(data, ["payment_id", "id"])  # recursive search
+
+        if not payment_id:
+            logger.warning("YooKassa webhook: no payment id found in payload")
+            return web.Response(status=200)
+
+        # Fetch payment details from YooKassa SDK
+        payment = await yookassa_service.get_payment(payment_id)
+        if not payment:
+            return web.Response(status=200)
+
+        # Try to resolve order_id from metadata, else lookup by payment_id in DB
+        order_id = yookassa_service.extract_order_id(payment.get("Raw") if isinstance(payment.get("Raw"), dict) else payment.get("Raw", {}))
+        if not order_id:
+            # DB lookup by payment_id
+            import aiosqlite
+            from bot.database import DATABASE_PATH
+
+            async with aiosqlite.connect(DATABASE_PATH) as db_conn:
+                db_conn.row_factory = aiosqlite.Row
+                cursor = await db_conn.execute(
+                    "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
+                    (payment_id, "yookassa"),
+                )
+                row = await cursor.fetchone()
+                if row:
+                    order_id = row["order_id"]
+
+        if not order_id:
+            logger.warning("YooKassa webhook: cannot resolve order_id for payment %s", payment_id)
+            return web.Response(status=200)
+
+        transaction = await get_transaction_by_order(order_id)
+        if not transaction or transaction.status == "completed":
+            return web.Response(status=200)
+
+        telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+        if not telegram_id:
+            logger.warning("Cannot resolve telegram_id for user_id=%s", transaction.user_id)
+            return web.Response(status=200)
+
+        paid = bool(payment.get("paid")) or (payment.get("status") or "").lower() in (
+            "succeeded",
+            "paid",
+            "captured",
+        )
+
+        if not paid:
+            return web.Response(status=200)
+
+        await add_credits(telegram_id, transaction.credits)
+        await update_transaction_status(order_id, "completed")
+        referral_bonus = await credit_first_payment_referral_bonus(
+            telegram_id, transaction.credits, transaction.amount_rub
+        )
+
+        bonus_text = ""
+        if referral_bonus.get("mode") == "partner":
+            bonus_text = f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+        elif referral_bonus.get("mode") == "banana":
+            bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+
+        try:
+            await _notify_user(
+                request.app["bot"],
+                telegram_id,
+                "✅ <b>Оплата успешно обработана</b>\n"
+                f"• Начислено: <code>{transaction.credits}</code> бананов\n"
+                f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest as e:
+            if _is_ignored_telegram_error(e):
+                logger.warning(
+                    "Skipping YooKassa notification for user %s: %s", telegram_id, e
+                )
+            else:
+                logger.error("Failed to notify user %s: %s", telegram_id, e)
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception("Error processing YooKassa webhook: %s", e)
         return web.Response(status=200)

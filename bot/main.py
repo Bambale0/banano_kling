@@ -32,7 +32,11 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
-from bot.handlers.payments import handle_cryptobot_webhook, handle_lava_webhook
+from bot.handlers.payments import (
+    handle_cryptobot_webhook,
+    handle_lava_webhook,
+    handle_yookassa_webhook,
+)
 from bot.miniapp import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
@@ -1852,6 +1856,17 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         _normalize_path(config.CRYPTOBOT_WEBHOOK_PATH, "/cryptobot/webhook"),
         handle_cryptobot_webhook,
     )
+
+    # Вебхук Lava
+    app.router.add_post(
+        _normalize_path(config.LAVA_WEBHOOK_PATH, "/lava/webhook"),
+        handle_lava_webhook,
+    )
+
+    # Вебхук YooKassa
+    app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+    # Alternative path (matches provided URL https://.../webhook/yookassa)
+    app.router.add_post("/webhook/yookassa", handle_yookassa_webhook)
 
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)

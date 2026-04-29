@@ -23,6 +23,8 @@ from bot.database import (
     get_or_create_user,
     get_partner_overview,
     get_user_stats,
+    create_transaction,
+    get_and_clear_miniapp_notifications,
 )
 from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
@@ -55,6 +57,7 @@ from bot.keyboards import (
 )
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.preset_manager import preset_manager
+from bot.services.yookassa_service import yookassa_service
 
 logger = logging.getLogger(__name__)
 
@@ -998,6 +1001,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 for item in VIDEO_MODELS
             ],
             "recent_tasks": recent_tasks,
+            "notifications": await get_and_clear_miniapp_notifications(telegram_id),
         }
         return web.json_response(data)
     except Exception as e:
@@ -1090,6 +1094,68 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.exception("Mini App upload failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_create_payment(request: web.Request) -> web.Response:
+    """Create a YooKassa payment for a selected package from the mini-app."""
+    try:
+        body = await request.json()
+        init_data = body.get("init_data", "")
+        package_id = body.get("package_id")
+
+        if not package_id:
+            return web.json_response({"ok": False, "error": "package_id is required"}, status=400)
+
+        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+
+        package = preset_manager.get_package(package_id)
+        if not package:
+            return web.json_response({"ok": False, "error": "Package not found"}, status=404)
+
+        order_id = f"{telegram_id}_{int(time.time())}_{package_id}"
+        total_credits = package["credits"] + package.get("bonus_credits", 0)
+        description = f"Покупка {total_credits} бананов ({package['name']})"
+
+        # Create YooKassa payment (use service directly)
+        if not yookassa_service.enabled:
+            return web.json_response({"ok": False, "error": "YooKassa not configured"}, status=500)
+
+        result = await yookassa_service.create_payment(
+            amount_rub=float(package["price_rub"]),
+            order_id=order_id,
+            description=description,
+            return_url=config.YOOKASSA_RETURN_URL or config.mini_app_url,
+            notification_url=config.yookassa_notification_url,
+        )
+
+        if not result or not (result.get("Success") or result.get("PaymentId")):
+            return web.json_response({"ok": False, "error": result or "Failed to create payment"}, status=500)
+
+        payment_id = result.get("PaymentId")
+        payment_url = result.get("PaymentURL")
+
+        # Persist transaction
+        await create_transaction(
+            order_id=order_id,
+            user_id=user.id,
+            payment_id=payment_id,
+            provider="yookassa",
+            credits=total_credits,
+            amount_rub=float(package["price_rub"]),
+            status="pending",
+        )
+
+        return web.json_response({
+            "ok": True,
+            "order_id": order_id,
+            "payment_id": payment_id,
+            "payment_url": payment_url,
+        })
+
+    except Exception as e:
+        logger.exception("Mini App create-payment failed: %s", e)
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
@@ -1706,6 +1772,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(
         miniapp_root + "/api/partner-overview", miniapp_partner_overview
     )
+    app.router.add_post(miniapp_root + "/api/create-payment", miniapp_create_payment)
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
     app.router.add_get(miniapp_root + "/{tail:.*}", miniapp_asset)

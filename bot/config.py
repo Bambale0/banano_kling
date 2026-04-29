@@ -22,7 +22,7 @@ class Config:
     YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
     YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
     YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "cryptobot").lower()
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "yookassa").lower()
 
     # CryptoBot / Crypto Pay
     CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")

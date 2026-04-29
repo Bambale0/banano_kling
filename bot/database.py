@@ -325,6 +325,20 @@ async def init_db():
         await db.commit()
         logger.info("Database initialized successfully")
 
+        # Таблица уведомлений для мини‑аппа
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS miniapp_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+            """
+        )
+        await db.commit()
+
 
 async def get_or_create_user(telegram_id: int) -> User:
     """Получает или создаёт пользователя (thread-safe)"""
@@ -967,6 +981,43 @@ async def create_transaction(
         except aiosqlite.IntegrityError:
             logger.warning(f"Transaction already exists: {order_id}")
             return False
+
+
+async def create_miniapp_notification(user_id: int, message: str) -> bool:
+    """Создаёт уведомление, которое мини‑апп прочитает при следующем bootstrap."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute(
+                "INSERT INTO miniapp_notifications (user_id, message) VALUES (?, ?)",
+                (user_id, message),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            logger.exception("Failed to create miniapp notification")
+            return False
+
+
+async def get_and_clear_miniapp_notifications(telegram_id: int) -> list:
+    """Получает и удаляет все накопленные уведомления для пользователя (по telegram_id)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Получаем внутренний user_id
+        cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return []
+        uid = row["id"]
+        cursor = await db.execute(
+            "SELECT id, message, created_at FROM miniapp_notifications WHERE user_id = ? ORDER BY created_at DESC",
+            (uid,),
+        )
+        notes = await cursor.fetchall()
+        messages = [n["message"] for n in notes]
+        # Удаляем выбранные
+        await db.execute("DELETE FROM miniapp_notifications WHERE user_id = ?", (uid,))
+        await db.commit()
+        return messages
 
 
 async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
