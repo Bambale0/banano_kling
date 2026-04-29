@@ -326,8 +326,7 @@ async def init_db():
         logger.info("Database initialized successfully")
 
         # Таблица уведомлений для мини‑аппа
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS miniapp_notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -335,8 +334,7 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-            """
-        )
+            """)
         await db.commit()
 
 
@@ -601,9 +599,9 @@ async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
     signup_bonus: int = 25,
-    inviter_bonus: int = 5,
+    inviter_bonus: int = 3,
 ) -> bool:
-    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +5🍌."""
+    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +3🍌."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False
@@ -1003,7 +1001,9 @@ async def get_and_clear_miniapp_notifications(telegram_id: int) -> list:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         # Получаем внутренний user_id
-        cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
         row = await cursor.fetchone()
         if not row:
             return []

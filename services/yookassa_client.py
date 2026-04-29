@@ -1,7 +1,8 @@
-from yookassa import Configuration, Payment
-import uuid
 import os
-from typing import Optional, Dict, Any
+import uuid
+from typing import Any, Dict, Optional
+
+from yookassa import Configuration, Payment
 
 
 class YooKassaClient:
@@ -14,23 +15,26 @@ class YooKassaClient:
         Configuration.account_id = shop_id
         Configuration.secret_key = secret_key
 
-    def create_payment(self, amount: float, return_url: str, description: str = "Оплата") -> Dict[str, Any]:
-        payment = Payment.create({
-            "amount": {
-                "value": f"{amount:.2f}",
-                "currency": "RUB"
+    def create_payment(
+        self, amount: float, return_url: str, description: str = "Оплата"
+    ) -> Dict[str, Any]:
+        payment = Payment.create(
+            {
+                "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
+                "confirmation": {"type": "redirect", "return_url": return_url},
+                "capture": True,
+                "description": description,
             },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": return_url
-            },
-            "capture": True,
-            "description": description
-        }, str(uuid.uuid4()))
+            str(uuid.uuid4()),
+        )
 
         return {
             "payment_id": payment.id,
-            "confirmation_url": getattr(payment, "confirmation", {}).get("confirmation_url") if hasattr(payment, "confirmation") else getattr(payment.confirmation, "confirmation_url", None)
+            "confirmation_url": (
+                getattr(payment, "confirmation", {}).get("confirmation_url")
+                if hasattr(payment, "confirmation")
+                else getattr(payment.confirmation, "confirmation_url", None)
+            ),
         }
 
     def get_payment(self, payment_id: str) -> Dict[str, Any]:
@@ -39,5 +43,5 @@ class YooKassaClient:
         return {
             "status": payment.status,
             "paid": getattr(payment, "paid", None),
-            "amount": getattr(payment.amount, "value", None)
+            "amount": getattr(payment.amount, "value", None),
         }

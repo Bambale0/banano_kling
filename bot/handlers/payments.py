@@ -9,6 +9,7 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     add_credits,
+    create_miniapp_notification,
     create_transaction,
     credit_first_payment_referral_bonus,
     get_or_create_user,
@@ -24,9 +25,8 @@ from bot.keyboards import (
 )
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
-from bot.services.yookassa_service import yookassa_service
 from bot.services.preset_manager import preset_manager
-from bot.database import create_miniapp_notification
+from bot.services.yookassa_service import yookassa_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -177,7 +177,9 @@ async def initiate_payment(callback: types.CallbackQuery):
         creation_ok = bool(result and result.get("ok"))
     elif provider == "yookassa":
         # yookassa_service returns {'Success': True, 'PaymentId': ..., 'PaymentURL': ...}
-        creation_ok = bool(result and (result.get("Success") or result.get("PaymentId")))
+        creation_ok = bool(
+            result and (result.get("Success") or result.get("PaymentId"))
+        )
     else:
         creation_ok = bool(result and result.get("ok"))
 
@@ -267,7 +269,9 @@ async def check_payment_status(callback: types.CallbackQuery):
 
     if transaction.provider == "lava":
         if not lava_service.enabled:
-            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            await callback.answer(
+                "Платёжный сервис временно недоступен", show_alert=True
+            )
             return
 
         invoice = await lava_service.get_invoice(transaction.payment_id)
@@ -275,7 +279,9 @@ async def check_payment_status(callback: types.CallbackQuery):
         paid = status == "completed"
     elif transaction.provider == "yookassa":
         if not yookassa_service.enabled:
-            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            await callback.answer(
+                "Платёжный сервис временно недоступен", show_alert=True
+            )
             return
 
         invoice = await yookassa_service.get_payment(transaction.payment_id)
@@ -283,7 +289,9 @@ async def check_payment_status(callback: types.CallbackQuery):
         paid = bool((invoice or {}).get("paid"))
     else:
         if not cryptobot_service.enabled:
-            await callback.answer("Платёжный сервис временно недоступен", show_alert=True)
+            await callback.answer(
+                "Платёжный сервис временно недоступен", show_alert=True
+            )
             return
 
         invoice = await cryptobot_service.get_invoice(transaction.payment_id)
@@ -405,14 +413,15 @@ async def handle_cryptobot_webhook(request: web.Request):
             note = f"✅ Оплата успешно обработана — {transaction.credits} бананов за {transaction.amount_rub} ₽"
             await create_miniapp_notification(transaction.user_id, note)
         except Exception:
-            logger.exception("Failed to create miniapp notification for order %s", order_id)
+            logger.exception(
+                "Failed to create miniapp notification for order %s", order_id
+            )
 
         return web.Response(status=200)
 
     except Exception as e:
         logger.exception("Error processing CryptoBot webhook: %s", e)
         return web.Response(status=200)
-
 
 
 async def handle_lava_webhook(request: web.Request):
@@ -439,6 +448,7 @@ async def handle_lava_webhook(request: web.Request):
             return web.Response(status=200)
 
         import aiosqlite
+
         from bot.database import DATABASE_PATH
 
         async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -460,7 +470,9 @@ async def handle_lava_webhook(request: web.Request):
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
         if not telegram_id:
-            logger.warning("Cannot resolve telegram_id for user_id=%s", transaction.user_id)
+            logger.warning(
+                "Cannot resolve telegram_id for user_id=%s", transaction.user_id
+            )
             return web.Response(status=200)
 
         await add_credits(telegram_id, transaction.credits)
@@ -471,7 +483,9 @@ async def handle_lava_webhook(request: web.Request):
 
         bonus_text = ""
         if referral_bonus.get("mode") == "partner":
-            bonus_text = f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+            bonus_text = (
+                f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+            )
         elif referral_bonus.get("mode") == "banana":
             bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
 
@@ -486,7 +500,9 @@ async def handle_lava_webhook(request: web.Request):
             )
         except TelegramBadRequest as e:
             if _is_ignored_telegram_error(e):
-                logger.warning("Skipping Lava notification for user %s: %s", telegram_id, e)
+                logger.warning(
+                    "Skipping Lava notification for user %s: %s", telegram_id, e
+                )
             else:
                 logger.error("Failed to notify user %s: %s", telegram_id, e)
 
@@ -527,13 +543,21 @@ async def handle_yookassa_webhook(request: web.Request):
                 for hdr in candidate_headers:
                     if not hdr:
                         continue
-                    if hmac.compare_digest(hdr, hex_expected) or hmac.compare_digest(hdr, b64_expected):
+                    if hmac.compare_digest(hdr, hex_expected) or hmac.compare_digest(
+                        hdr, b64_expected
+                    ):
                         verified = True
                         break
 
                 if not verified:
-                    logger.warning("Rejected YooKassa webhook: invalid signature headers=%s", 
-                                   {k: v for k, v in request.headers.items() if 'yookassa' in k.lower() or 'signature' in k.lower()})
+                    logger.warning(
+                        "Rejected YooKassa webhook: invalid signature headers=%s",
+                        {
+                            k: v
+                            for k, v in request.headers.items()
+                            if "yookassa" in k.lower() or "signature" in k.lower()
+                        },
+                    )
                     return web.Response(status=200)
         except Exception:
             logger.exception("Error while validating YooKassa webhook signature")
@@ -549,7 +573,7 @@ async def handle_yookassa_webhook(request: web.Request):
         payment_id = None
         obj = data.get("object") or {}
         if isinstance(obj, dict):
-            payment_id = obj.get("id") or _extract_first(obj, ["id", "payment_id"]) 
+            payment_id = obj.get("id") or _extract_first(obj, ["id", "payment_id"])
 
         # Fallback: sometimes payload wraps payment under 'payment'
         if not payment_id:
@@ -565,10 +589,15 @@ async def handle_yookassa_webhook(request: web.Request):
             return web.Response(status=200)
 
         # Try to resolve order_id from metadata, else lookup by payment_id in DB
-        order_id = yookassa_service.extract_order_id(payment.get("Raw") if isinstance(payment.get("Raw"), dict) else payment.get("Raw", {}))
+        order_id = yookassa_service.extract_order_id(
+            payment.get("Raw")
+            if isinstance(payment.get("Raw"), dict)
+            else payment.get("Raw", {})
+        )
         if not order_id:
             # DB lookup by payment_id
             import aiosqlite
+
             from bot.database import DATABASE_PATH
 
             async with aiosqlite.connect(DATABASE_PATH) as db_conn:
@@ -582,7 +611,9 @@ async def handle_yookassa_webhook(request: web.Request):
                     order_id = row["order_id"]
 
         if not order_id:
-            logger.warning("YooKassa webhook: cannot resolve order_id for payment %s", payment_id)
+            logger.warning(
+                "YooKassa webhook: cannot resolve order_id for payment %s", payment_id
+            )
             return web.Response(status=200)
 
         transaction = await get_transaction_by_order(order_id)
@@ -591,7 +622,9 @@ async def handle_yookassa_webhook(request: web.Request):
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
         if not telegram_id:
-            logger.warning("Cannot resolve telegram_id for user_id=%s", transaction.user_id)
+            logger.warning(
+                "Cannot resolve telegram_id for user_id=%s", transaction.user_id
+            )
             return web.Response(status=200)
 
         paid = bool(payment.get("paid")) or (payment.get("status") or "").lower() in (
@@ -611,7 +644,9 @@ async def handle_yookassa_webhook(request: web.Request):
 
         bonus_text = ""
         if referral_bonus.get("mode") == "partner":
-            bonus_text = f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+            bonus_text = (
+                f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+            )
         elif referral_bonus.get("mode") == "banana":
             bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
 

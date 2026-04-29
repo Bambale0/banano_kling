@@ -19,12 +19,12 @@ from bot.database import (
     add_generation_task,
     check_can_afford,
     complete_video_task,
+    create_transaction,
     deduct_credits,
+    get_and_clear_miniapp_notifications,
     get_or_create_user,
     get_partner_overview,
     get_user_stats,
-    create_transaction,
-    get_and_clear_miniapp_notifications,
 )
 from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
@@ -962,7 +962,11 @@ ACTIONS = {
 async def miniapp_index(_request: web.Request) -> web.Response:
     root = _resolve_miniapp_static_root()
     index_path = root / "index.html"
-    logger.info("Miniapp index requested, resolved static root=%s index_exists=%s", str(root), str(index_path.exists()))
+    logger.info(
+        "Miniapp index requested, resolved static root=%s index_exists=%s",
+        str(root),
+        str(index_path.exists()),
+    )
     response = web.FileResponse(index_path)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
@@ -974,7 +978,13 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     static_root = _resolve_miniapp_static_root().resolve()
     tail = request.match_info.get("tail", "").lstrip("/")
     asset_path = (static_root / tail).resolve()
-    logger.info("Miniapp asset request: tail=%s static_root=%s asset_path=%s exists=%s", tail, str(static_root), str(asset_path), str(asset_path.exists()))
+    logger.info(
+        "Miniapp asset request: tail=%s static_root=%s asset_path=%s exists=%s",
+        tail,
+        str(static_root),
+        str(asset_path),
+        str(asset_path.exists()),
+    )
 
     try:
         asset_path.relative_to(static_root)
@@ -1127,14 +1137,18 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         package_id = body.get("package_id")
 
         if not package_id:
-            return web.json_response({"ok": False, "error": "package_id is required"}, status=400)
+            return web.json_response(
+                {"ok": False, "error": "package_id is required"}, status=400
+            )
 
         telegram_id, ctx = await _get_user_context(request.app, init_data)
         user = ctx["user"]
 
         package = preset_manager.get_package(package_id)
         if not package:
-            return web.json_response({"ok": False, "error": "Package not found"}, status=404)
+            return web.json_response(
+                {"ok": False, "error": "Package not found"}, status=404
+            )
 
         order_id = f"{telegram_id}_{int(time.time())}_{package_id}"
         total_credits = package["credits"] + package.get("bonus_credits", 0)
@@ -1142,7 +1156,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
 
         # Create YooKassa payment (use service directly)
         if not yookassa_service.enabled:
-            return web.json_response({"ok": False, "error": "YooKassa not configured"}, status=500)
+            return web.json_response(
+                {"ok": False, "error": "YooKassa not configured"}, status=500
+            )
 
         result = await yookassa_service.create_payment(
             amount_rub=float(package["price_rub"]),
@@ -1153,7 +1169,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         )
 
         if not result or not (result.get("Success") or result.get("PaymentId")):
-            return web.json_response({"ok": False, "error": result or "Failed to create payment"}, status=500)
+            return web.json_response(
+                {"ok": False, "error": result or "Failed to create payment"}, status=500
+            )
 
         payment_id = result.get("PaymentId")
         payment_url = result.get("PaymentURL")
@@ -1169,12 +1187,14 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             status="pending",
         )
 
-        return web.json_response({
-            "ok": True,
-            "order_id": order_id,
-            "payment_id": payment_id,
-            "payment_url": payment_url,
-        })
+        return web.json_response(
+            {
+                "ok": True,
+                "order_id": order_id,
+                "payment_id": payment_id,
+                "payment_url": payment_url,
+            }
+        )
 
     except Exception as e:
         logger.exception("Mini App create-payment failed: %s", e)
@@ -1508,7 +1528,9 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "") or "").strip()
-        model = str(body.get("motion_model", "motion_control_v26") or "motion_control_v26")
+        model = str(
+            body.get("motion_model", "motion_control_v26") or "motion_control_v26"
+        )
         image_url = str(body.get("motion_image_url", "") or "").strip()
         video_url = str(body.get("motion_video_url", "") or "").strip()
         mode = str(body.get("motion_mode", "720p") or "720p")

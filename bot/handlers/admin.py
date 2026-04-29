@@ -1,6 +1,6 @@
+import json
 import logging
 from pathlib import Path
-import json
 
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
@@ -263,9 +263,11 @@ async def admin_reload_presets(callback: types.CallbackQuery):
 
     success = preset_manager.reload()
     await callback.answer(
-        "✅ Прайс и конфиг перезагружены"
-        if success
-        else "❌ Не удалось перезагрузить конфиг",
+        (
+            "✅ Прайс и конфиг перезагружены"
+            if success
+            else "❌ Не удалось перезагрузить конфиг"
+        ),
         show_alert=True,
     )
 
@@ -279,8 +281,7 @@ async def admin_prices_menu(callback: types.CallbackQuery, state: FSMContext):
 
     await state.clear()
     await callback.message.edit_text(
-        "💸 <b>Управление ценами</b>\n\n"
-        "Выберите раздел, который нужно обновить.",
+        "💸 <b>Управление ценами</b>\n\n" "Выберите раздел, который нужно обновить.",
         reply_markup=_admin_price_menu_keyboard(),
         parse_mode="HTML",
     )
@@ -356,9 +357,7 @@ async def admin_price_package(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin_price_package_field_"))
-async def admin_price_package_field(
-    callback: types.CallbackQuery, state: FSMContext
-):
+async def admin_price_package_field(callback: types.CallbackQuery, state: FSMContext):
     """Запрашивает новое значение для поля пакета."""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
