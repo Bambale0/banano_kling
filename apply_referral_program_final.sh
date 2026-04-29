@@ -36,9 +36,9 @@ partner_func = '''async def render_partner_program(target, user_id: int):
         "• После оплат рефералов начисляется денежное вознаграждение\\n\\n"
         "<b>2 уровень:</b>\\n"
         "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\\n\\n"
-        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\\n"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\\n"
-        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>5</code> бананов\\n\\n"
+        "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>15</code> бананов для тестирования бота\n"
+        "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>3</code> бананов\n\n"
         "<b>Ваша статистика:</b>\\n"
         f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\\n"
         f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\\n"
@@ -86,10 +86,10 @@ s = p.read_text(encoding="utf-8")
 process_func = '''async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
-    signup_bonus: int = 25,
-    inviter_bonus: int = 5,
+    signup_bonus: int = 15,
+    inviter_bonus: int = 3,
 ) -> bool:
-    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +5🍌."""
+    """Закрепляет пользователя за партнёром: новичку +15🍌, пригласившему +3🍌."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False
