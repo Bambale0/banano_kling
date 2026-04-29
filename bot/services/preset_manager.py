@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, field
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -176,6 +177,9 @@ class PresetManager:
     def get_packages(self) -> List[Dict]:
         return self._price_config.get("packages", [])
 
+    def get_price_config(self) -> Dict:
+        return deepcopy(self._price_config)
+
     def get_package(self, package_id: str) -> Optional[Dict]:
         for pkg in self.get_packages():
             if pkg["id"] == package_id:
@@ -215,7 +219,7 @@ class PresetManager:
 
     def _format_cost(self, value):
         """Вернуть стоимость без потери дробной части: 2.5 -> 2.5, 2.0 -> 2."""
-        value = float(value)
+        value = round(float(value), 2)
         return int(value) if value.is_integer() else value
 
     def get_generation_cost(self, model: str, options: dict = None):
@@ -256,8 +260,21 @@ class PresetManager:
 
         return DEFAULT_VIDEO_COST
 
+    def get_video_cost_per_second(self, model: str, duration: int = 5):
+        """Вернуть стоимость генерации видео за одну секунду."""
+        duration = max(1, int(duration))
+        total_cost = self.get_video_cost(model, duration)
+        return self._format_cost(total_cost / duration)
+
     def get_image_cost(self, model: str) -> int:
         return self.get_generation_cost(model)
+
+    def update_price_config(self, price_config: Dict) -> bool:
+        """Сохраняет обновлённый прайс и перезагружает конфиг."""
+        with open(self.price_path, "w", encoding="utf-8") as f:
+            json.dump(price_config, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        return self.reload()
 
 
 preset_manager = PresetManager()

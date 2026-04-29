@@ -60,6 +60,7 @@ class AdminStates(StatesGroup):
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
     waiting_credits_amount = State()  # Ввод количества кредитов
+    waiting_price_value = State()  # Ввод нового значения цены
 
 
 class BatchGenerationStates(StatesGroup):

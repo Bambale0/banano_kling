@@ -600,10 +600,10 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
 async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
-    signup_bonus: int = 15,
-    inviter_bonus: int = 3,
+    signup_bonus: int = 25,
+    inviter_bonus: int = 5,
 ) -> bool:
-    """Закрепляет пользователя за партнёром: новичку +15🍌, пригласившему +3🍌."""
+    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +5🍌."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False

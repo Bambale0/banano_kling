@@ -98,6 +98,7 @@ function MotionUploadCard({
 
 export function MotionTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask } = useApp()
+  const formatPerSecondCost = (raw: number) => Number(raw.toFixed(2)).toString()
 
   const [characterImage, setCharacterImage] = useState<UploadedFile | null>(null)
   const [motionVideo, setMotionVideo] = useState<UploadedFile | null>(null)
@@ -108,6 +109,10 @@ export function MotionTab() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const motionModelData = state.videoModels.find((item) => item.id === motionModel)
+  const motionDuration = motionModelData?.durations?.[0] || 5
+  const motionCost = motionModelData?.costs?.[motionDuration.toString()] || 15
+  const perSecondCost = motionCost / Math.max(motionDuration, 1)
 
   async function uploadImage(file: File) {
     if (state.mode !== 'live') {
@@ -174,12 +179,12 @@ export function MotionTab() {
           setTaskDetail(result.detail)
         }
       } else {
-        const cost = mode === '1080p' ? 18 : 12
+        const cost = motionCost
         const newTask: Task = {
           task_id: `motion_${Date.now()}`,
           type: 'video',
-          model: 'motion_control',
-          model_label: 'Kling 2.6 Motion Control',
+          model: motionModel,
+          model_label: motionModelData?.label || 'Motion Control',
           aspect_ratio: 'motion',
           status: 'pending',
           created_at: new Date().toISOString(),
@@ -200,7 +205,7 @@ export function MotionTab() {
     }
   }
 
-  const estimatedCost = mode === '1080p' ? 'Pro' : 'Standard'
+  const estimatedCost = `${motionCost}🍌 • ${formatPerSecondCost(perSecondCost)}🍌/с`
 
   return (
     <div className="px-4 space-y-5 pb-28">
@@ -258,7 +263,12 @@ export function MotionTab() {
                   {[
                     { id: 'motion_control_v26' as const, label: 'Kling 2.6' },
                     { id: 'motion_control_v30' as const, label: 'Kling 3.0' },
-                  ].map((item) => (
+                  ].map((item) => {
+                    const itemModel = state.videoModels.find((model) => model.id === item.id)
+                    const itemDuration = itemModel?.durations?.[0] || 5
+                    const itemCost = itemModel?.costs?.[itemDuration.toString()] || 15
+                    const itemPerSecondCost = itemCost / Math.max(itemDuration, 1)
+                    return (
                     <button
                       key={item.id}
                       type="button"
@@ -270,9 +280,13 @@ export function MotionTab() {
                           : 'border-border/70 bg-background/40 text-muted-foreground'
                       )}
                     >
-                      {item.label}
+                      <span className="block">{item.label}</span>
+                      <span className="mt-1 block text-xs opacity-80">
+                        {formatPerSecondCost(itemPerSecondCost)}🍌/с
+                      </span>
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
@@ -293,7 +307,10 @@ export function MotionTab() {
                           : 'border-border/70 bg-background/40 text-muted-foreground'
                       )}
                     >
-                      {item}
+                      <span className="block">{item}</span>
+                      <span className="mt-1 block text-xs opacity-80">
+                        {formatPerSecondCost(perSecondCost)}🍌/с
+                      </span>
                     </button>
                   ))}
                 </div>

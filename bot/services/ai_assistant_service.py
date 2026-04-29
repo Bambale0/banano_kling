@@ -16,10 +16,10 @@ AI_INSTRUCTIONS_FILE = os.path.join("bot", "utils", "ai_assistant_instructions.j
 
 # Fallback-цены на случай, если data/price.json недоступен.
 FALLBACK_IMAGE_COSTS = {
-    "banana_pro": 5,
-    "banana_2": 7,
-    "seedream_edit": 7,
-    "grok_imagine_i2i": 7,
+    "banana_pro": 2.5,
+    "banana_2": 2.5,
+    "seedream_edit": 1.5,
+    "grok_imagine_i2i": 3,
 }
 
 FALLBACK_VIDEO_COSTS = {

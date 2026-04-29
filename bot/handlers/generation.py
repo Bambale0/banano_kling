@@ -4698,8 +4698,9 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
     ]
     for model_key, label, cost in rows:
         check = "✅ " if current_model == model_key else ""
+        per_second = preset_manager.get_video_cost_per_second(model_key, 5)
         builder.button(
-            text=f"{check}{label} • Pro • {cost}🍌",
+            text=f"{check}{label} • {per_second}🍌/с",
             callback_data=f"motion_model_{model_key}",
         )
     builder.button(text="🏠 Главное меню", callback_data="back_main")
@@ -4731,7 +4732,7 @@ async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMCont
     text = (
         "🎯 <b>Motion Control</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
-        "Выберите версию Kling. Обе версии запускаются в <b>Pro-режиме</b> по умолчанию."
+        "Выберите версию Kling. На кнопках указана только цена за 1 секунду."
     )
     await callback.message.edit_text(
         text,
@@ -4768,6 +4769,8 @@ async def select_motion_control_model(callback: types.CallbackQuery, state: FSMC
     text = (
         f"🎯 <b>{label}</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
+        f"💰 Стоимость: <code>{preset_manager.get_video_cost(model, 5)}</code>🍌 за 5 сек "
+        f"(<code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с)\n"
         "⚙️ Режим: <b>Pro / 1080p</b>\n\n"
         "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
     )

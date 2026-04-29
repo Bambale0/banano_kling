@@ -4,7 +4,6 @@ import {
   Wand2,
   Pencil,
   Play,
-  Layers,
   HeadphonesIcon,
   Users,
   MoreHorizontal,
@@ -46,14 +45,6 @@ const primaryServices = [
     description: 'Переход к видео-сценариям: стартовый кадр, движение, камера.',
     badge: 'Анимация',
     tone: 'success',
-  },
-  {
-    id: 'batch-edit',
-    icon: Layers,
-    title: 'Серия фото',
-    description: 'Один стиль или одна правка сразу для нескольких фото.',
-    badge: 'Пакетно',
-    tone: 'accent',
   },
 ]
 
@@ -113,7 +104,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-serif text-lg text-foreground">Основные</h3>
-          <span className="text-xs text-muted-foreground">5 сценариев</span>
+          <span className="text-xs text-muted-foreground">4 сценария</span>
         </div>
 
         <div className="grid gap-3">

@@ -120,9 +120,10 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
 
     for model_key, title, description, cost in options:
         check = "✅ " if current_model == model_key else ""
+        per_second = preset_manager.get_video_cost_per_second(model_key, 5)
         builder.row(
             InlineKeyboardButton(
-                text=f"{check}{title} • {cost}🍌",
+                text=f"{check}{title} • {per_second}🍌/с",
                 callback_data=f"v_model_{model_key}",
             )
         )
@@ -150,6 +151,7 @@ def get_admin_keyboard():
     builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
+    builder.button(text="💸 Цены", callback_data="admin_prices")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(2, 2, 1)
@@ -258,9 +260,13 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
 
     for model_key, label, cost in model_rows:
         check = "✅ " if current_model == model_key else ""
+        default_duration = 6 if model_key.startswith("veo3") else 5
+        per_second = preset_manager.get_video_cost_per_second(
+            model_key, default_duration
+        )
         builder.row(
             InlineKeyboardButton(
-                text=f"{check}{label} • {cost}🍌",
+                text=f"{check}{label} • {per_second}🍌/с",
                 callback_data=f"v_model_{model_key}",
             )
         )
@@ -519,9 +525,15 @@ def get_create_video_keyboard(
 
     # Рассчитываем цену
     total_cost = preset_manager.get_video_cost(current_model, current_duration)
+    per_second_cost = preset_manager.get_video_cost_per_second(
+        current_model, current_duration
+    )
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
-    builder.button(text=f"Стоимость: {total_cost}🍌", callback_data="ignore")
+    builder.button(
+        text=f"Цена: {per_second_cost}🍌/с",
+        callback_data="ignore",
+    )
     builder.button(text="🏠 Главное меню", callback_data="back_main")
 
     widths = [2]

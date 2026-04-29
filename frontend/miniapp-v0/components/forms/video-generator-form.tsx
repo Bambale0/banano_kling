@@ -50,6 +50,7 @@ export function VideoGeneratorForm({
   isSubmitting,
   credits,
 }: VideoGeneratorFormProps) {
+  const formatPerSecondCost = (raw: number) => Number(raw.toFixed(2)).toString()
   const [selectedModel, setSelectedModel] = useState(models.find((item) => !['motion_control', 'motion_control_v26', 'motion_control_v30'].includes(item.id))?.id || models[0]?.id || '')
   const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('text')
   const [selectedRatio, setSelectedRatio] = useState('16:9')
@@ -83,6 +84,7 @@ export function VideoGeneratorForm({
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
   
   const cost = model?.costs[selectedDuration.toString()] || 5
+  const perSecondCost = cost / Math.max(selectedDuration, 1)
   const canAfford = credits >= cost
   
   // Check if scenario is supported
@@ -199,7 +201,9 @@ export function VideoGeneratorForm({
               id: m.id,
               label: m.label,
               description: m.description,
-              cost: m.costs[selectedDuration.toString()] || Object.values(m.costs)[0] || 0,
+              cost:
+                ((m.costs[selectedDuration.toString()] || Object.values(m.costs)[0] || 0) /
+                Math.max(selectedDuration, 1)),
             }))}
             value={selectedModel}
             onChange={setSelectedModel}
@@ -209,10 +213,13 @@ export function VideoGeneratorForm({
         <div className="rounded-2xl border border-cyan/20 bg-cyan/5 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-            <p className="text-sm font-medium text-foreground">{model?.label}</p>
-            <p className="text-xs text-muted-foreground mt-1">{model?.description}</p>
-          </div>
-          <div className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs text-gold">
+              <p className="text-sm font-medium text-foreground">{model?.label}</p>
+              <p className="text-xs text-muted-foreground mt-1">{model?.description}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {formatPerSecondCost(perSecondCost)}🍌 за 1 секунду
+              </p>
+            </div>
+            <div className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs text-gold">
               {model?.durations.join(' / ')} сек
             </div>
           </div>
@@ -537,7 +544,7 @@ export function VideoGeneratorForm({
           <div>
             <span className="text-sm text-muted-foreground">Стоимость</span>
             <p className="text-xs text-muted-foreground/70">
-              {selectedDuration} сек. • {selectedRatio}
+              {selectedDuration} сек. • {selectedRatio} • {formatPerSecondCost(perSecondCost)}🍌/с
             </p>
           </div>
           <div className="flex items-center gap-1.5">

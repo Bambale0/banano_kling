@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Layers, Loader2, PanelTopOpen, Send, Sparkles, Wand2 } from 'lucide-react'
+import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, PanelTopOpen, Send, Sparkles, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { UploadArea } from '@/components/forms/upload-area'
@@ -42,11 +42,6 @@ const workspaceConfig: Record<
     title: 'Поддержка',
     description: 'Помощь по задачам, оплате и результатам.',
     icon: Headphones,
-  },
-  'batch-edit': {
-    title: 'Серия фото',
-    description: 'Одинаковая обработка сразу для нескольких фото.',
-    icon: Layers,
   },
   more: {
     title: 'Ещё',
@@ -100,7 +95,6 @@ export function WorkspaceSheet() {
           )}
           {activeWorkspace === 'partners' && <PartnersPanel />}
           {activeWorkspace === 'support' && <SupportPanel />}
-          {activeWorkspace === 'batch-edit' && <BatchEditPanel />}
           {activeWorkspace === 'more' && (
             <MorePanel
               onPhoto={() => {

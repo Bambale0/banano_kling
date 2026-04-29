@@ -11,11 +11,13 @@ interface DurationSelectProps {
 }
 
 export function DurationSelect({ durations, value, onChange, costs }: DurationSelectProps) {
+  const formatCost = (raw: number) => Number(raw.toFixed(2)).toString()
   return (
     <div className="flex flex-wrap gap-2">
       {durations.map((duration) => {
         const isSelected = duration === value
         const cost = costs[duration.toString()] || 0
+        const perSecondCost = duration > 0 ? cost / duration : 0
         
         return (
           <button
@@ -35,7 +37,7 @@ export function DurationSelect({ durations, value, onChange, costs }: DurationSe
               isSelected ? "text-gold" : "text-gold/70"
             )}>
               <Banana className="w-3 h-3" />
-              {cost}
+              {formatCost(perSecondCost)}/с
             </span>
           </button>
         )

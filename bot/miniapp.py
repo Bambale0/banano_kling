@@ -72,6 +72,15 @@ IMAGE_MODELS = (
         "max_references": 14,
     },
     {
+        "id": "banana_2",
+        "label": "Nano Banana 2",
+        "description": "Повседневная фото-модель с аккуратной детализацией",
+        "cost": preset_manager.get_generation_cost("banana_2"),
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
+        "requires_reference": False,
+        "max_references": 14,
+    },
+    {
         "id": "seedream_edit",
         "label": "Seedream 4.5 Edit",
         "description": "Сильный edit по исходникам",
@@ -183,6 +192,18 @@ VIDEO_MODELS = (
         "ratios": ["motion"],
         "supports": ["motion"],
         "motion_versions": ["2.6"],
+        "motion_modes": ["720p", "1080p"],
+        "max_image_references": 1,
+        "max_video_references": 1,
+    },
+    {
+        "id": "motion_control_v30",
+        "label": "Kling 3.0 Motion Control",
+        "description": "Обновлённая версия Motion Control для фото и видео движения",
+        "durations": [5],
+        "ratios": ["motion"],
+        "supports": ["motion"],
+        "motion_versions": ["3.0"],
         "motion_modes": ["720p", "1080p"],
         "max_image_references": 1,
         "max_video_references": 1,
@@ -987,6 +1008,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
+            "payment_packages": preset_manager.get_packages(),
             "image_models": list(IMAGE_MODELS),
             "video_models": [
                 {
@@ -1478,7 +1500,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
 
 async def miniapp_generate_motion(request: web.Request) -> web.Response:
-    """Mini App endpoint for Kling 2.6 Motion Control."""
+    """Mini App endpoint for Motion Control."""
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -1486,6 +1508,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "") or "").strip()
+        model = str(body.get("motion_model", "motion_control_v26") or "motion_control_v26")
         image_url = str(body.get("motion_image_url", "") or "").strip()
         video_url = str(body.get("motion_video_url", "") or "").strip()
         mode = str(body.get("motion_mode", "720p") or "720p")
@@ -1508,14 +1531,13 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
             )
         if motion_direction not in {"video", "image"}:
             motion_direction = "video"
+        if model not in {"motion_control_v26", "motion_control_v30"}:
+            model = "motion_control_v26"
 
         from bot.services.kling_service import kling_service
 
         duration = 5
-        model = "motion_control"
         cost = preset_manager.get_video_cost(model, duration)
-        if not cost:
-            cost = preset_manager.get_video_cost("v26_pro", duration)
 
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, cost):
