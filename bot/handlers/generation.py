@@ -3571,12 +3571,14 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         width, height = img.size
         if width < 300 or height < 300:
             await message.answer(
-                f"❌ Изображение слишком маленькое: {width}×{height}\n"
-                "Нужно фото не меньше 300×300 px.",
-                parse_mode="HTML",
-                reply_markup=get_main_menu_button_keyboard(),
+                "❌ REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast."
             )
+            if not is_admin:
+                await add_credits(message.from_user.id, cost)
+            await processing_msg.delete()
+            await state.clear()
             return
+
     except Exception as e:
         logger.error(f"Image validation failed: {e}")
         await message.answer(
@@ -4354,9 +4356,15 @@ async def run_no_preset_video_from_message(
     veo_resolution = data.get("veo_resolution", "720p")
     veo_seed = data.get("veo_seed")
     veo_watermark = data.get("veo_watermark", "")
+    motion_mode = data.get("v_mode", "720p")
+    motion_direction = data.get("v_orientation", "video")
 
     image_url = data.get("v_image_url")
-    video_urls = data.get("v_reference_videos", []) if v_type == "video" else None
+    video_urls = (
+        data.get("v_reference_videos", [])
+        if v_type in {"video", "motion"}
+        else None
+    )
     image_refs = data.get("reference_images", [])
 
     elements_list = None
@@ -4433,7 +4441,7 @@ async def run_no_preset_video_from_message(
                     await processing_msg.delete()
                     await state.clear()
                     return
-                veo_image_urls = []
+
                 if image_url:
                     veo_image_urls.append(image_url)
                 for ref_url in image_refs:
@@ -4518,6 +4526,10 @@ async def run_no_preset_video_from_message(
                     await processing_msg.delete()
                     await state.clear()
                     return
+
+            kling_negative_prompt = data.get("kling_negative_prompt", "")
+            kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
+
             result = await kling_service.generate_video(
                 prompt=prompt,
                 model=v_model,
@@ -4533,6 +4545,8 @@ async def run_no_preset_video_from_message(
                 elements=elements_list,
                 negative_prompt=kling_negative_prompt or None,
                 cfg_scale=kling_cfg_scale,
+                motion_direction=motion_direction,
+                motion_mode=motion_mode,
                 webhook_url=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),
@@ -4617,12 +4631,11 @@ async def upload_reference_image_for_any_image_flow(
 
     reference_images = list(data.get("reference_images") or [])
     if len(reference_images) >= max_refs:
-        await message.answer(
-            f"Уже загружено максимум: {max_refs} фото.",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(reference_images), max_refs, preset_id
-            ),
-        )
+        await message.answer("❌ REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast.")
+        if not is_admin:
+            await add_credits(message.from_user.id, cost)
+        await processing_msg.delete()
+        await state.clear()
         return
 
     try:

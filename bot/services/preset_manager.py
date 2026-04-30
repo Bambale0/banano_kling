@@ -250,7 +250,9 @@ class PresetManager:
                 return int(specific[str(duration)])
             base = model_config.get("base") or model_config.get("cost")
             if base is not None:
-                return int(base)
+                default_dur = 6 if key.startswith("veo3") else 5
+                per_sec = base / default_dur
+                return int(round(duration * per_sec))
 
         if key in legacy_keys:
             return int(legacy_keys[key])

@@ -473,7 +473,7 @@ class KlingService:
             "prompt": prompt or "",
             "input_urls": [image_url],
             "character_orientation": motion_direction or "video",
-            "mode": "1080p" if mode == "pro" else "720p",
+            "mode": "1080p" if mode in {"pro", "1080p"} else "720p",
         }
 
         if cleaned_video_urls:
@@ -516,6 +516,8 @@ class KlingService:
         generate_audio: bool = True,
         multi_shots: Optional[List[Dict[str, Any]]] = None,
         image_input: Optional[List[str]] = None,
+        motion_direction: str = "video",
+        motion_mode: str = "720p",
     ) -> Dict[str, Any]:
         """
         Route only Kling-supported models.
@@ -591,8 +593,8 @@ class KlingService:
                 image_url=image_url or "",
                 video_urls=video_urls or [],
                 prompt=prompt,
-                motion_direction="video",
-                mode="std",
+                motion_direction=motion_direction,
+                mode=motion_mode,
                 motion_model=motion_model,
                 webhook_url=webhook_url,
             )

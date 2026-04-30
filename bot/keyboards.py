@@ -235,6 +235,11 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
         ("v3_std", "⚡ Kling v3", preset_manager.get_video_cost("v3_std", 5)),
         ("v26_pro", "🌀 Kling 2.5 Turbo", preset_manager.get_video_cost("v26_pro", 5)),
         (
+            "grok_imagine",
+            "🧠 Grok Imagine",
+            preset_manager.get_video_cost("grok_imagine", 5),
+        ),
+        (
             "avatar_std",
             "🗣 Avatar Standard",
             preset_manager.get_video_cost("avatar_std", 5),
@@ -654,7 +659,8 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
         ),
     ]
 
-    for model_key, callback_data, label, cost in model_rows:
+    for model_row in model_rows:
+        model_key, callback_data, label, cost = model_row[:4]
         check = "✅ " if current_service == model_key else ""
         builder.row(
             InlineKeyboardButton(
