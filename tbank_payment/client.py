@@ -9,29 +9,14 @@ import aiohttp
 import requests
 
 from .config import TBankConfig
-from .exceptions import (
-    TBankAPIError,
-    TBankAuthError,
-    TBankNetworkError,
-    TBankValidationError,
-)
-from .models import (
-    CancelRequest,
-    CancelResponse,
-    ChargeRequest,
-    ChargeResponse,
-    ConfirmRequest,
-    ConfirmResponse,
-    FinishAuthorizeRequest,
-    FinishAuthorizeResponse,
-    GetStateRequest,
-    GetStateResponse,
-    InitPaymentRequest,
-    InitPaymentResponse,
-    Receipt,
-    SendClosingReceiptRequest,
-    SendClosingReceiptResponse,
-)
+from .exceptions import (TBankAPIError, TBankAuthError, TBankNetworkError,
+                         TBankValidationError)
+from .models import (CancelRequest, CancelResponse, ChargeRequest,
+                     ChargeResponse, ConfirmRequest, ConfirmResponse,
+                     FinishAuthorizeRequest, FinishAuthorizeResponse,
+                     GetStateRequest, GetStateResponse, InitPaymentRequest,
+                     InitPaymentResponse, Receipt, SendClosingReceiptRequest,
+                     SendClosingReceiptResponse)
 from .utils import amount_to_coins, format_datetime, prepare_request_data
 
 logger = logging.getLogger(__name__)

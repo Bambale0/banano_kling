@@ -18,34 +18,23 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image
 
 from bot.config import config
-from bot.database import (
-    add_credits,
-    add_generation_history,
-    add_generation_task,
-    check_can_afford,
-    complete_video_task,
-    deduct_credits,
-    get_or_create_user,
-    get_task_by_id,
-    get_user_credits,
-    get_user_settings,
-)
-from bot.keyboards import (
-    get_back_keyboard,
-    get_create_image_keyboard,
-    get_create_video_keyboard,
-    get_image_model_label,
-    get_image_model_selection_keyboard,
-    get_image_result_keyboard,
-    get_main_menu_button_keyboard,
-    get_main_menu_keyboard,
-    get_reference_images_upload_keyboard,
-    get_reference_videos_upload_keyboard,
-    get_video_media_step_keyboard,
-    get_video_model_label,
-    get_video_model_selection_keyboard,
-    get_video_type_label,
-)
+from bot.database import (add_credits, add_generation_history,
+                          add_generation_task, check_can_afford,
+                          complete_video_task, deduct_credits,
+                          get_or_create_user, get_task_by_id, get_user_credits,
+                          get_user_settings)
+from bot.keyboards import (get_back_keyboard, get_create_image_keyboard,
+                           get_create_video_keyboard, get_image_model_label,
+                           get_image_model_selection_keyboard,
+                           get_image_result_keyboard,
+                           get_main_menu_button_keyboard,
+                           get_main_menu_keyboard,
+                           get_reference_images_upload_keyboard,
+                           get_reference_videos_upload_keyboard,
+                           get_video_media_step_keyboard,
+                           get_video_model_label,
+                           get_video_model_selection_keyboard,
+                           get_video_type_label)
 from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
@@ -55,12 +44,8 @@ from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
-from bot.utils.help_texts import (
-    UserHints,
-    format_generation_options,
-    get_prompt_tips,
-    get_reference_images_help,
-)
+from bot.utils.help_texts import (UserHints, format_generation_options,
+                                  get_prompt_tips, get_reference_images_help)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -266,6 +251,7 @@ async def _start_image_generation_task(
         result = await nano_banana_2_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
+            resolution=img_quality.upper(),
             image_input=reference_images,
             callback_url=callback_url,
         )
@@ -273,6 +259,7 @@ async def _start_image_generation_task(
         result = await nano_banana_pro_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
+            resolution=img_quality.upper(),
             image_input=reference_images,
             callback_url=callback_url,
         )
@@ -337,6 +324,7 @@ async def _start_image_generation_task(
         result = await nano_banana_pro_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
+            resolution=img_quality.upper(),
             image_input=reference_images,
             callback_url=callback_url,
         )

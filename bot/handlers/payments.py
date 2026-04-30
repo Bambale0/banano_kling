@@ -7,22 +7,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiohttp import web
 
 from bot.config import config
-from bot.database import (
-    add_credits,
-    create_miniapp_notification,
-    create_transaction,
-    credit_first_payment_referral_bonus,
-    get_or_create_user,
-    get_telegram_id_by_user_id,
-    get_transaction_by_order,
-    update_transaction_status,
-)
-from bot.keyboards import (
-    get_back_keyboard,
-    get_main_menu_keyboard,
-    get_payment_confirmation_keyboard,
-    get_payment_packages_keyboard,
-)
+from bot.database import (add_credits, create_miniapp_notification,
+                          create_transaction,
+                          credit_first_payment_referral_bonus,
+                          get_or_create_user, get_telegram_id_by_user_id,
+                          get_transaction_by_order, update_transaction_status)
+from bot.keyboards import (get_back_keyboard, get_main_menu_keyboard,
+                           get_payment_confirmation_keyboard,
+                           get_payment_packages_keyboard)
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager

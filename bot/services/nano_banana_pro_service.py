@@ -3,7 +3,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
-from bot.services.media_input_utils import image_sources_to_supported_image_urls
+from bot.services.media_input_utils import \
+    image_sources_to_supported_image_urls
 
 logger = logging.getLogger(__name__)
 

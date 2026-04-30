@@ -5,37 +5,16 @@ T-Bank (Т-Банк) Payment Module
 
 from .client import TBankAsyncClient, TBankPaymentClient
 from .config import TBankConfig
-from .exceptions import (
-    TBankAPIError,
-    TBankAuthError,
-    TBankNetworkError,
-    TBankPaymentError,
-    TBankValidationError,
-)
-from .models import (
-    VAT,
-    CancelRequest,
-    CancelResponse,
-    ChargeRequest,
-    ChargeResponse,
-    ConfirmRequest,
-    ConfirmResponse,
-    FinishAuthorizeRequest,
-    FinishAuthorizeResponse,
-    GetStateRequest,
-    GetStateResponse,
-    InitPaymentRequest,
-    InitPaymentResponse,
-    Notification,
-    PaymentMethod,
-    PaymentObject,
-    PaymentStatus,
-    Receipt,
-    ReceiptItem,
-    SendClosingReceiptRequest,
-    SendClosingReceiptResponse,
-    Taxation,
-)
+from .exceptions import (TBankAPIError, TBankAuthError, TBankNetworkError,
+                         TBankPaymentError, TBankValidationError)
+from .models import (VAT, CancelRequest, CancelResponse, ChargeRequest,
+                     ChargeResponse, ConfirmRequest, ConfirmResponse,
+                     FinishAuthorizeRequest, FinishAuthorizeResponse,
+                     GetStateRequest, GetStateResponse, InitPaymentRequest,
+                     InitPaymentResponse, Notification, PaymentMethod,
+                     PaymentObject, PaymentStatus, Receipt, ReceiptItem,
+                     SendClosingReceiptRequest, SendClosingReceiptResponse,
+                     Taxation)
 from .utils import amount_to_coins, coins_to_amount
 from .webhooks import WebhookHandler
 

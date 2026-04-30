@@ -13,48 +13,29 @@ import aiosqlite
 from aiohttp import web
 
 from bot.config import config
-from bot.database import (
-    DATABASE_PATH,
-    add_credits,
-    add_generation_task,
-    check_can_afford,
-    complete_video_task,
-    create_transaction,
-    deduct_credits,
-    get_and_clear_miniapp_notifications,
-    get_or_create_user,
-    get_partner_overview,
-    get_user_stats,
-)
+from bot.database import (DATABASE_PATH, add_credits, add_generation_task,
+                          check_can_afford, complete_video_task,
+                          create_transaction, deduct_credits,
+                          get_and_clear_miniapp_notifications,
+                          get_or_create_user, get_partner_overview,
+                          get_user_stats)
 from bot.handlers.batch_generation import get_batch_upload_keyboard
-from bot.handlers.common import (
-    AIAssistantStates,
-    _build_balance_text,
-    _build_main_menu_text,
-)
-from bot.handlers.generation import (
-    _init_default_video_state,
-    _show_image_model_selection_screen,
-    _show_video_model_selection_screen,
-    _start_image_generation_task,
-    save_uploaded_file,
-)
+from bot.handlers.common import (AIAssistantStates, _build_balance_text,
+                                 _build_main_menu_text)
+from bot.handlers.generation import (_init_default_video_state,
+                                     _show_image_model_selection_screen,
+                                     _show_video_model_selection_screen,
+                                     _start_image_generation_task,
+                                     save_uploaded_file)
 from bot.handlers.image_analyzer import ImageAnalyzerStates
-from bot.keyboards import (
-    get_ai_assistant_keyboard,
-    get_animate_hub_keyboard,
-    get_balance_keyboard,
-    get_create_hub_keyboard,
-    get_edit_hub_keyboard,
-    get_image_model_label,
-    get_main_menu_button_keyboard,
-    get_main_menu_keyboard,
-    get_more_menu_keyboard,
-    get_partner_program_keyboard,
-    get_payment_packages_keyboard,
-    get_support_keyboard,
-    get_video_model_label,
-)
+from bot.keyboards import (get_ai_assistant_keyboard, get_animate_hub_keyboard,
+                           get_balance_keyboard, get_create_hub_keyboard,
+                           get_edit_hub_keyboard, get_image_model_label,
+                           get_main_menu_button_keyboard,
+                           get_main_menu_keyboard, get_more_menu_keyboard,
+                           get_partner_program_keyboard,
+                           get_payment_packages_keyboard, get_support_keyboard,
+                           get_video_model_label)
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.preset_manager import preset_manager
 from bot.services.yookassa_service import yookassa_service
@@ -70,6 +51,7 @@ IMAGE_MODELS = (
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "requires_reference": False,
         "max_references": 14,
+        "qualities": ["2K", "4K"],
     },
     {
         "id": "banana_2",
@@ -79,6 +61,7 @@ IMAGE_MODELS = (
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "requires_reference": False,
         "max_references": 14,
+        "qualities": ["2K", "4K"],
     },
     {
         "id": "seedream_edit",
@@ -89,7 +72,7 @@ IMAGE_MODELS = (
         "requires_reference": True,
         "max_references": 14,
         "qualities": ["2K", "4K"],
-        "supports_nsfw_checker": True,
+        "supports_nsfw_checker": False,
     },
     {
         "id": "flux_pro",
