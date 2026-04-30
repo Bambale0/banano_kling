@@ -63,7 +63,7 @@
       "z_image_turbo": 5,
       "seedream": 4,
       "seedream_45": 1.5,
-      "flux_pro": 2,
+      "flux_pro": 3,
       "nano-banana-pro": 2.5,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 3,
@@ -79,16 +79,16 @@
           "15": 45
         }
       },
-        "v3_pro": {
-          "base": 15,
-          "duration_costs": {
-            "3": 9,
-            "5": 15,
-            "10": 30,
-            "15": 45
-          }
-        },
-        "v26_pro": {
+      "v3_pro": {
+        "base": 15,
+        "duration_costs": {
+          "3": 9,
+          "5": 15,
+          "10": 30,
+          "15": 45
+        }
+      },
+      "v26_pro": {
         "base": 15,
         "duration_costs": {
           "5": 15,

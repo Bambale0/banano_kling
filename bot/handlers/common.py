@@ -1304,6 +1304,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     else:
         await add_credits(telegram_id, cost)
         await message.answer("❌ Ошибка запуска. Бананы возвращены.", parse_mode="HTML")
+        await state.clear()
 
 
 @router.message(GenerationStates.waiting_for_motion_character_image)

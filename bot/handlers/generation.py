@@ -15,6 +15,7 @@ from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from PIL import Image
 
 from bot.config import config
 from bot.database import (
@@ -564,17 +565,9 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             user=user,
             telegram_id=callback.from_user.id,
             img_service=img_service,
-            prompt=_build_image_variant_prompt(
-                prompt,
-                index if "index" in locals() else 0,
-                img_count if "img_count" in locals() else 1,
-            ),
+            prompt=_build_image_variant_prompt(prompt, 0, 1),
             img_ratio=img_ratio,
-            reference_images=list(
-                stable_reference_images
-                if "stable_reference_images" in locals()
-                else (reference_images or [])
-            ),
+            reference_images=list(reference_images or []),
             unit_cost=unit_cost,
             img_quality=img_quality,
             img_nsfw_checker=img_nsfw_checker,
@@ -2756,8 +2749,6 @@ async def handle_video_edit_change_type(
     video_edit_options = {"quality": "std", "duration": 5, "aspect_ratio": "16:9"}
     await state.update_data(video_edit_options=video_edit_options)
 
-    from bot.keyboards import get_video_edit_input_type_keyboard
-
     user_credits = await get_user_credits(callback.from_user.id)
 
     await callback.message.edit_text(
@@ -3322,9 +3313,6 @@ async def process_photo_for_video_prompt_state(
 
     # Validate
     try:
-        import io
-
-        from PIL import Image
 
         img = Image.open(io.BytesIO(image_data))
         width, height = img.size
@@ -3439,6 +3427,628 @@ async def process_photo_for_video_prompt_state(
         )
 
 
+async def handle_motion_mode(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик режимов Motion Control"""
+    mode = callback.data.replace("motion_mode_", "")
+    await state.update_data(motion_mode=mode)
+    data = await state.get_data()
+    current_orientation = data.get("motion_orientation", "video")
+    await callback.message.edit_reply_markup(
+        get_motion_control_keyboard(mode, current_orientation)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("motion_orientation_"))
+async def handle_motion_orientation(callback: types.CallbackQuery, state: FSMContext):
+    """Обработчик ориентации Motion Control"""
+    orientation = callback.data.replace("motion_orientation_", "")
+    await state.update_data(motion_orientation=orientation)
+    data = await state.get_data()
+    current_mode = data.get("motion_mode", "720p")
+    await callback.message.edit_reply_markup(
+        get_motion_control_keyboard(current_mode, orientation)
+    )
+    await callback.answer()
+
+
+@router.message(GenerationStates.waiting_for_video_prompt, F.text)
+async def handle_video_prompt_text(message: types.Message, state: FSMContext):
+    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
+    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
+    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
+    prompt = message.text.strip()
+
+    if not prompt:
+        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
+        return
+
+    data = await state.get_data()
+    generation_type = data.get("generation_type", "")
+    v_type = data.get("v_type", "")
+    if (
+        generation_type == "video"
+        and v_type != "motion"
+        and data.get("video_flow_step") != "configure"
+    ):
+        await message.answer(
+            "Сначала завершите шаг с типом и медиа, затем нажмите кнопку перехода к настройкам."
+        )
+        return
+    logger.info(f"Generation type: {generation_type}")
+
+    await state.update_data(user_prompt=prompt)
+
+    if generation_type == "motion_control":
+        logger.info("Calling run_motion_control")
+        await run_motion_control(message, state, prompt)
+    else:
+        logger.info("Calling run_no_preset_video_from_message")
+        await run_no_preset_video_from_message(message, state, prompt)
+
+
+@router.message(
+    GenerationStates.waiting_for_video_prompt,
+    F.audio
+    | F.voice
+    | (
+        F.document
+        & F.document.mime_type.in_(
+            [
+                "audio/mpeg",
+                "audio/wav",
+                "audio/x-wav",
+                "audio/aac",
+                "audio/mp4",
+                "audio/ogg",
+            ]
+        )
+    ),
+)
+async def process_avatar_audio_upload(message: types.Message, state: FSMContext):
+    """Handles audio uploads for Kling AI Avatar flow."""
+    data = await state.get_data()
+    if data.get("v_type") != "avatar":
+        await message.answer("Пожалуйста, отправьте текстовое описание.")
+        return
+
+    media = message.audio or message.voice or message.document
+    file_size = getattr(media, "file_size", 0) or 0
+    if file_size and file_size > 10 * 1024 * 1024:
+        await message.answer("❌ Аудиофайл слишком большой. Максимум 10MB.")
+        return
+
+    file = await message.bot.get_file(media.file_id)
+    audio_bytes = await message.bot.download_file(file.file_path)
+    audio_data = audio_bytes.read()
+
+    if message.audio:
+        mime_type = message.audio.mime_type or "audio/mpeg"
+    elif message.voice:
+        mime_type = "audio/ogg"
+    else:
+        mime_type = message.document.mime_type or "audio/mpeg"
+
+    ext_map = {
+        "audio/mpeg": "mp3",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/aac": "aac",
+        "audio/mp4": "m4a",
+        "audio/ogg": "ogg",
+    }
+    file_ext = ext_map.get(mime_type, "mp3")
+    audio_url = save_uploaded_file(audio_data, file_ext)
+    if not audio_url:
+        await message.answer("❌ Не удалось сохранить аудио.")
+        return
+
+    await state.update_data(avatar_audio_url=audio_url)
+    await message.answer("✅ Аудио загружено.")
+    if data.get("video_flow_step") == "media":
+        await _show_video_media_screen(message, state, edit=False)
+    else:
+        await _show_video_creation_screen(message, state, edit=False)
+
+
+async def run_no_preset_video_from_message(
+    message: types.Message, state: FSMContext, prompt: str
+):
+    """Запускает видео генерацию без пресета (новый UX с v_type, v_model и т.д.)"""
+    data = await state.get_data()
+    v_type = data.get("v_type", "text")
+    v_model = data.get("v_model", "v3_std")
+    video_urls = data.get("v_reference_videos", [])
+
+    v_duration = int(data.get("v_duration", 5))
+    if v_model.startswith("veo3"):
+        v_duration = max(2, min(v_duration, 10))
+    if v_model == "v26_pro":
+        v_duration = 10 if v_duration == 10 else 5
+    # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
+    if (
+        v_type == "imgtxt"
+        and v_model not in {"grok_imagine"}
+        and not v_model.startswith("veo3")
+    ):
+        v_duration = min(v_duration, 10)
+    v_ratio = data.get("v_ratio", "16:9")
+    v_image_url = data.get("v_image_url")
+    v_video_url = data.get("v_video_url")
+    veo_generation_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
+    veo_translation = data.get("veo_translation", True)
+    veo_resolution = data.get("veo_resolution", "720p")
+    veo_seed = data.get("veo_seed")
+    veo_watermark = data.get("veo_watermark", "")
+    motion_mode = data.get("v_mode", "720p")
+    motion_direction = data.get("v_orientation", "video")
+
+    image_url = data.get("v_image_url")
+    video_urls = (
+        data.get("v_reference_videos", []) if v_type in {"video", "motion"} else None
+    )
+    image_refs = data.get("reference_images", [])
+
+    elements_list = None
+    if v_type == "imgtxt" and image_refs:
+        elements_list = [
+            {
+                "description": "reference photos for video generation consistency and style",
+                "reference_image_urls": image_refs[
+                    :12
+                ],  # Kling elements support up to 3x4=12 refs
+            }
+        ]
+
+    cost = preset_manager.get_video_cost(v_model, v_duration)
+
+    user = await get_or_create_user(message.from_user.id)
+    is_admin = config.is_admin(message.from_user.id)
+
+    # Admin free access
+    if is_admin:
+        logger.info(
+            f"Admin {message.from_user.id} - free access (skipped {cost} credits)"
+        )
+    else:
+        if not await check_can_afford(message.from_user.id, cost):
+            await message.answer(
+                f"❌ Недостаточно бананов!\nНужно: <code>{cost}</code>🍌\nПополните баланс.",
+                reply_markup=get_main_menu_keyboard(
+                    await get_user_credits(message.from_user.id)
+                ),
+                parse_mode="HTML",
+            )
+            await state.clear()
+            return
+        await deduct_credits(message.from_user.id, cost)
+
+    run_summary = _build_video_run_summary(v_model, v_type, v_ratio, v_duration, data)
+
+    processing_msg = await message.answer(
+        f"🎬 <b>Видео генерируется...</b>"
+        f"{run_summary}\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌"
+        f"<i>Ожидайте 1-5 минут</i>",
+        parse_mode="HTML",
+    )
+
+    try:
+        from bot.services.kling_service import kling_service
+
+        if v_model.startswith("veo3"):
+            veo_image_urls = []
+            if veo_generation_type == "TEXT_2_VIDEO":
+                veo_image_urls = []
+            elif veo_generation_type == "FIRST_AND_LAST_FRAMES_2_VIDEO":
+                if image_url:
+                    veo_image_urls.append(image_url)
+                elif image_refs:
+                    veo_image_urls.append(image_refs[0])
+                if image_refs:
+                    for ref_url in image_refs:
+                        if ref_url not in veo_image_urls:
+                            veo_image_urls.append(ref_url)
+                            if len(veo_image_urls) >= 2:
+                                break
+            elif veo_generation_type == "REFERENCE_2_VIDEO":
+                if v_model != "veo3_fast":
+                    await message.answer(
+                        "❌ Изображение слишком маленькое (мин 300px)."
+                    )
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
+
+                if image_url:
+                    veo_image_urls.append(image_url)
+                for ref_url in image_refs:
+                    if ref_url not in veo_image_urls:
+                        veo_image_urls.append(ref_url)
+                    if len(veo_image_urls) >= 3:
+                        break
+
+            if veo_generation_type != "TEXT_2_VIDEO" and not veo_image_urls:
+                await message.answer(
+                    "❌ Для выбранного режима Veo нужно загрузить фото."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+
+            result = await veo_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                generation_type=veo_generation_type,
+                image_urls=veo_image_urls or None,
+                aspect_ratio=v_ratio,
+                enable_translation=veo_translation,
+                watermark=veo_watermark or None,
+                resolution=veo_resolution,
+                seeds=veo_seed,
+                callBackUrl=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+
+        elif v_model == "grok_imagine":
+            if not image_url:
+                await message.answer(
+                    "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+
+            # Pass start image + references (max 7 total for Grok)
+            grok_image_urls = [image_url] + image_refs[:6]
+            grok_duration = v_duration  # Supports 6,20,30 sec
+            grok_mode = data.get("grok_mode", "normal")
+            result = await grok_service.generate_image_to_video(
+                image_urls=grok_image_urls,
+                prompt=prompt,
+                mode=grok_mode,
+                duration=grok_duration,
+                aspect_ratio=v_ratio,
+                callBackUrl=(
+                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+        else:
+            if v_model == "v26_pro" and v_type == "video":
+                await message.answer(
+                    "❌ Kling 2.5 Turbo не поддерживает режим Видео + Текст."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+            if v_model in {"avatar_std", "avatar_pro"}:
+                if not image_url:
+                    await message.answer("❌ Для Kling AI Avatar нужно фото аватара.")
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
+                if not avatar_audio_url:
+                    await message.answer("❌ Для Kling AI Avatar нужно аудио.")
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
+
+            kling_negative_prompt = data.get("kling_negative_prompt", "")
+            kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
+
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                image_url=image_url,
+                video_urls=(
+                    [avatar_audio_url]
+                    if v_model in {"avatar_std", "avatar_pro"} and avatar_audio_url
+                    else video_urls
+                ),
+                image_input=image_refs if v_type != "imgtxt" else None,
+                elements=elements_list,
+                negative_prompt=kling_negative_prompt or None,
+                cfg_scale=kling_cfg_scale,
+                motion_direction=motion_direction,
+                motion_mode=motion_mode,
+                webhook_url=(
+                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+
+        await processing_msg.delete()
+
+        if result and "task_id" in result:
+            await add_generation_task(
+                user.id,
+                message.from_user.id,
+                result["task_id"],
+                "video",
+                "no_preset_video",
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                prompt=prompt,
+                cost=cost,
+            )
+            await message.answer(
+                f"✅ <b>Видео задача запущена!</b>"
+                f"🆔 <code>{result['task_id']}</code>\n"
+                f"{run_summary}\n"
+                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}"
+                f"⏳ Результат через 1-5 мин в этом чате.",
+                parse_mode="HTML",
+            )
+        else:
+            if not is_admin:
+                await add_credits(message.from_user.id, cost)
+            await message.answer(
+                "❌ Не получилось создать задачу. Бананы за попытку уже возвращены."
+            )
+    except Exception as e:
+        logger.exception(f"Video generation error: {e}")
+        if not is_admin:
+            await add_credits(message.from_user.id, cost)
+        await message.answer(
+            "❌ Не получилось завершить запуск генерации. Бананы за попытку уже возвращены."
+        )
+
+    await state.clear()
+
+
+# Service callback for informational inline buttons.
+# Prevents Telegram loading spinner on non-action buttons like price/status.
+@router.callback_query(F.data == "ignore")
+async def ignore_callback(callback: types.CallbackQuery):
+    """Service callback for informational inline buttons."""
+    await callback.answer()
+
+
+@router.message(GenerationStates.uploading_reference_images, F.photo)
+async def upload_reference_image_for_any_image_flow(
+    message: types.Message, state: FSMContext
+):
+    """Universal reference upload fallback for image flows, including Wan 2.7."""
+    data = await state.get_data()
+    img_service = data.get("img_service", "banana_pro")
+    preset_id = data.get("preset_id", "new")
+    max_refs = 9 if img_service == "wan_27" else 14
+
+    reference_images = list(data.get("reference_images") or [])
+    if len(reference_images) >= max_refs:
+        await message.answer(
+            "❌ Достигнут лимит фото. Нажмите «Продолжить».",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        image_bytes = downloaded.read()
+
+        public_url = save_uploaded_file(image_bytes, "jpg")
+        if not public_url:
+            await message.answer(
+                "Не удалось сохранить фото. Попробуйте другое изображение."
+            )
+            return
+
+        reference_images.append(public_url)
+        await state.update_data(reference_images=reference_images)
+
+        title = "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
+        await message.answer(
+            f"{title}\n\n"
+            f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
+            "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
+            reply_markup=get_reference_images_upload_keyboard(
+                len(reference_images), max_refs, preset_id
+            ),
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("Reference image upload failed")
+        await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
+
+
+@router.callback_query(
+    F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"})
+)
+async def continue_wan27_after_refs(callback: types.CallbackQuery, state: FSMContext):
+    """Continue Wan 2.7 after optional references."""
+    await state.update_data(
+        img_service="wan_27",
+        img_flow_step="settings",
+        preset_id="wan_27",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ref_skip_wan_27")
+async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(
+        img_service="wan_27",
+        reference_images=[],
+        img_flow_step="settings",
+        preset_id="wan_27",
+    )
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Продолжаем без референсов")
+
+
+def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
+    builder = InlineKeyboardBuilder()
+    rows = [
+        (
+            "motion_control_v26",
+            "🎯 Kling 2.6 Motion Control",
+            preset_manager.get_video_cost("motion_control_v26", 5),
+        ),
+        (
+            "motion_control_v30",
+            "🚀 Kling 3.0 Motion Control",
+            preset_manager.get_video_cost("motion_control_v30", 5),
+        ),
+    ]
+    for model_key, label, cost in rows:
+        check = "✅ " if current_model == model_key else ""
+        per_second = preset_manager.get_video_cost_per_second(model_key, 5)
+        builder.button(
+            text=f"{check}{label} • {per_second}🍌/с",
+            callback_data=f"motion_model_{model_key}",
+        )
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+# =============================================================================
+# MOTION CONTROL DEDICATED MENU
+# =============================================================================
+
+
+@router.callback_query(F.data == "motion_control")
+async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Open dedicated Motion Control version chooser."""
+    await state.clear()
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="video",
+        v_type="motion",
+        v_model="motion_control_v26",
+        v_duration=5,
+        v_ratio="motion",
+        v_image_url=None,
+        v_reference_videos=[],
+        motion_mode="1080p",
+        motion_orientation="video",
+    )
+    text = (
+        "🎯 <b>Motion Control</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "Выберите версию Kling. На кнопках указана только цена за 1 секунду."
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_motion_control_model_keyboard("motion_control_v26"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"})
+)
+async def select_motion_control_model(callback: types.CallbackQuery, state: FSMContext):
+    """Select Motion Control model and ask for character photo."""
+    model = callback.data.replace("motion_model_", "")
+    label = (
+        "Kling 3.0 Motion Control"
+        if model == "motion_control_v30"
+        else "Kling 2.6 Motion Control"
+    )
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="video",
+        v_type="motion",
+        v_model=model,
+        v_duration=5,
+        v_ratio="motion",
+        v_image_url=None,
+        v_reference_videos=[],
+        motion_mode="1080p",
+        motion_orientation="video",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_start_image)
+    text = (
+        f"🎯 <b>{label}</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
+        f"💰 Стоимость: <code>{preset_manager.get_video_cost(model, 5)}</code>🍌 за 5 сек "
+        f"(<code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с)\n"
+        "⚙️ Режим: <b>Pro / 1080p</b>\n\n"
+        "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
+    )
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer(label)
+
+
+@router.message(GenerationStates.waiting_for_video_start_image, F.photo)
+async def motion_control_character_photo_upload(
+    message: types.Message, state: FSMContext
+):
+    """Upload character photo for dedicated Motion Control flow."""
+    data = await state.get_data()
+    if data.get("v_type") != "motion":
+        return
+
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    downloaded = await message.bot.download_file(file.file_path)
+    image_url = save_uploaded_file(downloaded.read(), "jpg")
+    await state.update_data(v_image_url=image_url)
+    await state.set_state(GenerationStates.uploading_reference_videos)
+    await message.answer(
+        "✅ Фото персонажа загружено.\n\n"
+        "Шаг 2. Теперь отправьте <b>видео движения</b>.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(
+    GenerationStates.uploading_reference_videos,
+    F.video | (F.document & F.document.mime_type.startswith("video/")),
+)
+async def motion_control_reference_video_upload(
+    message: types.Message, state: FSMContext
+):
+    """Upload movement video for dedicated Motion Control flow."""
+    data = await state.get_data()
+    if data.get("v_type") != "motion":
+        return
+
+    if message.video:
+        video_obj = message.video
+    elif message.document and message.document.mime_type.startswith("video/"):
+        video_obj = message.document
+    else:
+        await message.answer(
+            "❌ Неверный тип файла. Отправьте видео.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    file = await message.bot.get_file(video_obj.file_id)
+    downloaded = await message.bot.download_file(file.file_path)
+    video_url = save_uploaded_file(downloaded.read(), "mp4")
+    await state.update_data(v_reference_videos=[video_url])
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await message.answer(
+        "✅ Видео движения загружено.\n\n"
+        "Шаг 3. Отправьте короткое описание результата.\n"
+        "Например: <i>сохранить лицо, плавное движение, кинематографичный свет</i>.",
+        parse_mode="HTML",
+    )
+
+
 @router.message(
     GenerationStates.uploading_reference_videos,
     F.video | (F.document & F.document.mime_type.startswith("video/")),
@@ -3448,6 +4058,8 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
     Обрабатывает загрузку нескольких референсных видео для режима video+text.
     """
     data = await state.get_data()
+    if data.get("v_type") == "motion":
+        return  # Propagate to motion_control_reference_video_upload
     generation_type = data.get("generation_type")
     v_type = data.get("v_type")
     v_reference_videos = data.get("v_reference_videos", [])
@@ -3563,20 +4175,14 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
 
     # Validate image size (min 300x300 for Kie.ai)
     try:
-        import io
-
-        from PIL import Image
 
         img = Image.open(io.BytesIO(image_data))
         width, height = img.size
         if width < 300 or height < 300:
             await message.answer(
-                "❌ REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast."
+                "❌ Изображение слишком маленькое (мин 300px).",
+                reply_markup=get_main_menu_button_keyboard(),
             )
-            if not is_admin:
-                await add_credits(message.from_user.id, cost)
-            await processing_msg.delete()
-            await state.clear()
             return
 
     except Exception as e:
@@ -3675,8 +4281,6 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             reply_markup=get_main_menu_button_keyboard(),
         )
         return
-
-    import uuid
 
     user = await get_or_create_user(message.from_user.id)
     unit_cost = preset_manager.get_generation_cost(img_service)
@@ -3916,7 +4520,7 @@ async def handle_veo_generation_type(callback: types.CallbackQuery, state: FSMCo
     current_model = data.get("v_model", "veo3_fast")
     if generation_type == "REFERENCE_2_VIDEO" and current_model != "veo3_fast":
         await callback.answer(
-            "REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast",
+            "❌ Изображение слишком маленькое (мин 300px).",
             show_alert=True,
         )
         return
@@ -4089,8 +4693,6 @@ async def handle_veo_4k_upgrade(callback: types.CallbackQuery, state: FSMContext
         await callback.answer("Задача Veo не найдена", show_alert=True)
         return
 
-    from bot.services.veo_service import veo_service
-
     result = await veo_service.get_4k_video(task_id)
     if not result:
         await callback.answer(
@@ -4172,8 +4774,6 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
     await deduct_credits(message.from_user.id, cost)
     await message.answer("🎬 Продлеваю Veo-видео...")
 
-    from bot.services.veo_service import veo_service
-
     result = await veo_service.extend_video(
         task_id=source_task_id,
         prompt=prompt,
@@ -4208,635 +4808,6 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("motion_mode_"))
-async def handle_motion_mode(callback: types.CallbackQuery, state: FSMContext):
-    """Обработчик режимов Motion Control"""
-    mode = callback.data.replace("motion_mode_", "")
-    await state.update_data(motion_mode=mode)
-    data = await state.get_data()
-    current_orientation = data.get("motion_orientation", "video")
-    await callback.message.edit_reply_markup(
-        get_motion_control_keyboard(mode, current_orientation)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("motion_orientation_"))
-async def handle_motion_orientation(callback: types.CallbackQuery, state: FSMContext):
-    """Обработчик ориентации Motion Control"""
-    orientation = callback.data.replace("motion_orientation_", "")
-    await state.update_data(motion_orientation=orientation)
-    data = await state.get_data()
-    current_mode = data.get("motion_mode", "720p")
-    await callback.message.edit_reply_markup(
-        get_motion_control_keyboard(current_mode, orientation)
-    )
-    await callback.answer()
-
-
-@router.message(GenerationStates.waiting_for_video_prompt, F.text)
-async def handle_video_prompt_text(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
-    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
-    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
-    prompt = message.text.strip()
-
-    if not prompt:
-        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
-        return
-
-    data = await state.get_data()
-    generation_type = data.get("generation_type", "")
-    if generation_type == "video" and data.get("video_flow_step") != "configure":
-        await message.answer(
-            "Сначала завершите шаг с типом и медиа, затем нажмите кнопку перехода к настройкам."
-        )
-        return
-    logger.info(f"Generation type: {generation_type}")
-
-    await state.update_data(user_prompt=prompt)
-
-    if generation_type == "motion_control":
-        logger.info("Calling run_motion_control")
-        await run_motion_control(message, state, prompt)
-    else:
-        logger.info("Calling run_no_preset_video_from_message")
-        await run_no_preset_video_from_message(message, state, prompt)
-
-
-@router.message(
-    GenerationStates.waiting_for_video_prompt,
-    F.audio
-    | F.voice
-    | (
-        F.document
-        & F.document.mime_type.in_(
-            [
-                "audio/mpeg",
-                "audio/wav",
-                "audio/x-wav",
-                "audio/aac",
-                "audio/mp4",
-                "audio/ogg",
-            ]
-        )
-    ),
-)
-async def process_avatar_audio_upload(message: types.Message, state: FSMContext):
-    """Handles audio uploads for Kling AI Avatar flow."""
-    data = await state.get_data()
-    if data.get("v_type") != "avatar":
-        await message.answer("Пожалуйста, отправьте текстовое описание.")
-        return
-
-    media = message.audio or message.voice or message.document
-    file_size = getattr(media, "file_size", 0) or 0
-    if file_size and file_size > 10 * 1024 * 1024:
-        await message.answer("❌ Аудиофайл слишком большой. Максимум 10MB.")
-        return
-
-    file = await message.bot.get_file(media.file_id)
-    audio_bytes = await message.bot.download_file(file.file_path)
-    audio_data = audio_bytes.read()
-
-    if message.audio:
-        mime_type = message.audio.mime_type or "audio/mpeg"
-    elif message.voice:
-        mime_type = "audio/ogg"
-    else:
-        mime_type = message.document.mime_type or "audio/mpeg"
-
-    ext_map = {
-        "audio/mpeg": "mp3",
-        "audio/wav": "wav",
-        "audio/x-wav": "wav",
-        "audio/aac": "aac",
-        "audio/mp4": "m4a",
-        "audio/ogg": "ogg",
-    }
-    file_ext = ext_map.get(mime_type, "mp3")
-    audio_url = save_uploaded_file(audio_data, file_ext)
-    if not audio_url:
-        await message.answer("❌ Не удалось сохранить аудио.")
-        return
-
-    await state.update_data(avatar_audio_url=audio_url)
-    await message.answer("✅ Аудио загружено.")
-    if data.get("video_flow_step") == "media":
-        await _show_video_media_screen(message, state, edit=False)
-    else:
-        await _show_video_creation_screen(message, state, edit=False)
-
-
-async def run_no_preset_video_from_message(
-    message: types.Message, state: FSMContext, prompt: str
-):
-    """Запускает видео генерацию без пресета (новый UX с v_type, v_model и т.д.)"""
-    data = await state.get_data()
-    v_type = data.get("v_type", "text")
-    v_model = data.get("v_model", "v3_std")
-    video_urls = data.get("v_reference_videos", [])
-
-    v_duration = int(data.get("v_duration", 5))
-    if v_model.startswith("veo3"):
-        v_duration = max(2, min(v_duration, 10))
-    if v_model == "v26_pro":
-        v_duration = 10 if v_duration == 10 else 5
-    # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
-    if (
-        v_type == "imgtxt"
-        and v_model not in {"grok_imagine"}
-        and not v_model.startswith("veo3")
-    ):
-        v_duration = min(v_duration, 10)
-    v_ratio = data.get("v_ratio", "16:9")
-    v_image_url = data.get("v_image_url")
-    v_video_url = data.get("v_video_url")
-    veo_generation_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
-    veo_translation = data.get("veo_translation", True)
-    veo_resolution = data.get("veo_resolution", "720p")
-    veo_seed = data.get("veo_seed")
-    veo_watermark = data.get("veo_watermark", "")
-    motion_mode = data.get("v_mode", "720p")
-    motion_direction = data.get("v_orientation", "video")
-
-    image_url = data.get("v_image_url")
-    video_urls = (
-        data.get("v_reference_videos", [])
-        if v_type in {"video", "motion"}
-        else None
-    )
-    image_refs = data.get("reference_images", [])
-
-    elements_list = None
-    if v_type == "imgtxt" and image_refs:
-        elements_list = [
-            {
-                "description": "reference photos for video generation consistency and style",
-                "reference_image_urls": image_refs[
-                    :12
-                ],  # Kling elements support up to 3x4=12 refs
-            }
-        ]
-
-    cost = preset_manager.get_video_cost(v_model, v_duration)
-
-    user = await get_or_create_user(message.from_user.id)
-    is_admin = config.is_admin(message.from_user.id)
-
-    # Admin free access
-    if is_admin:
-        logger.info(
-            f"Admin {message.from_user.id} - free access (skipped {cost} credits)"
-        )
-    else:
-        if not await check_can_afford(message.from_user.id, cost):
-            await message.answer(
-                f"❌ Недостаточно бананов!\nНужно: <code>{cost}</code>🍌\nПополните баланс.",
-                reply_markup=get_main_menu_keyboard(
-                    await get_user_credits(message.from_user.id)
-                ),
-                parse_mode="HTML",
-            )
-            await state.clear()
-            return
-        await deduct_credits(message.from_user.id, cost)
-
-    run_summary = _build_video_run_summary(v_model, v_type, v_ratio, v_duration, data)
-
-    processing_msg = await message.answer(
-        f"🎬 <b>Видео генерируется...</b>"
-        f"{run_summary}\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌"
-        f"<i>Ожидайте 1-5 минут</i>",
-        parse_mode="HTML",
-    )
-
-    try:
-        from bot.services.grok_service import grok_service
-        from bot.services.kling_service import kling_service
-        from bot.services.veo_service import veo_service
-
-        if v_model.startswith("veo3"):
-            veo_image_urls = []
-            if veo_generation_type == "TEXT_2_VIDEO":
-                veo_image_urls = []
-            elif veo_generation_type == "FIRST_AND_LAST_FRAMES_2_VIDEO":
-                if image_url:
-                    veo_image_urls.append(image_url)
-                elif image_refs:
-                    veo_image_urls.append(image_refs[0])
-                if image_refs:
-                    for ref_url in image_refs:
-                        if ref_url not in veo_image_urls:
-                            veo_image_urls.append(ref_url)
-                            if len(veo_image_urls) >= 2:
-                                break
-            elif veo_generation_type == "REFERENCE_2_VIDEO":
-                if v_model != "veo3_fast":
-                    await message.answer(
-                        "❌ REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast."
-                    )
-                    if not is_admin:
-                        await add_credits(message.from_user.id, cost)
-                    await processing_msg.delete()
-                    await state.clear()
-                    return
-
-                if image_url:
-                    veo_image_urls.append(image_url)
-                for ref_url in image_refs:
-                    if ref_url not in veo_image_urls:
-                        veo_image_urls.append(ref_url)
-                    if len(veo_image_urls) >= 3:
-                        break
-
-            if veo_generation_type != "TEXT_2_VIDEO" and not veo_image_urls:
-                await message.answer(
-                    "❌ Для выбранного режима Veo нужно загрузить фото."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
-            result = await veo_service.generate_video(
-                prompt=prompt,
-                model=v_model,
-                duration=v_duration,
-                generation_type=veo_generation_type,
-                image_urls=veo_image_urls or None,
-                aspect_ratio=v_ratio,
-                enable_translation=veo_translation,
-                watermark=veo_watermark or None,
-                resolution=veo_resolution,
-                seeds=veo_seed,
-                callBackUrl=(
-                    config.kie_notification_url if config.WEBHOOK_HOST else None
-                ),
-            )
-
-        elif v_model == "grok_imagine":
-            if not image_url:
-                await message.answer(
-                    "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-
-            # Pass start image + references (max 7 total for Grok)
-            grok_image_urls = [image_url] + image_refs[:6]
-            grok_duration = v_duration  # Supports 6,20,30 sec
-            grok_mode = data.get("grok_mode", "normal")
-            result = await grok_service.generate_image_to_video(
-                image_urls=grok_image_urls,
-                prompt=prompt,
-                mode=grok_mode,
-                duration=grok_duration,
-                aspect_ratio=v_ratio,
-                callBackUrl=(
-                    config.kling_notification_url if config.WEBHOOK_HOST else None
-                ),
-            )
-        else:
-            if v_model == "v26_pro" and v_type == "video":
-                await message.answer(
-                    "❌ Kling 2.5 Turbo не поддерживает режим Видео + Текст."
-                )
-                if not is_admin:
-                    await add_credits(message.from_user.id, cost)
-                await processing_msg.delete()
-                await state.clear()
-                return
-            if v_model in {"avatar_std", "avatar_pro"}:
-                if not image_url:
-                    await message.answer("❌ Для Kling AI Avatar нужно фото аватара.")
-                    if not is_admin:
-                        await add_credits(message.from_user.id, cost)
-                    await processing_msg.delete()
-                    await state.clear()
-                    return
-                if not avatar_audio_url:
-                    await message.answer("❌ Для Kling AI Avatar нужно аудио.")
-                    if not is_admin:
-                        await add_credits(message.from_user.id, cost)
-                    await processing_msg.delete()
-                    await state.clear()
-                    return
-
-            kling_negative_prompt = data.get("kling_negative_prompt", "")
-            kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
-
-            result = await kling_service.generate_video(
-                prompt=prompt,
-                model=v_model,
-                duration=v_duration,
-                aspect_ratio=v_ratio,
-                image_url=image_url,
-                video_urls=(
-                    [avatar_audio_url]
-                    if v_model in {"avatar_std", "avatar_pro"} and avatar_audio_url
-                    else video_urls
-                ),
-                image_input=image_refs if v_type != "imgtxt" else None,
-                elements=elements_list,
-                negative_prompt=kling_negative_prompt or None,
-                cfg_scale=kling_cfg_scale,
-                motion_direction=motion_direction,
-                motion_mode=motion_mode,
-                webhook_url=(
-                    config.kling_notification_url if config.WEBHOOK_HOST else None
-                ),
-            )
-
-        await processing_msg.delete()
-
-        if result and "task_id" in result:
-            await add_generation_task(
-                user.id,
-                message.from_user.id,
-                result["task_id"],
-                "video",
-                "no_preset_video",
-                model=v_model,
-                duration=v_duration,
-                aspect_ratio=v_ratio,
-                prompt=prompt,
-                cost=cost,
-            )
-            await message.answer(
-                f"✅ <b>Видео задача запущена!</b>"
-                f"🆔 <code>{result['task_id']}</code>\n"
-                f"{run_summary}\n"
-                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}"
-                f"⏳ Результат через 1-5 мин в этом чате.",
-                parse_mode="HTML",
-            )
-        else:
-            if not is_admin:
-                await add_credits(message.from_user.id, cost)
-            await message.answer(
-                "❌ Не получилось создать задачу. Бананы за попытку уже возвращены."
-            )
-    except Exception as e:
-        logger.exception(f"Video generation error: {e}")
-        if not is_admin:
-            await add_credits(message.from_user.id, cost)
-        await message.answer(
-            "❌ Не получилось завершить запуск генерации. Бананы за попытку уже возвращены."
-        )
-
-    await state.clear()
-
-
-# Service callback for informational inline buttons.
-# Prevents Telegram loading spinner on non-action buttons like price/status.
-@router.callback_query(F.data == "ignore")
-async def ignore_callback(callback: types.CallbackQuery):
-    user_credits = await get_user_credits(callback.from_user.id)
-    await callback.answer()
-
-    # =============================================================================
-    # WAN 2.7 TEST FLOW
-    # =============================================================================
-
-    text = (
-        "🧪 <b>Wan 2.7 Pro — тест</b>\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        "<b>Шаг 1. Референсы</b>\n"
-        "Можно загрузить до 9 фото или сразу продолжить без референсов.\n\n"
-        "Когда всё готово — нажмите <b>▶️ Продолжить</b>."
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "wan_27"),
-        parse_mode="HTML",
-    )
-    await callback.answer("Wan 2.7 Pro выбран")
-
-
-@router.message(GenerationStates.uploading_reference_images, F.photo)
-async def upload_reference_image_for_any_image_flow(
-    message: types.Message, state: FSMContext
-):
-    """Universal reference upload fallback for image flows, including Wan 2.7."""
-    data = await state.get_data()
-    img_service = data.get("img_service", "banana_pro")
-    preset_id = data.get("preset_id", "new")
-    max_refs = 9 if img_service == "wan_27" else 14
-
-    reference_images = list(data.get("reference_images") or [])
-    if len(reference_images) >= max_refs:
-        await message.answer("❌ REFERENCE_2_VIDEO доступен только для Veo 3.1 Fast.")
-        if not is_admin:
-            await add_credits(message.from_user.id, cost)
-        await processing_msg.delete()
-        await state.clear()
-        return
-
-    try:
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        downloaded = await message.bot.download_file(file.file_path)
-        image_bytes = downloaded.read()
-
-        public_url = save_uploaded_file(image_bytes, "jpg")
-        if not public_url:
-            await message.answer(
-                "Не удалось сохранить фото. Попробуйте другое изображение."
-            )
-            return
-
-        reference_images.append(public_url)
-        await state.update_data(reference_images=reference_images)
-
-        title = "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
-        await message.answer(
-            f"{title}\n\n"
-            f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
-            "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(reference_images), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-    except Exception:
-        logger.exception("Reference image upload failed")
-        await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
-
-
-@router.callback_query(
-    F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"})
-)
-async def continue_wan27_after_refs(callback: types.CallbackQuery, state: FSMContext):
-    """Continue Wan 2.7 after optional references."""
-    await state.update_data(
-        img_service="wan_27",
-        img_flow_step="settings",
-        preset_id="wan_27",
-    )
-    await _show_image_creation_screen(callback, state)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "img_ref_skip_wan_27")
-async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(
-        img_service="wan_27",
-        reference_images=[],
-        img_flow_step="settings",
-        preset_id="wan_27",
-    )
-    await _show_image_creation_screen(callback, state)
-    await callback.answer("Продолжаем без референсов")
-
-
-def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
-    builder = InlineKeyboardBuilder()
-    rows = [
-        (
-            "motion_control_v26",
-            "🎯 Kling 2.6 Motion Control",
-            preset_manager.get_video_cost("motion_control_v26", 5),
-        ),
-        (
-            "motion_control_v30",
-            "🚀 Kling 3.0 Motion Control",
-            preset_manager.get_video_cost("motion_control_v30", 5),
-        ),
-    ]
-    for model_key, label, cost in rows:
-        check = "✅ " if current_model == model_key else ""
-        per_second = preset_manager.get_video_cost_per_second(model_key, 5)
-        builder.button(
-            text=f"{check}{label} • {per_second}🍌/с",
-            callback_data=f"motion_model_{model_key}",
-        )
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1)
-    return builder.as_markup()
-
-
-# =============================================================================
-# MOTION CONTROL DEDICATED MENU
-# =============================================================================
-
-
-@router.callback_query(F.data == "motion_control")
-async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMContext):
-    """Open dedicated Motion Control version chooser."""
-    await state.clear()
-    user_credits = await get_user_credits(callback.from_user.id)
-    await state.update_data(
-        generation_type="video",
-        v_type="motion",
-        v_model="motion_control_v26",
-        v_duration=5,
-        v_ratio="motion",
-        v_image_url=None,
-        v_reference_videos=[],
-        motion_mode="1080p",
-        motion_orientation="video",
-    )
-    text = (
-        "🎯 <b>Motion Control</b>\n"
-        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
-        "Выберите версию Kling. На кнопках указана только цена за 1 секунду."
-    )
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_motion_control_model_keyboard("motion_control_v26"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.callback_query(
-    F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"})
-)
-async def select_motion_control_model(callback: types.CallbackQuery, state: FSMContext):
-    """Select Motion Control model and ask for character photo."""
-    model = callback.data.replace("motion_model_", "")
-    label = (
-        "Kling 3.0 Motion Control"
-        if model == "motion_control_v30"
-        else "Kling 2.6 Motion Control"
-    )
-    user_credits = await get_user_credits(callback.from_user.id)
-    await state.update_data(
-        generation_type="video",
-        v_type="motion",
-        v_model=model,
-        v_duration=5,
-        v_ratio="motion",
-        v_image_url=None,
-        v_reference_videos=[],
-        motion_mode="1080p",
-        motion_orientation="video",
-    )
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
-    text = (
-        f"🎯 <b>{label}</b>\n"
-        f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
-        f"💰 Стоимость: <code>{preset_manager.get_video_cost(model, 5)}</code>🍌 за 5 сек "
-        f"(<code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с)\n"
-        "⚙️ Режим: <b>Pro / 1080p</b>\n\n"
-        "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
-    )
-    await callback.message.edit_text(text, parse_mode="HTML")
-    await callback.answer(label)
-
-
-@router.message(GenerationStates.waiting_for_video_start_image, F.photo)
-async def motion_control_character_photo_upload(
-    message: types.Message, state: FSMContext
-):
-    """Upload character photo for dedicated Motion Control flow."""
-    data = await state.get_data()
-    if data.get("v_type") != "motion":
-        return
-
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    downloaded = await message.bot.download_file(file.file_path)
-    image_url = save_uploaded_file(downloaded.read(), "jpg")
-    await state.update_data(v_image_url=image_url)
-    await state.set_state(GenerationStates.uploading_reference_videos)
-    await message.answer(
-        "✅ Фото персонажа загружено.\n\n"
-        "Шаг 2. Теперь отправьте <b>видео движения</b>.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(GenerationStates.uploading_reference_videos, F.video)
-async def motion_control_reference_video_upload(
-    message: types.Message, state: FSMContext
-):
-    """Upload movement video for dedicated Motion Control flow."""
-    data = await state.get_data()
-    if data.get("v_type") != "motion":
-        return
-
-    video = message.video
-    file = await message.bot.get_file(video.file_id)
-    downloaded = await message.bot.download_file(file.file_path)
-    video_url = save_uploaded_file(downloaded.read(), "mp4")
-    await state.update_data(v_reference_videos=[video_url])
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-    await message.answer(
-        "✅ Видео движения загружено.\n\n"
-        "Шаг 3. Отправьте короткое описание результата.\n"
-        "Например: <i>сохранить лицо, плавное движение, кинематографичный свет</i>.",
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data == "avatar_service")
 async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(
