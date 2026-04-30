@@ -14,6 +14,8 @@ const qualityLabels: Record<string, string> = {
   standard: 'Стандарт',
   hd: 'HD',
   ultra: 'Ultra',
+  "2K": "2K",
+  "4K": "4K",
 }
 
 export function QualitySelect({ qualities, value, onChange }: QualitySelectProps) {

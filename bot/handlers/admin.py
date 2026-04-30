@@ -98,10 +98,6 @@ def _admin_image_prices_keyboard() -> types.InlineKeyboardMarkup:
         "flux_pro": "GPT Image 2",
         "grok_imagine_i2i": "Grok Imagine",
         "wan_27": "Wan 2.7 Pro",
-        "seedream": "Seedream",
-        "seedream_45": "Seedream 4.5",
-        "gemini_2_5_flash": "Gemini 2.5 Flash",
-        "gemini_3_pro": "Gemini 3 Pro",
     }
     buttons = []
     for key, value in image_models.items():

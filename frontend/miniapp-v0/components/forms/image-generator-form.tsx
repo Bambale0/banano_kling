@@ -51,21 +51,24 @@ export function ImageGeneratorForm({
   const needsReference = model?.requires_reference && references.length === 0
   const isValid = prompt.trim().length > 0 && canAfford && !needsReference
 
-  useEffect(() => {
-    if (!model) return
-    if (!model.ratios.includes(selectedRatio)) {
-      setSelectedRatio(model.ratios[0] || '1:1')
-    }
-    if (model.qualities?.length && !model.qualities.includes(selectedQuality)) {
-      setSelectedQuality(model.qualities[0])
-    }
-    if (!(model.supports_nsfw_checker || model.id === 'seedream_edit' || model.id === 'flux_pro')) {
-      setNsfwChecker(false)
-    }
-    if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
-      setNsfwEnabled(false)
-    }
-  }, [model, selectedQuality, selectedRatio])
+    useEffect(() => {
+      if (!model) return
+      if (!model.ratios.includes(selectedRatio)) {
+        setSelectedRatio(model.ratios[0] || '1:1')
+      }
+      const bananaQualities = ['2K', '4K']
+      if (model.qualities?.length && !model.qualities.includes(selectedQuality) ||
+          (model.id === 'banana_pro' || model.id === 'banana_2') && !bananaQualities.includes(selectedQuality)) {
+        const q = (model.id === 'banana_pro' || model.id === 'banana_2') ? '2K' : model.qualities![0]
+        setSelectedQuality(q)
+      }
+      if (!(model.supports_nsfw_checker || model.id === 'seedream_edit' || model.id === 'flux_pro')) {
+        setNsfwChecker(false)
+      }
+      if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
+        setNsfwEnabled(false)
+      }
+    }, [model, selectedQuality, selectedRatio])
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -109,11 +112,20 @@ export function ImageGeneratorForm({
               onChange={setSelectedRatio}
             />
           </div>
-          {model?.qualities?.length ? (
+          {(model?.id === 'banana_pro' || model?.id === 'banana_2') ? (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Качество</label>
               <QualitySelect
-                qualities={model.qualities}
+                qualities={['2K', '4K']}
+                value={selectedQuality}
+                onChange={setSelectedQuality}
+              />
+            </div>
+          ) : model?.qualities?.length ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Качество</label>
+              <QualitySelect
+                qualities={model.qualities!}
                 value={selectedQuality}
                 onChange={setSelectedQuality}
               />
