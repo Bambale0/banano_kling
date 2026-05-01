@@ -5,8 +5,7 @@ from typing import Dict, List, Optional
 
 from bot.config import config
 from bot.services.kling_service import KlingService
-from bot.services.media_input_utils import \
-    image_sources_to_provider_safe_png_urls
+from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
 
 logger = logging.getLogger(__name__)
 

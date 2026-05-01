@@ -24,12 +24,19 @@ from aiohttp import web
 
 from bot.config import config
 from bot.database import init_db
-from bot.handlers import (admin_router, batch_generation_router, common_router,
-                          generation_router, image_analyzer_router,
-                          payments_router)
-from bot.handlers.payments import (handle_cryptobot_webhook,
-                                   handle_lava_webhook,
-                                   handle_yookassa_webhook)
+from bot.handlers import (
+    admin_router,
+    batch_generation_router,
+    common_router,
+    generation_router,
+    image_analyzer_router,
+    payments_router,
+)
+from bot.handlers.payments import (
+    handle_cryptobot_webhook,
+    handle_lava_webhook,
+    handle_yookassa_webhook,
+)
 from bot.miniapp import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
@@ -370,8 +377,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             task_id = data["taskId"]
             video_url = data["data"].get("result_video_url")
             if task_id and video_url:
-                from bot.database import (complete_video_task, get_task_by_id,
-                                          get_telegram_id_by_user_id)
+                from bot.database import (
+                    complete_video_task,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
                 from bot.keyboards import get_video_result_keyboard
 
                 task = await get_task_by_id(task_id)
@@ -433,9 +443,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 video_url = None
 
             if task_id:
-                from bot.database import (add_credits, complete_video_task,
-                                          get_task_by_id,
-                                          get_telegram_id_by_user_id)
+                from bot.database import (
+                    add_credits,
+                    complete_video_task,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
 
                 task = await get_task_by_id(task_id)
                 model_display = _get_task_model_label(
@@ -478,14 +491,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 else:
                                     caption += f"\n\n🎯 <b>Пресет</b>\n<code>{task.preset_id}</code>"
                                 import os
+
                                 # Отправляем видео - всегда скачиваем для Kie.ai
                                 import tempfile
 
                                 import aiohttp
                                 from aiogram.types import FSInputFile
 
-                                from bot.keyboards import \
-                                    get_video_result_keyboard
+                                from bot.keyboards import get_video_result_keyboard
 
                                 tmp_file = None
                                 try:
@@ -628,8 +641,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             logger.info(f"Extracted video URL: {video_url[:50]}...")
 
             # Находим задачу в БД
-            from bot.database import (complete_video_task, get_task_by_id,
-                                      get_telegram_id_by_user_id)
+            from bot.database import (
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
 
             task = await get_task_by_id(task_id)
 
@@ -764,9 +780,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
 
-            from bot.database import (add_credits, complete_video_task,
-                                      get_task_by_id,
-                                      get_telegram_id_by_user_id)
+            from bot.database import (
+                add_credits,
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
 
             task = await get_task_by_id(task_id)
             if task and task.cost:
@@ -815,8 +834,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 + _to_str(webhook_data.get("logs"))
             ).lower()
             if "sensitive" in error_msg or "e005" in error_msg:
-                from bot.database import (add_credits, get_task_by_id,
-                                          get_telegram_id_by_user_id)
+                from bot.database import (
+                    add_credits,
+                    get_task_by_id,
+                    get_telegram_id_by_user_id,
+                )
 
                 task = await get_task_by_id(task_id)
                 if task:
@@ -1293,8 +1315,11 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 logger.error(f"No video URL in WanX completed task: {webhook_data}")
                 return web.Response(status=200)
 
-            from bot.database import (complete_video_task, get_task_by_id,
-                                      get_telegram_id_by_user_id)
+            from bot.database import (
+                complete_video_task,
+                get_task_by_id,
+                get_telegram_id_by_user_id,
+            )
 
             task = await get_task_by_id(task_id)
             if not task:
@@ -1371,8 +1396,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         logger.info(f"Kie.ai webhook parsed data: {data}")
 
-        from bot.database import (add_credits, complete_video_task,
-                                  get_task_by_id, get_telegram_id_by_user_id)
+        from bot.database import (
+            add_credits,
+            complete_video_task,
+            get_task_by_id,
+            get_telegram_id_by_user_id,
+        )
         from bot.keyboards import get_video_result_keyboard
 
         # Flexible extraction for task_id, status, image_url

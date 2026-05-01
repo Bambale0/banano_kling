@@ -8,17 +8,31 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from bot.database import (DATABASE_PATH, accept_partner_agreement,
-                          create_partner_withdrawal, get_or_create_user,
-                          get_partner_overview, get_referral_stats,
-                          get_user_settings, get_user_stats, process_referral,
-                          save_user_settings)
-from bot.keyboards import (get_ai_assistant_keyboard, get_animate_hub_keyboard,
-                           get_back_keyboard, get_balance_keyboard,
-                           get_create_hub_keyboard, get_edit_hub_keyboard,
-                           get_main_menu_keyboard, get_more_menu_keyboard,
-                           get_partner_consent_keyboard,
-                           get_partner_program_keyboard, get_referral_keyboard)
+from bot.database import (
+    DATABASE_PATH,
+    accept_partner_agreement,
+    create_partner_withdrawal,
+    get_or_create_user,
+    get_partner_overview,
+    get_referral_stats,
+    get_user_settings,
+    get_user_stats,
+    process_referral,
+    save_user_settings,
+)
+from bot.keyboards import (
+    get_ai_assistant_keyboard,
+    get_animate_hub_keyboard,
+    get_back_keyboard,
+    get_balance_keyboard,
+    get_create_hub_keyboard,
+    get_edit_hub_keyboard,
+    get_main_menu_keyboard,
+    get_more_menu_keyboard,
+    get_partner_consent_keyboard,
+    get_partner_program_keyboard,
+    get_referral_keyboard,
+)
 from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates, GenerationStates, PaymentStates
 
@@ -209,8 +223,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
         order_id = args[0].replace("success_", "")
 
         # Проверяем транзакцию в базе данных
-        from bot.database import (add_credits, get_transaction_by_order,
-                                  update_transaction_status)
+        from bot.database import (
+            add_credits,
+            get_transaction_by_order,
+            update_transaction_status,
+        )
         from bot.services.cryptobot_service import cryptobot_service
 
         transaction = await get_transaction_by_order(order_id)
@@ -1213,8 +1230,12 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     import uuid
 
     from bot.config import config
-    from bot.database import (add_credits, add_generation_task, deduct_credits,
-                              get_or_create_user)
+    from bot.database import (
+        add_credits,
+        add_generation_task,
+        deduct_credits,
+        get_or_create_user,
+    )
     from bot.services.kling_service import kling_service
 
     data = await state.get_data()

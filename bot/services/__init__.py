@@ -6,8 +6,7 @@ from .cryptobot_service import CryptoBotService, cryptobot_service
 from .gpt_image_service import GPTImageService, gpt_image_service
 from .kling_service import KlingService, kling_service
 from .nano_banana_2_service import NanoBanana2Service, nano_banana_2_service
-from .nano_banana_pro_service import (NanoBananaProService,
-                                      nano_banana_pro_service)
+from .nano_banana_pro_service import NanoBananaProService, nano_banana_pro_service
 from .seedream_service import SeedreamService, seedream_service
 from .veo_service import VeoService, veo_service
 

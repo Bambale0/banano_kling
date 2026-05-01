@@ -18,23 +18,34 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image
 
 from bot.config import config
-from bot.database import (add_credits, add_generation_history,
-                          add_generation_task, check_can_afford,
-                          complete_video_task, deduct_credits,
-                          get_or_create_user, get_task_by_id, get_user_credits,
-                          get_user_settings)
-from bot.keyboards import (get_back_keyboard, get_create_image_keyboard,
-                           get_create_video_keyboard, get_image_model_label,
-                           get_image_model_selection_keyboard,
-                           get_image_result_keyboard,
-                           get_main_menu_button_keyboard,
-                           get_main_menu_keyboard,
-                           get_reference_images_upload_keyboard,
-                           get_reference_videos_upload_keyboard,
-                           get_video_media_step_keyboard,
-                           get_video_model_label,
-                           get_video_model_selection_keyboard,
-                           get_video_type_label)
+from bot.database import (
+    add_credits,
+    add_generation_history,
+    add_generation_task,
+    check_can_afford,
+    complete_video_task,
+    deduct_credits,
+    get_or_create_user,
+    get_task_by_id,
+    get_user_credits,
+    get_user_settings,
+)
+from bot.keyboards import (
+    get_back_keyboard,
+    get_create_image_keyboard,
+    get_create_video_keyboard,
+    get_image_model_label,
+    get_image_model_selection_keyboard,
+    get_image_result_keyboard,
+    get_main_menu_button_keyboard,
+    get_main_menu_keyboard,
+    get_reference_images_upload_keyboard,
+    get_reference_videos_upload_keyboard,
+    get_video_media_step_keyboard,
+    get_video_model_label,
+    get_video_model_selection_keyboard,
+    get_video_type_label,
+)
 from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
@@ -44,8 +55,12 @@ from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
-from bot.utils.help_texts import (UserHints, format_generation_options,
-                                  get_prompt_tips, get_reference_images_help)
+from bot.utils.help_texts import (
+    UserHints,
+    format_generation_options,
+    get_prompt_tips,
+    get_reference_images_help,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -2274,7 +2289,7 @@ async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "img_quality_basic")
 async def handle_img_quality_basic(callback: types.CallbackQuery, state: FSMContext):
     """Seedream quality: basic."""
-    await state.update_data(img_quality="2K")
+    await state.update_data(img_quality="basic")
     await _show_image_creation_screen(callback, state)
     await callback.answer("Quality: basic")
 
@@ -2282,7 +2297,7 @@ async def handle_img_quality_basic(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(F.data == "img_quality_high")
 async def handle_img_quality_high(callback: types.CallbackQuery, state: FSMContext):
     """Seedream quality: high."""
-    await state.update_data(img_quality="4K")
+    await state.update_data(img_quality="high")
     await _show_image_creation_screen(callback, state)
     await callback.answer("Quality: high")
 

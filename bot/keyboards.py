@@ -765,11 +765,11 @@ def get_create_image_keyboard(
         )
         builder.row(
             InlineKeyboardButton(
-                text=f"{basic_marker} Basic 2K",
+                text=f"{basic_marker} Basic",
                 callback_data="img_quality_basic",
             ),
             InlineKeyboardButton(
-                text=f"{high_marker} High 4K",
+                text=f"{high_marker} High",
                 callback_data="img_quality_high",
             ),
         )
