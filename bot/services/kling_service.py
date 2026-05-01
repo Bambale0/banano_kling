@@ -539,6 +539,22 @@ class KlingService:
                 extra={"model": model},
             )
 
+        if model in self.MOTION_MODELS or "motion" in model.lower():
+            motion_model = (
+                "kling-3.0/motion-control"
+                if model in {"motion_control_v30", "kling-3.0/motion-control"}
+                else "kling-2.6/motion-control"
+            )
+            return await self.generate_motion_control(
+                image_url=image_url or "",
+                video_urls=video_urls or [],
+                prompt=prompt,
+                motion_direction=motion_direction,
+                mode=motion_mode,
+                motion_model=motion_model,
+                webhook_url=webhook_url,
+            )
+
         if model in self.KLING_3_MODELS or "v3" in model or "omni" in model:
             mode = "pro" if "pro" in model else "std"
             image_urls = self._collect_image_urls(image_url, end_image_url, image_input)
@@ -581,22 +597,6 @@ class KlingService:
                     else "kling/ai-avatar-pro"
                 ),
                 webhook=webhook_url,
-            )
-
-        if model in self.MOTION_MODELS or "motion" in model.lower():
-            motion_model = (
-                "kling-3.0/motion-control"
-                if model in {"motion_control_v30", "kling-3.0/motion-control"}
-                else "kling-2.6/motion-control"
-            )
-            return await self.generate_motion_control(
-                image_url=image_url or "",
-                video_urls=video_urls or [],
-                prompt=prompt,
-                motion_direction=motion_direction,
-                mode=motion_mode,
-                motion_model=motion_model,
-                webhook_url=webhook_url,
             )
 
         if model in self.GLOW_MODELS:

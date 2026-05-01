@@ -63,24 +63,14 @@ logger = logging.getLogger(__name__)
 
 IMAGE_MODELS = (
     {
-        "id": "banana_pro",
-        "label": "Nano Banana Pro",
-        "description": "Быстрый универсальный фото-генератор",
-        "cost": preset_manager.get_generation_cost("banana_pro"),
-        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
-        "requires_reference": False,
-        "max_references": 14,
-        "qualities": ["2K", "4K"],
-    },
-    {
-        "id": "banana_2",
-        "label": "Nano Banana 2",
-        "description": "Повседневная фото-модель с аккуратной детализацией",
-        "cost": preset_manager.get_generation_cost("banana_2"),
-        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
-        "requires_reference": False,
-        "max_references": 14,
-        "qualities": ["2K", "4K"],
+        "id": "motion_control_v26",
+        "label": "Kling 2.6 Motion Control",
+        "durations": [5],
+        "ratios": ["motion"],
+        "supports": ["motion"],
+        "motion_versions": ["2.6"],
+        "motion_modes": ["720p", "1080p"],
+        "max_image_references": 1,
     },
     {
         "id": "seedream_edit",
@@ -490,7 +480,7 @@ async def _launch_video_generation_task(
             video_urls=[audio_url] if audio_url else [],
             webhook_url=callback_url,
         )
-    elif model in {"motion_control_v26", "motion_control_v30"}:
+    elif model == "motion_control_v26":
         result = await kling_service.generate_video(
             prompt=prompt,
             model=model,
@@ -1577,13 +1567,24 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         if not is_admin:
             await deduct_credits(telegram_id, cost)
 
-        callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
+        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+        api_motion_model = (
+            "kling-3.0/motion-control"
+            if model == "motion_control_v30"
+            else "kling-2.6/motion-control"
+        )
+        model_label = (
+            "Kling 3.0 Motion Control"
+            if model == "motion_control_v30"
+            else "Kling 2.6 Motion Control"
+        )
         result = await kling_service.generate_motion_control(
             image_url=image_url,
             video_urls=[video_url],
             prompt=prompt,
             mode=mode,
             motion_direction=motion_direction,
+            motion_model=api_motion_model,
             webhook_url=callback_url,
         )
 
@@ -1619,7 +1620,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                     "task_id": task_id,
                     "credits": fresh_user.credits,
                     "cost": cost,
-                    "model_label": "Kling 2.6 Motion Control",
+                    "model_label": model_label,
                 }
             )
 
@@ -1657,7 +1658,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                     "saved_url": saved_url,
                     "credits": fresh_user.credits,
                     "cost": cost,
-                    "model_label": "Kling 2.6 Motion Control",
+                    "model_label": model_label,
                 }
             )
 

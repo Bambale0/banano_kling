@@ -218,9 +218,9 @@ class PresetManager:
         return CANONICAL_VIDEO_ALIASES.get(model.lower(), model.lower())
 
     def _format_cost(self, value):
-        """Вернуть стоимость без потери дробной части: 2.5 -> 2.5, 2.0 -> 2."""
-        value = round(float(value), 2)
-        return int(value) if value.is_integer() else value
+        """Округляем до ближайшего целого для целых кредитов."""
+        value = round(float(value), 0)
+        return int(value)
 
     def get_generation_cost(self, model: str, options: dict = None):
         """Вернуть стоимость генерации изображения по каноническому ключу модели."""

@@ -110,12 +110,6 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
             "Стабильный перенос движения",
             preset_manager.get_video_cost("motion_control_v26", 5),
         ),
-        (
-            "motion_control_v30",
-            "🚀 Kling 3.0 Motion Control",
-            "Новая версия с улучшенной стабильностью",
-            preset_manager.get_video_cost("motion_control_v30", 5),
-        ),
     ]
 
     for model_key, title, description, cost in options:
@@ -171,7 +165,6 @@ SUPPORTED_RATIOS = {
     "v3_omni_pro": ["16:9", "9:16", "1:1"],
     "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
     "motion_control_v26": ["motion"],
-    "motion_control_v30": ["motion"],
     "glow": ["16:9", "9:16", "1:1"],
     "veo3": ["16:9", "9:16", "Auto"],
     "veo3_fast": ["16:9", "9:16", "Auto"],
@@ -185,7 +178,6 @@ VIDEO_MODEL_LABELS = {
     "avatar_std": "Kling AI Avatar Standard",
     "avatar_pro": "Kling AI Avatar Pro",
     "motion_control_v26": "Kling 2.6 Motion Control",
-    "motion_control_v30": "Kling 3.0 Motion Control",
     "grok_imagine": "Grok Imagine",
     "glow": "Kling Glow",
     "veo3": "Veo 3.1 Quality",

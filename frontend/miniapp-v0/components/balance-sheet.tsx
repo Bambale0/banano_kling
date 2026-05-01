@@ -69,7 +69,7 @@ export function BalanceSheet() {
                       <Banana className="h-5 w-5 text-gold" />
                       <span className="text-2xl font-semibold text-gold">{user.credits}</span>
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">Welcome-бонус для новых пользователей: 25🍌</p>
+                    <p className="mt-2 text-xs text-muted-foreground">Welcome-бонус для новых пользователей: 15🍌</p>
                   </div>
                   <div className="rounded-2xl border border-cyan/20 bg-background/30 px-4 py-3 text-right">
                     <p className="text-xs text-muted-foreground">Режим</p>

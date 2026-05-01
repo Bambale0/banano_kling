@@ -102,6 +102,20 @@
           "10": 30
         }
       },
+      "motion_control_v26": {
+        "base": 15,
+        "duration_costs": {
+          "5": 15,
+          "10": 30
+        }
+      },
+      "motion_control_v30": {
+        "base": 18,
+        "duration_costs": {
+          "5": 18,
+          "10": 36
+        }
+      },
       "grok_imagine": {
         "base": 15,
         "duration_costs": {

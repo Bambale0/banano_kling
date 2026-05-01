@@ -580,7 +580,7 @@ async def render_partner_program(target, user_id: int):
         "<b>2 уровень:</b>\n"
         "Ваш реферал привёл ещё рефералов. За все их покупки вам также начисляется денежное вознаграждение — <code>7%</code>.\n\n"
         "• Вывод доступен после достижения минимальной суммы <code>1000₽</code>\n"
-        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>25</code> бананов для тестирования бота\n"
+        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает 🍌 <code>15</code> бананов для тестирования бота\n"
         "• За каждого приглашённого вами реферала вам начисляется + 🍌 <code>3</code> бананов\n\n"
         "<b>Ваша статистика:</b>\n"
         f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
@@ -1259,9 +1259,13 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     telegram_id = message.from_user.id
     user = await get_or_create_user(telegram_id)
-    cost = data.get("cost")
     video_model = data.get("video_model")
     mode = data.get("mode", "std")
+
+    raw_duration = getattr(video, "duration", 0) or 0
+    actual_duration = 10 if raw_duration > 5 else 5
+    from bot.services.preset_manager import preset_manager as _pm
+    cost = _pm.get_video_cost(video_model, actual_duration)
 
     await deduct_credits(telegram_id, cost)
 

@@ -285,7 +285,7 @@ async def _start_image_generation_task(
             aspect_ratio=img_ratio,
             image_urls=reference_images,
             quality=img_quality,
-            nsfw_checker=img_nsfw_checker,
+            nsfw_checker=False,
             callBackUrl=callback_url,
         )
     elif runtime_img_service == "flux_pro":
@@ -1311,7 +1311,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
+        unit_cost = 5 if str(img_quality or "2K").upper() == "4K" else 3
     total_cost = unit_cost * current_count
 
     # nano_quality_cost_info_v2
@@ -1322,7 +1322,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 7 if str(img_quality or "2K").upper() == "4K" else 5
+        unit_cost = 5 if str(img_quality or "2K").upper() == "4K" else 3
         total_cost = unit_cost * current_count
 
     info_lines = [
@@ -3872,32 +3872,6 @@ async def upload_reference_image_for_any_image_flow(
         await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
 
 
-@router.callback_query(
-    F.data.in_({"img_ref_confirm_wan_27", "img_ref_continue_wan_27"})
-)
-async def continue_wan27_after_refs(callback: types.CallbackQuery, state: FSMContext):
-    """Continue Wan 2.7 after optional references."""
-    await state.update_data(
-        img_service="wan_27",
-        img_flow_step="settings",
-        preset_id="wan_27",
-    )
-    await _show_image_creation_screen(callback, state)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "img_ref_skip_wan_27")
-async def skip_wan27_refs(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(
-        img_service="wan_27",
-        reference_images=[],
-        img_flow_step="settings",
-        preset_id="wan_27",
-    )
-    await _show_image_creation_screen(callback, state)
-    await callback.answer("Продолжаем без референсов")
-
-
 def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
     builder = InlineKeyboardBuilder()
     rows = [
@@ -3942,8 +3916,8 @@ async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMCont
         v_ratio="motion",
         v_image_url=None,
         v_reference_videos=[],
-        motion_mode="1080p",
-        motion_orientation="video",
+        v_mode="1080p",
+        v_orientation="video",
     )
     text = (
         "🎯 <b>Motion Control</b>\n"
@@ -3978,8 +3952,8 @@ async def select_motion_control_model(callback: types.CallbackQuery, state: FSMC
         v_ratio="motion",
         v_image_url=None,
         v_reference_videos=[],
-        motion_mode="1080p",
-        motion_orientation="video",
+        v_mode="1080p",
+        v_orientation="video",
     )
     await state.set_state(GenerationStates.waiting_for_video_start_image)
     text = (
@@ -4042,7 +4016,11 @@ async def motion_control_reference_video_upload(
     file = await message.bot.get_file(video_obj.file_id)
     downloaded = await message.bot.download_file(file.file_path)
     video_url = save_uploaded_file(downloaded.read(), "mp4")
-    await state.update_data(v_reference_videos=[video_url])
+
+    raw_duration = getattr(video_obj, "duration", 0) or 0
+    v_duration = 10 if raw_duration > 5 else 5
+
+    await state.update_data(v_reference_videos=[video_url], v_duration=v_duration)
     await state.set_state(GenerationStates.waiting_for_video_prompt)
     await message.answer(
         "✅ Видео движения загружено.\n\n"
