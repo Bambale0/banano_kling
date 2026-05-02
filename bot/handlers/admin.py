@@ -171,10 +171,20 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
         .get("video_models", {})
     )
     model_cfg = video_models.get(model_key, {})
+    quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
 
     buttons = []
-    if duration_costs:
+    if quality_costs:
+        for quality in sorted(quality_costs.keys()):
+            cost = quality_costs[quality]
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text=f"{quality} → {cost}🍌",
+                    callback_data=f"admin_price_video_{model_key}_q{quality}",
+                )
+            )
+    elif duration_costs:
         for dur_str, cost in sorted(duration_costs.items(), key=lambda x: int(x[0])):
             buttons.append(
                 types.InlineKeyboardButton(
@@ -276,6 +286,13 @@ def _update_price_value(target: str, key: str, field: str, value):
             target_key = "base" if "base" in model else "cost"
             old_value = model[target_key]
             model[target_key] = value
+        elif field.startswith("q"):
+            quality = field[1:]
+            quality_costs = model.get("quality_costs")
+            if not quality_costs or quality not in quality_costs:
+                raise KeyError("video_quality")
+            old_value = quality_costs[quality]
+            quality_costs[quality] = value
         else:
             duration_costs = model.setdefault("duration_costs", {})
             old_value = duration_costs[field]
@@ -416,9 +433,16 @@ async def admin_video_model(callback: types.CallbackQuery):
 
     label = VIDEO_MODEL_LABELS.get(model_key, model_key)
     per_sec = _model_per_sec(model_cfg)
+    quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
 
-    if duration_costs:
+    if quality_costs:
+        lines = "\n".join(
+            f"• {quality} → <code>{cost}</code>🍌"
+            for quality, cost in sorted(quality_costs.items())
+        )
+        detail = f"Цены по качеству:\n{lines}"
+    elif duration_costs:
         lines = "\n".join(
             f"• {dur}с → <code>{cost}</code>🍌"
             for dur, cost in sorted(duration_costs.items(), key=lambda x: int(x[0]))
@@ -575,6 +599,12 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         current_value = model.get("base", model.get("cost"))
         hint_text = "Введите новую базовую стоимость."
         param_label = "базовая цена"
+    elif field.startswith("q"):
+        quality = field[1:]
+        quality_costs = model.get("quality_costs") or {}
+        current_value = quality_costs.get(quality)
+        hint_text = f"Введите новую стоимость для качества <b>{quality}</b> (за одну генерацию)."
+        param_label = f"качество {quality}"
     else:
         current_value = (model.get("duration_costs") or {}).get(field)
         hint_text = f"Введите новую стоимость для длительности <b>{field} сек</b>."

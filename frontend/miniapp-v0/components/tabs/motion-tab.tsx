@@ -111,7 +111,10 @@ export function MotionTab() {
   const [error, setError] = useState<string | null>(null)
   const motionModelData = state.videoModels.find((item) => item.id === motionModel)
   const motionDuration = motionModelData?.durations?.[0] || 5
-  const motionCost = motionModelData?.costs?.[motionDuration.toString()] || 15
+  const motionCost =
+    motionModelData?.quality_costs?.[mode] ??
+    motionModelData?.costs?.[motionDuration.toString()] ??
+    15
   const perSecondCost = motionCost / Math.max(motionDuration, 1)
 
   async function uploadImage(file: File) {
@@ -295,7 +298,13 @@ export function MotionTab() {
                   Качество
                 </p>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['720p', '1080p'] as MotionMode[]).map((item) => (
+                  {(['720p', '1080p'] as MotionMode[]).map((item) => {
+                    const qCost =
+                      motionModelData?.quality_costs?.[item] ??
+                      motionModelData?.costs?.[motionDuration.toString()] ??
+                      15
+                    const qPerSec = qCost / Math.max(motionDuration, 1)
+                    return (
                     <button
                       key={item}
                       type="button"
@@ -309,10 +318,11 @@ export function MotionTab() {
                     >
                       <span className="block">{item}</span>
                       <span className="mt-1 block text-xs opacity-80">
-                        {formatPerSecondCost(perSecondCost)}🍌/с
+                        {formatPerSecondCost(qPerSec)}🍌/с
                       </span>
                     </button>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 

@@ -1020,7 +1020,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
             "payment_packages": preset_manager.get_packages(),
-            "image_models": list(IMAGE_MODELS),
+            "image_models": [
+                {**item, "cost": preset_manager.get_generation_cost(item["id"])}
+                for item in IMAGE_MODELS
+            ],
             "video_models": [
                 {
                     **item,
@@ -1030,6 +1033,18 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                         )
                         for duration in item["durations"]
                     },
+                    **(
+                        {
+                            "quality_costs": {
+                                q: preset_manager.get_video_cost_with_quality(
+                                    item["id"], item["durations"][0], q
+                                )
+                                for q in ["720p", "1080p"]
+                            }
+                        }
+                        if item["id"] in {"motion_control_v26", "motion_control_v30"}
+                        else {}
+                    ),
                 }
                 for item in VIDEO_MODELS
             ],
@@ -1565,7 +1580,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         from bot.services.kling_service import kling_service
 
         duration = 5
-        cost = preset_manager.get_video_cost(model, duration)
+        cost = preset_manager.get_video_cost_with_quality(model, duration, mode)
 
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, cost):

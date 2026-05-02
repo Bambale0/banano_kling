@@ -103,17 +103,25 @@
         }
       },
       "motion_control_v26": {
+        "base": 10,
+        "duration_costs": {
+          "5": 10,
+          "10": 20
+        },
+        "quality_costs": {
+          "720p": 10,
+          "1080p": 15
+        }
+      },
+      "motion_control_v30": {
         "base": 15,
         "duration_costs": {
           "5": 15,
           "10": 30
-        }
-      },
-      "motion_control_v30": {
-        "base": 20,
-        "duration_costs": {
-          "5": 20,
-          "10": 40
+        },
+        "quality_costs": {
+          "720p": 15,
+          "1080p": 20
         }
       },
       "grok_imagine": {

@@ -264,6 +264,20 @@ class PresetManager:
 
         return DEFAULT_VIDEO_COST
 
+    def get_video_cost_with_quality(
+        self, model: str, duration: int = 5, quality: str | None = None
+    ) -> float:
+        """Вернуть стоимость видео с учётом качества (например, 720p/1080p для Motion Control)."""
+        if quality:
+            video_models = self._video_costs()
+            key = self.normalize_video_model_key(model)
+            if key in video_models:
+                model_config = video_models[key] or {}
+                quality_costs = model_config.get("quality_costs", {})
+                if quality in quality_costs:
+                    return self._format_cost(quality_costs[quality])
+        return self.get_video_cost(model, duration)
+
     def get_video_cost_per_second(self, model: str, duration: int = 5):
         """Вернуть стоимость генерации видео за одну секунду."""
         duration = max(1, int(duration))

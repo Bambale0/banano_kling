@@ -3590,7 +3590,7 @@ async def run_no_preset_video_from_message(
             }
         ]
 
-    cost = preset_manager.get_video_cost(v_model, v_duration)
+    cost = preset_manager.get_video_cost_with_quality(v_model, v_duration, motion_mode)
 
     user = await get_or_create_user(message.from_user.id)
     is_admin = config.is_admin(message.from_user.id)
@@ -3859,25 +3859,24 @@ async def upload_reference_image_for_any_image_flow(
         await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
 
 
+def _motion_quality_per_second(model_key: str, quality: str) -> float:
+    total = preset_manager.get_video_cost_with_quality(model_key, 5, quality)
+    raw = total / 5
+    return preset_manager._format_cost(raw)
+
+
 def get_motion_control_model_keyboard(current_model: str = "motion_control_v26"):
     builder = InlineKeyboardBuilder()
     rows = [
-        (
-            "motion_control_v26",
-            "🎯 Kling 2.6 Motion Control",
-            preset_manager.get_video_cost("motion_control_v26", 5),
-        ),
-        (
-            "motion_control_v30",
-            "🚀 Kling 3.0 Motion Control",
-            preset_manager.get_video_cost("motion_control_v30", 5),
-        ),
+        ("motion_control_v26", "🎯 Kling 2.6 Motion Control"),
+        ("motion_control_v30", "🚀 Kling 3.0 Motion Control"),
     ]
-    for model_key, label, cost in rows:
+    for model_key, label in rows:
         check = "✅ " if current_model == model_key else ""
-        per_second = preset_manager.get_video_cost_per_second(model_key, 5)
+        ps_720 = _motion_quality_per_second(model_key, "720p")
+        ps_1080 = _motion_quality_per_second(model_key, "1080p")
         builder.button(
-            text=f"{check}{label} • {per_second}🍌/с",
+            text=f"{check}{label} • {ps_720}-{ps_1080}🍌/с",
             callback_data=f"motion_model_{model_key}",
         )
     builder.button(text="🏠 Главное меню", callback_data="back_main")
@@ -3923,12 +3922,14 @@ def get_motion_quality_keyboard(model: str, current_mode: str = "1080p"):
     builder = InlineKeyboardBuilder()
     check_720 = "✅ " if current_mode == "720p" else ""
     check_1080 = "✅ " if current_mode == "1080p" else ""
+    ps_720 = _motion_quality_per_second(model, "720p")
+    ps_1080 = _motion_quality_per_second(model, "1080p")
     builder.button(
-        text=f"{check_720}📱 720p (Std)",
+        text=f"{check_720}📱 720p • {ps_720}🍌/с",
         callback_data=f"motion_quality_{model}_720p",
     )
     builder.button(
-        text=f"{check_1080}🖥 1080p (Pro)",
+        text=f"{check_1080}🖥 1080p • {ps_1080}🍌/с",
         callback_data=f"motion_quality_{model}_1080p",
     )
     builder.button(text="◀️ Назад", callback_data="motion_control")
@@ -3959,11 +3960,13 @@ async def select_motion_control_model(callback: types.CallbackQuery, state: FSMC
         v_mode="1080p",
         v_orientation="video",
     )
+    ps_720 = _motion_quality_per_second(model, "720p")
+    ps_1080 = _motion_quality_per_second(model, "1080p")
     text = (
         f"🎯 <b>{label}</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
-        f"💰 Стоимость: <code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с "
-        f"(списывается по длине вашего видео)\n\n"
+        f"💰 Стоимость: <code>{ps_720}</code>-<code>{ps_1080}</code>🍌/с "
+        f"(зависит от качества)\n\n"
         "Выберите качество:"
     )
     await callback.message.edit_text(
@@ -3993,10 +3996,11 @@ async def select_motion_control_quality(
         else "Kling 2.6 Motion Control"
     )
     mode_label = "Pro / 1080p" if quality == "1080p" else "Std / 720p"
+    ps_quality = _motion_quality_per_second(model, quality)
     text = (
         f"🎯 <b>{label}</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
-        f"💰 Стоимость: <code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с "
+        f"💰 Стоимость: <code>{ps_quality}</code>🍌/с "
         f"(списывается по длине вашего видео)\n"
         f"⚙️ Режим: <b>{mode_label}</b>\n\n"
         "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
@@ -4060,7 +4064,10 @@ async def motion_control_reference_video_upload(
     await state.update_data(v_reference_videos=[video_url], v_duration=v_duration)
     data = await state.get_data()
     v_model = data.get("v_model", "motion_control_v26")
-    detected_cost = preset_manager.get_video_cost(v_model, v_duration)
+    v_mode = data.get("v_mode", "1080p")
+    detected_cost = preset_manager.get_video_cost_with_quality(
+        v_model, v_duration, v_mode
+    )
     await state.set_state(GenerationStates.waiting_for_video_prompt)
     await message.answer(
         f"✅ Видео движения загружено ({v_duration} сек).\n"
