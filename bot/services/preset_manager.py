@@ -218,11 +218,12 @@ class PresetManager:
         return CANONICAL_VIDEO_ALIASES.get(model.lower(), model.lower())
 
     def _format_cost(self, value):
-        """Округляем до ближайшего целого для целых кредитов."""
-        value = round(float(value), 0)
-        return int(value)
+        """Округляем до ближайшего 0.5 для поддержки дробных кредитов."""
+        v = float(value)
+        rounded = round(v * 2) / 2
+        return int(rounded) if rounded == int(rounded) else rounded
 
-    def get_generation_cost(self, model: str, options: dict = None):
+    def get_generation_cost(self, model: str, options: dict = None) -> float:
         """Вернуть стоимость генерации изображения по каноническому ключу модели."""
         image_models = self._image_costs()
         legacy_keys = self._legacy_costs()
@@ -234,7 +235,7 @@ class PresetManager:
             return self._format_cost(legacy_keys[key])
         return DEFAULT_IMAGE_COST
 
-    def get_video_cost(self, model: str, duration: int = 5) -> int:
+    def get_video_cost(self, model: str, duration: int = 5) -> float:
         """Вернуть стоимость генерации видео по каноническому ключу модели."""
         video_models = self._video_costs()
         legacy_keys = self._legacy_costs()
@@ -252,7 +253,8 @@ class PresetManager:
             if base is not None:
                 default_dur = 6 if key.startswith("veo3") else 5
                 per_sec = base / default_dur
-                return int(round(duration * per_sec))
+                raw = duration * per_sec
+                return int(raw) if raw == int(raw) else round(raw * 2) / 2
 
         if key in legacy_keys:
             return int(legacy_keys[key])

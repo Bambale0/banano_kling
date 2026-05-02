@@ -45,8 +45,10 @@ export function ImageGeneratorForm({
   const [references, setReferences] = useState<UploadedFile[]>([])
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
-  
-  const cost = (model?.cost || 0) * selectedCount
+
+  const isBanana = model?.id === 'banana_pro' || model?.id === 'banana_2'
+  const unitCost = isBanana ? (selectedQuality === '4K' ? 3.5 : 2.5) : (model?.cost || 0)
+  const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const needsReference = model?.requires_reference && references.length === 0
   const isValid = prompt.trim().length > 0 && canAfford && !needsReference

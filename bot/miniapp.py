@@ -55,6 +55,7 @@ from bot.keyboards import (
     get_support_keyboard,
     get_video_model_label,
 )
+from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.preset_manager import preset_manager
 from bot.services.yookassa_service import yookassa_service
@@ -63,14 +64,22 @@ logger = logging.getLogger(__name__)
 
 IMAGE_MODELS = (
     {
-        "id": "motion_control_v26",
-        "label": "Kling 2.6 Motion Control",
-        "durations": [5],
-        "ratios": ["motion"],
-        "supports": ["motion"],
-        "motion_versions": ["2.6"],
-        "motion_modes": ["720p", "1080p"],
-        "max_image_references": 1,
+        "id": "banana_pro",
+        "label": "Nano Banana Pro",
+        "description": "Универсальная модель для качественных изображений",
+        "cost": preset_manager.get_generation_cost("nano-banana-pro"),
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
+        "requires_reference": False,
+        "max_references": 14,
+    },
+    {
+        "id": "banana_2",
+        "label": "Nano Banana 2",
+        "description": "Новая версия Nano Banana с улучшенной детализацией и цветопередачей",
+        "cost": preset_manager.get_generation_cost("banana_2"),
+        "ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
+        "requires_reference": False,
+        "max_references": 14,
     },
     {
         "id": "seedream_edit",
@@ -181,7 +190,7 @@ VIDEO_MODELS = (
         "label": "Kling 2.6 Motion Control",
         "description": "Перенос движения по фото персонажа и видео движения",
         "durations": [5],
-        "ratios": ["motion"],
+        "ratios": ["1:1"],
         "supports": ["motion"],
         "motion_versions": ["2.6"],
         "motion_modes": ["720p", "1080p"],
@@ -1277,7 +1286,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        unit_cost = preset_manager.get_generation_cost(img_service)
+        if img_service in ("banana_pro", "banana_2"):
+            unit_cost = QUALITY_COSTS.get(
+                img_quality, preset_manager.get_generation_cost(img_service)
+            )
+        else:
+            unit_cost = preset_manager.get_generation_cost(img_service)
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
             return web.json_response(
@@ -1600,7 +1614,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                 "miniapp_motion_control",
                 model=model,
                 duration=duration,
-                aspect_ratio="motion",
+                aspect_ratio="1:1",
                 prompt=prompt,
                 cost=cost,
                 request_data={
@@ -1633,7 +1647,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
             "miniapp_motion_control",
             model=model,
             duration=duration,
-            aspect_ratio="motion",
+            aspect_ratio="1:1",
             prompt=prompt,
             cost=cost,
             request_data={

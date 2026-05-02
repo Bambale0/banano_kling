@@ -21,6 +21,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_keyboard,
     get_payment_confirmation_keyboard,
+    get_payment_method_keyboard,
     get_payment_packages_keyboard,
 )
 from bot.services.cryptobot_service import cryptobot_service
@@ -79,10 +80,60 @@ async def show_packages(callback: types.CallbackQuery):
     await _render_topup_menu(callback.message)
 
 
+@router.callback_query(F.data.startswith("choose_pay_"))
+async def choose_payment_method(callback: types.CallbackQuery):
+    """Показывает доступные способы оплаты для выбранного пакета."""
+    package_id = callback.data.replace("choose_pay_", "", 1)
+    package = preset_manager.get_package(package_id)
+    if not package:
+        await callback.answer("Пакет не найден", show_alert=True)
+        return
+
+    has_yookassa = yookassa_service.enabled
+    has_crypto = cryptobot_service.enabled
+
+    if not has_yookassa and not has_crypto:
+        await callback.message.edit_text(
+            "❌ Платёжные системы временно недоступны.\nОбратитесь в поддержку.",
+            reply_markup=get_back_keyboard("menu_topup"),
+        )
+        return
+
+    if has_yookassa and not has_crypto:
+        await callback.answer()
+        await callback.bot.answer_callback_query(
+            callback.id, text="Перенаправляем на оплату…"
+        )
+        fake = callback.model_copy(update={"data": f"buy_yookassa_{package_id}"})
+        return await initiate_payment(fake)
+
+    if has_crypto and not has_yookassa:
+        await callback.answer()
+        fake = callback.model_copy(update={"data": f"buy_crypto_{package_id}"})
+        return await initiate_payment(fake)
+
+    total_credits = package["credits"] + package.get("bonus_credits", 0)
+    await callback.message.edit_text(
+        f"💳 <b>Выберите способ оплаты</b>\n\n"
+        f"Пакет: <b>{package['name']}</b>\n"
+        f"Бананы: <code>{total_credits}</code>🍌\n"
+        f"Сумма: <code>{package['price_rub']}</code>₽",
+        reply_markup=get_payment_method_keyboard(package_id, has_yookassa, has_crypto),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("buy_"))
 async def initiate_payment(callback: types.CallbackQuery):
     """Создаёт инвойс у выбранного платёжного провайдера."""
-    provider = config.payment_provider
+    payload = callback.data.replace("buy_", "", 1)
+    if payload.startswith("yookassa_"):
+        provider = "yookassa"
+    elif payload.startswith("crypto_"):
+        provider = "cryptobot"
+    else:
+        provider = config.payment_provider
 
     if provider == "lava" and not lava_service.enabled:
         await callback.message.edit_text(
@@ -93,22 +144,31 @@ async def initiate_payment(callback: types.CallbackQuery):
         )
         return
 
-    if provider != "lava" and not cryptobot_service.enabled:
+    if provider == "yookassa" and not yookassa_service.enabled:
         await callback.message.edit_text(
-            "Не удалось создать оплату: CryptoBot не настроен.\n"
-            "Проверьте переменную окружения <code>CRYPTOBOT_API_TOKEN</code>.",
-            reply_markup=get_back_keyboard("back_main"),
+            "YooKassa временно недоступна. Попробуйте другой способ оплаты.",
+            reply_markup=get_back_keyboard("menu_topup"),
+            parse_mode="HTML",
+        )
+        return
+
+    if provider in ("cryptobot", "cryptopay") and not cryptobot_service.enabled:
+        await callback.message.edit_text(
+            "CryptoBot временно недоступен. Попробуйте другой способ оплаты.",
+            reply_markup=get_back_keyboard("menu_topup"),
             parse_mode="HTML",
         )
         return
 
     payload = callback.data.replace("buy_", "", 1)
-    package_id = payload
-    if payload.startswith("crypto_"):
+    if payload.startswith("yookassa_"):
+        package_id = payload.replace("yookassa_", "", 1)
+    elif payload.startswith("crypto_"):
         package_id = payload.replace("crypto_", "", 1)
     elif "_" in payload:
-        # Совместимость со старыми callback вида buy_tbank_xxx / buy_yookassa_xxx
         package_id = payload.split("_", 1)[1]
+    else:
+        package_id = payload
     package = preset_manager.get_package(package_id)
     if not package:
         await callback.answer("Пакет не найден", show_alert=True)
@@ -236,8 +296,14 @@ async def initiate_payment(callback: types.CallbackQuery):
     if package.get("bonus_credits", 0) > 0:
         bonus_text = f"\n• Бонус: <code>{package['bonus_credits']}</code> бананов"
 
+    provider_label = {
+        "lava": "Lava",
+        "yookassa": "YooKassa (банковская карта)",
+        "cryptobot": "CryptoBot (криптовалюта)",
+    }.get(provider, provider.capitalize())
+
     await callback.message.edit_text(
-        f"💳 <b>Оплата через {'Lava' if provider == 'lava' else 'CryptoBot'}</b>\n"
+        f"💳 <b>Оплата через {provider_label}</b>\n"
         f"• Пакет: <code>{package['name']}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package['price_rub']}</code> ₽\n\n"

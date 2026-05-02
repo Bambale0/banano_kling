@@ -474,6 +474,7 @@ class KlingService:
             "input_urls": [image_url],
             "character_orientation": motion_direction or "video",
             "mode": "1080p" if mode in {"pro", "1080p"} else "720p",
+            "aspect_ratio": "1:1",
         }
 
         if cleaned_video_urls:

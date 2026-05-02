@@ -14,11 +14,25 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
 
 
+class Credits(float):
+    """Float subclass that displays without trailing .0"""
+
+    def __str__(self):
+        if self == int(self):
+            return str(int(self))
+        return f"{self:.1f}"
+
+    def __format__(self, spec):
+        if not spec:
+            return self.__str__()
+        return float.__format__(self, spec)
+
+
 @dataclass
 class User:
     id: int
     telegram_id: int
-    credits: int
+    credits: float
     created_at: datetime
     updated_at: datetime
     referral_code: Optional[str] = None
@@ -366,7 +380,7 @@ async def get_or_create_user(telegram_id: int) -> User:
             return User(
                 id=row["id"],
                 telegram_id=row["telegram_id"],
-                credits=int(row["credits"] or 0),
+                credits=Credits(row["credits"] or 0),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
                 referral_code=referral_code,
@@ -401,7 +415,7 @@ async def get_or_create_user(telegram_id: int) -> User:
         try:
             referral_code = await generate_referral_code(db)
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 25, ?)",
+                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 15, ?)",
                 (telegram_id, referral_code),
             )
             await db.commit()
@@ -433,7 +447,7 @@ async def get_or_create_user(telegram_id: int) -> User:
         return User(
             id=row["id"],
             telegram_id=row["telegram_id"],
-            credits=int(row["credits"] or 0),
+            credits=Credits(row["credits"] or 0),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             referral_code=referral_code,
@@ -598,10 +612,10 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
 async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
-    signup_bonus: int = 25,
+    signup_bonus: int = 0,
     inviter_bonus: int = 3,
 ) -> bool:
-    """Закрепляет пользователя за партнёром: новичку +25🍌, пригласившему +3🍌."""
+    """Закрепляет пользователя за партнёром: пригласившему +3🍌 (новичок уже получил 15 при регистрации)."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         return False
@@ -893,13 +907,13 @@ async def get_referral_stats(telegram_id: int) -> dict:
         }
 
 
-async def get_user_credits(telegram_id: int) -> int:
+async def get_user_credits(telegram_id: int) -> float:
     """Получает баланс кредитов пользователя"""
     user = await get_or_create_user(telegram_id)
-    return user.credits
+    return Credits(user.credits)
 
 
-async def add_credits(telegram_id: int, amount: int) -> bool:
+async def add_credits(telegram_id: int, amount: float) -> bool:
     """Добавляет кредиты пользователю"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
@@ -912,7 +926,7 @@ async def add_credits(telegram_id: int, amount: int) -> bool:
 
 
 async def deduct_credits(
-    telegram_id: int, amount: int, check_balance: bool = True
+    telegram_id: int, amount: float, check_balance: bool = True
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
@@ -944,7 +958,7 @@ async def deduct_credits(
         return True
 
 
-async def check_can_afford(telegram_id: int, amount: int) -> bool:
+async def check_can_afford(telegram_id: int, amount: float) -> bool:
     """Проверяет, может ли пользователь позволить себе операцию"""
     from bot.config import config
 

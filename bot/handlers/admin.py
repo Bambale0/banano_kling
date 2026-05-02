@@ -113,48 +113,96 @@ def _admin_image_prices_keyboard() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+VIDEO_MODEL_LABELS = {
+    "v3_std": "Kling v3 Std",
+    "v3_pro": "Kling 3.0 Pro",
+    "v26_pro": "Kling 2.5 Turbo",
+    "v26_motion_pro": "Motion Pro",
+    "motion_control_v26": "Motion Control 2.6",
+    "motion_control_v30": "Motion Control 3.0",
+    "grok_imagine": "Grok Imagine",
+    "veo3": "Veo 3.1 Quality",
+    "veo3_fast": "Veo 3.1 Fast",
+    "veo3_lite": "Veo 3.1 Lite",
+    "glow": "Kling Glow",
+}
+
+
+def _model_per_sec(model_cfg: dict) -> str:
+    """Возвращает строку 'X🍌/с' для модели."""
+    duration_costs = (model_cfg or {}).get("duration_costs", {})
+    if duration_costs:
+        ref_dur = 5 if "5" in duration_costs else int(min(duration_costs, key=int))
+        cost = duration_costs[str(ref_dur)]
+        per_sec = cost / ref_dur
+        return f"{per_sec:.1f}".rstrip("0").rstrip(".")
+    base = (model_cfg or {}).get("base", (model_cfg or {}).get("cost"))
+    return str(base) if base is not None else "?"
+
+
 def _admin_video_prices_keyboard() -> types.InlineKeyboardMarkup:
+    """Одна кнопка на модель с отображением цены за секунду."""
     video_models = (
         preset_manager.get_price_config()
         .get("costs_reference", {})
         .get("video_models", {})
     )
-    labels = {
-        "v3_std": "Kling v3",
-        "v3_pro": "Kling 3.0",
-        "v26_pro": "Kling 2.5 Turbo",
-        "grok_imagine": "Grok Imagine",
-        "veo3": "Veo 3.1 Quality",
-        "veo3_fast": "Veo 3.1 Fast",
-        "veo3_lite": "Veo 3.1 Lite",
-        "glow": "Kling Glow",
-        "v26_motion_pro": "Motion Pro",
-    }
     buttons = []
     for model_key, model_cfg in video_models.items():
-        duration_costs = (model_cfg or {}).get("duration_costs", {})
-        if duration_costs:
-            for duration, value in duration_costs.items():
-                buttons.append(
-                    types.InlineKeyboardButton(
-                        text=f"{labels.get(model_key, model_key)} • {duration}с • {value}🍌",
-                        callback_data=f"admin_price_video_{model_key}_{duration}",
-                    )
-                )
-            continue
-
-        base_value = (model_cfg or {}).get("base", (model_cfg or {}).get("cost"))
-        if base_value is None:
-            continue
+        per_sec = _model_per_sec(model_cfg)
+        label = VIDEO_MODEL_LABELS.get(model_key, model_key)
         buttons.append(
             types.InlineKeyboardButton(
-                text=f"{labels.get(model_key, model_key)} • {base_value}🍌",
+                text=f"{label} • {per_sec}🍌/с",
+                callback_data=f"admin_video_model_{model_key}",
+            )
+        )
+    rows = _chunk_buttons(buttons, 1) + [
+        [types.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_prices")]
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
+    """Детальный экран модели: каждая длительность + кнопка 'цена за 1с'."""
+    video_models = (
+        preset_manager.get_price_config()
+        .get("costs_reference", {})
+        .get("video_models", {})
+    )
+    model_cfg = video_models.get(model_key, {})
+    duration_costs = model_cfg.get("duration_costs", {})
+
+    buttons = []
+    if duration_costs:
+        for dur_str, cost in sorted(duration_costs.items(), key=lambda x: int(x[0])):
+            buttons.append(
+                types.InlineKeyboardButton(
+                    text=f"{dur_str}с → {cost}🍌",
+                    callback_data=f"admin_price_video_{model_key}_{dur_str}",
+                )
+            )
+        buttons.append(
+            types.InlineKeyboardButton(
+                text="⚡ Установить цену за 1с (пересчёт всех)",
+                callback_data=f"admin_price_video_{model_key}_persec",
+            )
+        )
+    else:
+        base = model_cfg.get("base", model_cfg.get("cost"))
+        buttons.append(
+            types.InlineKeyboardButton(
+                text=f"Базовая цена → {base}🍌",
                 callback_data=f"admin_price_video_{model_key}_base",
             )
         )
 
-    rows = _chunk_buttons(buttons) + [
-        [types.InlineKeyboardButton(text="🔙 К разделам", callback_data="admin_prices")]
+    rows = _chunk_buttons(buttons, 2) + [
+        [
+            types.InlineKeyboardButton(
+                text="🔙 К моделям", callback_data="admin_prices_videos"
+            )
+        ]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -204,7 +252,27 @@ def _update_price_value(target: str, key: str, field: str, value):
         model = video_models.get(key)
         if not model:
             raise KeyError("video")
-        if field == "base":
+        if field == "persec":
+            # Пересчитываем все длительности по новой цене за секунду
+            per_sec = float(value)
+            duration_costs = model.get("duration_costs", {})
+            if duration_costs:
+                old_ref_dur = (
+                    5 if "5" in duration_costs else int(min(duration_costs, key=int))
+                )
+                old_value = round(duration_costs[str(old_ref_dur)] / old_ref_dur, 2)
+                new_durations = {}
+                for dur_str in duration_costs:
+                    new_durations[dur_str] = round(per_sec * int(dur_str))
+                model["duration_costs"] = new_durations
+                ref_dur = (
+                    5 if "5" in new_durations else int(min(new_durations, key=int))
+                )
+                model["base"] = new_durations[str(ref_dur)]
+            else:
+                old_value = model.get("base", model.get("cost", 0))
+                model["base"] = round(per_sec * 5)
+        elif field == "base":
             target_key = "base" if "base" in model else "cost"
             old_value = model[target_key]
             model[target_key] = value
@@ -315,17 +383,59 @@ async def admin_prices_images(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "admin_prices_videos")
 async def admin_prices_videos(callback: types.CallbackQuery):
-    """Список цен на видео-модели."""
+    """Список видео-моделей с ценой за секунду."""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
 
     await callback.message.edit_text(
         "🎬 <b>Цены на видео</b>\n\n"
-        "Выберите модель или длительность и отправьте новую стоимость в бананах.",
+        "Цена указана за <b>1 секунду</b>. Выберите модель для редактирования.",
         reply_markup=_admin_video_prices_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("admin_video_model_"))
+async def admin_video_model(callback: types.CallbackQuery):
+    """Детальный экран модели: все длительности + кнопка цены/с."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    model_key = callback.data.replace("admin_video_model_", "", 1)
+    video_models = (
+        preset_manager.get_price_config()
+        .get("costs_reference", {})
+        .get("video_models", {})
+    )
+    model_cfg = video_models.get(model_key)
+    if not model_cfg:
+        await callback.answer("Модель не найдена", show_alert=True)
+        return
+
+    label = VIDEO_MODEL_LABELS.get(model_key, model_key)
+    per_sec = _model_per_sec(model_cfg)
+    duration_costs = model_cfg.get("duration_costs", {})
+
+    if duration_costs:
+        lines = "\n".join(
+            f"• {dur}с → <code>{cost}</code>🍌"
+            for dur, cost in sorted(duration_costs.items(), key=lambda x: int(x[0]))
+        )
+        detail = (
+            f"Текущие длительности:\n{lines}\n\nЦена за 1с: <code>{per_sec}</code>🍌"
+        )
+    else:
+        base = model_cfg.get("base", model_cfg.get("cost"))
+        detail = f"Базовая стоимость: <code>{base}</code>🍌"
+
+    await callback.message.edit_text(
+        f"🎬 <b>{label}</b>\n\n{detail}\n\n" "Выберите параметр для изменения:",
+        reply_markup=_admin_video_model_keyboard(model_key),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.regexp(r"^admin_price_package_[a-z0-9-]+$"))
@@ -434,7 +544,7 @@ async def admin_price_image(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_price_video_"))
 async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает новую цену для видео-модели."""
+    """Запрашивает новую цену для видео-модели (конкретная длительность, base или persec)."""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
@@ -451,32 +561,43 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Модель не найдена", show_alert=True)
         return
 
-    current_value = (
-        (model.get("duration_costs") or {}).get(field)
-        if field != "base"
-        else model.get("base", model.get("cost"))
-    )
+    model_label = VIDEO_MODEL_LABELS.get(model_key, model_key)
+    return_to = f"admin_video_model_{model_key}"
+
+    if field == "persec":
+        current_value = float(_model_per_sec(model))
+        hint_text = (
+            "Введите новую цену за <b>1 секунду</b>.\n"
+            "Все длительности будут пересчитаны автоматически."
+        )
+        param_label = "цена/с"
+    elif field == "base":
+        current_value = model.get("base", model.get("cost"))
+        hint_text = "Введите новую базовую стоимость."
+        param_label = "базовая цена"
+    else:
+        current_value = (model.get("duration_costs") or {}).get(field)
+        hint_text = f"Введите новую стоимость для длительности <b>{field} сек</b>."
+        param_label = f"{field} сек"
+
     if current_value is None:
         await callback.answer("Цена не найдена", show_alert=True)
         return
 
-    label = "base" if field == "base" else f"{field} сек"
     await state.set_state(AdminStates.waiting_price_value)
     await state.update_data(
         price_target="video",
         price_key=model_key,
         price_field=field,
         current_price_value=current_value,
-        return_to="admin_prices_videos",
+        return_to=return_to,
     )
 
     await callback.message.edit_text(
-        f"🎬 <b>Изменение цены видео-модели</b>\n\n"
-        f"Модель: <code>{model_key}</code>\n"
-        f"Параметр: <code>{label}</code>\n"
-        f"Текущая стоимость: <code>{current_value}</code> 🍌\n\n"
-        "Отправьте новую стоимость одним сообщением.",
-        reply_markup=get_back_keyboard("admin_prices_videos"),
+        f"🎬 <b>{model_label}</b> — {param_label}\n\n"
+        f"Текущее значение: <code>{current_value}</code>🍌\n\n"
+        f"{hint_text}",
+        reply_markup=get_back_keyboard(return_to),
         parse_mode="HTML",
     )
 
@@ -509,10 +630,23 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
+    field = data.get("price_field", "")
+    if field == "persec":
+        success_text = (
+            "✅ <b>Цена за секунду обновлена</b>\n\n"
+            f"Было: <code>{old_value}</code>🍌/с\n"
+            f"Стало: <code>{new_value}</code>🍌/с\n\n"
+            "Все длительности пересчитаны автоматически."
+        )
+    else:
+        success_text = (
+            "✅ <b>Цена обновлена</b>\n\n"
+            f"Было: <code>{old_value}</code>\n"
+            f"Стало: <code>{new_value}</code>"
+        )
+
     await message.answer(
-        "✅ <b>Цена обновлена</b>\n\n"
-        f"Было: <code>{old_value}</code>\n"
-        f"Стало: <code>{new_value}</code>",
+        success_text,
         reply_markup=get_back_keyboard(return_to),
         parse_mode="HTML",
     )
@@ -555,7 +689,7 @@ async def admin_users_menu(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        "👥 <b>Управление пользователями</b>" "Введите Telegram ID пользователя:",
+        "👥 <b>Управление пользователями</b>\n\nВведите Telegram ID пользователя:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
     )
@@ -640,8 +774,8 @@ async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(target_user_id=user_id, action="add")
 
     await callback.message.edit_text(
-        f"➕ <b>Добавление кредитов</b>"
-        f"Пользователь ID: <code>{user_id}</code>"
+        f"➕ <b>Добавление кредитов</b>\n\n"
+        f"Пользователь ID: <code>{user_id}</code>\n"
         f"Введите количество кредитов для добавления:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
@@ -661,8 +795,8 @@ async def admin_deduct_credits_prompt(callback: types.CallbackQuery, state: FSMC
     await state.update_data(target_user_id=user_id, action="deduct")
 
     await callback.message.edit_text(
-        f"➖ <b>Списание кредитов</b>"
-        f"Пользователь ID: <code>{user_id}</code>"
+        f"➖ <b>Списание кредитов</b>\n\n"
+        f"Пользователь ID: <code>{user_id}</code>\n"
         f"Введите количество кредитов для списания:",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
@@ -699,7 +833,7 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
     if success:
         stats = await get_user_stats(user_id)
         await message.answer(
-            f"✅ <b>Успешно!</b>"
+            f"✅ <b>Успешно!</b>\n\n"
             f"Пользователь ID: <code>{user_id}</code>\n"
             f"Действие: {action_text}\n"
             f"Текущий баланс: <code>{stats['credits']}</code> кредитов",
@@ -723,7 +857,7 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
         return
 
     await callback.message.edit_text(
-        "📢 <b>Рассылка всем пользователям</b>"
+        "📢 <b>Рассылка всем пользователям</b>\n\n"
         "Введите текст сообщения для рассылки:\n"
         "<i>Поддерживается HTML-форматирование</i>",
         reply_markup=get_back_keyboard("admin_back"),
@@ -739,10 +873,10 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
     await state.update_data(broadcast_text=message.text)
 
     await message.answer(
-        "📢 <b>Превью рассылки:</b>"
+        "📢 <b>Превью рассылки:</b>\n"
         "───────────────\n"
         f"{message.text}\n"
-        "───────────────"
+        "───────────────\n"
         "Подтверждаете отправку?",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -802,7 +936,7 @@ async def admin_execute_broadcast(
             error_count += 1
 
     await callback.message.edit_text(
-        f"📢 <b>Рассылка завершена!</b>"
+        f"📢 <b>Рассылка завершена!</b>\n\n"
         f"✅ Успешно: <code>{success_count}</code>\n"
         f"❌ Ошибок: <code>{error_count}</code>",
         reply_markup=get_admin_keyboard(),

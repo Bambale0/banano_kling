@@ -2,6 +2,7 @@ import json
 import logging
 import os
 
+from aiogram import types
 from aiogram.types import InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -129,13 +130,11 @@ def get_motion_control_model_keyboard(current_model: str = "motion_control_v26")
 def get_more_menu_keyboard():
     """Вторичные разделы, чтобы не перегружать главный экран."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="💼 Партнёрам", callback_data="menu_partner")
-    builder.button(text="📋 История", callback_data="menu_history")
     builder.button(text="❓ Как пользоваться", callback_data="menu_help")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 1, 1)
+    builder.adjust(2, 1, 1)
     return builder.as_markup()
 
 
@@ -164,7 +163,7 @@ SUPPORTED_RATIOS = {
     "v3_omni_std": ["16:9", "9:16", "1:1"],
     "v3_omni_pro": ["16:9", "9:16", "1:1"],
     "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
-    "motion_control_v26": ["motion"],
+    "motion_control_v26": ["1:1"],
     "glow": ["16:9", "9:16", "1:1"],
     "veo3": ["16:9", "9:16", "Auto"],
     "veo3_fast": ["16:9", "9:16", "Auto"],
@@ -752,9 +751,6 @@ def get_create_image_keyboard(
     if current_service == "seedream_edit":
         basic_marker = "◉" if img_quality == "basic" else "○"
         high_marker = "◉" if img_quality == "high" else "○"
-        seedream_nsfw_text = (
-            "🔞 NSFW checker: on" if img_nsfw_checker else "🛡 NSFW checker: off"
-        )
         builder.row(
             InlineKeyboardButton(
                 text=f"{basic_marker} Basic",
@@ -764,29 +760,6 @@ def get_create_image_keyboard(
                 text=f"{high_marker} High",
                 callback_data="img_quality_high",
             ),
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text=seedream_nsfw_text,
-                callback_data="seedream_nsfw_toggle",
-            )
-        )
-
-    if current_service == "flux_pro":
-        gpt_nsfw_text = (
-            "🔞 NSFW checker: on" if img_nsfw_checker else "🛡 NSFW checker: off"
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text=gpt_nsfw_text,
-                callback_data="gpt_nsfw_toggle",
-            )
-        )
-
-    if current_service == "grok_imagine_i2i":
-        nsfw_text = "🔓 NSFW Вкл" if nsfw_enabled else "🔒 NSFW Выкл"
-        builder.row(
-            InlineKeyboardButton(text=nsfw_text, callback_data="grok_i2i_nsfw_toggle")
         )
 
     # Main menu button
@@ -806,17 +779,39 @@ def get_topup_keyboard():
 
 
 def get_payment_packages_keyboard(packages: list):
-    """Клавиатура выбора пакета бананов (CryptoBot)."""
+    """Клавиатура выбора пакета бананов — ведёт на выбор способа оплаты."""
     builder = InlineKeyboardBuilder()
 
     for pkg in packages:
         popular = " 🔥" if pkg.get("popular") else ""
         builder.button(
             text=f"{pkg['name']}: {pkg['credits']}🍌 за {pkg['price_rub']}₽{popular}",
-            callback_data=f"buy_crypto_{pkg['id']}",
+            callback_data=f"choose_pay_{pkg['id']}",
         )
 
     builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_payment_method_keyboard(
+    package_id: str,
+    has_yookassa: bool = True,
+    has_crypto: bool = True,
+) -> types.InlineKeyboardMarkup:
+    """Выбор способа оплаты для конкретного пакета."""
+    builder = InlineKeyboardBuilder()
+    if has_yookassa:
+        builder.button(
+            text="💳 Банковская карта (YooKassa)",
+            callback_data=f"buy_yookassa_{package_id}",
+        )
+    if has_crypto:
+        builder.button(
+            text="₿ Криптовалюта (CryptoBot)",
+            callback_data=f"buy_crypto_{package_id}",
+        )
+    builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()
 

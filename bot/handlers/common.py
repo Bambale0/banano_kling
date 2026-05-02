@@ -198,7 +198,7 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
     text = (
         "⋯ <b>Ещё</b>\n"
         f"🍌 Баланс: <code>{user.credits}</code> бананов\n\n"
-        "Здесь находятся баланс, история, помощь, поддержка и партнёрская программа."
+        "Здесь находятся баланс, история, помощь и поддержка."
     )
     await callback.message.edit_text(
         text, reply_markup=get_more_menu_keyboard(), parse_mode="HTML"
@@ -1263,8 +1263,9 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     mode = data.get("mode", "std")
 
     raw_duration = getattr(video, "duration", 0) or 0
-    actual_duration = 10 if raw_duration > 5 else 5
+    actual_duration = max(1, min(30, raw_duration)) if raw_duration > 0 else 5
     from bot.services.preset_manager import preset_manager as _pm
+
     cost = _pm.get_video_cost(video_model, actual_duration)
 
     await deduct_credits(telegram_id, cost)

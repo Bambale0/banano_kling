@@ -295,7 +295,7 @@ async def _start_image_generation_task(
                 input_urls=reference_images,
                 model="gpt-image-2-image-to-image",
                 aspect_ratio=img_ratio,
-                nsfw_checker=img_nsfw_checker,
+                nsfw_checker=False,
                 callBackUrl=callback_url,
             )
         else:
@@ -303,7 +303,7 @@ async def _start_image_generation_task(
                 prompt=prompt,
                 model="gpt-image-2-text-to-image",
                 aspect_ratio=img_ratio,
-                nsfw_checker=img_nsfw_checker,
+                nsfw_checker=False,
                 callBackUrl=callback_url,
             )
     elif runtime_img_service in {"seedream", "seedream_45"}:
@@ -317,7 +317,7 @@ async def _start_image_generation_task(
         result = await grok_service.generate_image_to_image(
             image_urls=reference_images,
             prompt=effective_prompt,
-            nsfw_checker=nsfw_enabled,
+            nsfw_checker=False,
             callBackUrl=callback_url,
         )
     elif runtime_img_service == "wan_27":
@@ -1311,7 +1311,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 5 if str(img_quality or "2K").upper() == "4K" else 3
+        unit_cost = 3.5 if str(img_quality or "2K").upper() == "4K" else 2.5
     total_cost = unit_cost * current_count
 
     # nano_quality_cost_info_v2
@@ -1322,7 +1322,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 5 if str(img_quality or "2K").upper() == "4K" else 3
+        unit_cost = 3.5 if str(img_quality or "2K").upper() == "4K" else 2.5
         total_cost = unit_cost * current_count
 
     info_lines = [
@@ -1337,15 +1337,6 @@ def _build_image_creation_text(data: dict) -> str:
         info_lines.append("• Референсы: <code>0 (text-to-image)</code>")
     if current_service == "seedream_edit":
         info_lines.append(f"• Quality: <code>{img_quality}</code>")
-        info_lines.append(
-            f"• NSFW checker: <code>{'on' if img_nsfw_checker else 'off'}</code>"
-        )
-    if current_service == "flux_pro":
-        info_lines.append(
-            f"• NSFW checker: <code>{'on' if img_nsfw_checker else 'off'}</code>"
-        )
-    if current_service == "grok_imagine_i2i":
-        info_lines.append(f"• NSFW: <code>{'Вкл' if nsfw_enabled else 'Выкл'}</code>")
 
     prompt_hint = (
         "Опишите, что нужно изменить на загруженном изображении."
@@ -3482,12 +3473,8 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 
     await state.update_data(user_prompt=prompt)
 
-    if generation_type == "motion_control":
-        logger.info("Calling run_motion_control")
-        await run_motion_control(message, state, prompt)
-    else:
-        logger.info("Calling run_no_preset_video_from_message")
-        await run_no_preset_video_from_message(message, state, prompt)
+    logger.info("Calling run_no_preset_video_from_message")
+    await run_no_preset_video_from_message(message, state, prompt)
 
 
 @router.message(
@@ -3913,7 +3900,7 @@ async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMCont
         v_type="motion",
         v_model="motion_control_v26",
         v_duration=5,
-        v_ratio="motion",
+        v_ratio="1:1",
         v_image_url=None,
         v_reference_videos=[],
         v_mode="1080p",
@@ -3932,11 +3919,28 @@ async def open_motion_control_menu(callback: types.CallbackQuery, state: FSMCont
     await callback.answer()
 
 
+def get_motion_quality_keyboard(model: str, current_mode: str = "1080p"):
+    builder = InlineKeyboardBuilder()
+    check_720 = "✅ " if current_mode == "720p" else ""
+    check_1080 = "✅ " if current_mode == "1080p" else ""
+    builder.button(
+        text=f"{check_720}📱 720p (Std)",
+        callback_data=f"motion_quality_{model}_720p",
+    )
+    builder.button(
+        text=f"{check_1080}🖥 1080p (Pro)",
+        callback_data=f"motion_quality_{model}_1080p",
+    )
+    builder.button(text="◀️ Назад", callback_data="motion_control")
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+
 @router.callback_query(
     F.data.in_({"motion_model_motion_control_v26", "motion_model_motion_control_v30"})
 )
 async def select_motion_control_model(callback: types.CallbackQuery, state: FSMContext):
-    """Select Motion Control model and ask for character photo."""
+    """Select Motion Control model — show quality chooser."""
     model = callback.data.replace("motion_model_", "")
     label = (
         "Kling 3.0 Motion Control"
@@ -3949,23 +3953,56 @@ async def select_motion_control_model(callback: types.CallbackQuery, state: FSMC
         v_type="motion",
         v_model=model,
         v_duration=5,
-        v_ratio="motion",
+        v_ratio="1:1",
         v_image_url=None,
         v_reference_videos=[],
         v_mode="1080p",
         v_orientation="video",
     )
-    await state.set_state(GenerationStates.waiting_for_video_start_image)
     text = (
         f"🎯 <b>{label}</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
-        f"💰 Стоимость: <code>{preset_manager.get_video_cost(model, 5)}</code>🍌 за 5 сек "
-        f"(<code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с)\n"
-        "⚙️ Режим: <b>Pro / 1080p</b>\n\n"
+        f"💰 Стоимость: <code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с "
+        f"(списывается по длине вашего видео)\n\n"
+        "Выберите качество:"
+    )
+    await callback.message.edit_text(
+        text, parse_mode="HTML", reply_markup=get_motion_quality_keyboard(model)
+    )
+    await callback.answer(label)
+
+
+@router.callback_query(F.data.startswith("motion_quality_"))
+async def select_motion_control_quality(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Select quality for Motion Control and ask for character photo."""
+    # callback_data format: motion_quality_<model>_<quality>
+    parts = callback.data.split("_")
+    # parts: ["motion", "quality", "motion", "control", "v26/v30", "720p/1080p"]
+    quality = parts[-1]  # "720p" or "1080p"
+    model = "_".join(parts[2:-1])  # "motion_control_v26" or "motion_control_v30"
+
+    await state.update_data(v_mode=quality)
+    await state.set_state(GenerationStates.waiting_for_video_start_image)
+
+    user_credits = await get_user_credits(callback.from_user.id)
+    label = (
+        "Kling 3.0 Motion Control"
+        if model == "motion_control_v30"
+        else "Kling 2.6 Motion Control"
+    )
+    mode_label = "Pro / 1080p" if quality == "1080p" else "Std / 720p"
+    text = (
+        f"🎯 <b>{label}</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n"
+        f"💰 Стоимость: <code>{preset_manager.get_video_cost_per_second(model, 5)}</code>🍌/с "
+        f"(списывается по длине вашего видео)\n"
+        f"⚙️ Режим: <b>{mode_label}</b>\n\n"
         "Шаг 1. Отправьте <b>фото персонажа</b>, которого нужно оживить."
     )
     await callback.message.edit_text(text, parse_mode="HTML")
-    await callback.answer(label)
+    await callback.answer(quality)
 
 
 @router.message(GenerationStates.waiting_for_video_start_image, F.photo)
@@ -4018,12 +4055,16 @@ async def motion_control_reference_video_upload(
     video_url = save_uploaded_file(downloaded.read(), "mp4")
 
     raw_duration = getattr(video_obj, "duration", 0) or 0
-    v_duration = 10 if raw_duration > 5 else 5
+    v_duration = max(1, min(30, raw_duration)) if raw_duration > 0 else 5
 
     await state.update_data(v_reference_videos=[video_url], v_duration=v_duration)
+    data = await state.get_data()
+    v_model = data.get("v_model", "motion_control_v26")
+    detected_cost = preset_manager.get_video_cost(v_model, v_duration)
     await state.set_state(GenerationStates.waiting_for_video_prompt)
     await message.answer(
-        "✅ Видео движения загружено.\n\n"
+        f"✅ Видео движения загружено ({v_duration} сек).\n"
+        f"💰 Стоимость: <code>{detected_cost}</code>🍌\n\n"
         "Шаг 3. Отправьте короткое описание результата.\n"
         "Например: <i>сохранить лицо, плавное движение, кинематографичный свет</i>.",
         parse_mode="HTML",
@@ -4273,7 +4314,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         "banana_2",
         "nanobanana",
     }:
-        unit_cost = 7 if img_quality_upper == "4K" else 5
+        unit_cost = 3.5 if img_quality_upper == "4K" else 2.5
     total_cost = unit_cost * img_count
 
     if user.credits < total_cost:
@@ -4420,39 +4461,6 @@ async def invalid_reference_video_input(message: types.Message, state: FSMContex
         "⚠️ Пожалуйста, отправьте видео файл (макс 50MB)."
         "Это видео будет использовано как референс для стиля/движения."
     )
-
-
-@router.callback_query(F.data == "grok_i2i_nsfw_toggle")
-async def handle_grok_i2i_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
-    """Переключение NSFW для Grok i2i на общем экране создания фото"""
-    data = await state.get_data()
-    nsfw_enabled = not data.get("nsfw_enabled", False)
-    await state.update_data(nsfw_enabled=nsfw_enabled)
-    await _show_image_creation_screen(callback, state)
-    await callback.answer(f"NSFW: {'Вкл' if nsfw_enabled else 'Выкл'}")
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "seedream_nsfw_toggle")
-async def handle_seedream_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
-    """Toggle Seedream nsfw_checker."""
-    data = await state.get_data()
-    img_nsfw_checker = not data.get("img_nsfw_checker", False)
-    await state.update_data(img_nsfw_checker=img_nsfw_checker)
-    await _show_image_creation_screen(callback, state)
-    await callback.answer(f"NSFW checker: {'on' if img_nsfw_checker else 'off'}")
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "gpt_nsfw_toggle")
-async def handle_gpt_nsfw_toggle(callback: types.CallbackQuery, state: FSMContext):
-    """Toggle GPT Image 2 nsfw_checker."""
-    data = await state.get_data()
-    img_nsfw_checker = not data.get("img_nsfw_checker", False)
-    await state.update_data(img_nsfw_checker=img_nsfw_checker)
-    await _show_image_creation_screen(callback, state)
-    await callback.answer(f"NSFW checker: {'on' if img_nsfw_checker else 'off'}")
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data.startswith("v_mode_"))
