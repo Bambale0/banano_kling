@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -55,18 +56,30 @@ class YooKassaService:
             payload["metadata"]["notification_url"] = notification_url
             payload["notification_url"] = notification_url
 
-        try:
-            payment = Payment.create(payload, str(uuid.uuid4()))
-            logger.info("YooKassa payment created: %s", payment.id)
-            return {
-                "Success": True,
-                "PaymentId": payment.id,
-                "PaymentURL": payment.confirmation.confirmation_url,
-                "Raw": payment,
-            }
-        except Exception as exc:
-            logger.exception("YooKassa payment creation failed: %s", exc)
-            return {"Success": False, "Message": str(exc)}
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                payment = Payment.create(payload, str(uuid.uuid4()))
+                logger.info("YooKassa payment created: %s", payment.id)
+                return {
+                    "Success": True,
+                    "PaymentId": payment.id,
+                    "PaymentURL": payment.confirmation.confirmation_url,
+                    "Raw": payment,
+                }
+            except Exception as exc:
+                last_exc = exc
+                exc_str = str(exc)
+                is_transient = any(
+                    code in exc_str for code in ("502", "503", "504", "429")
+                )
+                if is_transient and attempt < 2:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                break
+
+        logger.exception("YooKassa payment creation failed: %s", last_exc)
+        return {"Success": False, "Message": str(last_exc)}
 
     async def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
         if not self.enabled:

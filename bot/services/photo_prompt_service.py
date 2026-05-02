@@ -1,5 +1,6 @@
-"""Photo to prompt service via Kie GPT 5.4 Responses API."""
+"""Photo to prompt service via Kie GPT 5.4 Responses API with Claude Haiku fallback."""
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -52,13 +53,22 @@ def _extract_output_text(data: Dict[str, Any]) -> str:
     if parts:
         return "\n".join(parts).strip()
 
-    # Fallbacks for provider variations.
     if isinstance(data.get("output_text"), str):
         return data["output_text"].strip()
     if isinstance(data.get("text"), str):
         return data["text"].strip()
 
     return json.dumps(data, ensure_ascii=False)
+
+
+def _extract_claude_text(data: Dict[str, Any]) -> str:
+    parts: list[str] = []
+    for block in data.get("content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text", "")
+            if text:
+                parts.append(str(text))
+    return "\n".join(parts).strip()
 
 
 def _parse_json_object(raw_text: str) -> Dict[str, Any]:
@@ -90,11 +100,184 @@ def _parse_json_object(raw_text: str) -> Dict[str, Any]:
     }
 
 
+def _build_result(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    prompt_en = str(parsed.get("prompt_en") or "").strip()
+    prompt_ru = str(parsed.get("prompt_ru") or "").strip()
+    negative_prompt = str(parsed.get("negative_prompt") or "").strip()
+    model_hint = str(parsed.get("model_hint") or "").strip()
+    key_details = parsed.get("key_details") or []
+
+    if not prompt_en:
+        raise RuntimeError("prompt_en пустой")
+
+    if not negative_prompt:
+        negative_prompt = (
+            "blurry, low quality, distorted face, bad anatomy, extra fingers, "
+            "bad hands, watermark, text, logo, overexposed, underexposed, "
+            "plastic skin, unnatural eyes, asymmetry"
+        )
+
+    if not model_hint:
+        model_hint = (
+            "Nano Banana Pro — для похожей генерации. "
+            "Seedream 4.5 Edit — для редактирования по исходнику."
+        )
+
+    return {
+        "prompt_en": prompt_en,
+        "prompt_ru": prompt_ru,
+        "negative_prompt": negative_prompt,
+        "model_hint": model_hint,
+        "key_details": key_details if isinstance(key_details, list) else [],
+        "raw": parsed,
+    }
+
+
 class PhotoPromptService:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or config.KIE_AI_API_KEY
         self.base_url = "https://api.kie.ai"
-        self.endpoint = "/codex/v1/responses"
+
+    async def _analyze_with_gpt54(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: Dict[str, str],
+    ) -> Dict[str, Any]:
+        payload = {
+            "model": "gpt-5-4",
+            "stream": False,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": SYSTEM_PROMPT}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": user_instruction},
+                        {"type": "input_image", "image_url": image_url},
+                    ],
+                },
+            ],
+            "reasoning": {"effort": "high"},
+        }
+
+        timeout = aiohttp.ClientTimeout(total=120)
+        data: Optional[Dict[str, Any]] = None
+
+        for attempt in range(3):
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/codex/v1/responses",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    text = await response.text()
+
+                    if response.status >= 500:
+                        logger.error(
+                            "GPT-5.4 server error: status=%s body=%s attempt=%d",
+                            response.status,
+                            text[:500],
+                            attempt,
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(2**attempt)
+                            continue
+                        raise RuntimeError(
+                            f"GPT-5.4 недоступен. Код: {response.status}"
+                        )
+
+                    if response.status >= 400:
+                        raise RuntimeError(f"GPT-5.4 ошибка. Код: {response.status}")
+
+                    try:
+                        data = json.loads(text)
+                    except Exception:
+                        raise RuntimeError("GPT-5.4 вернул некорректный JSON")
+
+                    body_code = data.get("code") if isinstance(data, dict) else None
+                    if body_code and int(body_code) >= 400:
+                        logger.error(
+                            "GPT-5.4 application error in body: %s attempt=%d",
+                            data,
+                            attempt,
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(2**attempt)
+                            data = None
+                            continue
+                        raise RuntimeError(f"GPT-5.4 вернул ошибку: {body_code}")
+            break
+
+        if data is None:
+            raise RuntimeError("GPT-5.4 не вернул данных после всех попыток")
+
+        raw_output = _extract_output_text(data)
+        parsed = _parse_json_object(raw_output)
+        return _build_result(parsed)
+
+    async def _analyze_with_claude(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: Dict[str, str],
+    ) -> Dict[str, Any]:
+        payload = {
+            "model": "claude-haiku-4-5",
+            "stream": False,
+            "max_tokens": 2048,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": SYSTEM_PROMPT + "\n\n" + user_instruction,
+                        },
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": image_url},
+                        },
+                    ],
+                }
+            ],
+        }
+
+        timeout = aiohttp.ClientTimeout(total=90)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{self.base_url}/claude/v1/messages",
+                json=payload,
+                headers=headers,
+            ) as response:
+                text = await response.text()
+
+                if response.status >= 400:
+                    logger.error(
+                        "Claude Haiku fallback failed: status=%s body=%s",
+                        response.status,
+                        text[:2000],
+                    )
+                    raise RuntimeError(
+                        f"Claude Haiku недоступен. Код: {response.status}"
+                    )
+
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    raise RuntimeError("Claude Haiku вернул некорректный JSON")
+
+        raw_output = _extract_claude_text(data)
+        if not raw_output:
+            raise RuntimeError("Claude Haiku вернул пустой ответ")
+
+        parsed = _parse_json_object(raw_output)
+        return _build_result(parsed)
 
     async def analyze_photo(
         self,
@@ -108,116 +291,34 @@ class PhotoPromptService:
         if not image_url:
             raise ValueError("image_url is required")
 
-        user_instruction = f"""
-Analyze this image and create a precise prompt for generating a visually similar image.
-
-User goal:
-{goal or "Generate a visually similar image based on the reference."}
-
-Important details to preserve:
-{preserve or "Subject appearance, composition, lighting, style, colors, pose, background, and camera feel."}
-
-Return valid JSON only according to the required schema.
-""".strip()
-
-        payload = {
-            "model": "gpt-5-4",
-            "stream": False,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": SYSTEM_PROMPT,
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": user_instruction,
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": image_url,
-                        },
-                    ],
-                },
-            ],
-            "reasoning": {
-                "effort": "high",
-            },
-        }
+        user_instruction = (
+            f"Analyze this image and create a precise prompt for generating a visually similar image.\n\n"
+            f"User goal:\n{goal or 'Generate a visually similar image based on the reference.'}\n\n"
+            f"Important details to preserve:\n{preserve or 'Subject appearance, composition, lighting, style, colors, pose, background, and camera feel.'}\n\n"
+            f"Return valid JSON only according to the required schema."
+        )
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
 
-        timeout = aiohttp.ClientTimeout(total=120)
-
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                f"{self.base_url}{self.endpoint}",
-                json=payload,
+        try:
+            return await self._analyze_with_gpt54(
+                image_url=image_url,
+                user_instruction=user_instruction,
                 headers=headers,
-            ) as response:
-                text = await response.text()
-
-                if response.status >= 400:
-                    logger.error(
-                        "Photo prompt GPT 5.4 failed: status=%s body=%s",
-                        response.status,
-                        text[:2000],
-                    )
-                    raise RuntimeError(
-                        f"AI-анализ фото временно недоступен. Код: {response.status}"
-                    )
-
-                try:
-                    data = json.loads(text)
-                except Exception:
-                    logger.error(
-                        "Photo prompt GPT 5.4 returned non-JSON: %s", text[:2000]
-                    )
-                    raise RuntimeError("AI вернул некорректный ответ")
-
-        raw_output = _extract_output_text(data)
-        parsed = _parse_json_object(raw_output)
-
-        prompt_en = str(parsed.get("prompt_en") or "").strip()
-        prompt_ru = str(parsed.get("prompt_ru") or "").strip()
-        negative_prompt = str(parsed.get("negative_prompt") or "").strip()
-        model_hint = str(parsed.get("model_hint") or "").strip()
-        key_details = parsed.get("key_details") or []
-
-        if not prompt_en:
-            raise RuntimeError("AI не смог собрать prompt по фото")
-
-        if not negative_prompt:
-            negative_prompt = (
-                "blurry, low quality, distorted face, bad anatomy, extra fingers, "
-                "bad hands, watermark, text, logo, overexposed, underexposed, "
-                "plastic skin, unnatural eyes, asymmetry"
+            )
+        except Exception as exc:
+            logger.warning(
+                "GPT-5.4 failed (%s), switching to Claude Haiku fallback", exc
             )
 
-        if not model_hint:
-            model_hint = (
-                "Nano Banana Pro — для похожей генерации. "
-                "Seedream 4.5 Edit — для редактирования по исходнику."
-            )
-
-        return {
-            "prompt_en": prompt_en,
-            "prompt_ru": prompt_ru,
-            "negative_prompt": negative_prompt,
-            "model_hint": model_hint,
-            "key_details": key_details if isinstance(key_details, list) else [],
-            "raw": parsed,
-        }
+        return await self._analyze_with_claude(
+            image_url=image_url,
+            user_instruction=user_instruction,
+            headers=headers,
+        )
 
 
 photo_prompt_service = PhotoPromptService()
