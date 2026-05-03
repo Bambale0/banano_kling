@@ -1,4 +1,6 @@
+import json
 import logging
+from pathlib import Path
 
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
@@ -6,8 +8,17 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import config
 from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
-from bot.keyboards import get_admin_keyboard, get_back_keyboard
+from bot.keyboards import (
+    get_admin_keyboard,
+    get_admin_price_image_keyboard,
+    get_admin_price_video_keyboard,
+    get_admin_prices_keyboard,
+    get_back_keyboard,
+)
+from bot.services.preset_manager import preset_manager
 from bot.states import AdminStates
+
+PRICE_PATH = Path("data/price.json")
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -361,3 +372,184 @@ async def admin_back_to_menu(callback: types.CallbackQuery):
     await callback.message.edit_text(
         text, reply_markup=get_admin_keyboard(), parse_mode="HTML"
     )
+
+
+# ---------------------------------------------------------------------------
+# Price editing
+# ---------------------------------------------------------------------------
+
+
+def _load_price_json() -> dict:
+    with open(PRICE_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_price_json(data: dict):
+    with open(PRICE_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    preset_manager.reload()
+
+
+@router.callback_query(F.data == "admin_prices")
+async def admin_prices_menu(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await callback.message.edit_text(
+        "💰 <b>Управление ценами</b>\n\nВыберите категорию:",
+        reply_markup=get_admin_prices_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_price_cat_image")
+async def admin_price_cat_image(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    price_config = _load_price_json()
+    await callback.message.edit_text(
+        "🖼 <b>Цены на изображения</b>\n\nНажмите на модель для изменения цены:",
+        reply_markup=get_admin_price_image_keyboard(price_config),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_price_cat_video")
+async def admin_price_cat_video(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    price_config = _load_price_json()
+    await callback.message.edit_text(
+        "🎬 <b>Цены на видео</b>\n\nНажмите на модель для изменения цены:",
+        reply_markup=get_admin_price_video_keyboard(price_config),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin_price_img_"))
+async def admin_price_img_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    key = callback.data.removeprefix("admin_price_img_")
+    price_config = _load_price_json()
+    current = (
+        price_config.get("costs_reference", {}).get("image_models", {}).get(key, "?")
+    )
+    await state.update_data(price_type="image", price_key=key)
+    await state.set_state(AdminStates.waiting_price_value)
+    await callback.message.edit_text(
+        f"🖼 <b>Изменение цены: <code>{key}</code></b>\n\n"
+        f"Текущая цена: <code>{current}</code> 🍌\n\n"
+        f"Введите новую цену (целое число):",
+        reply_markup=get_back_keyboard("admin_price_cat_image"),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin_price_vid_"))
+async def admin_price_vid_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    key = callback.data.removeprefix("admin_price_vid_")
+    price_config = _load_price_json()
+    model_data = (
+        price_config.get("costs_reference", {}).get("video_models", {}).get(key, {})
+    )
+
+    if "fixed_cost" in model_data:
+        hint = (
+            f"Текущая цена: <code>{model_data['fixed_cost']}</code> 🍌 (фиксированная)\n\n"
+            f"Введите новую цену (целое число):"
+        )
+        await state.update_data(price_type="video_fixed", price_key=key)
+    else:
+        dur = model_data.get("duration_costs", {})
+        dur_str = ", ".join(f"{d}с:{c}" for d, c in dur.items())
+        hint = (
+            f"Текущий базовый тариф: <code>{model_data.get('base', '?')}</code> 🍌\n"
+            f"Цены по длительности: <code>{dur_str}</code>\n\n"
+            f"Введите цены в формате <code>5:15,10:30,15:45</code>\n"
+            f"(длительность_сек:цена через запятую)"
+        )
+        await state.update_data(price_type="video_duration", price_key=key)
+
+    await state.set_state(AdminStates.waiting_price_value)
+    await callback.message.edit_text(
+        f"🎬 <b>Изменение цены: <code>{key}</code></b>\n\n{hint}",
+        reply_markup=get_back_keyboard("admin_price_cat_video"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminStates.waiting_price_value)
+async def admin_process_price_value(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    price_type = data.get("price_type")
+    price_key = data.get("price_key")
+    text = message.text.strip()
+
+    try:
+        price_config = _load_price_json()
+        costs = price_config.setdefault("costs_reference", {})
+
+        if price_type == "image":
+            new_price = int(text)
+            costs.setdefault("image_models", {})[price_key] = new_price
+            _save_price_json(price_config)
+            await state.clear()
+            await message.answer(
+                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🍌",
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML",
+            )
+
+        elif price_type == "video_fixed":
+            new_price = int(text)
+            model_data = costs.setdefault("video_models", {}).setdefault(price_key, {})
+            model_data["fixed_cost"] = new_price
+            model_data["base"] = new_price
+            _save_price_json(price_config)
+            await state.clear()
+            await message.answer(
+                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🍌",
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML",
+            )
+
+        elif price_type == "video_duration":
+            # parse "5:15,10:30,15:45"
+            pairs = {}
+            for part in text.split(","):
+                part = part.strip()
+                if ":" not in part:
+                    raise ValueError(f"Bad format: {part}")
+                dur, cost = part.split(":", 1)
+                pairs[dur.strip()] = int(cost.strip())
+            if not pairs:
+                raise ValueError("Empty duration list")
+            model_data = costs.setdefault("video_models", {}).setdefault(price_key, {})
+            model_data["duration_costs"] = pairs
+            model_data["base"] = min(pairs.values())
+            _save_price_json(price_config)
+            dur_str = ", ".join(f"{d}с: {c}🍌" for d, c in pairs.items())
+            await state.clear()
+            await message.answer(
+                f"✅ Цены для <code>{price_key}</code> обновлены:\n{dur_str}",
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML",
+            )
+        else:
+            await state.clear()
+            await message.answer(
+                "❌ Неизвестный тип цены.", reply_markup=get_admin_keyboard()
+            )
+
+    except ValueError as e:
+        await message.answer(
+            f"❌ Неверный формат: <code>{e}</code>\n\nПопробуйте ещё раз:",
+            parse_mode="HTML",
+        )

@@ -1,4 +1,4 @@
-"""Grok Imagine Image-to-Video Service - Kie.ai API"""
+"""Grok Imagine Service - Image-to-Video, Text-to-Image, Image-to-Image via Kie.ai API"""
 
 import logging
 from typing import Dict, List, Optional
@@ -40,6 +40,54 @@ class GrokService(KlingService):
         if callBackUrl:
             payload["callBackUrl"] = callBackUrl
         return await self._kie_post("/api/v1/jobs/createTask", payload)
+
+    async def generate_text_to_image(
+        self,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        enable_pro: bool = False,
+        nsfw_checker: bool = False,
+        callback_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Generate image from text using Grok Imagine. Returns {'task_id': ...}"""
+        payload = {
+            "model": "grok-imagine/text-to-image",
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "enable_pro": enable_pro,
+                "nsfw_checker": nsfw_checker,
+            },
+        }
+        if callback_url:
+            payload["callBackUrl"] = callback_url
+        resp = await self._kie_post("/api/v1/jobs/createTask", payload)
+        if resp and "task_id" in resp:
+            return resp
+        return None
+
+    async def generate_image_to_image(
+        self,
+        image_url: str,
+        prompt: str = "",
+        nsfw_checker: bool = False,
+        callback_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Transform image using Grok Imagine. Returns {'task_id': ...}"""
+        payload = {
+            "model": "grok-imagine/image-to-image",
+            "input": {
+                "image_urls": [image_url],
+                "prompt": prompt,
+                "nsfw_checker": nsfw_checker,
+            },
+        }
+        if callback_url:
+            payload["callBackUrl"] = callback_url
+        resp = await self._kie_post("/api/v1/jobs/createTask", payload)
+        if resp and "task_id" in resp:
+            return resp
+        return None
 
 
 grok_service = GrokService(kie_key=config.KIE_AI_API_KEY)

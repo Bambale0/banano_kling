@@ -1262,14 +1262,14 @@ async def get_user_stats(telegram_id: int) -> dict:
 
         # Считаем количество генераций
         cursor = await db.execute(
-            "SELECT COUNT(*) as count FROM generation_history WHERE user_id = ?",
+            "SELECT COUNT(*) as count FROM generation_tasks WHERE user_id = ? AND status = 'completed'",
             (user.id,),
         )
         gen_row = await cursor.fetchone()
 
         # Считаем потраченные кредиты
         cursor = await db.execute(
-            "SELECT SUM(cost) as total FROM generation_history WHERE user_id = ?",
+            "SELECT SUM(cost) as total FROM generation_tasks WHERE user_id = ? AND status = 'completed'",
             (user.id,),
         )
         cost_row = await cursor.fetchone()
@@ -1297,7 +1297,9 @@ async def get_admin_stats() -> dict:
         users_row = await cursor.fetchone()
 
         # Всего генераций
-        cursor = await db.execute("SELECT COUNT(*) as count FROM generation_history")
+        cursor = await db.execute(
+            "SELECT COUNT(*) as count FROM generation_tasks WHERE status = 'completed'"
+        )
         gen_row = await cursor.fetchone()
 
         # Всего транзакций

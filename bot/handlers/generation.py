@@ -37,6 +37,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_create_image_keyboard,
     get_create_video_keyboard,
+    get_image_result_keyboard,
     get_main_menu_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
@@ -45,10 +46,12 @@ from bot.services.aleph_service import aleph_service
 from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
+from bot.services.hailuo_service import hailuo_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_lite_service as seedream_service
+from bot.services.veo_service import veo_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
@@ -139,6 +142,37 @@ def _build_image_creation_text(
     )
 
 
+_MODELS_TEXT = {
+    "v3_std",
+    "v3_pro",
+    "runway",
+    "veo3_fast",
+    "veo3",
+    "hailuo_pro",
+    "hailuo_std",
+}
+_MODELS_IMGTXT = {
+    "v3_std",
+    "v3_pro",
+    "seedance2",
+    "runway",
+    "grok_imagine",
+    "veo3_fast",  # only veo3_fast supports image reference; veo3/veo3_lite are text-only
+    "hailuo_23_pro",
+    "hailuo_23_std",
+    "hailuo_i2v_pro",
+    "hailuo_i2v_std",
+}
+
+
+def _clamp_model_for_type(model: str, v_type: str) -> str:
+    if v_type == "text" and model not in _MODELS_TEXT:
+        return "v3_std"
+    if v_type == "imgtxt" and model not in _MODELS_IMGTXT:
+        return "v3_std"
+    return model
+
+
 def _get_video_ui_state(data: dict) -> dict:
     return {
         "current_v_type": data.get("v_type", "text"),
@@ -148,6 +182,7 @@ def _get_video_ui_state(data: dict) -> dict:
         "current_mode": data.get("v_mode", "720p"),
         "current_orientation": data.get("v_orientation", "video"),
         "current_grok_mode": data.get("grok_mode", "normal"),
+        "current_hailuo_resolution": data.get("hailuo_resolution", "768P"),
     }
 
 
@@ -169,6 +204,10 @@ def _format_video_settings(data: dict) -> str:
 
     if ui["current_model"] == "grok_imagine":
         lines.append(f"• Режим Grok: <code>{ui['current_grok_mode']}</code>")
+
+    _hailuo_res_models = {"hailuo_23_pro", "hailuo_23_std", "hailuo_i2v_std"}
+    if ui["current_model"] in _hailuo_res_models:
+        lines.append(f"• Разрешение: <code>{ui['current_hailuo_resolution']}</code>")
 
     if ui["current_v_type"] == "video":
         lines.append(f"• Качество: <code>{ui['current_mode']}</code>")
@@ -411,6 +450,7 @@ async def _show_video_creation_screen(
         current_mode=ui["current_mode"],
         current_orientation=ui["current_orientation"],
         current_grok_mode=ui["current_grok_mode"],
+        current_hailuo_resolution=ui["current_hailuo_resolution"],
     )
     # Используем edit для callback, send для message
     try:
@@ -561,18 +601,19 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: текст"""
     data = await state.get_data()
     ui = _get_video_ui_state(data)
-
-    await state.update_data(v_type="text")
+    clamped_model = _clamp_model_for_type(ui["current_model"], "text")
+    await state.update_data(v_type="text", v_model=clamped_model)
 
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type="text",
-            current_model=ui["current_model"],
+            current_model=clamped_model,
             current_duration=ui["current_duration"],
             current_ratio=ui["current_ratio"],
             current_mode=ui["current_mode"],
             current_orientation=ui["current_orientation"],
             current_grok_mode=ui["current_grok_mode"],
+            current_hailuo_resolution=ui["current_hailuo_resolution"],
         )
     )
     await callback.answer()
@@ -585,15 +626,15 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
     data = await state.get_data()
     ui = _get_video_ui_state(data)
     v_image_url = data.get("v_image_url")
-
-    await state.update_data(v_type="imgtxt")
+    clamped_model = _clamp_model_for_type(ui["current_model"], "imgtxt")
+    await state.update_data(v_type="imgtxt", v_model=clamped_model)
 
     # Показываем сообщение с просьбой загрузить изображение на ТОМ ЖЕ экране
     image_status = ""
     if v_image_url:
         image_status = "\n✅ <b>Изображение загружено!</b>\n"
 
-    preview_data = {**data, "v_type": "imgtxt"}
+    preview_data = {**data, "v_type": "imgtxt", "v_model": clamped_model}
     text = (
         "🎬 <b>Создание видео</b>\n\n"
         f"{_format_video_settings(preview_data)}\n"
@@ -608,12 +649,13 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
         text,
         reply_markup=get_create_video_keyboard(
             current_v_type="imgtxt",
-            current_model=ui["current_model"],
+            current_model=clamped_model,
             current_duration=ui["current_duration"],
             current_ratio=ui["current_ratio"],
             current_mode=ui["current_mode"],
             current_orientation=ui["current_orientation"],
             current_grok_mode=ui["current_grok_mode"],
+            current_hailuo_resolution=ui["current_hailuo_resolution"],
         ),
         parse_mode="HTML",
     )
@@ -707,6 +749,16 @@ async def handle_grok_mode(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer(f"Режим Grok: {mode.title()}")
 
 
+@router.callback_query(F.data.startswith("hailuo_res_"))
+async def handle_hailuo_resolution(callback: types.CallbackQuery, state: FSMContext):
+    """Handler for Hailuo resolution selection (768P / 1080P)"""
+    res_map = {"hailuo_res_768p": "768P", "hailuo_res_1080p": "1080P"}
+    resolution = res_map.get(callback.data, "768P")
+    await state.update_data(hailuo_resolution=resolution)
+    await _show_video_creation_screen(callback, state)
+    await callback.answer(f"Разрешение: {resolution}")
+
+
 async def _apply_video_model_selection(
     callback: types.CallbackQuery, state: FSMContext, model: str
 ):
@@ -747,6 +799,7 @@ async def _apply_video_model_selection(
                 current_mode=ui["current_mode"],
                 current_orientation=ui["current_orientation"],
                 current_grok_mode=data.get("grok_mode", "normal"),
+                current_hailuo_resolution=data.get("hailuo_resolution", "768P"),
             ),
             parse_mode="HTML",
         )
@@ -2477,6 +2530,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         img_service,
         model=img_service,
         aspect_ratio=img_options["aspect_ratio"],
+        prompt=prompt,
         cost=cost,
     )
 
@@ -2522,6 +2576,30 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 nsfw_checker=img_options.get("nsfw_checker", False),
                 callback_url=callback_url,
             )
+        elif img_service == "grok_t2i":
+            result = await grok_service.generate_text_to_image(
+                prompt=prompt,
+                aspect_ratio=img_options["aspect_ratio"],
+                enable_pro=img_options.get("enable_pro", False),
+                nsfw_checker=img_options.get("nsfw_checker", False),
+                callback_url=callback_url,
+            )
+        elif img_service == "grok_i2i":
+            if reference_images:
+                result = await grok_service.generate_image_to_image(
+                    image_url=reference_images[0],
+                    prompt=prompt,
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    callback_url=callback_url,
+                )
+            else:
+                # No reference image - fall back to text-to-image
+                result = await grok_service.generate_text_to_image(
+                    prompt=prompt,
+                    aspect_ratio=img_options["aspect_ratio"],
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    callback_url=callback_url,
+                )
         else:
             # Fallback
             result = await nano_banana_pro_service.generate_image(
@@ -2547,16 +2625,18 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 )
                 await db.commit()
             await message.answer(
-                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>🍌 списаноОжидайте результат (1-3 мин).",
+                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>🍌 списано\nОжидайте результат (1-3 мин).",
                 parse_mode="HTML",
             )
         elif result:  # bytes
             # Sync result - bytes, complete task immediately
             saved_url = save_uploaded_file(result, "png")
+            retry_kb = get_image_result_keyboard(local_task_id, saved_url)
             await message.answer_photo(
                 photo=types.BufferedInputFile(result, filename="generated.png"),
                 caption=f"✅ Изображение готово!\n💰 <code>{cost}</code>🍌 списано",
                 parse_mode="HTML",
+                reply_markup=retry_kb,
             )
             await _send_original_document(message.answer_document, result, saved_url)
             await complete_video_task(local_task_id, saved_url)
@@ -2572,6 +2652,143 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         await message.answer("❌ Ошибка генерации.")
 
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("retry_img_"))
+async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
+    """Повторяет генерацию фото с теми же параметрами (без референс-изображений)."""
+    task_id = callback.data.replace("retry_img_", "")
+    task = await get_task_by_id(task_id)
+
+    if not task or not task.prompt:
+        await callback.answer("❌ Нет данных для повтора", show_alert=True)
+        return
+
+    img_service = task.model or "banana_pro"
+    aspect_ratio = task.aspect_ratio or "1:1"
+    cost = task.cost or preset_manager.get_generation_cost(img_service)
+    img_options = normalize_image_options(img_service, {"aspect_ratio": aspect_ratio})
+    prompt = task.prompt
+
+    user = await get_or_create_user(callback.from_user.id)
+    if user.credits < cost:
+        await callback.answer(f"❌ Нужно {cost}🍌", show_alert=True)
+        return
+
+    await callback.answer("🔄 Запускаю повтор...")
+    await deduct_credits(callback.from_user.id, cost)
+
+    local_task_id = f"img_{uuid.uuid4().hex[:12]}"
+    await add_generation_task(
+        user.id,
+        callback.from_user.id,
+        local_task_id,
+        "image",
+        img_service,
+        model=img_service,
+        aspect_ratio=aspect_ratio,
+        prompt=prompt,
+        cost=cost,
+    )
+
+    processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
+
+    try:
+        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+
+        if img_service == "banana_2":
+            result = await nano_banana_2_service.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=img_options.get("resolution", "4K"),
+                output_format=img_options.get("output_format", "png"),
+                image_input=[],
+                callback_url=callback_url,
+            )
+        elif img_service == "banana_pro":
+            result = await nano_banana_pro_service.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                resolution=img_options.get("resolution", "4K"),
+                output_format=img_options.get("output_format", "png"),
+                image_input=[],
+                callback_url=callback_url,
+            )
+        elif img_service in ("seedream_edit", "seedream_5_lite"):
+            model_config = get_image_model_config(img_service)
+            result = await seedream_service.generate_image(
+                prompt=prompt,
+                model=model_config["api_model"],
+                aspect_ratio=aspect_ratio,
+                nsfw_checker=img_options.get("nsfw_checker", False),
+                image_urls=[],
+                callback_url=callback_url,
+            )
+        elif img_service == "gpt_image_2":
+            result = await gpt_image_service.generate_image(
+                prompt=prompt,
+                image_urls=[],
+                aspect_ratio=aspect_ratio,
+                nsfw_checker=img_options.get("nsfw_checker", False),
+                callback_url=callback_url,
+            )
+        elif img_service in ("grok_t2i", "grok_i2i"):
+            result = await grok_service.generate_text_to_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                nsfw_checker=img_options.get("nsfw_checker", False),
+                callback_url=callback_url,
+            )
+        else:
+            result = await nano_banana_pro_service.generate_image(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                image_input=[],
+                callback_url=callback_url,
+            )
+
+        await processing_msg.delete()
+
+        if isinstance(result, dict) and "task_id" in result:
+            api_task_id = result["task_id"]
+            import aiosqlite
+
+            from bot.database import DATABASE_PATH
+
+            async with aiosqlite.connect(DATABASE_PATH) as db:
+                await db.execute(
+                    "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
+                    (api_task_id, local_task_id, user.id),
+                )
+                await db.commit()
+            await callback.message.answer(
+                f"🚀 Повтор запущен!\n🆔 <code>{api_task_id}</code>\n"
+                f"💰 <code>{cost}</code>🍌 списано\nОжидайте результат (1-3 мин).",
+                parse_mode="HTML",
+            )
+        elif result:  # bytes
+            saved_url = save_uploaded_file(result, "png")
+            retry_kb = get_image_result_keyboard(local_task_id, saved_url)
+            await callback.message.answer_photo(
+                photo=types.BufferedInputFile(result, filename="generated.png"),
+                caption=f"✅ Готово!\n💰 <code>{cost}</code>🍌 списано",
+                parse_mode="HTML",
+                reply_markup=retry_kb,
+            )
+            await _send_original_document(
+                callback.message.answer_document, result, saved_url
+            )
+            await complete_video_task(local_task_id, saved_url)
+        else:
+            await add_credits(callback.from_user.id, cost)
+            await complete_video_task(local_task_id, None)
+            await callback.message.answer("❌ Ошибка повтора. Бананы возвращены.")
+
+    except Exception as e:
+        logger.exception(f"Retry image error: {e}")
+        await add_credits(callback.from_user.id, cost)
+        await complete_video_task(local_task_id, None)
+        await callback.message.answer("❌ Ошибка повтора.")
 
 
 @router.message(GenerationStates.waiting_for_reference_video)
@@ -2667,8 +2884,21 @@ async def run_no_preset_video_from_message(
     if v_type == "video":
         v_model = "aleph"
     v_duration = int(data.get("v_duration", 5))
-    # Cap duration for imgtxt except for Grok Imagine (30s) and Seedance 2 (15s)
-    if v_type == "imgtxt" and v_model not in ("grok_imagine", "seedance2"):
+    # Cap duration for imgtxt except for models with their own duration logic
+    _no_cap_models = (
+        "grok_imagine",
+        "seedance2",
+        "veo3_fast",
+        "veo3",
+        "veo3_lite",
+        "hailuo_23_pro",
+        "hailuo_23_std",
+        "hailuo_pro",
+        "hailuo_std",
+        "hailuo_i2v_pro",
+        "hailuo_i2v_std",
+    )
+    if v_type == "imgtxt" and v_model not in _no_cap_models:
         v_duration = min(v_duration, 10)
     v_ratio = data.get("v_ratio", "16:9")
     v_image_url = data.get("v_image_url")
@@ -2723,7 +2953,6 @@ async def run_no_preset_video_from_message(
     )
 
     try:
-        from bot.services.grok_service import grok_service
         from bot.services.kling_service import kling_service
 
         if v_model == "grok_imagine":
@@ -2793,6 +3022,49 @@ async def run_no_preset_video_from_message(
                 aspect_ratio=v_ratio,
                 callback_url=callback_url,
             )
+        elif v_model in ("veo3_fast", "veo3", "veo3_lite"):
+            veo_image_urls = []
+            if image_url:
+                veo_image_urls = [image_url] + image_refs[:1]
+            result = await veo_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                aspect_ratio=v_ratio,
+                resolution="1080p",
+                image_urls=veo_image_urls or None,
+                callback_url=(
+                    config.veo_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+        elif v_model in (
+            "hailuo_23_pro",
+            "hailuo_23_std",
+            "hailuo_pro",
+            "hailuo_std",
+            "hailuo_i2v_pro",
+            "hailuo_i2v_std",
+        ):
+            from bot.services.hailuo_service import HAILUO_IMAGE_REQUIRED
+
+            if v_model in HAILUO_IMAGE_REQUIRED and not image_url:
+                await message.answer(
+                    f"❌ {v_model} требует стартовое изображение (фото+текст режим)."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+            result = await hailuo_service.generate_video(
+                model_key=v_model,
+                prompt=prompt,
+                image_url=image_url,
+                duration=v_duration,
+                resolution=data.get("hailuo_resolution", "768P"),
+                callback_url=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
         else:
             result = await kling_service.generate_video(
                 prompt=prompt,
@@ -2803,6 +3075,7 @@ async def run_no_preset_video_from_message(
                 video_urls=video_urls,
                 image_input=image_refs if v_type != "imgtxt" else None,
                 elements=elements_list,
+                generate_audio=True,
                 webhook_url=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),

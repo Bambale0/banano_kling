@@ -1,9 +1,13 @@
 from copy import deepcopy
 
 IMAGE_MODEL_ORDER = [
+    # Text-to-image (работают без референсов)
     "banana_pro",
     "banana_2",
     "gpt_image_2",
+    "grok_t2i",
+    # Image-to-image (требуют хотя бы один референс)
+    "grok_i2i",
     "seedream_5_lite",
     "seedream_edit",
 ]
@@ -22,6 +26,7 @@ IMAGE_MODEL_CONFIGS = {
         "label": "💎 Banana Pro",
         "settings_label": "💎 Banana Pro",
         "cost_key": "nano-banana-pro",
+        "requires_refs": False,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -39,6 +44,7 @@ IMAGE_MODEL_CONFIGS = {
         "label": "🍌 Banana 2",
         "settings_label": "🍌 Banana 2",
         "cost_key": "banana_2",
+        "requires_refs": False,
         "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "auto",
@@ -56,6 +62,7 @@ IMAGE_MODEL_CONFIGS = {
         "label": "🧠 GPT Image 2",
         "settings_label": "🧠 GPT Image 2",
         "cost_key": "gpt_image_2",
+        "requires_refs": False,
         "aspect_ratios": [
             "auto",
             "1:1",
@@ -91,10 +98,45 @@ IMAGE_MODEL_CONFIGS = {
         },
         "service": "gpt_image_2",
     },
+    "grok_t2i": {
+        "label": "✨ Grok Imagine",
+        "settings_label": "✨ Grok Imagine T2I",
+        "cost_key": "grok_t2i",
+        "requires_refs": False,
+        "aspect_ratios": ["1:1", "16:9", "9:16", "3:2", "2:3"],
+        "defaults": {
+            "aspect_ratio": "1:1",
+            "enable_pro": False,
+            "nsfw_checker": False,
+        },
+        "options": {
+            "aspect_ratio": ["1:1", "16:9", "9:16", "3:2", "2:3"],
+            "enable_pro": [False, True],
+            "nsfw_checker": [False, True],
+        },
+        "service": "grok_t2i",
+    },
+    "grok_i2i": {
+        "label": "✨ Grok Img→Img",
+        "settings_label": "✨ Grok Img→Img",
+        "cost_key": "grok_i2i",
+        "requires_refs": True,
+        "aspect_ratios": ["1:1", "16:9", "9:16", "3:2", "2:3"],
+        "defaults": {
+            "aspect_ratio": "1:1",
+            "nsfw_checker": False,
+        },
+        "options": {
+            "aspect_ratio": ["1:1", "16:9", "9:16", "3:2", "2:3"],
+            "nsfw_checker": [False, True],
+        },
+        "service": "grok_i2i",
+    },
     "seedream_5_lite": {
         "label": "🔥 Seedream 5.0 Lite",
         "settings_label": "🔥 Seedream 5.0 Lite",
         "cost_key": "seedream_5_lite",
+        "requires_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -109,9 +151,10 @@ IMAGE_MODEL_CONFIGS = {
         "api_model": "seedream/5-lite-image-to-image",
     },
     "seedream_edit": {
-        "label": "🖌 Seedream 4.5",
-        "settings_label": "🖌 Seedream 4.5",
+        "label": "🖌 Seedream 4.5 Edit",
+        "settings_label": "🖌 Seedream 4.5 Edit",
         "cost_key": "seedream_edit",
+        "requires_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -132,6 +175,7 @@ IMAGE_OPTION_LABELS = {
     "aspect_ratio": "Формат",
     "resolution": "Разрешение",
     "output_format": "Формат файла",
+    "enable_pro": "Pro режим",
     "nsfw_checker": "NSFW check",
 }
 
@@ -169,6 +213,8 @@ def get_image_option_label(option_name: str, value):
         return str(value)
     if option_name == "output_format":
         return str(value).upper()
+    if option_name == "enable_pro":
+        return "⚡ Pro" if value else "Std"
     if option_name == "nsfw_checker":
-        return "ON" if value else "OFF"
+        return "NSFW ON" if value else "NSFW OFF"
     return str(value)

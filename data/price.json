@@ -50,16 +50,18 @@
   "costs_reference": {
     "image_models": {
       "gemini_2_5_flash": 5,
-      "gemini_3_pro": 5,
+      "gemini_3_pro": 3,
       "banana_2": 7,
       "gpt_image_2": 5,
       "z_image_turbo": 5,
       "seedream": 5,
       "seedream_45": 5,
-      "nano-banana-pro": 5,
+      "nano-banana-pro": 3,
       "seedream_lite": 6,
       "seedream_5_lite": 6,
-      "seedream_edit": 7
+      "seedream_edit": 3,
+      "grok_t2i": 3,
+      "grok_i2i": 3
     },
     "video_models": {
       "v3_std": {
@@ -124,6 +126,60 @@
           "5": 25,
           "10": 40
         }
+      },
+      "veo3_fast": {
+        "base": 20,
+        "fixed_cost": 20,
+        "duration_costs": {}
+      },
+      "veo3": {
+        "base": 25,
+        "fixed_cost": 25,
+        "duration_costs": {}
+      },
+      "veo3_lite": {
+        "base": 15,
+        "fixed_cost": 15,
+        "duration_costs": {}
+      },
+      "hailuo_23_pro": {
+        "base": 20,
+        "duration_costs": {
+          "6": 20,
+          "10": 30
+        }
+      },
+      "hailuo_23_std": {
+        "base": 15,
+        "duration_costs": {
+          "5": 15,
+          "10": 30,
+          "15": 45
+        }
+      },
+      "hailuo_pro": {
+        "base": 15,
+        "fixed_cost": 15,
+        "duration_costs": {}
+      },
+      "hailuo_std": {
+        "base": 12,
+        "duration_costs": {
+          "6": 12,
+          "10": 20
+        }
+      },
+      "hailuo_i2v_pro": {
+        "base": 15,
+        "fixed_cost": 15,
+        "duration_costs": {}
+      },
+      "hailuo_i2v_std": {
+        "base": 12,
+        "duration_costs": {
+          "6": 12,
+          "10": 20
+        }
       }
     },
     "video_duration_costs": {
@@ -148,22 +204,42 @@
       "gemini_3_pro": 5
     },
     "discount_tiers": [
-      {"min_items": 3, "discount": 10},
-      {"min_items": 4, "discount": 15},
-      {"min_items": 6, "discount": 20},
-      {"min_items": 10, "discount": 25}
+      {
+        "min_items": 3,
+        "discount": 10
+      },
+      {
+        "min_items": 4,
+        "discount": 15
+      },
+      {
+        "min_items": 6,
+        "discount": 20
+      },
+      {
+        "min_items": 10,
+        "discount": 25
+      }
     ],
     "pro_features": {
       "batch_generation": true,
       "priority_queue": true,
       "4k_upscale": true,
-      "custom_aspect_ratios": ["21:9", "9:21", "4:5", "5:4"]
+      "custom_aspect_ratios": [
+        "21:9",
+        "9:21",
+        "4:5",
+        "5:4"
+      ]
     },
     "upscale_costs": {
       "2K": 5,
       "4K": 10
     }
   },
-  "admin_ids": [939259764, 339795159],
+  "admin_ids": [
+    939259764,
+    339795159
+  ],
   "support_contact": "@S_k7222"
 }

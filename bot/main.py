@@ -1146,6 +1146,20 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 service_name += " Pro"
             else:
                 service_name += " 2"
+        elif "hailuo" in model_lower:
+            service_name = "Hailuo"
+            if "2-3" in model_lower:
+                service_name += " 2.3"
+            if "pro" in model_lower:
+                service_name += " Pro"
+            elif "standard" in model_lower:
+                service_name += " Std"
+        elif "grok-imagine" in model_lower or "grok_imagine" in model_lower:
+            service_name = "Grok Imagine"
+            if "text-to-image" in model_lower:
+                service_name += " T2I"
+            elif "image-to-image" in model_lower:
+                service_name += " I2I"
         else:
             service_name = "AI"
 
@@ -1457,6 +1471,199 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
 
+async def handle_veo_webhook(request: web.Request) -> web.Response:
+    """Обрабатывает callback от Veo 3.1 API.
+
+    Callback format:
+    {
+      "code": 200,
+      "msg": "...",
+      "data": {
+        "taskId": "veo_task_...",
+        "info": {
+          "resultUrls": "[https://...mp4]",   <- JSON-encoded string
+          "resolution": "1080p"
+        },
+        "fallbackFlag": false
+      }
+    }
+    """
+    try:
+        raw_body = await request.read()
+        logger.info(f"Veo webhook raw body: {repr(raw_body[:200])}")
+
+        if not raw_body:
+            return web.Response(status=200)
+
+        data = json.loads(raw_body.decode("utf-8"))
+
+        code = data.get("code")
+        veo_data = data.get("data", {})
+        task_id = veo_data.get("taskId")
+
+        if not task_id:
+            logger.error(f"Veo webhook: missing taskId. Payload: {data}")
+            return web.Response(status=200)
+
+        from bot.database import (
+            add_credits,
+            complete_video_task,
+            get_task_by_id,
+            get_telegram_id_by_user_id,
+        )
+        from bot.keyboards import get_video_result_keyboard
+
+        task = await get_task_by_id(task_id)
+        telegram_id = None
+        if task:
+            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+
+        if code == 200:
+            # Parse resultUrls - it's a JSON-encoded string like "[https://...mp4]"
+            info = veo_data.get("info", {})
+            result_urls_raw = info.get("resultUrls", "[]")
+            video_url = None
+            try:
+                if isinstance(result_urls_raw, list):
+                    video_url = result_urls_raw[0] if result_urls_raw else None
+                elif isinstance(result_urls_raw, str):
+                    parsed = json.loads(result_urls_raw)
+                    video_url = parsed[0] if parsed else None
+            except Exception as parse_e:
+                logger.error(
+                    f"Veo resultUrls parse error: {parse_e}, raw: {result_urls_raw}"
+                )
+
+            if not video_url:
+                logger.error(f"Veo webhook: no video URL in data: {veo_data}")
+                if telegram_id:
+                    bot_instance = Bot(token=config.BOT_TOKEN)
+                    try:
+                        await bot_instance.send_message(
+                            chat_id=telegram_id,
+                            text=f"❌ <b>Veo 3.1: нет результата</b>\nID: <code>{task_id}</code>",
+                            parse_mode="HTML",
+                        )
+                    finally:
+                        await bot_instance.session.close()
+                return web.Response(status=200)
+
+            logger.info(f"Veo task {task_id} succeeded: {video_url[:60]}...")
+
+            if not task or not telegram_id:
+                logger.warning(f"Veo task {task_id} not found in DB or no telegram_id")
+                return web.Response(status=200)
+
+            caption = f"✅ <b>Видео (Veo 3.1) готово!</b>\n\nID: <code>{task_id}</code>"
+            if task.duration:
+                caption += f"\n⏱ <code>{task.duration}с</code>"
+            if task.aspect_ratio:
+                caption += f"\n📐 <code>{task.aspect_ratio}</code>"
+            if task.cost:
+                caption += f"\n💰 <code>{task.cost}🍌</code>"
+            if task.prompt:
+                caption += f"\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+
+            bot_instance = Bot(token=config.BOT_TOKEN)
+            try:
+                import os
+                import tempfile
+
+                import aiohttp as _aiohttp
+
+                tmp_file = None
+                sent = False
+                try:
+                    async with _aiohttp.ClientSession() as sess:
+                        async with sess.get(
+                            video_url, timeout=_aiohttp.ClientTimeout(total=120)
+                        ) as resp:
+                            if resp.status == 200:
+                                tmp = tempfile.NamedTemporaryFile(
+                                    delete=False, suffix=".mp4"
+                                )
+                                tmp_file = tmp.name
+                                with open(tmp_file, "wb") as f:
+                                    async for chunk in resp.content.iter_chunked(
+                                        1024 * 64
+                                    ):
+                                        if chunk:
+                                            f.write(chunk)
+                    from aiogram.types import FSInputFile
+
+                    video_file = FSInputFile(tmp_file)
+                    await bot_instance.send_video(
+                        chat_id=telegram_id,
+                        video=video_file,
+                        caption=caption,
+                        parse_mode="HTML",
+                        supports_streaming=True,
+                        reply_markup=get_video_result_keyboard(video_url),
+                    )
+                    sent = True
+                except Exception as dl_e:
+                    logger.warning(
+                        f"Veo video download failed ({dl_e}), trying URL send"
+                    )
+                    try:
+                        await bot_instance.send_video(
+                            chat_id=telegram_id,
+                            video=video_url,
+                            caption=caption,
+                            parse_mode="HTML",
+                            supports_streaming=True,
+                            reply_markup=get_video_result_keyboard(video_url),
+                        )
+                        sent = True
+                    except Exception as url_e:
+                        logger.error(f"Veo URL send failed: {url_e}")
+                finally:
+                    if tmp_file and os.path.exists(tmp_file):
+                        try:
+                            os.remove(tmp_file)
+                        except Exception:
+                            pass
+
+                if sent:
+                    await complete_video_task(task_id, video_url)
+                else:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"{caption}\n\n🔗 <a href='{video_url}'>📥 Ссылка на видео</a>",
+                        parse_mode="HTML",
+                        disable_web_page_preview=False,
+                    )
+                    await complete_video_task(task_id, video_url)
+                logger.info(f"Veo video sent to {telegram_id}")
+            except Exception as send_e:
+                logger.error(f"Veo webhook send error: {send_e}")
+            finally:
+                await bot_instance.session.close()
+        else:
+            # Failure
+            msg = data.get("msg", "Unknown error")
+            logger.error(f"Veo task {task_id} failed: code={code}, msg={msg}")
+            if task and task.cost and task.cost > 0 and telegram_id:
+                await add_credits(telegram_id, task.cost)
+            if telegram_id:
+                bot_instance = Bot(token=config.BOT_TOKEN)
+                try:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"❌ <b>Veo 3.1: ошибка генерации</b>\nID: <code>{task_id}</code>\n{msg}\n🍌 Кредиты возвращены.",
+                        parse_mode="HTML",
+                    )
+                finally:
+                    await bot_instance.session.close()
+            await complete_video_task(task_id, None)
+
+        return web.Response(status=200)
+
+    except Exception as e:
+        logger.exception(f"Veo webhook error: {e}")
+        return web.Response(status=200)
+
+
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
@@ -1482,8 +1689,11 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     # Вебхук Kling
     app.router.add_post("/webhook/kling", handle_kling_webhook)
 
-    # Вебхук Kie.ai (Nano Banana 2)
+    # Вебхук Kie.ai (Nano Banana 2, Seedream, Hailuo, Grok Image)
     app.router.add_post(config.KIE_AI_WEBHOOK_PATH, handle_kie_ai_webhook)
+
+    # Вебхук Veo 3.1
+    app.router.add_post("/webhook/veo", handle_veo_webhook)
 
     # Health check endpoint
     async def health_check(request: web.Request) -> web.Response:

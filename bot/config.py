@@ -196,6 +196,10 @@ class Config:
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
     @property
+    def veo_notification_url(self) -> str:
+        return f"{self.WEBHOOK_HOST}/webhook/veo"
+
+    @property
     def wanx_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/wanx"
 

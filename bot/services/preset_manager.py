@@ -243,8 +243,8 @@ class PresetManager:
         video_models = costs.get("video_models", {})
         video_duration_costs = costs.get("video_duration_costs", {})
 
-        # Normalize duration
-        duration = max(3, min(15, duration))
+        # Normalize duration (only for models that use it)
+        duration = max(1, min(30, duration))
 
         # Normalize model name
         model_lower = model.lower()
@@ -265,6 +265,9 @@ class PresetManager:
         # Check if model exists in video_models
         if mapped_model in video_models:
             model_config = video_models[mapped_model]
+            # Fixed-cost models (no duration selection)
+            if "fixed_cost" in model_config:
+                return model_config["fixed_cost"]
             duration_costs = model_config.get("duration_costs", {})
             if str(duration) in duration_costs:
                 return duration_costs[str(duration)]
