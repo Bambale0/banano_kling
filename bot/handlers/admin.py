@@ -379,7 +379,20 @@ async def admin_execute_broadcast(
     broadcast_text = data.get("broadcast_text")
     broadcast_photo_id = data.get("broadcast_photo_id")
 
-    await callback.message.edit_text("📢 <b>Рассылка запущена...</b>", parse_mode="HTML")
+    # Если превью было с фото — редактируем caption, иначе текст
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+            )
+    except Exception:
+        await callback.message.answer(
+            "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+        )
 
     # Получаем всех пользователей
     import aiosqlite
@@ -412,13 +425,30 @@ async def admin_execute_broadcast(
             logger.warning(f"Broadcast failed for {user['telegram_id']}: {e}")
             error_count += 1
 
-    await callback.message.edit_text(
-        f"📢 <b>Рассылка завершена!</b>"
+    result_text = (
+        f"📢 <b>Рассылка завершена!</b>\n"
         f"✅ Успешно: <code>{success_count}</code>\n"
-        f"❌ Ошибок: <code>{error_count}</code>",
-        reply_markup=get_admin_keyboard(),
-        parse_mode="HTML",
+        f"❌ Ошибок: <code>{error_count}</code>"
     )
+    try:
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                result_text,
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.edit_text(
+                result_text,
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML",
+            )
+    except Exception:
+        await callback.message.answer(
+            result_text,
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML",
+        )
 
     await state.clear()
 
