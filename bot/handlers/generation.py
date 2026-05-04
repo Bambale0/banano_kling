@@ -189,10 +189,33 @@ def _apply_reference_detail_preservation(
         "nanobanana",
     }:
         return prompt
-    instruction = (
-        "Preserve the reference image details exactly: identity, face, proportions, hairstyle, outfit, accessories, colors, textures, labels, markings, object shape, material, and visual style. "
-        "Do not redesign or replace unchanged elements. Apply only the requested user changes."
-    )
+    instruction = """
+STRICT IDENTITY AND DETAIL PRESERVATION. HIGHEST PRIORITY.
+
+Treat the reference image(s) as the exact source of truth.
+Recreate the same person or people with no identity drift and no redesign.
+
+Preserve exactly and do not alter unless the user explicitly requests it:
+- face identity
+- head shape, facial proportions, bone structure
+- eyes, eyelids, iris color, eyebrows, eyelashes
+- nose, lips, teeth, smile line, ears
+- skin tone, undertone, texture, freckles, moles, scars, wrinkles, pores
+- age appearance and body proportions
+- hairstyle, hairline, hair density, hair texture, hair color
+- makeup style and intensity
+- outfit, fabric, folds, fit, seams, logos, prints, labels
+- accessories, jewelry, piercings, tattoos, glasses, headwear
+- pose, hand shape, fingers, nails, silhouette
+- colors, materials, textures, lighting logic, camera perspective
+
+Do not beautify, stylize, reinterpret, average out, morph, or substitute the person.
+Do not generate a similar person. Generate the exact same person from the reference.
+Do not change ethnicity, gender presentation, age, weight, body shape, facial expression style, or facial asymmetry.
+Do not add distortions, warping, extra fingers, altered eyes, altered teeth, blurred skin, or fabric redesign.
+If something is not explicitly requested, keep it identical to the reference.
+Apply only the minimum necessary change requested by the user while preserving everything else exactly.
+""".strip()
     return f"{instruction}\n\nUser request: {prompt}" if prompt else instruction
 
 
@@ -212,6 +235,13 @@ def _build_image_variant_prompt(
     ]
     instruction = variants[variant_index % len(variants)]
     return f"{prompt}\n\nVariant {variant_index + 1} of {total_count}: {instruction} Do not copy previous outputs exactly."
+
+
+def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
+    """Freeze the exact reference set for every launched image task."""
+    if not reference_images:
+        return []
+    return [str(image).strip() for image in reference_images if str(image).strip()]
 
 
 async def _start_image_generation_task(
@@ -560,7 +590,9 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     img_service = request_data.get("img_service", task.model or "banana_pro")
     prompt = request_data.get("prompt", task.prompt or "")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
-    reference_images = request_data.get("reference_images", [])
+    reference_images = _snapshot_reference_images(
+        request_data.get("reference_images", [])
+    )
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
@@ -582,7 +614,7 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             img_service=img_service,
             prompt=_build_image_variant_prompt(prompt, 0, 1),
             img_ratio=img_ratio,
-            reference_images=list(reference_images or []),
+            reference_images=reference_images,
             unit_cost=unit_cost,
             img_quality=img_quality,
             img_nsfw_checker=img_nsfw_checker,
@@ -4364,10 +4396,18 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-        stable_reference_images = list(reference_images or [])
+        stable_reference_images = _snapshot_reference_images(reference_images)
 
         for index in range(img_count):
             variant_prompt = _build_image_variant_prompt(prompt, index, img_count)
+            task_reference_images = list(stable_reference_images)
+            logger.info(
+                "Launching image variant %s/%s with %s references for model=%s",
+                index + 1,
+                img_count,
+                len(task_reference_images),
+                img_service,
+            )
 
             launch_result = await _start_image_generation_task(
                 user=user,
@@ -4375,7 +4415,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 img_service=img_service,
                 prompt=variant_prompt,
                 img_ratio=img_ratio,
-                reference_images=list(stable_reference_images),
+                reference_images=task_reference_images,
                 unit_cost=unit_cost,
                 img_quality=img_quality,
                 img_nsfw_checker=img_nsfw_checker,

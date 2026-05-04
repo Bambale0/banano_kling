@@ -3,7 +3,10 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
-from bot.services.media_input_utils import image_sources_to_supported_image_urls
+from bot.services.media_input_utils import (
+    image_sources_to_data_uris,
+    image_sources_to_supported_image_urls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +78,8 @@ class NanoBanana2Service:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
-        normalized_image_input = image_sources_to_supported_image_urls(image_input)
+        normalized_image_input = image_sources_to_data_uris(image_input)
+        fallback_image_urls = image_sources_to_supported_image_urls(image_input)
         payload = {
             "model": "nano-banana-2",
             "input": {
@@ -86,8 +90,22 @@ class NanoBanana2Service:
                 "output_format": output_format,
             },
         }
+        if fallback_image_urls:
+            payload["input"]["image_urls"] = fallback_image_urls
         if callback_url:
             payload["callBackUrl"] = callback_url
+
+        logger.info(
+            "Nano Banana 2 create_task: refs=%s aspect_ratio=%s resolution=%s first_ref_kind=%s",
+            len(normalized_image_input),
+            aspect_ratio,
+            resolution,
+            (
+                "data-uri"
+                if normalized_image_input and normalized_image_input[0].startswith("data:image/")
+                else "url-or-empty"
+            ),
+        )
 
         resp = await self._post("/api/v1/jobs/createTask", payload)
         if not resp or not isinstance(resp, dict):
