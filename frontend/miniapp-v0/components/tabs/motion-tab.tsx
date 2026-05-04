@@ -102,6 +102,7 @@ export function MotionTab() {
 
   const [characterImage, setCharacterImage] = useState<UploadedFile | null>(null)
   const [motionVideo, setMotionVideo] = useState<UploadedFile | null>(null)
+  const [videoDuration, setVideoDuration] = useState<number>(5)
   const [motionModel, setMotionModel] = useState<MotionModel>('motion_control_v26')
   const [mode, setMode] = useState<MotionMode>('720p')
   const [direction, setDirection] = useState<MotionDirection>('video')
@@ -110,12 +111,11 @@ export function MotionTab() {
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
   const motionModelData = state.videoModels.find((item) => item.id === motionModel)
-  const motionDuration = motionModelData?.durations?.[0] || 5
-  const motionCost =
-    motionModelData?.quality_costs?.[mode] ??
-    motionModelData?.costs?.[motionDuration.toString()] ??
-    15
-  const perSecondCost = motionCost / Math.max(motionDuration, 1)
+  const perSecondCost =
+    (motionModelData?.quality_costs?.[mode] ??
+    motionModelData?.costs?.['5'] ??
+    15) / 5
+  const motionCost = Math.round(perSecondCost * videoDuration * 2) / 2
 
   async function uploadImage(file: File) {
     if (state.mode !== 'live') {
@@ -133,6 +133,20 @@ export function MotionTab() {
   }
 
   async function uploadVideo(file: File) {
+    // read duration before uploading
+    const duration = await new Promise<number>((resolve) => {
+      const url = URL.createObjectURL(file)
+      const el = document.createElement('video')
+      el.preload = 'metadata'
+      el.onloadedmetadata = () => {
+        resolve(Math.max(1, Math.round(el.duration)))
+        URL.revokeObjectURL(url)
+      }
+      el.onerror = () => { resolve(5); URL.revokeObjectURL(url) }
+      el.src = url
+    })
+    setVideoDuration(duration)
+
     if (state.mode !== 'live') {
       setMotionVideo({
         id: `file_${Date.now()}`,
@@ -171,6 +185,7 @@ export function MotionTab() {
           mode,
           direction,
           model: motionModel,
+          videoDuration,
         })
 
         addTask(result.task)
@@ -193,7 +208,7 @@ export function MotionTab() {
           created_at: new Date().toISOString(),
           prompt_preview: prompt || 'Motion transfer',
           cost,
-          duration: 5,
+          duration: videoDuration,
         }
 
         addTask(newTask)
@@ -268,9 +283,11 @@ export function MotionTab() {
                     { id: 'motion_control_v30' as const, label: 'Kling 3.0' },
                   ].map((item) => {
                     const itemModel = state.videoModels.find((model) => model.id === item.id)
-                    const itemDuration = itemModel?.durations?.[0] || 5
-                    const itemCost = itemModel?.costs?.[itemDuration.toString()] || 15
-                    const itemPerSecondCost = itemCost / Math.max(itemDuration, 1)
+                    const itemPerSecondCost =
+                      (itemModel?.quality_costs?.[mode] ??
+                      itemModel?.costs?.['5'] ??
+                      15) / 5
+                    const itemCost = Math.round(itemPerSecondCost * videoDuration * 2) / 2
                     return (
                     <button
                       key={item.id}
@@ -285,7 +302,7 @@ export function MotionTab() {
                     >
                       <span className="block">{item.label}</span>
                       <span className="mt-1 block text-xs opacity-80">
-                        {formatPerSecondCost(itemPerSecondCost)}🍌/с
+                        {itemCost}🍌 · {formatPerSecondCost(itemPerSecondCost)}🍌/с
                       </span>
                     </button>
                     )
@@ -299,11 +316,10 @@ export function MotionTab() {
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {(['720p', '1080p'] as MotionMode[]).map((item) => {
-                    const qCost =
-                      motionModelData?.quality_costs?.[item] ??
-                      motionModelData?.costs?.[motionDuration.toString()] ??
-                      15
-                    const qPerSec = qCost / Math.max(motionDuration, 1)
+                    const qPerSec = (motionModelData?.quality_costs?.[item] ??
+                      motionModelData?.costs?.['5'] ??
+                      15) / 5
+                    const qCost = Math.round(qPerSec * videoDuration * 2) / 2
                     return (
                     <button
                       key={item}
@@ -318,7 +334,7 @@ export function MotionTab() {
                     >
                       <span className="block">{item}</span>
                       <span className="mt-1 block text-xs opacity-80">
-                        {formatPerSecondCost(qPerSec)}🍌/с
+                        {qCost}🍌 · {formatPerSecondCost(qPerSec)}🍌/с
                       </span>
                     </button>
                     )

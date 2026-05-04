@@ -1579,7 +1579,11 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
 
         from bot.services.kling_service import kling_service
 
-        duration = 5
+        raw_duration = body.get("motion_duration")
+        try:
+            duration = max(1, min(300, int(raw_duration))) if raw_duration else 5
+        except (TypeError, ValueError):
+            duration = 5
         cost = preset_manager.get_video_cost_with_quality(model, duration, mode)
 
         is_admin = config.is_admin(telegram_id)
