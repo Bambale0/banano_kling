@@ -60,6 +60,7 @@ class AdminStates(StatesGroup):
     """Состояния для админ-панели"""
 
     waiting_broadcast_text = State()  # Ввод текста рассылки
+    waiting_broadcast_photo = State()  # Ожидание фото для рассылки
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
     waiting_credits_amount = State()  # Ввод количества кредитов

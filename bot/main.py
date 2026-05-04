@@ -930,12 +930,17 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             # Отправляем изображение пользователю
             bot_instance = Bot(token=config.BOT_TOKEN)
 
+            from bot.keyboards import get_image_result_keyboard
+
+            img_kb = get_image_result_keyboard(task_id, image_url)
+
             try:
                 await bot_instance.send_photo(
                     chat_id=telegram_id,
                     photo=image_url,
                     caption=caption,
                     parse_mode="HTML",
+                    reply_markup=img_kb,
                 )
 
                 logger.info(f"Image sent to user {telegram_id}")
@@ -946,6 +951,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=f"🖼️ Ваше изображение готово!{image_url}",
+                        reply_markup=img_kb,
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
@@ -1279,15 +1285,20 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 \n🎯 {label}: {prompt_or_preset}{source_links}
 \n🔗 <a href='{result_url}'>📥 Ссылка</a>"""
 
-            kb_link = types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        types.InlineKeyboardButton(
-                            text="📥 Скачать оригинал", url=result_url
-                        )
+            if not is_video:
+                from bot.keyboards import get_image_result_keyboard
+
+                kb_link = get_image_result_keyboard(task_id, result_url)
+            else:
+                kb_link = types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(
+                                text="📥 Скачать оригинал", url=result_url
+                            )
+                        ]
                     ]
-                ]
-            )
+                )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:

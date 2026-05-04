@@ -472,6 +472,7 @@ def get_create_image_keyboard(
     current_ratio: str = "1:1",
     num_refs: int = 0,
     current_options: dict | None = None,
+    img_count: int = 1,
 ):
     """Меню создания фото - всё на одном экране"""
     builder = InlineKeyboardBuilder()
@@ -511,6 +512,23 @@ def get_create_image_keyboard(
         row_size = 3 if option_name == "aspect_ratio" else 2
         for index in range(0, len(option_buttons), row_size):
             builder.row(*option_buttons[index : index + row_size])
+
+    # Кнопки выбора количества одновременных генераций (1-6)
+    count_buttons = []
+    for n in [1, 2, 3, 4, 5, 6]:
+        check = "✅" if img_count == n else ""
+        count_buttons.append(
+            InlineKeyboardButton(
+                text=f"{check}{n}×" if not check else f"✅{n}×",
+                callback_data=f"img_count_{n}",
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔢 Количество генераций:", callback_data="img_count_info"
+        )
+    )
+    builder.row(*count_buttons)
 
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return builder.as_markup()

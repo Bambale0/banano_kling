@@ -837,6 +837,8 @@ async def handle_dynamic_video_duration(
 async def _refresh_image_creation_screen(
     callback: types.CallbackQuery, state: FSMContext
 ) -> None:
+    data = await state.get_data()
+    img_count = data.get("img_count", 1)
     current_service, current_options, reference_images = await _sync_image_state(state)
     await callback.message.edit_text(
         _build_image_creation_text(current_service, current_options, reference_images),
@@ -845,9 +847,34 @@ async def _refresh_image_creation_screen(
             current_ratio=current_options["aspect_ratio"],
             num_refs=len(reference_images),
             current_options=current_options,
+            img_count=img_count,
         ),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data == "img_count_info")
+async def handle_img_count_info(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer(
+        "Выберите количество одновременных генераций (1-6)", show_alert=False
+    )
+
+
+@router.callback_query(F.data.startswith("img_count_"))
+async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
+    """Устанавливает количество одновременных генераций"""
+    try:
+        count = int(callback.data.replace("img_count_", ""))
+        if count < 1 or count > 6:
+            await callback.answer("❌ Допустимо от 1 до 6", show_alert=True)
+            return
+    except ValueError:
+        await callback.answer("❌ Неверное значение", show_alert=True)
+        return
+    await state.update_data(img_count=count)
+    await _refresh_image_creation_screen(callback, state)
+    await callback.answer(f"✅ Будет запущено {count} генераций")
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data.startswith("img_model_"))
@@ -2505,151 +2532,160 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     img_service, img_options, reference_images = _get_image_state(data)
 
-    import uuid
-
     user = await get_or_create_user(message.from_user.id)
     cost = preset_manager.get_generation_cost(img_service)
+    img_count = data.get("img_count", 1)
+    total_cost = cost * img_count
 
-    if user.credits < cost:
+    if user.credits < total_cost:
         await message.answer(
-            f"❌ Недостаточно бананов! Нужно: <code>{cost}</code>🍌",
+            f"❌ Недостаточно бананов! Нужно: <code>{total_cost}</code>🍌 ({img_count}×{cost}🍌)",
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
         return
 
-    await deduct_credits(message.from_user.id, cost)
+    await deduct_credits(message.from_user.id, total_cost)
 
-    # Create local task ID and store in DB
-    local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-    await add_generation_task(
-        user.id,
-        message.from_user.id,
-        local_task_id,
-        "image",
-        img_service,
-        model=img_service,
-        aspect_ratio=img_options["aspect_ratio"],
-        prompt=prompt,
-        cost=cost,
-    )
+    if img_count == 1:
+        processing_msg = await message.answer("🖼 Генерирую изображение...")
+    else:
+        processing_msg = await message.answer(
+            f"🖼 Запускаю {img_count} генераций параллельно..."
+        )
 
-    processing_msg = await message.answer("🖼 Генерирую изображение...")
-
-    try:
-        callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-
-        if img_service == "banana_2":
-            result = await nano_banana_2_service.generate_image(
-                prompt=prompt,
-                aspect_ratio=img_options["aspect_ratio"],
-                resolution=img_options["resolution"],
-                output_format=img_options["output_format"],
-                image_input=reference_images,
-                callback_url=callback_url,
-            )
-        elif img_service == "banana_pro":
-            result = await nano_banana_pro_service.generate_image(
-                prompt=prompt,
-                aspect_ratio=img_options["aspect_ratio"],
-                resolution=img_options["resolution"],
-                output_format=img_options["output_format"],
-                image_input=reference_images,
-                callback_url=callback_url,
-            )
-        elif img_service in ["seedream_edit", "seedream_5_lite"]:
-            model_config = get_image_model_config(img_service)
-            result = await seedream_service.generate_image(
-                prompt=prompt,
-                model=model_config["api_model"],
-                aspect_ratio=img_options["aspect_ratio"],
-                quality=img_options.get("quality", "basic"),
-                nsfw_checker=img_options.get("nsfw_checker", False),
-                image_urls=reference_images,
-                callback_url=callback_url,
-            )
-        elif img_service == "gpt_image_2":
-            result = await gpt_image_service.generate_image(
-                prompt=prompt,
-                image_urls=reference_images,
-                aspect_ratio=img_options["aspect_ratio"],
-                nsfw_checker=img_options.get("nsfw_checker", False),
-                callback_url=callback_url,
-            )
-        elif img_service == "grok_t2i":
-            result = await grok_service.generate_text_to_image(
-                prompt=prompt,
-                aspect_ratio=img_options["aspect_ratio"],
-                enable_pro=img_options.get("enable_pro", False),
-                nsfw_checker=img_options.get("nsfw_checker", False),
-                callback_url=callback_url,
-            )
-        elif img_service == "grok_i2i":
-            if reference_images:
-                result = await grok_service.generate_image_to_image(
-                    image_url=reference_images[0],
+    async def _run_single(idx: int) -> None:
+        local_tid = f"img_{uuid.uuid4().hex[:12]}"
+        await add_generation_task(
+            user.id,
+            message.from_user.id,
+            local_tid,
+            "image",
+            img_service,
+            model=img_service,
+            aspect_ratio=img_options["aspect_ratio"],
+            prompt=prompt,
+            cost=cost,
+        )
+        try:
+            callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+            if img_service == "banana_2":
+                result = await nano_banana_2_service.generate_image(
                     prompt=prompt,
-                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    aspect_ratio=img_options["aspect_ratio"],
+                    resolution=img_options["resolution"],
+                    output_format=img_options["output_format"],
+                    image_input=reference_images,
                     callback_url=callback_url,
                 )
-            else:
-                # No reference image - fall back to text-to-image
-                result = await grok_service.generate_text_to_image(
+            elif img_service == "banana_pro":
+                result = await nano_banana_pro_service.generate_image(
                     prompt=prompt,
+                    aspect_ratio=img_options["aspect_ratio"],
+                    resolution=img_options["resolution"],
+                    output_format=img_options["output_format"],
+                    image_input=reference_images,
+                    callback_url=callback_url,
+                )
+            elif img_service in ["seedream_edit", "seedream_5_lite"]:
+                model_config = get_image_model_config(img_service)
+                result = await seedream_service.generate_image(
+                    prompt=prompt,
+                    model=model_config["api_model"],
+                    aspect_ratio=img_options["aspect_ratio"],
+                    quality=img_options.get("quality", "basic"),
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    image_urls=reference_images,
+                    callback_url=callback_url,
+                )
+            elif img_service == "gpt_image_2":
+                result = await gpt_image_service.generate_image(
+                    prompt=prompt,
+                    image_urls=reference_images,
                     aspect_ratio=img_options["aspect_ratio"],
                     nsfw_checker=img_options.get("nsfw_checker", False),
                     callback_url=callback_url,
                 )
-        else:
-            # Fallback
-            result = await nano_banana_pro_service.generate_image(
-                prompt=prompt,
-                aspect_ratio=img_options["aspect_ratio"],
-                image_input=reference_images,
-                callback_url=callback_url,
-            )
-
-        await processing_msg.delete()
-
-        if isinstance(result, dict) and "task_id" in result:
-            # Async task - update DB with API task_id and notify user
-            api_task_id = result["task_id"]
-            import aiosqlite
-
-            from bot.database import DATABASE_PATH
-
-            async with aiosqlite.connect(DATABASE_PATH) as db:
-                await db.execute(
-                    "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
-                    (api_task_id, local_task_id, user.id),
+            elif img_service == "grok_t2i":
+                result = await grok_service.generate_text_to_image(
+                    prompt=prompt,
+                    aspect_ratio=img_options["aspect_ratio"],
+                    enable_pro=img_options.get("enable_pro", False),
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    callback_url=callback_url,
                 )
-                await db.commit()
-            await message.answer(
-                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>🍌 списано\nОжидайте результат (1-3 мин).",
-                parse_mode="HTML",
-            )
-        elif result:  # bytes
-            # Sync result - bytes, complete task immediately
-            saved_url = save_uploaded_file(result, "png")
-            retry_kb = get_image_result_keyboard(local_task_id, saved_url)
-            await message.answer_photo(
-                photo=types.BufferedInputFile(result, filename="generated.png"),
-                caption=f"✅ Изображение готово!\n💰 <code>{cost}</code>🍌 списано",
-                parse_mode="HTML",
-                reply_markup=retry_kb,
-            )
-            await _send_original_document(message.answer_document, result, saved_url)
-            await complete_video_task(local_task_id, saved_url)
-        else:
-            await add_credits(message.from_user.id, cost)
-            await complete_video_task(local_task_id, None)
-            await message.answer("❌ Ошибка генерации. Бананы возвращены.")
+            elif img_service == "grok_i2i":
+                if reference_images:
+                    result = await grok_service.generate_image_to_image(
+                        image_url=reference_images[0],
+                        prompt=prompt,
+                        nsfw_checker=img_options.get("nsfw_checker", False),
+                        callback_url=callback_url,
+                    )
+                else:
+                    result = await grok_service.generate_text_to_image(
+                        prompt=prompt,
+                        aspect_ratio=img_options["aspect_ratio"],
+                        nsfw_checker=img_options.get("nsfw_checker", False),
+                        callback_url=callback_url,
+                    )
+            else:
+                result = await nano_banana_pro_service.generate_image(
+                    prompt=prompt,
+                    aspect_ratio=img_options["aspect_ratio"],
+                    image_input=reference_images,
+                    callback_url=callback_url,
+                )
 
-    except Exception as e:
-        logger.exception(f"Image generation error: {e}")
-        await add_credits(message.from_user.id, cost)
-        await complete_video_task(local_task_id, None)
-        await message.answer("❌ Ошибка генерации.")
+            prefix = f"[{idx}/{img_count}] " if img_count > 1 else ""
+
+            if isinstance(result, dict) and "task_id" in result:
+                api_task_id = result["task_id"]
+                import aiosqlite
+
+                from bot.database import DATABASE_PATH
+
+                async with aiosqlite.connect(DATABASE_PATH) as db:
+                    await db.execute(
+                        "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
+                        (api_task_id, local_tid, user.id),
+                    )
+                    await db.commit()
+                await message.answer(
+                    f"🚀 {prefix}Генерация запущена!\n🆔 <code>{api_task_id}</code>\nОжидайте результат (1-3 мин).",
+                    parse_mode="HTML",
+                )
+            elif result:
+                saved_url = save_uploaded_file(result, "png")
+                retry_kb = get_image_result_keyboard(local_tid, saved_url)
+                await message.answer_photo(
+                    photo=types.BufferedInputFile(result, filename="generated.png"),
+                    caption=f"✅ {prefix}Готово!\n💰 <code>{cost}</code>🍌",
+                    parse_mode="HTML",
+                    reply_markup=retry_kb,
+                )
+                await _send_original_document(
+                    message.answer_document, result, saved_url
+                )
+                await complete_video_task(local_tid, saved_url)
+            else:
+                await add_credits(message.from_user.id, cost)
+                await complete_video_task(local_tid, None)
+                await message.answer(f"❌ {prefix}Ошибка генерации. Бананы возвращены.")
+
+        except Exception as e:
+            logger.exception(f"Image generation error (idx={idx}): {e}")
+            await add_credits(message.from_user.id, cost)
+            await complete_video_task(local_tid, None)
+            await message.answer(f"❌ Ошибка генерации #{idx}.")
+
+    try:
+        await asyncio.gather(*[_run_single(i + 1) for i in range(img_count)])
+    finally:
+        try:
+            await processing_msg.delete()
+        except Exception:
+            pass
 
     await state.clear()
 

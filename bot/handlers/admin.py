@@ -277,29 +277,91 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
 
 @router.message(AdminStates.waiting_broadcast_text)
 async def admin_process_broadcast_text(message: types.Message, state: FSMContext):
-    """Показывает превью рассылки"""
-    await state.update_data(broadcast_text=message.text)
+    """Сохраняет текст и предлагает прикрепить фото"""
+    await state.update_data(broadcast_text=message.text, broadcast_photo_id=None)
 
     await message.answer(
-        "📢 <b>Превью рассылки:</b>"
-        "───────────────\n"
-        f"{message.text}\n"
-        "───────────────"
-        "Подтверждаете отправку?",
+        "🖼 <b>Хотите прикрепить изображение к рассылке?</b>\n\n"
+        "Отправьте фото или нажмите «Пропустить».",
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text="✅ Отправить", callback_data="admin_broadcast_confirm"
-                    ),
+                        text="⏭ Пропустить", callback_data="admin_broadcast_skip_photo"
+                    )
+                ],
+                [
                     types.InlineKeyboardButton(
                         text="❌ Отмена", callback_data="admin_back"
                     ),
-                ]
+                ],
             ]
         ),
         parse_mode="HTML",
     )
+
+    await state.set_state(AdminStates.waiting_broadcast_photo)
+
+
+@router.message(AdminStates.waiting_broadcast_photo, F.photo)
+async def admin_broadcast_photo_received(message: types.Message, state: FSMContext):
+    """Получает фото и показывает превью"""
+    photo_file_id = message.photo[-1].file_id
+    await state.update_data(broadcast_photo_id=photo_file_id)
+    await _show_broadcast_preview(message, state)
+
+
+@router.callback_query(F.data == "admin_broadcast_skip_photo")
+async def admin_broadcast_skip_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает фото и показывает превью"""
+    await state.update_data(broadcast_photo_id=None)
+    await callback.message.delete()
+    await _show_broadcast_preview(callback.message, state, from_callback=True)
+
+
+async def _show_broadcast_preview(
+    message: types.Message,
+    state: FSMContext,
+    from_callback: bool = False,
+) -> None:
+    """Показывает превью рассылки"""
+    data = await state.get_data()
+    broadcast_text = data.get("broadcast_text", "")
+    photo_id = data.get("broadcast_photo_id")
+
+    confirm_kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Отправить", callback_data="admin_broadcast_confirm"
+                ),
+                types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back"),
+            ]
+        ]
+    )
+
+    photo_hint = "🖼 <i>С изображением</i>" if photo_id else "📝 <i>Только текст</i>"
+    preview_text = (
+        f"📢 <b>Превью рассылки:</b> {photo_hint}\n"
+        "───────────────\n"
+        f"{broadcast_text}\n"
+        "───────────────\n"
+        "Подтверждаете отправку?"
+    )
+
+    if photo_id:
+        await message.answer_photo(
+            photo=photo_id,
+            caption=preview_text,
+            reply_markup=confirm_kb,
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            preview_text,
+            reply_markup=confirm_kb,
+            parse_mode="HTML",
+        )
 
     await state.set_state(AdminStates.confirming_broadcast)
 
@@ -315,6 +377,7 @@ async def admin_execute_broadcast(
 
     data = await state.get_data()
     broadcast_text = data.get("broadcast_text")
+    broadcast_photo_id = data.get("broadcast_photo_id")
 
     await callback.message.edit_text("📢 <b>Рассылка запущена...</b>", parse_mode="HTML")
 
@@ -333,9 +396,17 @@ async def admin_execute_broadcast(
 
     for user in users:
         try:
-            await bot.send_message(
-                user["telegram_id"], broadcast_text, parse_mode="HTML"
-            )
+            if broadcast_photo_id:
+                await bot.send_photo(
+                    user["telegram_id"],
+                    photo=broadcast_photo_id,
+                    caption=broadcast_text,
+                    parse_mode="HTML",
+                )
+            else:
+                await bot.send_message(
+                    user["telegram_id"], broadcast_text, parse_mode="HTML"
+                )
             success_count += 1
         except Exception as e:
             logger.warning(f"Broadcast failed for {user['telegram_id']}: {e}")
