@@ -267,7 +267,11 @@ class PresetManager:
     def get_video_cost_with_quality(
         self, model: str, duration: int = 5, quality: str | None = None
     ) -> float:
-        """Вернуть стоимость видео с учётом качества (например, 720p/1080p для Motion Control)."""
+        """Вернуть стоимость видео с учётом качества (например, 720p/1080p для Motion Control).
+
+        quality_costs хранят базовую стоимость за 5 секунд; реальная цена
+        масштабируется пропорционально длительности.
+        """
         if quality:
             video_models = self._video_costs()
             key = self.normalize_video_model_key(model)
@@ -275,7 +279,12 @@ class PresetManager:
                 model_config = video_models[key] or {}
                 quality_costs = model_config.get("quality_costs", {})
                 if quality in quality_costs:
-                    return self._format_cost(quality_costs[quality])
+                    base_5s = quality_costs[quality]
+                    duration = max(3, min(30, int(duration)))
+                    per_sec = base_5s / 5
+                    raw = per_sec * duration
+                    cost = int(raw) if raw == int(raw) else round(raw * 2) / 2
+                    return self._format_cost(cost)
         return self.get_video_cost(model, duration)
 
     def get_video_cost_per_second(self, model: str, duration: int = 5):

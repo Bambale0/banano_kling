@@ -13,6 +13,7 @@ from typing import Optional
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image
@@ -64,6 +65,20 @@ from bot.utils.help_texts import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+@router.message(CommandStart(), StateFilter("*"))
+async def cmd_start_interrupt(message: types.Message, state: FSMContext):
+    """/start interrupts any active FSM state and redirects to main menu handler"""
+    from bot.database import get_or_create_user
+    from bot.keyboards import get_main_menu_keyboard
+    from bot.handlers.common import cmd_start as _cmd_start
+
+    current_state = await state.get_state()
+    if current_state is not None:
+        await state.clear()
+        await _cmd_start(message, state)
+        return
 
 
 SENSITIVE_FASHION_KEYWORDS = {
