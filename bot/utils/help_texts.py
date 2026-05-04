@@ -115,6 +115,7 @@ def get_model_selection_help() -> str:
 • Kling 2.6 Pro/Motion (15-30🍌)
 • Grok Imagine (15-50🍌, 6-30с)
 • Runway/Aleph (15-40🍌)
+• HappyHorse T2V/I2V/Ref2V/Edit (20-25🍌, 1080p)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Рекомендации:</b>

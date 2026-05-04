@@ -52,6 +52,10 @@ FALLBACK_VIDEO_COSTS = {
     "runway": 15,
     "aleph": 15,
     "glow": 25,
+    "happyhorse_t2v": 20,
+    "happyhorse_i2v": 20,
+    "happyhorse_ref2v": 22,
+    "happyhorse_edit": 25,
 }
 
 
@@ -335,6 +339,10 @@ class AIAssistantService:
         aleph_10 = _video_cost("aleph", 10)
         glow_5 = _video_cost("glow", 5)
         glow_10 = _video_cost("glow", 10)
+        happyhorse_t2v_5 = _video_cost("happyhorse_t2v", 5)
+        happyhorse_i2v_5 = _video_cost("happyhorse_i2v", 5)
+        happyhorse_ref2v_5 = _video_cost("happyhorse_ref2v", 5)
+        happyhorse_edit_5 = _video_cost("happyhorse_edit", 5)
         grok_6 = _video_cost("grok_imagine", 6)
         grok_10 = _video_cost("grok_imagine", 10)
         grok_20 = _video_cost("grok_imagine", 20)
@@ -383,6 +391,10 @@ class AIAssistantService:
 │ Runway  │ {runway_5}🍌   │ {runway_10}🍌  │
 │ Aleph   │ {aleph_5}🍌   │ {aleph_10}🍌  │
 │ Glow    │ {glow_5}🍌   │ {glow_10}🍌  │
+│ HappyHorse T2V │ {happyhorse_t2v_5}🍌 │ - │
+│ HappyHorse I2V │ {happyhorse_i2v_5}🍌 │ - │
+│ HappyHorse Ref │ {happyhorse_ref2v_5}🍌 │ - │
+│ HappyHorse Edit│ {happyhorse_edit_5}🍌 │ - │
 │ V2V Std │ {v2v_std_5}🍌   │ {v2v_std_10}🍌  │
 │ V2V Pro │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌  │
 

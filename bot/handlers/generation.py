@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import io
+import json
 import logging
 import os
 import random
+import re
 import time
 import uuid
 from datetime import datetime
@@ -47,6 +49,7 @@ from bot.services.gemini_service import gemini_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.hailuo_service import hailuo_service
+from bot.services.happyhorse_service import happyhorse_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -66,6 +69,12 @@ from bot.utils.help_texts import (
     get_resolution_help,
     get_search_grounding_help,
     get_success_message,
+)
+from bot.video_models import (
+    VIDEO_OPTION_LABELS,
+    get_video_model_config,
+    get_video_option_label,
+    normalize_video_options,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,8 +157,10 @@ _MODELS_TEXT = {
     "runway",
     "veo3_fast",
     "veo3",
+    "veo3_lite",
     "hailuo_pro",
     "hailuo_std",
+    "happyhorse_t2v",
 }
 _MODELS_IMGTXT = {
     "v3_std",
@@ -162,6 +173,13 @@ _MODELS_IMGTXT = {
     "hailuo_23_std",
     "hailuo_i2v_pro",
     "hailuo_i2v_std",
+    "happyhorse_i2v",
+    "happyhorse_ref2v",
+}
+_MODELS_VIDEO = {
+    "aleph",
+    "glow",
+    "happyhorse_edit",
 }
 
 
@@ -170,19 +188,25 @@ def _clamp_model_for_type(model: str, v_type: str) -> str:
         return "v3_std"
     if v_type == "imgtxt" and model not in _MODELS_IMGTXT:
         return "v3_std"
+    if v_type == "video" and model not in _MODELS_VIDEO:
+        return "aleph"
     return model
 
 
 def _get_video_ui_state(data: dict) -> dict:
+    model = data.get("v_model", "v3_std")
     return {
         "current_v_type": data.get("v_type", "text"),
-        "current_model": data.get("v_model", "v3_std"),
+        "current_model": model,
         "current_duration": data.get("v_duration", 5),
         "current_ratio": data.get("v_ratio", "16:9"),
         "current_mode": data.get("v_mode", "720p"),
         "current_orientation": data.get("v_orientation", "video"),
         "current_grok_mode": data.get("grok_mode", "normal"),
         "current_hailuo_resolution": data.get("hailuo_resolution", "768P"),
+        "current_video_options": normalize_video_options(
+            model, data.get("video_options", {})
+        ),
     }
 
 
@@ -202,16 +226,13 @@ def _format_video_settings(data: dict) -> str:
         f"• Формат: <code>{ui['current_ratio']}</code>",
     ]
 
-    if ui["current_model"] == "grok_imagine":
-        lines.append(f"• Режим Grok: <code>{ui['current_grok_mode']}</code>")
-
-    _hailuo_res_models = {"hailuo_23_pro", "hailuo_23_std", "hailuo_i2v_std"}
-    if ui["current_model"] in _hailuo_res_models:
-        lines.append(f"• Разрешение: <code>{ui['current_hailuo_resolution']}</code>")
-
-    if ui["current_v_type"] == "video":
-        lines.append(f"• Качество: <code>{ui['current_mode']}</code>")
-        lines.append(f"• Ориентация: <code>{ui['current_orientation']}</code>")
+    model_config = get_video_model_config(ui["current_model"])
+    for option_name in model_config.get("options", {}):
+        value = ui["current_video_options"].get(option_name)
+        label = VIDEO_OPTION_LABELS.get(option_name, option_name)
+        lines.append(
+            f"• {label}: <code>{get_video_option_label(option_name, value)}</code>"
+        )
 
     return "\n".join(lines)
 
@@ -441,6 +462,8 @@ async def _show_video_creation_screen(
         text += "\n\n<i>📷 Загрузите фото, которое станет первым кадром видео.</i>"
     elif current_v_type == "video" and not v_reference_videos:
         text += "\n\n<i>📹 Загрузите референсные видео: до 5 файлов, длительность 3-10 сек.</i>"
+    elif current_v_type == "video" and current_model == "happyhorse_edit":
+        text += "\n\n<i>🖼 Для HappyHorse Edit можно добавить фото-референсы через режим «Фото + Текст», затем вернуться к редактированию видео.</i>"
 
     keyboard = get_create_video_keyboard(
         current_v_type=current_v_type,
@@ -451,6 +474,7 @@ async def _show_video_creation_screen(
         current_orientation=ui["current_orientation"],
         current_grok_mode=ui["current_grok_mode"],
         current_hailuo_resolution=ui["current_hailuo_resolution"],
+        current_video_options=ui["current_video_options"],
     )
     # Используем edit для callback, send для message
     try:
@@ -671,18 +695,25 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
 
     user_credits = await get_user_credits(callback.from_user.id)
 
-    await state.update_data(v_type="video")
+    data = await state.get_data()
+    ui = _get_video_ui_state(data)
+    clamped_model = _clamp_model_for_type(ui["current_model"], "video")
+    await state.update_data(v_type="video", v_model=clamped_model)
 
     text = (
         "🎬 <b>Видео + Текст → Видео</b>\n\n"
         f"🍌 Баланс: <code>{user_credits}</code>\n\n"
         "<b>Шаг 1: загрузка видео-референсов</b>\n"
-        "Это опционально, можно добавить до 5 коротких видео.\n\n"
-        "Они помогут передать:\n"
-        "• стиль движения\n"
-        "• характер камеры\n"
-        "• атмосферу сцены\n\n"
-        "После загрузки нажмите «Продолжить» или «Пропустить»."
+        + (
+            "Для HappyHorse Edit нужно загрузить минимум одно видео.\n\n"
+            if clamped_model == "happyhorse_edit"
+            else "Это опционально, можно добавить до 5 коротких видео.\n\n"
+        )
+        + "Они помогут передать:\n"
+        + "• стиль движения\n"
+        + "• характер камеры\n"
+        + "• атмосферу сцены\n\n"
+        + "После загрузки нажмите «Продолжить» или «Пропустить»."
     )
     await callback.message.edit_text(
         text,
@@ -744,7 +775,10 @@ async def handle_video_options_model_legacy(
 async def handle_grok_mode(callback: types.CallbackQuery, state: FSMContext):
     """Handler for Grok Imagine mode selection (normal/fun/spicy)"""
     mode = callback.data.replace("grok_mode_", "")
-    await state.update_data(grok_mode=mode)
+    data = await state.get_data()
+    video_options = data.get("video_options", {})
+    video_options["mode"] = mode
+    await state.update_data(grok_mode=mode, video_options=video_options)
     await _show_video_creation_screen(callback, state)
     await callback.answer(f"Режим Grok: {mode.title()}")
 
@@ -754,9 +788,60 @@ async def handle_hailuo_resolution(callback: types.CallbackQuery, state: FSMCont
     """Handler for Hailuo resolution selection (768P / 1080P)"""
     res_map = {"hailuo_res_768p": "768P", "hailuo_res_1080p": "1080P"}
     resolution = res_map.get(callback.data, "768P")
-    await state.update_data(hailuo_resolution=resolution)
+    data = await state.get_data()
+    video_options = data.get("video_options", {})
+    video_options["resolution"] = resolution
+    await state.update_data(hailuo_resolution=resolution, video_options=video_options)
     await _show_video_creation_screen(callback, state)
     await callback.answer(f"Разрешение: {resolution}")
+
+
+@router.callback_query(F.data.startswith("vopt_"))
+async def handle_video_option(callback: types.CallbackQuery, state: FSMContext):
+    """Generic video model option selection."""
+    data = await state.get_data()
+    model = data.get("v_model", "v3_std")
+    config = get_video_model_config(model)
+    raw_option = callback.data.replace("vopt_", "", 1)
+    option_name = None
+    raw_value = None
+    for candidate in config.get("options", {}):
+        prefix = f"{candidate}_"
+        if raw_option.startswith(prefix):
+            option_name = candidate
+            raw_value = raw_option[len(prefix) :]
+            break
+    if not option_name:
+        await callback.answer("Некорректная опция", show_alert=True)
+        return
+    allowed_values = config.get("options", {}).get(option_name)
+    if not allowed_values:
+        await callback.answer("Опция недоступна для этой модели", show_alert=True)
+        return
+
+    value = None
+    for candidate in allowed_values:
+        if str(candidate).lower() == raw_value:
+            value = candidate
+            break
+    if value is None:
+        await callback.answer("Некорректное значение", show_alert=True)
+        return
+
+    video_options = data.get("video_options", {})
+    video_options[option_name] = value
+    updates = {"video_options": normalize_video_options(model, video_options)}
+    if option_name == "mode":
+        updates["grok_mode"] = value
+    if option_name == "resolution" and model.startswith("hailuo"):
+        updates["hailuo_resolution"] = value
+    if option_name == "motion_quality":
+        updates["v_mode"] = value
+    if option_name == "character_orientation":
+        updates["v_orientation"] = value
+    await state.update_data(**updates)
+    await _show_video_creation_screen(callback, state)
+    await callback.answer()
 
 
 async def _apply_video_model_selection(
@@ -778,7 +863,22 @@ async def _apply_video_model_selection(
     if model.startswith("wanx"):
         current_v_type = "text"
 
-    await state.update_data(v_model=model, v_type=current_v_type)
+    video_options = normalize_video_options(model, data.get("video_options", {}))
+    model_config = get_video_model_config(model)
+    durations = model_config.get("durations") or []
+    ratios = model_config.get("aspect_ratios") or ["16:9"]
+    if durations and current_duration not in durations:
+        current_duration = durations[0]
+    if current_ratio not in ratios:
+        current_ratio = ratios[0]
+
+    await state.update_data(
+        v_model=model,
+        v_type=current_v_type,
+        v_duration=current_duration,
+        v_ratio=current_ratio,
+        video_options=video_options,
+    )
     if model.startswith("wanx"):
         await state.update_data(
             wanx_lora_settings=[{"lora_type": "nsfw-general", "lora_strength": 1.0}]
@@ -893,6 +993,7 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         "aspect_ratio": "aspect_ratio_",
         "output_format": "output_format_",
         "resolution": "resolution_",
+        "quality": "quality_",
         "nsfw_checker": "nsfw_checker_",
     }
 
@@ -913,6 +1014,8 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
     elif option_name == "aspect_ratio":
         value = raw_value.replace("_", ":").upper().replace("AUTO", "auto")
     elif option_name == "output_format":
+        value = raw_value.lower()
+    elif option_name == "quality":
         value = raw_value.lower()
     else:
         value = raw_value.upper()
@@ -1287,6 +1390,53 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
     except Exception as e:
         logger.exception(f"Error saving uploaded file: {e}")
         return None
+
+
+def _serialize_reference_images(reference_images: list) -> Optional[str]:
+    refs = [str(url) for url in (reference_images or []) if url]
+    return json.dumps(refs, ensure_ascii=False) if refs else None
+
+
+def _deserialize_reference_images(raw_refs: Optional[str]) -> list:
+    if not raw_refs:
+        return []
+    try:
+        refs = json.loads(raw_refs)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(refs, list):
+        return []
+    return [str(url) for url in refs if url]
+
+
+def _extract_reference_images_from_message(message: Optional[types.Message]) -> list:
+    if not message:
+        return []
+
+    candidates = []
+    try:
+        candidates.append(message.html_text)
+    except Exception:
+        pass
+    try:
+        candidates.append(message.html_caption)
+    except Exception:
+        pass
+    candidates.extend(
+        [getattr(message, "caption", None), getattr(message, "text", None)]
+    )
+
+    for text in candidates:
+        if not text or "Исходники" not in text:
+            continue
+        block = text.split("Исходники", 1)[1]
+        block = block.split("🔗", 1)[0]
+        refs = re.findall(r"<a\s+href=['\"]([^'\"]+)['\"]", block)
+        if not refs:
+            refs = re.findall(r"https?://[^\s<>'\"]+", block)
+        if refs:
+            return refs[:14]
+    return []
 
 
 async def _send_original_document(
@@ -2260,7 +2410,15 @@ async def process_photo_for_video_prompt_state(
     """
     data = await state.get_data()
     v_type = data.get("v_type")
-    if v_type != "imgtxt":
+    v_model = data.get("v_model")
+    if v_type == "video" and v_model == "happyhorse_edit":
+        reference_images = data.get("reference_images", [])
+        if len(reference_images) >= 5:
+            await message.answer(
+                "❌ Для HappyHorse Edit можно добавить до 5 фото-референсов. Введите промпт."
+            )
+            return
+    elif v_type != "imgtxt":
         await message.answer("Пожалуйста, отправьте текстовое описание.")
         return
 
@@ -2296,6 +2454,22 @@ async def process_photo_for_video_prompt_state(
 
     v_image_url = data.get("v_image_url")
     reference_images = data.get("reference_images", [])
+
+    if v_type == "video" and v_model == "happyhorse_edit":
+        reference_images.append(image_url)
+        await state.update_data(reference_images=reference_images)
+        await message.answer(
+            f"✅ Фото-референс для HappyHorse Edit добавлен: <code>{len(reference_images)}/5</code>\n\n"
+            "Отправьте ещё фото или введите промпт.",
+            reply_markup=get_create_video_keyboard(
+                current_v_type="video",
+                current_model="happyhorse_edit",
+                current_duration=data.get("v_duration", 5),
+                current_ratio=data.get("v_ratio", "16:9"),
+            ),
+            parse_mode="HTML",
+        )
+        return
 
     start_count = 1 if v_image_url else 0
     current_refs = len(reference_images)
@@ -2566,6 +2740,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             aspect_ratio=img_options["aspect_ratio"],
             prompt=prompt,
             cost=cost,
+            reference_images=_serialize_reference_images(reference_images),
         )
         try:
             callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -2692,7 +2867,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("retry_img_"))
 async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
-    """Повторяет генерацию фото с теми же параметрами (без референс-изображений)."""
+    """Повторяет генерацию фото с теми же параметрами."""
     task_id = callback.data.replace("retry_img_", "")
     task = await get_task_by_id(task_id)
 
@@ -2705,6 +2880,14 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
     cost = task.cost or preset_manager.get_generation_cost(img_service)
     img_options = normalize_image_options(img_service, {"aspect_ratio": aspect_ratio})
     prompt = task.prompt
+    reference_images = _deserialize_reference_images(task.reference_images)
+    if not reference_images:
+        reference_images = _extract_reference_images_from_message(callback.message)
+
+    model_config = get_image_model_config(img_service)
+    if model_config.get("requires_refs") and not reference_images:
+        await callback.answer("❌ Не нашёл исходники для повтора", show_alert=True)
+        return
 
     user = await get_or_create_user(callback.from_user.id)
     if user.credits < cost:
@@ -2725,6 +2908,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
         aspect_ratio=aspect_ratio,
         prompt=prompt,
         cost=cost,
+        reference_images=_serialize_reference_images(reference_images),
     )
 
     processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
@@ -2738,7 +2922,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
                 aspect_ratio=aspect_ratio,
                 resolution=img_options.get("resolution", "4K"),
                 output_format=img_options.get("output_format", "png"),
-                image_input=[],
+                image_input=reference_images,
                 callback_url=callback_url,
             )
         elif img_service == "banana_pro":
@@ -2747,39 +2931,47 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
                 aspect_ratio=aspect_ratio,
                 resolution=img_options.get("resolution", "4K"),
                 output_format=img_options.get("output_format", "png"),
-                image_input=[],
+                image_input=reference_images,
                 callback_url=callback_url,
             )
         elif img_service in ("seedream_edit", "seedream_5_lite"):
-            model_config = get_image_model_config(img_service)
             result = await seedream_service.generate_image(
                 prompt=prompt,
                 model=model_config["api_model"],
                 aspect_ratio=aspect_ratio,
+                quality=img_options.get("quality", "basic"),
                 nsfw_checker=img_options.get("nsfw_checker", False),
-                image_urls=[],
+                image_urls=reference_images,
                 callback_url=callback_url,
             )
         elif img_service == "gpt_image_2":
             result = await gpt_image_service.generate_image(
                 prompt=prompt,
-                image_urls=[],
+                image_urls=reference_images,
                 aspect_ratio=aspect_ratio,
                 nsfw_checker=img_options.get("nsfw_checker", False),
                 callback_url=callback_url,
             )
         elif img_service in ("grok_t2i", "grok_i2i"):
-            result = await grok_service.generate_text_to_image(
-                prompt=prompt,
-                aspect_ratio=aspect_ratio,
-                nsfw_checker=img_options.get("nsfw_checker", False),
-                callback_url=callback_url,
-            )
+            if img_service == "grok_i2i" and reference_images:
+                result = await grok_service.generate_image_to_image(
+                    image_url=reference_images[0],
+                    prompt=prompt,
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    callback_url=callback_url,
+                )
+            else:
+                result = await grok_service.generate_text_to_image(
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio,
+                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    callback_url=callback_url,
+                )
         else:
             result = await nano_banana_pro_service.generate_image(
                 prompt=prompt,
                 aspect_ratio=aspect_ratio,
-                image_input=[],
+                image_input=reference_images,
                 callback_url=callback_url,
             )
 
@@ -2915,11 +3107,12 @@ async def run_no_preset_video_from_message(
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
     video_urls = data.get("v_reference_videos", [])
-    if video_urls:
+    if video_urls and v_model not in {"happyhorse_edit", "glow"}:
         v_model = "aleph"
-    if v_type == "video":
+    if v_type == "video" and v_model not in _MODELS_VIDEO:
         v_model = "aleph"
     v_duration = int(data.get("v_duration", 5))
+    video_options = normalize_video_options(v_model, data.get("video_options", {}))
     # Cap duration for imgtxt except for models with their own duration logic
     _no_cap_models = (
         "grok_imagine",
@@ -2933,6 +3126,10 @@ async def run_no_preset_video_from_message(
         "hailuo_std",
         "hailuo_i2v_pro",
         "hailuo_i2v_std",
+        "happyhorse_t2v",
+        "happyhorse_i2v",
+        "happyhorse_ref2v",
+        "happyhorse_edit",
     )
     if v_type == "imgtxt" and v_model not in _no_cap_models:
         v_duration = min(v_duration, 10)
@@ -3005,13 +3202,15 @@ async def run_no_preset_video_from_message(
             # Pass start image + references (max 7 total for Grok)
             grok_image_urls = [image_url] + image_refs[:6]
             grok_duration = v_duration  # Supports 6,20,30 sec
-            grok_mode = data.get("grok_mode", "normal")
+            grok_mode = video_options.get("mode", data.get("grok_mode", "normal"))
             result = await grok_service.generate_image_to_video(
                 image_urls=grok_image_urls,
                 prompt=prompt,
                 mode=grok_mode,
                 duration=grok_duration,
+                resolution=video_options.get("resolution", "720p"),
                 aspect_ratio=v_ratio,
+                nsfw_checker=video_options.get("nsfw_checker", False),
                 callBackUrl=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),
@@ -3054,7 +3253,7 @@ async def run_no_preset_video_from_message(
                 prompt=prompt,
                 image_url=image_url,
                 duration=v_duration,
-                quality="720p",
+                quality=video_options.get("quality", "720p"),
                 aspect_ratio=v_ratio,
                 callback_url=callback_url,
             )
@@ -3066,7 +3265,8 @@ async def run_no_preset_video_from_message(
                 prompt=prompt,
                 model=v_model,
                 aspect_ratio=v_ratio,
-                resolution="1080p",
+                resolution=video_options.get("resolution", "1080p"),
+                enable_translation=video_options.get("enable_translation", True),
                 image_urls=veo_image_urls or None,
                 callback_url=(
                     config.veo_notification_url if config.WEBHOOK_HOST else None
@@ -3096,7 +3296,60 @@ async def run_no_preset_video_from_message(
                 prompt=prompt,
                 image_url=image_url,
                 duration=v_duration,
-                resolution=data.get("hailuo_resolution", "768P"),
+                resolution=video_options.get(
+                    "resolution", data.get("hailuo_resolution", "768P")
+                ),
+                nsfw_checker=video_options.get("nsfw_checker", False),
+                prompt_optimizer=video_options.get("prompt_optimizer", False),
+                callback_url=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+        elif v_model in (
+            "happyhorse_t2v",
+            "happyhorse_i2v",
+            "happyhorse_ref2v",
+            "happyhorse_edit",
+        ):
+            from bot.services.happyhorse_service import (
+                HAPPYHORSE_IMAGE_REQUIRED,
+                HAPPYHORSE_VIDEO_REQUIRED,
+            )
+
+            happyhorse_images = []
+            if image_url:
+                happyhorse_images.append(image_url)
+            happyhorse_images.extend(image_refs)
+
+            if v_model in HAPPYHORSE_IMAGE_REQUIRED and not happyhorse_images:
+                await message.answer(
+                    f"❌ {v_model} требует минимум одно изображение (фото+текст режим)."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+            if v_model in HAPPYHORSE_VIDEO_REQUIRED and not video_urls:
+                await message.answer(
+                    "❌ HappyHorse Edit требует видео-референс (режим видео+текст)."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+
+            result = await happyhorse_service.generate_video(
+                model_key=v_model,
+                prompt=prompt,
+                image_urls=happyhorse_images,
+                video_url=video_urls[0] if video_urls else None,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                resolution=video_options.get("resolution", "1080p"),
+                audio_setting=video_options.get("audio_setting", "auto"),
+                seed=video_options.get("seed"),
                 callback_url=(
                     config.kie_notification_url if config.WEBHOOK_HOST else None
                 ),
@@ -3111,7 +3364,17 @@ async def run_no_preset_video_from_message(
                 video_urls=video_urls,
                 image_input=image_refs if v_type != "imgtxt" else None,
                 elements=elements_list,
-                generate_audio=True,
+                generate_audio=video_options.get("sound", True),
+                seedance_resolution=video_options.get("resolution"),
+                seedance_nsfw_checker=video_options.get("nsfw_checker", False),
+                seedance_web_search=video_options.get("web_search", False),
+                motion_mode=video_options.get(
+                    "motion_quality", data.get("v_mode", "720p")
+                ),
+                motion_orientation=video_options.get(
+                    "character_orientation", data.get("v_orientation", "video")
+                ),
+                keep_original_sound=video_options.get("keep_original_sound", True),
                 webhook_url=(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),

@@ -434,12 +434,17 @@ class KlingService:
 
         # Kie.ai primary (new migration target)
         if self.kie_key:
+            kie_mode = (
+                mode
+                if mode in {"720p", "1080p"}
+                else ("720p" if mode == "std" else "1080p")
+            )
             kie_input = {
                 "prompt": prompt or "",
                 "input_urls": [_maybe_data_uri(image_url)],
                 "video_urls": [_maybe_data_uri(v) for v in (video_urls or [])],
                 "character_orientation": motion_direction,
-                "mode": "720p" if mode == "std" else "1080p",
+                "mode": kie_mode,
             }
             if not kie_input["video_urls"]:
                 return {
@@ -603,6 +608,12 @@ class KlingService:
         generate_audio: bool = True,
         multi_shots: Optional[List[Dict[str, Any]]] = None,
         image_input: Optional[List[str]] = None,
+        seedance_resolution: Optional[str] = None,
+        seedance_nsfw_checker: bool = False,
+        seedance_web_search: bool = False,
+        motion_mode: Optional[str] = None,
+        motion_orientation: Optional[str] = None,
+        keep_original_sound: bool = True,
     ) -> Optional[Dict]:
         if model == "seedance2":
             input_data = {
@@ -610,9 +621,9 @@ class KlingService:
                 "aspect_ratio": aspect_ratio,
                 "duration": duration,
                 "generate_audio": generate_audio,
-                "resolution": "720p",
-                "nsfw_checker": False,
-                "web_search": False,
+                "resolution": seedance_resolution or "720p",
+                "nsfw_checker": seedance_nsfw_checker,
+                "web_search": seedance_web_search,
             }
             if image_url:
                 input_data["first_frame_url"] = image_url
@@ -685,6 +696,8 @@ class KlingService:
                 image_url=image_url,
                 video_urls=video_urls[:1] if video_urls else None,
                 prompt=prompt if negative_prompt is None else prompt,
+                mode=motion_mode or "720p",
+                motion_direction=motion_orientation or "video",
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
             )
@@ -716,9 +729,9 @@ class KlingService:
                 video_urls=video_urls or [],
                 preset_motion="glow",
                 prompt=prompt,
-                motion_direction="video",
-                keep_original_sound=True,
-                mode="std",
+                motion_direction=motion_orientation or "video",
+                keep_original_sound=keep_original_sound,
+                mode=motion_mode or "std",
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,
             )

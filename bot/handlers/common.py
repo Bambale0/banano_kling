@@ -1,6 +1,8 @@
 import logging
+import os
 import re
 import uuid
+from html import escape
 
 import aiosqlite
 from aiogram import Bot, F, Router, types
@@ -13,7 +15,10 @@ from bot.config import config
 from bot.database import (
     DATABASE_PATH,
     accept_partner_agreement,
+    append_gpt55_history,
+    clear_gpt55_history,
     create_partner_withdrawal,
+    get_gpt55_history,
     get_or_create_user,
     get_partner_overview,
     get_recent_partner_withdrawals,
@@ -28,6 +33,7 @@ from bot.image_models import get_image_model_config, resolve_image_model
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
+    get_gpt55_keyboard,
     get_main_menu_keyboard,
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
@@ -53,6 +59,12 @@ class AIAssistantStates(StatesGroup):
     main_menu = State()  # Пользователь в главном меню
     settings = State()  # Пользователь в настройках
     waiting_for_message = State()  # Ожидание сообщения от пользователя
+
+
+class GPT55States(StatesGroup):
+    """Состояния GPT 5.5 чата."""
+
+    waiting_for_message = State()
 
 
 # ⭐ ВАЖНО: Все обработчики сообщений в common.py должны иметь StateFilter(None)
@@ -108,6 +120,50 @@ def _normalize_phone(phone: str) -> str:
     if len(digits) != 11 or not digits.startswith("7"):
         raise ValueError("Телефон должен быть в формате +79991234567")
     return f"+{digits}"
+
+
+def _save_gpt55_upload(file_bytes: bytes, file_ext: str = "jpg") -> str | None:
+    if not config.WEBHOOK_HOST:
+        return None
+    uploads_dir = "static/uploads/gpt55"
+    os.makedirs(uploads_dir, exist_ok=True)
+    safe_ext = re.sub(r"[^a-zA-Z0-9]", "", file_ext or "jpg")[:8] or "jpg"
+    filename = f"{uuid.uuid4().hex}.{safe_ext}"
+    filepath = os.path.join(uploads_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(file_bytes)
+    return f"{config.WEBHOOK_HOST.rstrip('/')}/uploads/gpt55/{filename}"
+
+
+async def _build_gpt55_user_content(message: types.Message) -> list[dict] | None:
+    text = (message.text or message.caption or "").strip()
+    content = []
+    if text:
+        content.append({"type": "input_text", "text": text})
+
+    if message.photo:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        image_url = _save_gpt55_upload(downloaded.read(), "jpg")
+        if image_url:
+            content.append({"type": "input_image", "image_url": image_url})
+
+    if message.document:
+        document = message.document
+        file = await message.bot.get_file(document.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        ext = (document.file_name or "file").rsplit(".", 1)[-1]
+        file_url = _save_gpt55_upload(downloaded.read(), ext)
+        if file_url:
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": f"Пользователь приложил файл: {document.file_name or 'document'}\nURL: {file_url}",
+                }
+            )
+
+    return content or None
 
 
 def _split_full_name(full_name: str) -> str:
@@ -1387,6 +1443,100 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
 async def handle_ignore_callback(callback: types.CallbackQuery):
     """Обработчик для неинтерактивных кнопок-заголовков и разделителей"""
     await callback.answer()  # Просто закрываем уведомление о нажатии
+
+
+# =============================================================================
+# GPT 5.5
+# =============================================================================
+
+
+@router.callback_query(F.data == "menu_gpt55")
+async def open_gpt55(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(GPT55States.waiting_for_message)
+    history = await get_gpt55_history(callback.from_user.id, limit=20)
+    history_note = (
+        f"\n\n🧩 Контекст сохранён: <code>{len(history)}</code> сообщений."
+        if history
+        else "\n\n🧩 Контекст пока пуст. Я начну помнить диалог с этого сообщения."
+    )
+    text = (
+        "🧠 <b>GPT 5.5</b>\n\n"
+        "Пиши задачу, вопрос или код. Можно отправить фото с подписью — "
+        "я разберу изображение и отвечу с учётом твоего запроса."
+        f"{history_note}\n\n"
+        "Команды:\n"
+        "• /clear — очистить контекст\n"
+        "• Главное меню — выйти из чата"
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_gpt55_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "gpt55_clear")
+async def clear_gpt55(callback: types.CallbackQuery, state: FSMContext):
+    await clear_gpt55_history(callback.from_user.id)
+    await state.set_state(GPT55States.waiting_for_message)
+    await callback.message.edit_text(
+        "🧠 <b>GPT 5.5</b>\n\nКонтекст очищен. Напиши новое сообщение.",
+        reply_markup=get_gpt55_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer("Контекст очищен")
+
+
+@router.message(StateFilter(GPT55States.waiting_for_message), Command("clear"))
+async def clear_gpt55_command(message: types.Message, state: FSMContext):
+    await clear_gpt55_history(message.from_user.id)
+    await state.set_state(GPT55States.waiting_for_message)
+    await message.answer(
+        "🧹 Контекст GPT 5.5 очищен.", reply_markup=get_gpt55_keyboard()
+    )
+
+
+@router.message(StateFilter(GPT55States.waiting_for_message))
+async def handle_gpt55_message(message: types.Message, state: FSMContext):
+    from bot.services.gpt55_service import gpt55_service
+
+    user_content = await _build_gpt55_user_content(message)
+    if not user_content:
+        await message.answer(
+            "Отправь текст, фото с подписью или документ.",
+            reply_markup=get_gpt55_keyboard(),
+        )
+        return
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+    history = await get_gpt55_history(message.from_user.id, limit=20)
+
+    try:
+        response = await gpt55_service.ask(
+            user_content=user_content,
+            history=history,
+            reasoning_effort="high",
+            web_search=True,
+        )
+        if not response:
+            await message.answer(
+                "Не удалось получить ответ GPT 5.5. Попробуй ещё раз позже.",
+                reply_markup=get_gpt55_keyboard(),
+            )
+            return
+
+        await append_gpt55_history(message.from_user.id, user_content, response)
+        safe_response = escape(response)
+        await message.answer(
+            f"🧠 <b>GPT 5.5:</b>\n\n{safe_response}",
+            reply_markup=get_gpt55_keyboard(),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.exception("GPT 5.5 chat error: %s", e)
+        await message.answer(
+            "Что-то пошло не так в GPT 5.5 чате. Попробуй ещё раз.",
+            reply_markup=get_gpt55_keyboard(),
+        )
 
 
 # =============================================================================

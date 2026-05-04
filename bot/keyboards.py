@@ -13,6 +13,13 @@ from bot.image_models import (
     resolve_image_model,
 )
 from bot.services.preset_manager import preset_manager
+from bot.video_models import (
+    VIDEO_OPTION_LABELS,
+    get_video_model_config,
+    get_video_models_for_type,
+    get_video_option_label,
+    normalize_video_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +33,7 @@ def get_main_menu_keyboard(user_credits: int = 0):
     """Главное меню бота - согласно ux.md"""
     builder = InlineKeyboardBuilder()
 
+    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
@@ -36,7 +44,7 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🆘 Тех. поддержка", callback_data="menu_support")
     builder.button(text="❓ Помощь бота", callback_data="menu_help")
 
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(1, 2, 2, 2, 2)
 
     return builder.as_markup()
 
@@ -113,6 +121,10 @@ def get_admin_price_video_keyboard(price_config: dict):
         "hailuo_std": "Hailuo Std",
         "hailuo_i2v_pro": "Hailuo I2V Pro",
         "hailuo_i2v_std": "Hailuo I2V Std",
+        "happyhorse_t2v": "HappyHorse T2V",
+        "happyhorse_i2v": "HappyHorse I2V",
+        "happyhorse_ref2v": "HappyHorse Ref2V",
+        "happyhorse_edit": "HappyHorse Edit",
     }
     builder = InlineKeyboardBuilder()
     video_models = price_config.get("costs_reference", {}).get("video_models", {})
@@ -158,6 +170,10 @@ SUPPORTED_RATIOS = {
     "hailuo_std": ["16:9"],
     "hailuo_i2v_pro": ["16:9"],
     "hailuo_i2v_std": ["16:9"],
+    "happyhorse_t2v": ["16:9", "9:16", "1:1"],
+    "happyhorse_i2v": ["16:9"],
+    "happyhorse_ref2v": ["16:9", "9:16", "1:1"],
+    "happyhorse_edit": ["16:9"],
 }
 
 
@@ -171,11 +187,23 @@ def get_create_video_keyboard(
     current_video_model: str = None,  # Алиас для обратной совместимости
     current_grok_mode: str = "normal",
     current_hailuo_resolution: str = "768P",
+    current_video_options: dict | None = None,
 ):
     """Меню создания видео - всё на одном экране"""
     # Если передан current_video_model, используем его
     if current_video_model is not None:
         current_model = current_video_model
+    legacy_options = {
+        "mode": current_grok_mode,
+        "quality": current_mode,
+        "motion_quality": current_mode,
+        "character_orientation": current_orientation,
+    }
+    if current_model.startswith("hailuo"):
+        legacy_options["resolution"] = current_hailuo_resolution
+    if current_video_options:
+        legacy_options.update(current_video_options)
+    current_video_options = normalize_video_options(current_model, legacy_options)
 
     builder = InlineKeyboardBuilder()
 
@@ -197,99 +225,16 @@ def get_create_video_keyboard(
         ),
     )
 
-    # Модели - цены из preset_manager (синхронно с списанием)
-    v26_cost = preset_manager.get_video_cost("v26_pro", current_duration)
-    v3_std_cost = preset_manager.get_video_cost("v3_std", current_duration)
-    v3_pro_cost = preset_manager.get_video_cost("v3_pro", current_duration)
-    omni_cost = preset_manager.get_video_cost("v3_omni_std", current_duration)
-    v3_omni_pro_cost = preset_manager.get_video_cost("v3_omni_pro", current_duration)
-    v26_motion_cost = preset_manager.get_video_cost("v26_motion_pro", current_duration)
-    grok_cost = preset_manager.get_video_cost("grok_imagine", current_duration)
-
-    seedance_cost = preset_manager.get_video_cost("seedance2", current_duration)
-    runway_cost = preset_manager.get_video_cost("runway", current_duration)
-    aleph_cost = preset_manager.get_video_cost("aleph", current_duration)
-    glow_cost = preset_manager.get_video_cost("glow", current_duration)
-
-    veo3_fast_cost = preset_manager.get_video_cost("veo3_fast", current_duration)
-    veo3_cost = preset_manager.get_video_cost("veo3", current_duration)
-    hailuo_23_pro_cost = preset_manager.get_video_cost(
-        "hailuo_23_pro", current_duration
-    )
-    hailuo_23_std_cost = preset_manager.get_video_cost(
-        "hailuo_23_std", current_duration
-    )
-    hailuo_pro_cost = preset_manager.get_video_cost("hailuo_pro", current_duration)
-    hailuo_std_cost = preset_manager.get_video_cost("hailuo_std", current_duration)
-    hailuo_i2v_pro_cost = preset_manager.get_video_cost(
-        "hailuo_i2v_pro", current_duration
-    )
-    hailuo_i2v_std_cost = preset_manager.get_video_cost(
-        "hailuo_i2v_std", current_duration
-    )
-
-    if current_v_type == "video":
-        models = [
+    models = []
+    for model_id in get_video_models_for_type(current_v_type):
+        model_config = get_video_model_config(model_id)
+        models.append(
             {
-                "key": "aleph",
-                "label": "🔮 Aleph Video (требует видео реф.)",
-                "cost": aleph_cost,
-            },
-            {
-                "key": "glow",
-                "label": "✨ Kling Glow (требует видео реф.)",
-                "cost": glow_cost,
-            },
-        ]
-    elif current_v_type == "imgtxt":
-        # Только модели, поддерживающие изображение как входные данные
-        models = [
-            {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
-            {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
-            {"key": "seedance2", "label": "🌱 Seedance 2.0", "cost": seedance_cost},
-            {"key": "runway", "label": "🎥 Runway AI", "cost": runway_cost},
-            {"key": "grok_imagine", "label": "🧠 Grok Imagine", "cost": grok_cost},
-            {"key": "veo3_fast", "label": "🎬 Veo 3.1 Fast", "cost": veo3_fast_cost},
-            {
-                "key": "hailuo_23_pro",
-                "label": "🌊 Hailuo 2.3 I2V Pro",
-                "cost": hailuo_23_pro_cost,
-            },
-            {
-                "key": "hailuo_23_std",
-                "label": "🌊 Hailuo 2.3 I2V Std",
-                "cost": hailuo_23_std_cost,
-            },
-            {
-                "key": "hailuo_i2v_pro",
-                "label": "🌊 Hailuo 02 I2V Pro",
-                "cost": hailuo_i2v_pro_cost,
-            },
-            {
-                "key": "hailuo_i2v_std",
-                "label": "🌊 Hailuo 02 I2V Std",
-                "cost": hailuo_i2v_std_cost,
-            },
-        ]
-    else:
-        # Текстовый режим (text): только t2v модели
-        models = [
-            {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
-            {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
-            {"key": "runway", "label": "🎥 Runway AI", "cost": runway_cost},
-            {"key": "veo3_fast", "label": "🎬 Veo 3.1 Fast", "cost": veo3_fast_cost},
-            {"key": "veo3", "label": "🎬 Veo 3.1 Pro", "cost": veo3_cost},
-            {
-                "key": "hailuo_pro",
-                "label": "🌊 Hailuo 02 T2V Pro",
-                "cost": hailuo_pro_cost,
-            },
-            {
-                "key": "hailuo_std",
-                "label": "🌊 Hailuo 02 T2V Std",
-                "cost": hailuo_std_cost,
-            },
-        ]
+                "key": model_id,
+                "label": model_config["label"],
+                "cost": preset_manager.get_video_cost(model_id, current_duration),
+            }
+        )
 
     model_buttons = []
     for model_info in models:
@@ -306,7 +251,8 @@ def get_create_video_keyboard(
             builder.row(*model_buttons[index : index + 2])
 
     # Размер - только поддерживаемые моделью
-    supported_ratios = SUPPORTED_RATIOS.get(current_model, ["16:9", "9:16", "1:1"])
+    model_config = get_video_model_config(current_model)
+    supported_ratios = model_config.get("aspect_ratios", ["16:9", "9:16", "1:1"])
     ratio_buttons = []
     for ratio in supported_ratios:
         check = "✅ " if current_ratio == ratio else ""
@@ -320,21 +266,8 @@ def get_create_video_keyboard(
     for index in range(0, len(ratio_buttons), 3):
         builder.row(*ratio_buttons[index : index + 3])
 
-    # Длительности: показываем только поддерживаемые моделью значения
-    model_data_for_durations = (
-        preset_manager._price_config.get("costs_reference", {})
-        .get("video_models", {})
-        .get(current_model, {})
-    )
-    is_fixed_cost = "fixed_cost" in model_data_for_durations
-    duration_costs = model_data_for_durations.get("duration_costs", {})
-
-    if not is_fixed_cost:
-        if duration_costs:
-            available_durations = sorted([int(k) for k in duration_costs.keys()])
-        else:
-            available_durations = [5, 10, 15]
-
+    available_durations = model_config.get("durations") or []
+    if available_durations:
         duration_buttons = []
         for dur in available_durations:
             check = "✅ " if current_duration == dur else ""
@@ -346,62 +279,22 @@ def get_create_video_keyboard(
         for index in range(0, len(duration_buttons), 4):
             builder.row(*duration_buttons[index : index + 4])
 
-    # Grok Imagine modes
-    if current_model == "grok_imagine":
-        normal_check = "✅ " if current_grok_mode == "normal" else ""
-        fun_check = "✅ " if current_grok_mode == "fun" else ""
-        spicy_check = "✅ " if current_grok_mode == "spicy" else ""
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{normal_check}Normal", callback_data="grok_mode_normal"
-            ),
-            InlineKeyboardButton(
-                text=f"{fun_check}Fun 🎉", callback_data="grok_mode_fun"
-            ),
-            InlineKeyboardButton(
-                text=f"{spicy_check}Spicy 🔥", callback_data="grok_mode_spicy"
-            ),
-        )
-
-    # Hailuo resolution (768P / 1080P) for supported models
-    _hailuo_res_models = {"hailuo_23_pro", "hailuo_23_std", "hailuo_i2v_std"}
-    if current_model in _hailuo_res_models:
-        res_768_check = "✅ " if current_hailuo_resolution == "768P" else ""
-        res_1080_check = "✅ " if current_hailuo_resolution == "1080P" else ""
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{res_768_check}📺 768P", callback_data="hailuo_res_768p"
-            ),
-            InlineKeyboardButton(
-                text=f"{res_1080_check}🖥 1080P", callback_data="hailuo_res_1080p"
-            ),
-        )
-
-    if current_v_type == "video":
-        # Motion Control options
-        mode_check_720p = "✅ " if current_mode == "720p" else ""
-        mode_check_1080p = "✅ " if current_mode == "1080p" else ""
-        orient_check_image = "✅ " if current_orientation == "image" else ""
-        orient_check_video = "✅ " if current_orientation == "video" else ""
-
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{mode_check_720p}📱 720p (std)", callback_data="v_mode_720p"
-            ),
-            InlineKeyboardButton(
-                text=f"{mode_check_1080p}🖥 1080p (pro)", callback_data="v_mode_1080p"
-            ),
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text=f"{orient_check_image}🖼 Image orient",
-                callback_data="v_orientation_image",
-            ),
-            InlineKeyboardButton(
-                text=f"{orient_check_video}🎬 Video orient",
-                callback_data="v_orientation_video",
-            ),
-        )
+    # Дополнительные возможности модели: качество, разрешение, звук, режимы.
+    for option_name, allowed_values in model_config.get("options", {}).items():
+        option_label = VIDEO_OPTION_LABELS.get(option_name, option_name)
+        buttons = []
+        for value in allowed_values:
+            value_token = str(value).lower()
+            check = "✅ " if current_video_options.get(option_name) == value else ""
+            buttons.append(
+                InlineKeyboardButton(
+                    text=f"{check}{option_label}: {get_video_option_label(option_name, value)}",
+                    callback_data=f"vopt_{option_name}_{value_token}",
+                )
+            )
+        row_size = 2 if len(buttons) <= 4 else 3
+        for index in range(0, len(buttons), row_size):
+            builder.row(*buttons[index : index + row_size])
 
     # Рассчитываем цену
     total_cost = preset_manager.get_video_cost(current_model, current_duration)
@@ -759,6 +652,15 @@ def get_ai_assistant_keyboard():
     """Клавиатура для ИИ-ассистента"""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 В главное меню", callback_data="back_main")
+    return builder.as_markup()
+
+
+def get_gpt55_keyboard():
+    """Клавиатура GPT 5.5 чата"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧹 Очистить контекст", callback_data="gpt55_clear")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 

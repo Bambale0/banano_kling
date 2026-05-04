@@ -88,6 +88,7 @@ class Config:
     # which caused WEBHOOK_PATH to be empty even when WEBHOOK_PATH was set.
     # Default to "/webhook" to avoid registering an empty route in aiohttp.
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
+    WEBHOOK_BIND_HOST: str = os.getenv("WEBHOOK_BIND_HOST", "127.0.0.1")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
 
     # База данных

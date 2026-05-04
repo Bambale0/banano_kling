@@ -1166,6 +1166,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 service_name += " T2I"
             elif "image-to-image" in model_lower:
                 service_name += " I2I"
+        elif "happyhorse" in model_lower:
+            service_name = "HappyHorse"
+            if "text-to-video" in model_lower:
+                service_name += " T2V"
+            elif "image-to-video" in model_lower:
+                service_name += " I2V"
+            elif "reference-to-video" in model_lower:
+                service_name += " Ref2V"
+            elif "video-edit" in model_lower:
+                service_name += " Edit"
         else:
             service_name = "AI"
 
@@ -1229,8 +1239,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             try:
                 param_str = webhook_data.get("param", "{}")
                 param_json = json.loads(param_str)
-                input_str = param_json.get("input", "{}")
-                input_json = json.loads(input_str)
+                input_value = param_json.get("input", {})
+                input_json = (
+                    json.loads(input_value)
+                    if isinstance(input_value, str)
+                    else input_value
+                )
                 sources = []
                 for key in [
                     "image_urls",
@@ -1238,6 +1252,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "input_urls",
                     "first_frame_url",
                     "image_url",
+                    "reference_image",
+                    "video_url",
                 ]:
                     val = input_json.get(key)
                     if val:
@@ -1276,10 +1292,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
             prompt_or_preset = (
                 f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                if task.preset_id == "no_preset" and task.prompt
+                if task.preset_id in {"no_preset", "no_preset_video"} and task.prompt
                 else task.preset_id
             )
-            label = "Промпт" if task.preset_id == "no_preset" else "Пресет"
+            label = (
+                "Промпт"
+                if task.preset_id in {"no_preset", "no_preset_video"}
+                else "Пресет"
+            )
 
             full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
 \n🎯 {label}: {prompt_or_preset}{source_links}
@@ -1749,10 +1769,12 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
 
-        site = web.TCPSite(runner, "0.0.0.0", config.WEBHOOK_PORT)
+        site = web.TCPSite(runner, config.WEBHOOK_BIND_HOST, config.WEBHOOK_PORT)
         await site.start()
 
-        logger.info(f"Server started on port {config.WEBHOOK_PORT}")
+        logger.info(
+            f"Server started on {config.WEBHOOK_BIND_HOST}:{config.WEBHOOK_PORT}"
+        )
 
         # Держим бота запущенным
         await asyncio.Event().wait()

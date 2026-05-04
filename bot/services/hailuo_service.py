@@ -83,6 +83,8 @@ class HailuoService:
         end_image_url: Optional[str] = None,
         duration: int = 6,
         resolution: str = "768P",
+        nsfw_checker: bool = False,
+        prompt_optimizer: bool = False,
         callback_url: Optional[str] = None,
     ) -> Optional[Dict]:
         """Generate video using Hailuo. Returns {'task_id': ...} on success."""
@@ -93,7 +95,7 @@ class HailuoService:
 
         input_data: Dict = {
             "prompt": prompt,
-            "nsfw_checker": False,
+            "nsfw_checker": nsfw_checker,
         }
 
         if model_key in HAILUO_HAS_DURATION:
@@ -114,7 +116,7 @@ class HailuoService:
             "hailuo_i2v_pro",
             "hailuo_i2v_std",
         ):
-            input_data["prompt_optimizer"] = False
+            input_data["prompt_optimizer"] = prompt_optimizer
 
         if image_url:
             input_data["image_url"] = image_url

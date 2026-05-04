@@ -53,6 +53,7 @@ class VeoService:
         aspect_ratio: str = "16:9",
         resolution: str = "720p",
         image_urls: Optional[List[str]] = None,
+        enable_translation: bool = True,
         callback_url: Optional[str] = None,
     ) -> Optional[Dict]:
         """Generate video with Veo 3.1. Returns {'task_id': ...} on success."""
@@ -63,7 +64,7 @@ class VeoService:
             "model": api_model,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
-            "enableTranslation": True,
+            "enableTranslation": enable_translation,
         }
 
         # Only veo3_fast supports image reference input

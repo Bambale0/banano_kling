@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -58,6 +59,7 @@ class GenerationTask:
     status: str = "pending"
     telegram_id: Optional[int] = None
     result_url: Optional[str] = None
+    reference_images: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -160,6 +162,7 @@ async def init_db():
                 cost INTEGER,
                 status TEXT DEFAULT 'pending',
                 result_url TEXT,
+                reference_images TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
@@ -196,6 +199,12 @@ async def init_db():
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN cost INTEGER")
         except aiosqlite.OperationalError:
             pass  # Column already exists
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN reference_images TEXT"
+            )
+        except aiosqlite.OperationalError:
+            pass
 
         # Миграция: добавляем provider в transactions
         try:
@@ -231,6 +240,17 @@ async def init_db():
                 preferred_i2v_model TEXT DEFAULT 'v3_std',
                 image_service TEXT DEFAULT 'nanobanana',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gpt55_conversations (
+                user_id INTEGER PRIMARY KEY,
+                messages_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
@@ -1162,13 +1182,15 @@ async def add_generation_task(
     aspect_ratio: Optional[str] = None,
     prompt: Optional[str] = None,
     cost: Optional[int] = None,
+    reference_images: Optional[str] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         result = await db.execute(
             """INSERT OR IGNORE INTO generation_tasks 
-               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, status) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+               (user_id, telegram_id, task_id, type, preset_id, model,
+                duration, aspect_ratio, prompt, cost, reference_images, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
             (
                 user_id,
                 telegram_id,
@@ -1180,6 +1202,7 @@ async def add_generation_task(
                 aspect_ratio,
                 prompt,
                 cost,
+                reference_images,
             ),
         )
         await db.commit()
@@ -1220,6 +1243,9 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             status=row["status"],
             telegram_id=row["telegram_id"],
             result_url=row["result_url"],
+            reference_images=(
+                row["reference_images"] if "reference_images" in row.keys() else None
+            ),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -1571,4 +1597,69 @@ async def save_user_settings(
             await db.commit()
             logger.info(f"Created settings for user {telegram_id}")
 
+        return True
+
+
+async def get_gpt55_history(telegram_id: int, limit: int = 20) -> list[dict]:
+    """Возвращает последние сообщения GPT 5.5 чата пользователя."""
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT messages_json FROM gpt55_conversations WHERE user_id = ?",
+            (user.id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return []
+        try:
+            messages = json.loads(row[0] or "[]")
+        except json.JSONDecodeError:
+            logger.warning("Invalid GPT 5.5 history JSON for user %s", telegram_id)
+            return []
+        if not isinstance(messages, list):
+            return []
+        return messages[-limit:]
+
+
+async def append_gpt55_history(
+    telegram_id: int,
+    user_content: list[dict],
+    assistant_text: str,
+    limit: int = 20,
+) -> bool:
+    """Добавляет пару user/assistant в историю GPT 5.5."""
+    user = await get_or_create_user(telegram_id)
+    messages = await get_gpt55_history(telegram_id, limit=limit)
+    messages.extend(
+        [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_text},
+        ]
+    )
+    messages = messages[-limit:]
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO gpt55_conversations (user_id, messages_json, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                messages_json = excluded.messages_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user.id, json.dumps(messages, ensure_ascii=False)),
+        )
+        await db.commit()
+        return True
+
+
+async def clear_gpt55_history(telegram_id: int) -> bool:
+    """Очищает историю GPT 5.5 чата пользователя."""
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "DELETE FROM gpt55_conversations WHERE user_id = ?",
+            (user.id,),
+        )
+        await db.commit()
         return True

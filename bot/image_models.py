@@ -145,6 +145,7 @@ IMAGE_MODEL_CONFIGS = {
         },
         "options": {
             "aspect_ratio": ["1:1", "16:9", "9:16", "4:3", "3:2"],
+            "quality": ["basic", "high"],
             "nsfw_checker": [False, True],
         },
         "service": "seedream",
@@ -163,6 +164,7 @@ IMAGE_MODEL_CONFIGS = {
         },
         "options": {
             "aspect_ratio": ["1:1", "16:9", "9:16", "4:3", "3:2"],
+            "quality": ["basic", "high"],
             "nsfw_checker": [False, True],
         },
         "service": "seedream",
@@ -176,6 +178,7 @@ IMAGE_OPTION_LABELS = {
     "resolution": "Разрешение",
     "output_format": "Формат файла",
     "enable_pro": "Pro режим",
+    "quality": "Качество",
     "nsfw_checker": "NSFW check",
 }
 
@@ -215,6 +218,8 @@ def get_image_option_label(option_name: str, value):
         return str(value).upper()
     if option_name == "enable_pro":
         return "⚡ Pro" if value else "Std"
+    if option_name == "quality":
+        return "Basic" if value == "basic" else str(value).upper()
     if option_name == "nsfw_checker":
         return "NSFW ON" if value else "NSFW OFF"
     return str(value)
