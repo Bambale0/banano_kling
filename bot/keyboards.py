@@ -688,12 +688,12 @@ def get_create_image_keyboard(
 
     # Размер
     supported_ratios = (
-        ["auto", "1:1", "9:16", "16:9", "4:3", "3:4"]
+        ["auto", "1:1", "9:16", "16:9", "4:3", "3:4", "2:3"]
         if current_service == "flux_pro"
         else (
             ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
             if current_service == "seedream_edit"
-            else ["1:1", "16:9", "9:16", "4:3", "3:2"]
+            else ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]
         )
     )
     ratio_buttons = []
@@ -1081,7 +1081,8 @@ def get_image_aspect_ratio_keyboard(preset_id: str, current_ratio: str = "1:1"):
         ("1:1", "⬜"),
         ("16:9", "📺"),
         ("9:16", "📱"),
-        ("4:5", "🖼"),
+        ("3:4", "🖼"),
+        ("2:3", "📐"),
         ("21:9", "🎬"),
     ]:
         emoji = "✅ " if ratio == current_ratio else ""
