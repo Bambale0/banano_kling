@@ -61,6 +61,7 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "aleph": "Aleph Video",
         "glow": "Kling Glow",
         "grok_imagine": "Grok Imagine",
+        "seedance_2": "Bytedance Seedance 2.0",
         "grok_imagine_i2i": "Grok Imagine i2i",
         "v3_std": "Kling 3 Std",
         "v3_pro": "Kling 3 Pro",
@@ -1439,6 +1440,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             service_name = "Kling AI Avatar Pro"
         elif "kling/v2-5-turbo" in model_lower:
             service_name = "Kling 2.5 Turbo Pro"
+        elif "seedance" in model_lower:
+            service_name = "Bytedance Seedance 2.0"
         elif "veo" in model_lower or is_veo_payload:
             service_name = "Veo 3.1"
         else:
@@ -1532,6 +1535,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "image_input",
                     "input_urls",
                     "first_frame_url",
+                    "last_frame_url",
+                    "reference_image_urls",
+                    "reference_video_urls",
+                    "reference_audio_urls",
                     "image_url",
                 ]:
                     val = input_json.get(key)
@@ -1713,6 +1720,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             )
                             logger.info(
                                 f"{service_name} image sent as photo to user {telegram_id}"
+                            )
+                            document = types.BufferedInputFile(
+                                image_bytes, filename="generated.png"
+                            )
+                            await bot_instance.send_document(
+                                chat_id=telegram_id,
+                                document=document,
+                                caption="📎 Оригинал файлом",
+                                reply_markup=kb_link,
+                            )
+                            logger.info(
+                                f"{service_name} image also sent as document to user {telegram_id}"
                             )
                             sent_media = True
                         else:

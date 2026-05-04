@@ -163,6 +163,7 @@ SUPPORTED_RATIOS = {
     "v3_omni_std": ["16:9", "9:16", "1:1"],
     "v3_omni_pro": ["16:9", "9:16", "1:1"],
     "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
+    "seedance_2": ["16:9", "9:16", "1:1"],
     "motion_control_v26": ["1:1"],
     "glow": ["16:9", "9:16", "1:1"],
     "veo3": ["16:9", "9:16", "Auto"],
@@ -178,6 +179,7 @@ VIDEO_MODEL_LABELS = {
     "avatar_pro": "Kling AI Avatar Pro",
     "motion_control_v26": "Kling 2.6 Motion Control",
     "grok_imagine": "Grok Imagine",
+    "seedance_2": "Bytedance Seedance 2.0",
     "glow": "Kling Glow",
     "veo3": "Veo 3.1 Quality",
     "veo3_fast": "Veo 3.1 Fast",
@@ -229,6 +231,11 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
             "grok_imagine",
             "🧠 Grok Imagine",
             preset_manager.get_video_cost("grok_imagine", 5),
+        ),
+        (
+            "seedance_2",
+            "🎞 Seedance 2.0",
+            preset_manager.get_video_cost("seedance_2", 5),
         ),
         (
             "avatar_std",

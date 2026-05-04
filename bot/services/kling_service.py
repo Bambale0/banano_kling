@@ -53,6 +53,7 @@ class KlingService:
 
     NON_KLING_MODELS = {
         "grok_imagine",
+        "seedance_2",
         "grok_imagine_i2i",
         "banana_pro",
         "banana_2",

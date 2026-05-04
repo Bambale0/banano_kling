@@ -168,10 +168,20 @@ VIDEO_MODELS = (
         "max_image_references": 6,
     },
     {
+        "id": "seedance_2",
+        "label": "Bytedance Seedance 2.0",
+        "description": "Мультимодальная видео-модель с текстом, фото и видео-рефами",
+        "durations": [5, 10, 15],
+        "ratios": ["16:9", "9:16", "1:1"],
+        "supports": ["text", "imgtxt", "video"],
+        "max_image_references": 8,
+        "max_video_references": 3,
+    },
+    {
         "id": "veo3_fast",
         "label": "Veo 3.1 Fast",
         "description": "Быстрый кинематографичный рендер",
-        "durations": [5, 8],
+        "durations": [2, 4, 6, 8, 10],
         "ratios": ["16:9", "9:16", "Auto"],
         "supports": ["text", "imgtxt"],
         "veo_generation_types": [
@@ -474,6 +484,7 @@ async def _launch_video_generation_task(
 ) -> dict[str, Any]:
     from bot.services.grok_service import grok_service
     from bot.services.kling_service import kling_service
+    from bot.services.seedance_service import seedance_service
     from bot.services.veo_service import veo_service
 
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
@@ -508,6 +519,46 @@ async def _launch_video_generation_task(
             aspect_ratio=normalized_ratio,
             callBackUrl=callback_url,
         )
+    elif model == "seedance_2":
+        seedance_reference_images: list[str] = []
+        seedance_reference_videos = [url for url in video_references if url][:3]
+        if generation_type == "imgtxt" and image_url:
+            if image_references or seedance_reference_videos:
+                seedance_reference_images.append(image_url)
+                for ref_url in image_references:
+                    if ref_url and ref_url not in seedance_reference_images:
+                        seedance_reference_images.append(ref_url)
+            result = await seedance_service.generate_video(
+                prompt=prompt,
+                duration=duration,
+                aspect_ratio=normalized_ratio,
+                resolution="720p",
+                generate_audio=True,
+                first_frame_url=image_url
+                if not (image_references or seedance_reference_videos)
+                else None,
+                reference_image_urls=seedance_reference_images
+                if (image_references or seedance_reference_videos)
+                else None,
+                reference_video_urls=seedance_reference_videos or None,
+                callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+            )
+        else:
+            if image_url:
+                seedance_reference_images.append(image_url)
+            for ref_url in image_references:
+                if ref_url and ref_url not in seedance_reference_images:
+                    seedance_reference_images.append(ref_url)
+            result = await seedance_service.generate_video(
+                prompt=prompt,
+                duration=duration,
+                aspect_ratio=normalized_ratio,
+                resolution="720p",
+                generate_audio=True,
+                reference_image_urls=seedance_reference_images or None,
+                reference_video_urls=seedance_reference_videos or None,
+                callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+            )
     elif model.startswith("veo3"):
         veo_image_urls = []
         generation_mode = "TEXT_2_VIDEO"

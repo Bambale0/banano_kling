@@ -38,6 +38,8 @@ CANONICAL_VIDEO_ALIASES = {
     "kling-v3-pro": "v3_pro",
     "v26_pro": "v26_pro",
     "grok_imagine": "grok_imagine",
+    "seedance_2": "seedance_2",
+    "bytedance/seedance-2": "seedance_2",
     "glow": "glow",
     "motion_control_v26": "motion_control_v26",
     "motion_control_v30": "motion_control_v30",

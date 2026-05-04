@@ -1068,9 +1068,11 @@ async def _show_video_creation_screen(
     kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
 
     await _normalize_veo_state(state)
+    await _normalize_video_duration_state(state)
     data = await state.get_data()
     current_v_type = data.get("v_type", current_v_type)
     current_model = data.get("v_model", current_model)
+    current_duration = data.get("v_duration", current_duration)
     current_ratio = data.get("v_ratio", current_ratio)
     grok_mode = data.get("grok_mode", grok_mode)
     veo_generation_type = data.get("veo_generation_type", veo_generation_type)
@@ -1120,10 +1122,7 @@ async def _show_video_creation_screen(
         f"   📝 Тип: <code>{get_video_type_label(current_v_type)}</code>",
         f"   🤖 Модель: <code>{get_video_model_label(current_model)}</code>",
     ]
-    if current_model not in {
-        "avatar_std",
-        "avatar_pro",
-    } and not current_model.startswith("veo3"):
+    if current_model not in {"avatar_std", "avatar_pro"}:
         settings_lines.append(f"   ⏱ Длительность: <code>{current_duration} сек</code>")
     if current_model not in {"avatar_std", "avatar_pro"}:
         settings_lines.append(f"   📐 Формат: <code>{current_ratio}</code>")
@@ -1249,6 +1248,45 @@ def _build_video_creation_keyboard(data: dict):
     )
 
 
+def _get_supported_video_durations(model: str) -> list[int]:
+    """Return supported durations for the Telegram video flow."""
+    if model.startswith("veo3"):
+        return [2, 4, 6, 8, 10]
+    if model in {"avatar_std", "avatar_pro", "motion_control_v26", "motion_control_v30"}:
+        return [5]
+
+    model_config = (
+        preset_manager._price_config.get("costs_reference", {})
+        .get("video_models", {})
+        .get(model, {})
+    )
+    duration_costs = model_config.get("duration_costs", {})
+    if duration_costs:
+        return sorted(int(value) for value in duration_costs.keys())
+    return [5, 10, 15]
+
+
+def _normalize_video_duration_value(model: str, duration: int) -> int:
+    """Snap duration to the closest supported value for the selected model."""
+    supported = _get_supported_video_durations(model)
+    duration = int(duration)
+    if duration in supported:
+        return duration
+    return min(supported, key=lambda value: (abs(value - duration), value))
+
+
+async def _normalize_video_duration_state(state: FSMContext) -> None:
+    """Keep stored duration aligned with the selected model."""
+    data = await state.get_data()
+    current_model = data.get("v_model", "v3_std")
+    current_duration = int(data.get("v_duration", 5))
+    normalized_duration = _normalize_video_duration_value(
+        current_model, current_duration
+    )
+    if normalized_duration != current_duration:
+        await state.update_data(v_duration=normalized_duration)
+
+
 async def _normalize_veo_state(state: FSMContext):
     data = await state.get_data()
     current_model = data.get("v_model", "v3_std")
@@ -1302,7 +1340,7 @@ def _build_video_run_summary(
     ]
     if v_model not in {"avatar_std", "avatar_pro"}:
         parts.append(f"📐 <code>{v_ratio}</code>")
-    if v_model not in {"avatar_std", "avatar_pro"} and not v_model.startswith("veo3"):
+    if v_model not in {"avatar_std", "avatar_pro"}:
         parts.append(f"⏱ <code>{v_duration}s</code>")
 
     if v_model == "grok_imagine":
@@ -1986,6 +2024,7 @@ async def _apply_video_model_selection(
         updates["video_flow_step"] = "media"
     await state.update_data(**updates)
     await _normalize_veo_state(state)
+    await _normalize_video_duration_state(state)
     if model.startswith("wanx"):
         await state.update_data(
             wanx_lora_settings=[{"lora_type": "nsfw-general", "lora_strength": 1.0}]
@@ -2130,6 +2169,12 @@ async def handle_video_duration(callback: types.CallbackQuery, state: FSMContext
 
     if duration < 2 or duration > 30:
         await callback.answer()
+        return
+
+    data = await state.get_data()
+    current_model = data.get("v_model", "v3_std")
+    if duration not in _get_supported_video_durations(current_model):
+        await callback.answer("Эта длительность недоступна для выбранной модели")
         return
 
     await state.update_data(v_duration=duration)
@@ -3594,18 +3639,9 @@ async def run_no_preset_video_from_message(
     v_model = data.get("v_model", "v3_std")
     video_urls = data.get("v_reference_videos", [])
 
-    v_duration = int(data.get("v_duration", 5))
-    if v_model.startswith("veo3"):
-        v_duration = max(2, min(v_duration, 10))
-    if v_model == "v26_pro":
-        v_duration = 10 if v_duration == 10 else 5
-    # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
-    if (
-        v_type == "imgtxt"
-        and v_model not in {"grok_imagine"}
-        and not v_model.startswith("veo3")
-    ):
-        v_duration = min(v_duration, 10)
+    v_duration = _normalize_video_duration_value(
+        v_model, int(data.get("v_duration", 5))
+    )
     v_ratio = data.get("v_ratio", "16:9")
     v_image_url = data.get("v_image_url")
     v_video_url = data.get("v_video_url")
@@ -3669,6 +3705,7 @@ async def run_no_preset_video_from_message(
 
     try:
         from bot.services.kling_service import kling_service
+        from bot.services.seedance_service import seedance_service
 
         if v_model.startswith("veo3"):
             veo_image_urls = []
@@ -3755,6 +3792,61 @@ async def run_no_preset_video_from_message(
                     config.kling_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
+        elif v_model == "seedance_2":
+            seedance_reference_images = []
+            seedance_reference_videos = [url for url in (video_urls or []) if url][:3]
+
+            if v_type == "imgtxt":
+                if not image_url:
+                    await message.answer(
+                        "❌ Для Seedance 2.0 в режиме Фото + Текст нужно стартовое фото."
+                    )
+                    if not is_admin:
+                        await add_credits(message.from_user.id, cost)
+                    await processing_msg.delete()
+                    await state.clear()
+                    return
+
+                if image_refs or seedance_reference_videos:
+                    seedance_reference_images.append(image_url)
+                    for ref_url in image_refs:
+                        if ref_url and ref_url not in seedance_reference_images:
+                            seedance_reference_images.append(ref_url)
+
+                result = await seedance_service.generate_video(
+                    prompt=prompt,
+                    duration=v_duration,
+                    aspect_ratio=v_ratio,
+                    resolution="720p",
+                    generate_audio=True,
+                    first_frame_url=image_url
+                    if not (image_refs or seedance_reference_videos)
+                    else None,
+                    reference_image_urls=seedance_reference_images or None,
+                    reference_video_urls=seedance_reference_videos or None,
+                    callBackUrl=(
+                        config.kie_notification_url if config.WEBHOOK_HOST else None
+                    ),
+                )
+            else:
+                if image_url:
+                    seedance_reference_images.append(image_url)
+                for ref_url in image_refs:
+                    if ref_url and ref_url not in seedance_reference_images:
+                        seedance_reference_images.append(ref_url)
+
+                result = await seedance_service.generate_video(
+                    prompt=prompt,
+                    duration=v_duration,
+                    aspect_ratio=v_ratio,
+                    resolution="720p",
+                    generate_audio=True,
+                    reference_image_urls=seedance_reference_images or None,
+                    reference_video_urls=seedance_reference_videos or None,
+                    callBackUrl=(
+                        config.kie_notification_url if config.WEBHOOK_HOST else None
+                    ),
+                )
         else:
             if v_model == "v26_pro" and v_type == "video":
                 await message.answer(
