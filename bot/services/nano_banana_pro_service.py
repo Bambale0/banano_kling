@@ -11,6 +11,10 @@ from bot.services.media_input_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _is_remote_image_reference(source) -> bool:
+    return isinstance(source, str) and source.startswith(("http://", "https://"))
+
+
 class NanoBananaProService:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -78,33 +82,43 @@ class NanoBananaProService:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
-        normalized_image_input = image_sources_to_data_uris(image_input)
         fallback_image_urls = image_sources_to_supported_image_urls(image_input)
-        payload = {
-            "model": "nano-banana-pro",
-            "input": {
-                "prompt": prompt,
-                "image_input": normalized_image_input,
-                "aspect_ratio": aspect_ratio,
-                "resolution": resolution,
-                "output_format": output_format,
-            },
-        }
-        if fallback_image_urls:
-            payload["input"]["image_urls"] = fallback_image_urls
+        normalized_image_input = image_sources_to_data_uris(image_input)
+        use_image_urls = bool(fallback_image_urls) and all(
+            _is_remote_image_reference(source) for source in fallback_image_urls
+        )
+        if use_image_urls and fallback_image_urls:
+            payload = {
+                "model": "google/nano-banana-edit",
+                "input": {
+                    "prompt": prompt,
+                    "image_urls": fallback_image_urls,
+                    "output_format": output_format,
+                    "image_size": aspect_ratio,
+                },
+            }
+        else:
+            payload = {
+                "model": "nano-banana-pro",
+                "input": {
+                    "prompt": prompt,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": resolution,
+                    "output_format": output_format,
+                },
+            }
+            if normalized_image_input:
+                payload["input"]["image_input"] = normalized_image_input
         if callback_url:
             payload["callBackUrl"] = callback_url
 
         logger.info(
-            "Nano Banana Pro create_task: refs=%s aspect_ratio=%s resolution=%s first_ref_kind=%s",
-            len(normalized_image_input),
+            "Nano Banana Pro create_task: refs=%s aspect_ratio=%s resolution=%s transport=%s model=%s",
+            len(fallback_image_urls or normalized_image_input),
             aspect_ratio,
             resolution,
-            (
-                "data-uri"
-                if normalized_image_input and normalized_image_input[0].startswith("data:image/")
-                else "url-or-empty"
-            ),
+            "image_urls" if use_image_urls else "image_input",
+            payload["model"],
         )
 
         resp = await self._post("/api/v1/jobs/createTask", payload)
