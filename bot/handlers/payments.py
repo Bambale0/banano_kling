@@ -16,6 +16,7 @@ from bot.database import (
     get_telegram_id_by_user_id,
     get_transaction_by_order,
     get_user_credits,
+    track_event,
     update_transaction_status,
 )
 from bot.keyboards import (
@@ -105,6 +106,7 @@ async def _render_topup_menu(message: types.Message, provider: str = None):
 @router.callback_query(F.data == "menu_topup")
 async def show_topup_menu(callback: types.CallbackQuery):
     """Показывает меню пополнения баланса"""
+    await track_event(callback.from_user.id, "topup_open")
     await _render_topup_menu(callback.message, config.payment_provider)
 
 
@@ -154,6 +156,12 @@ async def initiate_payment(callback: types.CallbackQuery):
         await callback.answer("Пакет не найден")
         return
 
+    await track_event(
+        callback.from_user.id,
+        "payment_started",
+        {"provider": provider, "package_id": package_id},
+    )
+
     # Генерируем уникальный NUMERIC order_id для Robokassa (1..2^63-1)
     import random
 
@@ -202,6 +210,17 @@ async def initiate_payment(callback: types.CallbackQuery):
             amount_rub=package["price_rub"],
             status="pending",
         )
+        await track_event(
+            callback.from_user.id,
+            "payment_created",
+            {
+                "provider": provider,
+                "package_id": package_id,
+                "order_id": order_id,
+                "credits": total_credits,
+                "amount_rub": package["price_rub"],
+            },
+        )
 
         bonus_text = ""
         if package.get("bonus_credits", 0) > 0:
@@ -228,6 +247,11 @@ async def initiate_payment(callback: types.CallbackQuery):
             f"Попробуйте позже или обратитесь в поддержку.",
             reply_markup=get_back_keyboard("back_main"),
             parse_mode="HTML",
+        )
+        await track_event(
+            callback.from_user.id,
+            "payment_create_failed",
+            {"provider": provider, "package_id": package_id, "error": error_msg},
         )
 
 
@@ -287,6 +311,17 @@ async def check_payment_status(callback: types.CallbackQuery):
         await update_transaction_status(order_id, "completed")
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
+        )
+        await track_event(
+            telegram_id,
+            "payment_completed",
+            {
+                "provider": transaction.provider,
+                "order_id": order_id,
+                "credits": transaction.credits,
+                "amount_rub": transaction.amount_rub,
+                "source": "manual_check",
+            },
         )
 
         bonus_text = ""
@@ -356,6 +391,17 @@ async def handle_robokassa_result(request):
                 await update_transaction_status(order_id, "completed")
                 referral_bonus = await credit_first_payment_referral_bonus(
                     telegram_id, transaction.credits, transaction.amount_rub
+                )
+                await track_event(
+                    telegram_id,
+                    "payment_completed",
+                    {
+                        "provider": "robokassa",
+                        "order_id": order_id,
+                        "credits": transaction.credits,
+                        "amount_rub": transaction.amount_rub,
+                        "source": "robokassa_webhook",
+                    },
                 )
                 logger.info(f"Robokassa payment completed for order {order_id}")
 
@@ -503,6 +549,17 @@ async def handle_yookassa_webhook(request):
                 await update_transaction_status(order_id, "completed")
                 referral_bonus = await credit_first_payment_referral_bonus(
                     telegram_id, transaction.credits, transaction.amount_rub
+                )
+                await track_event(
+                    telegram_id,
+                    "payment_completed",
+                    {
+                        "provider": "yookassa",
+                        "order_id": order_id,
+                        "credits": transaction.credits,
+                        "amount_rub": transaction.amount_rub,
+                        "source": "yookassa_webhook",
+                    },
                 )
             except Exception as exc:
                 logger.exception(

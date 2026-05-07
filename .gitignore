@@ -1,70 +1,89 @@
-# Python
+# Python cache and artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
+develop-eggs/
 lib/
 lib64/
 parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
 *.egg-info/
 .installed.cfg
 *.egg
-*.pyc
-# Virtual Environment
-venv/
-ENV/
-env/
+
+# Virtual environments
 .venv/
-logs
-# Environment variables / Secrets
-.env
-*.env.local
 venv/
-# Database
+env/
+ENV/
+
+# Local environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime files
+logs/
+*.log
+bot.pid
+*.pid
+*.pid.lock
+
+# Local databases and generated data
 *.db
 *.sqlite
 *.sqlite3
-tests/
-# Logs
-logs/
-*.log
+data/orders.json
+data/products.json
+data/settings.json
 
-# Cache
-.cache/
-.pytest_cache/
-.mypy_cache/
+# Frontend build output
+miniapp/node_modules/
+miniapp/dist/
+miniapp/.vite/
+static/miniapp/
 
-# IDE
+# Generated uploads
+static/uploads/
+
+# Temporary and backup files
+tmp/
+temp/
+*.tmp
+*.bak
+*.bak.*
+*.orig
+
+# Tooling
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+.codex
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Bot specific
-bot.pid
-*.pid
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Static uploads (generated content)
-static/
-static/uploads/
+# Local nginx helper output
 *.conf0

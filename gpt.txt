@@ -1,0 +1,251 @@
+[1;36m[2loop-debug][0m Testing public Mini App frontend
+HTTP/2 500 
+server: nginx/1.18.0 (Ubuntu)
+date: Sat, 25 Apr 2026 01:21:16 GMT
+content-type: text/html
+content-length: 186
+
+<html>
+<head><title>500 Internal Server Error</title></head>
+<body>
+<center><h1>500 Internal Server Error</h1></center>
+<hr><center>nginx/1.18.0 (Ubuntu)</center>
+</body>
+</html>
+
+[1;36m[2loop-debug][0m Testing public API health
+HTTP/2 200 
+server: nginx/1.18.0 (Ubuntu)
+date: Sat, 25 Apr 2026 01:21:16 GMT
+content-type: application/json; charset=utf-8
+content-length: 40
+
+{"ok": true, "service": "2loop-miniapp"}
+[1;36m[2loop-debug][0m Testing local API health
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 40
+Date: Sat, 25 Apr 2026 01:21:16 GMT
+Server: Python/3.10 aiohttp/3.13.5
+
+{"ok": true, "service": "2loop-miniapp"}
+[1;36m[2loop-debug][0m Testing local products endpoint
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 372
+Date: Sat, 25 Apr 2026 01:21:16 GMT
+Server: Python/3.10 aiohttp/3.13.5
+
+{"products": [{"id": 1, "article": "2LOOP-001", "name": "Crystal Hair Loop", "category": "Hair", "price": 2900, "stock": 12, "badge": "Bestseller", "description": "A refined crystal hair accessory for competition-ready styling.", "details": "Hand-finished shine, lightweight hold, suitable for competition hairstyles.", "images": [], "mainImageIndex": 0, "active": true}]}
+[1;36m[2loop-debug][0m Testing local settings endpoint
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: 49
+Date: Sat, 25 Apr 2026 01:21:16 GMT
+Server: Python/3.10 aiohttp/3.13.5
+
+{"settings": {"theme": "dark", "brand": "2loop"}}
+[1;36m[2loop-debug][0m Testing direct static miniapp files
+total 16K
+drwxr-xr-x 3 root root 4.0K Apr 25 03:34 .
+drwxr-xr-x 5 root root 4.0K Apr 25 03:34 ..
+drwxr-xr-x 2 root root 4.0K Apr 25 03:34 assets
+-rw-r--r-- 1 root root  532 Apr 25 03:34 index.html
+
+[1;36m[2loop-debug][0m Recent app log errors
+2026-04-25 00:33:47,231 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /wp-config-backup.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,231 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /backup/wp-config.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,231 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.env.bak HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,231 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.env.backup HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,232 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.env.old HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,232 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.env.save HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,233 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /wp-config.php::$DATA HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,233 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/database.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,234 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%65%6Ev.%62%61%63%6B%75%70 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,234 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/database.php::$DATA HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,235 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/mail.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,235 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%65%6Ev.%62%61%6B HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,235 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/services.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,236 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%65%6Ev.%6F%6C%64 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,236 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%65%6Ev.%73%61%76%65 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,237 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%2565%256Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,237 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/services.php::$DATA HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,237 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config.php.bak HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,238 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /api/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,238 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config.php.old HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,238 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /storage/logs/laravel.log HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,239 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /ecosystem.config.js HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,239 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /backend/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,240 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /app/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,240 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /public/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,241 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /admin/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,241 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/default.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,242 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/production.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,242 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /laravel/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,242 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/local.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,243 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /actuator/env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,244 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%63%74%75%61%74%6F%72/%65%6E%76 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,244 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,244 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /src/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,245 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /server/.env HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,246 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%70%69/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,246 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /actuator/configprops HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,247 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%63%74%75%61%74%6F%72/%63%6F%6E%66%69%67%70%72%6F%70%73 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,247 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%62%61%63%6B%65%6E%64/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,247 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /actuator/beans HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,247 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%63%74%75%61%74%6F%72/%62%65%61%6E%73 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,248 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /application.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,248 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%70%70/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,249 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%70%75%62%6C%69%63/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,250 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%61%64%6D%69%6E/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,250 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%6C%61%72%61%76%65%6C/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,251 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /application.properties HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,252 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /application-prod.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,252 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%63%6F%6E%66%69%67/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,252 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /appsettings.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,253 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /application-production.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,253 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /appsettings.Production.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,253 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%73%72%63/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,254 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%73%65%72%76%65%72/.%65%6Ev HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,254 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /appsettings.Development.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,255 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /web.config HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,255 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /connectionstrings.config HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,255 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/secrets.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,256 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/database.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,257 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /serverless.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,258 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /terraform.tfstate HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,258 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%74%65%72%72%61%66%6F%72%6D.%74%66%73%74%61%74%65 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,258 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /terraform.tfvars HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,259 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%74%65%72%72%61%66%6F%72%6D.%74%66%76%61%72%73 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,260 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /secrets.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,260 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%73%65%63%72%65%74%73.%6A%73%6F%6E HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,261 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /secrets.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,261 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /credentials.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,261 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /%63%72%65%64%65%6E%74%69%61%6C%73.%6A%73%6F%6E HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,262 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.git/config HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,263 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%67%69%74/%63%6F%6E%66%69%67 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,263 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%2567%2569%2574/%2563%256F%256E%2566%2569%2567 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,264 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.git-credentials HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,264 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.%67%69%74-%63%72%65%64%65%6E%74%69%61%6C%73 HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,265 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /configuration.php.bak HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,266 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /configuration.php.old HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,266 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /configuration.php~ HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,267 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /sites/default/settings.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,267 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /sites/default/settings.php.bak HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,268 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /app/etc/env.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,269 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /app/etc/local.xml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,269 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/settings.inc.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,270 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /admin/config.php HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,270 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/database.js HTTP/1.1" 404 193 "-" "Mozilla/5.0 (compatible; SecurityScanner/1.0)"
+2026-04-25 00:33:47,271 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /config/server.js HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,271 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /docker-compose.yml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,272 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /docker-compose.yaml HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,273 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.vscode/settings.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,273 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /.vscode/launch.json HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 00:33:47,274 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /wp-content/debug.log HTTP/1.1" 404 193 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+2026-04-25 00:33:47,274 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:00:33:47 +0000] "GET /error.log HTTP/1.1" 404 193 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+2026-04-25 03:55:20,889 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:03:55:20 +0300] "GET /api/miniapp/health HTTP/1.1" 200 218 "-" "curl/7.81.0"
+2026-04-25 03:55:34,829 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:03:55:34 +0300] "GET /webhook HTTP/1.1" 404 193 "-" "curl/7.81.0"
+2026-04-25 03:56:28,829 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:03:56:28 +0300] "POST /webhook HTTP/1.1" 404 193 "-" "curl/7.81.0"
+2026-04-25 04:00:36,778 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:00:36 +0300] "POST /webhook HTTP/1.1" 404 193 "-" "curl/7.81.0"
+2026-04-25 04:02:02,545 - __main__ - ERROR - Webhook error: 1 validation error for Update
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+Traceback (most recent call last):
+pydantic_core._pydantic_core.ValidationError: 1 validation error for Update
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+2026-04-25 04:02:02,547 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:02:02 +0300] "POST /webhook HTTP/1.1" 200 173 "-" "curl/7.81.0"
+2026-04-25 04:10:07,380 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:10:07 +0300] "POST /webhook HTTP/1.1" 200 173 "-" "-"
+2026-04-25 04:10:16,448 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:10:16 +0300] "POST /webhook HTTP/1.1" 200 173 "-" "-"
+2026-04-25 04:10:20,980 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:10:20 +0300] "POST /webhook HTTP/1.1" 200 173 "-" "-"
+2026-04-25 04:20:21,632 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:20:21 +0300] "GET /api/miniapp/health HTTP/1.1" 200 218 "-" "curl/7.81.0"
+2026-04-25 04:20:21,639 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:20:21 +0300] "GET /api/miniapp/health HTTP/1.1" 200 199 "-" "curl/7.81.0"
+2026-04-25 04:20:21,645 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:20:21 +0300] "GET /api/miniapp/products HTTP/1.1" 200 532 "-" "curl/7.81.0"
+2026-04-25 04:20:21,651 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:20:21 +0300] "GET /api/miniapp/settings HTTP/1.1" 200 208 "-" "curl/7.81.0"
+2026-04-25 04:21:16,271 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:21:16 +0300] "GET /api/miniapp/health HTTP/1.1" 200 218 "-" "curl/7.81.0"
+2026-04-25 04:21:16,278 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:21:16 +0300] "GET /api/miniapp/health HTTP/1.1" 200 199 "-" "curl/7.81.0"
+2026-04-25 04:21:16,285 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:21:16 +0300] "GET /api/miniapp/products HTTP/1.1" 200 532 "-" "curl/7.81.0"
+2026-04-25 04:21:16,292 - aiohttp.access - INFO - 127.0.0.1 [25/Apr/2026:04:21:16 +0300] "GET /api/miniapp/settings HTTP/1.1" 200 208 "-" "curl/7.81.0"
+
+[1;36m[2loop-debug][0m Nginx error log tail
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:39 [error] 2257788#2257788: *194594 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/favicon.ico" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/favicon.ico" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [crit] 2257788#2257788: *194594 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:17:42 [error] 2257788#2257788: *194594 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 5.18.170.253, server: 2loop.chillcreative.ru, request: "GET /favicon.ico HTTP/2.0", host: "2loop.chillcreative.ru", referrer: "https://2loop.chillcreative.ru/"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [crit] 2257788#2257788: *194603 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:20:21 [error] 2257788#2257788: *194603 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [crit] 2257788#2257788: *194607 stat() "/root/2loop/static/miniapp/index.html" failed (13: Permission denied), client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+2026/04/25 04:21:16 [error] 2257788#2257788: *194607 rewrite or internal redirection cycle while internally redirecting to "/index.html", client: 89.125.51.145, server: 2loop.chillcreative.ru, request: "GET / HTTP/2.0", host: "2loop.chillcreative.ru"
+
+[1;36m[2loop-debug][0m Done

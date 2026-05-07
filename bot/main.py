@@ -22,6 +22,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Update
 from aiohttp import web
 
+from bot.catalog_webapp import setup_catalog_webapp_routes
 from bot.config import config
 from bot.database import init_db
 from bot.handlers import (
@@ -38,6 +39,7 @@ from bot.handlers.payments import (
     handle_robokassa_success,
     handle_yookassa_webhook,
 )
+from bot.miniapp_api import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -1567,12 +1569,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
+    setup_miniapp_routes(app)
+    app.router.add_static("/static/", path="static", name="static")
     app["bot"] = bot
 
     # Serve static uploads directory to fix 404 errors for Novita image downloads
     app.router.add_static(
         "/uploads/", path="static/uploads", show_index=False, name="uploads"
     )
+    setup_catalog_webapp_routes(app)
 
     # Вебхук Telegram
     async def telegram_webhook_handler(request: web.Request) -> web.Response:

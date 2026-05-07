@@ -45,13 +45,14 @@ class RobokassaService:
         if not self.enabled or not self.client:
             return {"Success": False, "Message": "Robokassa not configured"}
         try:
-            amount = decimal.Decimal(amount_rub).quantize(decimal.Decimal("0.01"))
+            amount = decimal.Decimal(str(amount_rub)).quantize(decimal.Decimal("0.01"))
+            amount_str = format(amount, ".2f")
             inv_id = int(order_id)
             loop = asyncio.get_running_loop()
             payment_url = await loop.run_in_executor(
                 None,
                 self.client.create_payment_url,
-                float(amount),
+                amount_str,
                 description[:1024],  # limit
                 inv_id,
             )

@@ -90,22 +90,18 @@ PACKAGES = PRICES.get("packages", [])
 
 
 def get_main_menu_keyboard(user_credits: int = 0):
-    """Главное меню бота - согласно ux.md"""
+    """Главное меню бота."""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
-    builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
-    builder.button(text="🎯 Motion Control", callback_data="motion_control")
+    builder.button(text="🎀 Подобрать аксессуар", callback_data="accessory_finder")
+    builder.button(text="🧊 Собрать AI-образ", callback_data="create_image_refs_new")
+    builder.button(text="🎬 Сделать видео/сторис", callback_data="create_video_new")
+    builder.button(text="🛒 Магазин 2Loop", callback_data="menu_catalog")
+    builder.button(text="🤖 AI-стилист", callback_data="menu_ai_assistant")
+    builder.button(text="💎 Баланс и GOE", callback_data="menu_balance")
+    builder.button(text="❓ Помощь", callback_data="menu_support")
 
-    builder.button(text="📸 Фото=Промпт", callback_data="photo_to_prompt")
-    builder.button(text="🛒 Каталог", callback_data="menu_catalog")
-
-    builder.button(text="🤖 ИИ ассистент", callback_data="menu_ai_assistant")
-    builder.button(text="💰 Пополнить", callback_data="menu_topup")
-    builder.button(text="🆘 Тех. поддержка", callback_data="menu_support")
-    builder.button(text="📚 FAQ", callback_data="menu_faq")
-
-    builder.adjust(2, 2, 1, 2, 2)
+    builder.adjust(1, 1, 1, 1, 2, 1)
 
     return builder.as_markup()
 
@@ -113,6 +109,8 @@ def get_main_menu_keyboard(user_credits: int = 0):
 def get_admin_keyboard():
     """Админ-панель"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="🛍 Магазин", callback_data="admin_shop")
+    builder.button(text="📦 Заказы", callback_data="admin_shop_orders")
     builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
@@ -496,8 +494,12 @@ def get_support_keyboard():
     """Клавиатура тех. поддержки"""
     builder = InlineKeyboardBuilder()
     builder.button(text="💬 ИИ-ассистент", callback_data="menu_ai_assistant")
+    builder.button(text="📚 FAQ", callback_data="menu_faq")
+    builder.button(text="📦 Доставка и возврат", callback_data="faq_dostavka")
+    builder.button(text="📋 Публичная оферта", callback_data="faq_ofert")
+    builder.button(text="💎 Баланс и GOE", callback_data="menu_balance")
     builder.button(text="🔙 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1)
+    builder.adjust(1)
     return builder.as_markup()
 
 

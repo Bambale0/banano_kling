@@ -1,3 +1,30 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+DOMAIN="2loop.chillcreative.ru"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MINIAPP_API="$PROJECT_ROOT/bot/miniapp_api.py"
+ENV_FILE="$PROJECT_ROOT/.env"
+
+log() { printf '\033[1;36m[2loop-go2]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[2loop-go2][warn]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[2loop-go2][error]\033[0m %s\n' "$*"; exit 1; }
+
+[[ -f "$MINIAPP_API" ]] || fail "bot/miniapp_api.py not found. Run git pull and setup_2loop_miniapp.sh first."
+
+log "Adding GO2 env defaults..."
+touch "$ENV_FILE"
+
+grep -q '^TWOLOOP_DOMAIN=' "$ENV_FILE" || echo "TWOLOOP_DOMAIN=$DOMAIN" >> "$ENV_FILE"
+grep -q '^TWOLOOP_VERIFY_INIT_DATA=' "$ENV_FILE" || echo "TWOLOOP_VERIFY_INIT_DATA=1" >> "$ENV_FILE"
+grep -q '^TWOLOOP_ADMIN_IDS=' "$ENV_FILE" || echo "TWOLOOP_ADMIN_IDS=\${ADMIN_IDS}" >> "$ENV_FILE"
+grep -q '^TWOLOOP_ORDER_NOTIFY_CHAT_IDS=' "$ENV_FILE" || echo "TWOLOOP_ORDER_NOTIFY_CHAT_IDS=\${ADMIN_IDS}" >> "$ENV_FILE"
+
+log "Backing up miniapp_api.py..."
+cp "$MINIAPP_API" "$MINIAPP_API.bak.$(date +%s)"
+
+log "Patching miniapp_api.py: Telegram auth, admin guard, order notifications..."
+cat > "$MINIAPP_API" <<'PY'
 import asyncio
 import hashlib
 import hmac
@@ -30,9 +57,7 @@ MINIAPP_ADMIN_IDS = {
 
 ORDER_NOTIFY_CHAT_IDS = {
     x.strip()
-    for x in os.getenv(
-        "TWOLOOP_ORDER_NOTIFY_CHAT_IDS", os.getenv("ADMIN_IDS", "")
-    ).split(",")
+    for x in os.getenv("TWOLOOP_ORDER_NOTIFY_CHAT_IDS", os.getenv("ADMIN_IDS", "")).split(",")
     if x.strip()
 }
 
@@ -96,9 +121,7 @@ def _next_id(items: List[Dict[str, Any]]) -> int:
     return max([int(item.get("id", 0)) for item in items] or [0]) + 1
 
 
-def _normalize_product(
-    payload: Dict[str, Any], product_id: Optional[int] = None
-) -> Dict[str, Any]:
+def _normalize_product(payload: Dict[str, Any], product_id: Optional[int] = None) -> Dict[str, Any]:
     images = payload.get("images") or []
     if not isinstance(images, list):
         images = []
@@ -137,15 +160,9 @@ def _parse_init_data(init_data: str) -> Optional[Dict[str, Any]]:
         if not BOT_TOKEN or not received_hash:
             return None
 
-        data_check_string = "\n".join(
-            f"{key}={value}" for key, value in sorted(parsed.items())
-        )
-        secret_key = hmac.new(
-            b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256
-        ).digest()
-        calculated_hash = hmac.new(
-            secret_key, data_check_string.encode(), hashlib.sha256
-        ).hexdigest()
+        data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(calculated_hash, received_hash):
             return None
@@ -243,9 +260,7 @@ async def list_products(request: web.Request) -> web.Response:
 async def get_product(request: web.Request) -> web.Response:
     product_id = int(request.match_info["product_id"])
     products = _read_json(PRODUCTS_FILE, [])
-    product = next(
-        (item for item in products if int(item.get("id")) == product_id), None
-    )
+    product = next((item for item in products if int(item.get("id")) == product_id), None)
 
     if not product:
         return _json({"error": "product_not_found"}, 404)
@@ -297,9 +312,7 @@ async def delete_product(request: web.Request) -> web.Response:
 
     product_id = int(request.match_info["product_id"])
     products = _read_json(PRODUCTS_FILE, [])
-    next_products = [
-        product for product in products if int(product.get("id")) != product_id
-    ]
+    next_products = [product for product in products if int(product.get("id")) != product_id]
 
     if len(next_products) == len(products):
         return _json({"error": "product_not_found"}, 404)
@@ -405,9 +418,7 @@ async def create_order(request: web.Request) -> web.Response:
     subtotal = 0.0
 
     for item in items:
-        product = product_by_id.get(
-            int(item.get("productId") or item.get("product_id") or 0)
-        )
+        product = product_by_id.get(int(item.get("productId") or item.get("product_id") or 0))
 
         if not product or not product.get("active", True):
             continue
@@ -471,9 +482,7 @@ def setup_miniapp_routes(app: web.Application) -> None:
     app.router.add_post("/api/miniapp/products", create_product)
     app.router.add_put("/api/miniapp/products/{product_id:\\d+}", update_product)
     app.router.add_delete("/api/miniapp/products/{product_id:\\d+}", delete_product)
-    app.router.add_post(
-        "/api/miniapp/products/{product_id:\\d+}/images", upload_product_image
-    )
+    app.router.add_post("/api/miniapp/products/{product_id:\\d+}/images", upload_product_image)
 
     app.router.add_get("/api/miniapp/settings", get_settings)
     app.router.add_put("/api/miniapp/settings", update_settings)
@@ -482,3 +491,12 @@ def setup_miniapp_routes(app: web.Application) -> None:
 
     app.router.add_post("/api/miniapp/orders", create_order)
     app.router.add_get("/api/miniapp/orders", list_orders)
+PY
+
+log "Compiling patched API..."
+python3 -m py_compile "$MINIAPP_API"
+
+log "GO2 done."
+echo
+echo "Restart now:"
+echo "./stop.sh && ./start.sh"

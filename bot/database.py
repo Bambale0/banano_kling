@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -322,8 +323,111 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER,
+                event_name TEXT NOT NULL,
+                payload TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analytics_events_name_created ON analytics_events(event_name, created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analytics_events_telegram_created ON analytics_events(telegram_id, created_at)"
+        )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shop_product_overrides (
+                wb_article TEXT PRIMARY KEY,
+                name TEXT,
+                image_url TEXT,
+                stock_override INTEGER,
+                price_override REAL,
+                is_hidden BOOLEAN DEFAULT 0,
+                updated_by INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shop_product_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wb_article TEXT NOT NULL,
+                image_url TEXT NOT NULL,
+                is_primary BOOLEAN DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shop_product_images_article ON shop_product_images(wb_article, sort_order, id)"
+        )
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shop_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT UNIQUE NOT NULL,
+                telegram_id INTEGER,
+                customer_name TEXT,
+                phone TEXT,
+                city TEXT,
+                address TEXT,
+                delivery_method TEXT DEFAULT 'manual',
+                delivery_status TEXT DEFAULT 'pending',
+                delivery_price REAL DEFAULT 0,
+                comment TEXT,
+                promo_code TEXT,
+                total_rub REAL NOT NULL,
+                status TEXT DEFAULT 'new',
+                raw_payload TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shop_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT NOT NULL,
+                wb_article TEXT NOT NULL,
+                name TEXT,
+                price_rub REAL NOT NULL,
+                qty INTEGER NOT NULL,
+                FOREIGN KEY(order_id) REFERENCES shop_orders(order_id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shop_orders_created ON shop_orders(created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders(status)"
+        )
+
         await db.commit()
         logger.info("Database initialized successfully")
+
+
+async def track_event(
+    telegram_id: Optional[int], event_name: str, payload: Optional[dict] = None
+) -> bool:
+    """Сохраняет продуктовые события для анализа воронки."""
+    try:
+        payload_json = (
+            json.dumps(payload or {}, ensure_ascii=False, default=str)
+            if payload
+            else None
+        )
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "INSERT INTO analytics_events (telegram_id, event_name, payload) VALUES (?, ?, ?)",
+                (telegram_id, event_name, payload_json),
+            )
+            await db.commit()
+        return True
+    except Exception:
+        logger.exception("Failed to track analytics event: %s", event_name)
+        return False
 
 
 async def get_or_create_user(telegram_id: int) -> User:
@@ -1218,6 +1322,308 @@ async def get_admin_stats() -> dict:
             "total_batch_jobs": batch_row["count"] or 0,
             "total_referrals": referrals_row["count"] or 0,
         }
+
+
+async def _ensure_shop_tables(db):
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS shop_product_overrides (
+            wb_article TEXT PRIMARY KEY,
+            name TEXT,
+            image_url TEXT,
+            stock_override INTEGER,
+            price_override REAL,
+            is_hidden BOOLEAN DEFAULT 0,
+            updated_by INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS shop_product_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wb_article TEXT NOT NULL,
+            image_url TEXT NOT NULL,
+            is_primary BOOLEAN DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shop_product_images_article ON shop_product_images(wb_article, sort_order, id)"
+    )
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS shop_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT UNIQUE NOT NULL,
+            telegram_id INTEGER,
+            customer_name TEXT,
+            phone TEXT,
+            city TEXT,
+            address TEXT,
+            delivery_method TEXT DEFAULT 'manual',
+            delivery_status TEXT DEFAULT 'pending',
+            delivery_price REAL DEFAULT 0,
+            comment TEXT,
+            promo_code TEXT,
+            total_rub REAL NOT NULL,
+            status TEXT DEFAULT 'new',
+            raw_payload TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS shop_order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT NOT NULL,
+            wb_article TEXT NOT NULL,
+            name TEXT,
+            price_rub REAL NOT NULL,
+            qty INTEGER NOT NULL,
+            FOREIGN KEY(order_id) REFERENCES shop_orders(order_id)
+        )
+    """)
+
+
+async def get_shop_product_overrides() -> dict:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_shop_tables(db)
+        cursor = await db.execute("SELECT * FROM shop_product_overrides")
+        rows = await cursor.fetchall()
+        return {row["wb_article"]: dict(row) for row in rows}
+
+
+async def get_shop_product_images(wb_article: Optional[str] = None) -> dict:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_shop_tables(db)
+        if wb_article:
+            cursor = await db.execute(
+                """
+                SELECT * FROM shop_product_images
+                WHERE wb_article = ?
+                ORDER BY is_primary DESC, sort_order ASC, id ASC
+                """,
+                (str(wb_article),),
+            )
+        else:
+            cursor = await db.execute("""
+                SELECT * FROM shop_product_images
+                ORDER BY wb_article ASC, is_primary DESC, sort_order ASC, id ASC
+                """)
+        rows = await cursor.fetchall()
+        grouped: dict[str, list[dict]] = {}
+        for row in rows:
+            grouped.setdefault(row["wb_article"], []).append(dict(row))
+        return grouped
+
+
+async def add_shop_product_image(
+    wb_article: str,
+    image_url: str,
+    *,
+    is_primary: bool = False,
+    created_by: Optional[int] = None,
+) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_shop_tables(db)
+        cursor = await db.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM shop_product_images WHERE wb_article = ?",
+            (str(wb_article),),
+        )
+        row = await cursor.fetchone()
+        next_sort = int(row["next_sort"] or 0)
+        if is_primary:
+            await db.execute(
+                "UPDATE shop_product_images SET is_primary = 0 WHERE wb_article = ?",
+                (str(wb_article),),
+            )
+        result = await db.execute(
+            """
+            INSERT INTO shop_product_images
+                (wb_article, image_url, is_primary, sort_order, created_by)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(wb_article), image_url, int(is_primary), next_sort, created_by),
+        )
+        await db.commit()
+        return int(result.lastrowid)
+
+
+async def set_shop_product_primary_image(wb_article: str, image_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await _ensure_shop_tables(db)
+        cursor = await db.execute(
+            "SELECT id, image_url FROM shop_product_images WHERE wb_article = ? AND id = ?",
+            (str(wb_article), image_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        await db.execute(
+            "UPDATE shop_product_images SET is_primary = 0 WHERE wb_article = ?",
+            (str(wb_article),),
+        )
+        await db.execute(
+            "UPDATE shop_product_images SET is_primary = 1 WHERE id = ?",
+            (image_id,),
+        )
+        await db.execute(
+            """
+            INSERT INTO shop_product_overrides (wb_article, image_url, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(wb_article) DO UPDATE SET
+                image_url = excluded.image_url,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (str(wb_article), row[1]),
+        )
+        await db.commit()
+        return True
+
+
+async def upsert_shop_product_override(
+    wb_article: str,
+    *,
+    name: Optional[str] = None,
+    image_url: Optional[str] = None,
+    stock_override: Optional[int] = None,
+    price_override: Optional[float] = None,
+    is_hidden: Optional[bool] = None,
+    updated_by: Optional[int] = None,
+) -> bool:
+    existing = (await get_shop_product_overrides()).get(str(wb_article))
+    values = {
+        "name": name if name is not None else (existing or {}).get("name"),
+        "image_url": (
+            image_url if image_url is not None else (existing or {}).get("image_url")
+        ),
+        "stock_override": (
+            stock_override
+            if stock_override is not None
+            else (existing or {}).get("stock_override")
+        ),
+        "price_override": (
+            price_override
+            if price_override is not None
+            else (existing or {}).get("price_override")
+        ),
+        "is_hidden": (
+            int(is_hidden)
+            if is_hidden is not None
+            else (existing or {}).get("is_hidden", 0)
+        ),
+    }
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await _ensure_shop_tables(db)
+        await db.execute(
+            """
+            INSERT INTO shop_product_overrides
+                (wb_article, name, image_url, stock_override, price_override, is_hidden, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(wb_article) DO UPDATE SET
+                name = excluded.name,
+                image_url = excluded.image_url,
+                stock_override = excluded.stock_override,
+                price_override = excluded.price_override,
+                is_hidden = excluded.is_hidden,
+                updated_by = excluded.updated_by,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                str(wb_article),
+                values["name"],
+                values["image_url"],
+                values["stock_override"],
+                values["price_override"],
+                values["is_hidden"],
+                updated_by,
+            ),
+        )
+        await db.commit()
+        return True
+
+
+async def create_shop_order(
+    *,
+    order_id: str,
+    telegram_id: Optional[int],
+    customer: dict,
+    delivery: dict,
+    items: list,
+    total_rub: float,
+    promo_code: str,
+    raw_payload: dict,
+) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await _ensure_shop_tables(db)
+        try:
+            await db.execute(
+                """
+                INSERT INTO shop_orders
+                    (order_id, telegram_id, customer_name, phone, city, address,
+                     delivery_method, delivery_status, delivery_price, comment,
+                     promo_code, total_rub, raw_payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    telegram_id,
+                    customer.get("name"),
+                    customer.get("phone"),
+                    delivery.get("city"),
+                    delivery.get("address"),
+                    delivery.get("method", "manual"),
+                    float(delivery.get("price") or 0),
+                    customer.get("comment"),
+                    promo_code,
+                    total_rub,
+                    json.dumps(raw_payload, ensure_ascii=False, default=str),
+                ),
+            )
+            for item in items:
+                await db.execute(
+                    """
+                    INSERT INTO shop_order_items
+                        (order_id, wb_article, name, price_rub, qty)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        order_id,
+                        str(item.get("wbArticle", "")),
+                        item.get("name", ""),
+                        float(item.get("price") or 0),
+                        int(item.get("qty") or 1),
+                    ),
+                )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def get_recent_shop_orders(limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_shop_tables(db)
+        cursor = await db.execute(
+            "SELECT * FROM shop_orders ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        orders = await cursor.fetchall()
+        result = []
+        for order in orders:
+            item_cursor = await db.execute(
+                "SELECT * FROM shop_order_items WHERE order_id = ?",
+                (order["order_id"],),
+            )
+            items = await item_cursor.fetchall()
+            data = dict(order)
+            data["items"] = [dict(item) for item in items]
+            result.append(data)
+        return result
 
 
 async def save_batch_job(

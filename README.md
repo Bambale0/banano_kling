@@ -1,320 +1,499 @@
-# Banano Kling AI Bot
+# 2Loop
 
-## 🎯 Описание
+`2Loop` — это Telegram-бот и набор связанных веб-интерфейсов для двух задач:
 
-Telegram-бот для генерации изображений и видео с использованием передовых AI-моделей (Gemini/NanoBanana, Kling 3.0/2.6, FLUX.2 Pro, Seedream, Grok). Поддерживает:
-- Text-to-Image/Video
-- Image-to-Image/Video (редактирование)
-- Motion Control (перенос движения)
-- Пакетная генерация (batch editing)
-- Референсные изображения (до 14 шт)
-- Платежи: Tinkoff, YooKassa
-- Партнёрская программа
-- Админ-панель
+1. AI-генерация изображений и видео для фигурного катания и смежных сценариев.
+2. Мини-магазин аксессуаров 2Loop с каталогом, промокодами, заказами и Telegram Mini App.
 
-## 🏗️ Архитектура
+По коду видно, что проект уже вырос из "одного бота" в гибридную платформу: здесь есть `aiogram`, `aiohttp`, SQLite, Excel-каталог, React mini app, webhook-интеграции и платёжные провайдеры.
 
+## Что умеет проект
+
+- Генерация изображений через Gemini / Nano Banana / Seedream / Flux-подобные провайдеры.
+- Генерация видео и motion control через Kling / Kie.ai / Replicate / Grok / Aleph.
+- Работа с референсами:
+  - до 14 референсных изображений;
+  - до 5 референсных видео для части video-flow.
+- Анализ фото в промпт.
+- Batch-редактирование изображений.
+- Пополнение баланса через YooKassa и Robokassa.
+- Партнёрская и реферальная логика.
+- Telegram Mini App c простым storefront/API.
+- Веб-каталог `/shop` на основе `data/catalog.xlsx`.
+- Админские инструменты для статистики и управления магазином.
+
+## Архитектура
+
+```text
+Telegram user
+   |
+   v
+aiogram routers
+   |
+   +--> generation / payments / admin / catalog / image analyzer
+   |
+   v
+aiohttp server in bot/main.py
+   |
+   +--> Telegram webhook
+   +--> payment webhooks
+   +--> AI provider webhooks
+   +--> /shop catalog webapp
+   +--> /api/miniapp/*
+   +--> static files / uploads
+   |
+   v
+Storage layer
+   +--> SQLite (users, payments, tasks, analytics, shop orders)
+   +--> JSON files for miniapp storage
+   +--> Excel catalog for storefront source data
+   +--> static/uploads and static/shop assets
 ```
-banano_kling/
+
+## Ключевой вывод по проекту
+
+Сейчас в репозитории одновременно живут две магазинные линии:
+
+- `bot/catalog_webapp.py` + `static/shop/` + `data/catalog.xlsx`  
+  Веб-каталог на базе Excel, с оверрайдами и заказами в SQLite.
+
+- `bot/miniapp_api.py` + `miniapp/`  
+  Telegram Mini App с отдельным JSON-хранилищем (`data/products.json`, `data/orders.json`, `data/settings.json`).
+
+Это важно учитывать при доработках: магазин в проекте не один, а два частично пересекающихся слоя.
+
+## Структура репозитория
+
+```text
+.
 ├── bot/
-│   ├── main.py              # aiohttp сервер + webhook handlers (Telegram, Kling, Kie.ai, TBank, Yookassa)
-│   ├── config.py            # Конфиг из .env (API ключи, webhook URLs)
-│   ├── database.py          # SQLite модели: User, Transaction, GenerationTask
-│   ├── states.py            # FSM состояния (aiogram)
-│   ├── keyboards.py         # Inline/RK клавиатуры (меню, настройки, генерация)
-│   ├── handlers/            # User flows
-│   │   ├── admin.py         # Админ-панель (статистика, рассылка, управление пользователями)
-│   │   ├── batch_generation.py # Пакетная генерация (до 10 изображений)
-│   │   ├── common.py        # /start, /help, баланс, партнёрка, настройки, ИИ-ассистент
-│   │   ├── generation.py    # Основная генерация (image/video/motion/edit)
-│   │   ├── image_analyzer.py # Анализ фото → промпт
-│   │   └── payments.py      # Платежи (TBank/Yookassa)
-│   ├── services/            # AI/платёжные интеграции
-│   │   ├── gemini_service.py     # NanoBanana/Gemini (text2img, edit, refs до 14)
-│   │   ├── kling_service.py      # Kling 3.0/2.6 (PiAPI/Kie.ai/Replicate) - video gen/motion
-│   │   ├── nano_banana_2/pro_service.py # Banana 2/Pro (Gemini 3.1 Flash/Pro)
-│   │   ├── seedream_service.py    # Seedream (Novita AI)
-│   │   ├── grok_service.py        # Grok Imagine (image-to-video)
-│   │   ├── tbank/yookassa_service.py # Платежи
-│   │   ├── preset_manager.py      # Цены/пресеты из JSON
-│   │   └── ai_assistant_service.py # ИИ-ассистент (Grok/Claude)
-│   └── utils/               # Help texts, validators
-├── data/                    # price.json (пакеты/цены), presets.json
-├── static/uploads/          # Загруженные файлы (nginx static)
-├── logs/                    # Логи
-└── requirements.txt
+│   ├── main.py                  # Точка входа: bot + aiohttp + webhook routes
+│   ├── config.py                # Конфигурация из env
+│   ├── database.py              # SQLite, миграции и доступ к данным
+│   ├── states.py                # FSM состояния aiogram
+│   ├── keyboards.py             # Inline keyboards
+│   ├── catalog_webapp.py        # Веб-каталог /shop и API каталога
+│   ├── miniapp_api.py           # API для Telegram Mini App
+│   ├── handlers/                # Пользовательские сценарии
+│   ├── middleware/              # Middleware для подписки и др.
+│   ├── services/                # AI, платежи, доставка, batch и т.д.
+│   └── utils/                   # Валидаторы, тексты, инструкции
+├── data/
+│   ├── price.json               # Пакеты GOE и справочник стоимости
+│   ├── catalog.xlsx             # Исходник каталога магазина
+│   ├── runway_characters.json   # Справочные данные для video flows
+│   ├── orders.json              # JSON-хранилище miniapp
+│   ├── products.json            # JSON-хранилище miniapp
+│   └── settings.json            # JSON-хранилище miniapp
+├── miniapp/                     # React/Vite исходники Telegram Mini App
+├── static/
+│   ├── shop/                    # Статический storefront и фото товаров
+│   └── uploads/                 # Пользовательские загрузки и временные файлы
+├── tests/                       # Unit/integration/standalone tests
+├── docs/                        # Документация по интеграциям и миграциям
+├── start.sh / stop.sh           # Локальный запуск и остановка
+└── setup_*.sh                   # Инфраструктурные и миграционные helper scripts
 ```
 
-### Детальная структура модулей
+## Основные модули
 
-#### Handlers (User Flows)
-| Handler | Ключевые функции |
-|---------|------------------|
-| **admin.py** | `cmd_admin()`, `admin_show_stats()`, `admin_add_credits_prompt()`, `admin_broadcast_prompt()` |
-| **batch_generation.py** | `show_batch_edit_start()`, `process_batch_image()`, `execute_batch()`, `show_batch_results()` |
-| **common.py** | `cmd_start()`, `cmd_help()`, `back_to_main()`, `show_settings()`, `handle_ai_assistant_message()` |
-| **generation.py** | `show_create_video_menu()`, `handle_v_model()`, `handle_img_ref_upload_new()`, `handle_video_prompt_text()` |
-| **image_analyzer.py** | `photo_to_prompt_handler()`, `analyze_photo()` |
-| **payments.py** | `show_topup_menu()`, `initiate_payment()`, `handle_tbank_webhook()`, `handle_yookassa_webhook()` |
+### `bot/main.py`
 
-#### Services (Интеграции)
-| Service | Ключевые методы |
-|---------|-----------------|
-| **gemini_service.py** | `generate_image()`, `edit_image()`, `generate_with_references()`, `generate_with_search()` |
-| **kling_service.py** | `generate_video()`, `generate_motion_control()`, `generate_omni_video_generation()`, `get_task_status()` |
-| **nano_banana_2/pro_service.py** | `generate_image()`, `create_task()`, `get_task_status()` |
-| **seedream_service.py** | `generate_image()`, `wait_for_completion()` |
-| **tbank_service.py** | `init_payment()`, `get_state()`, `verify_notification()` |
-| **yookassa_service.py** | `create_payment()`, `get_payment()`, `extract_order_id()` |
-| **preset_manager.py** | `get_generation_cost()`, `get_video_cost()`, `get_packages()` |
+Главная точка входа проекта:
 
-#### Database (database.py)
-**Модели:** `User`, `Transaction`, `GenerationTask`, `BatchJob`
+- загружает `.env`;
+- инициализирует БД;
+- собирает `Dispatcher`;
+- поднимает `aiohttp`-сервер;
+- регистрирует webhook routes;
+- раздаёт `/static/` и `/uploads/`;
+- запускает периодическую очистку `static/uploads` раз в 6 часов.
 
-**Ключевые queries:**
-- `get_or_create_user(telegram_id)`
-- `add_credits/deduct_credits(telegram_id, amount)`
-- `add_generation_task(...)`
-- `complete_video_task(task_id, result_url)`
-- `get_admin_stats()` → {users, generations, revenue}
+### `bot/database.py`
 
-#### Keyboards (keyboards.py)
-- `get_main_menu_keyboard()`, `get_create_video/image_keyboard()`
-- `get_model_selection_keyboard()`, `get_reference_images_keyboard()`
-- `get_payment_packages_keyboard()`
+Фактически это и слой доступа к данным, и слой миграций. Здесь:
 
-### FSM States (states.py) - Полный список
-```
-GenerationStates:
-- waiting_for_input/image/video/prompt/ref_video/motion_character/video_start_image/confirming_generation/selecting_batch_count
-- uploading_reference_images/videos/confirming_reference_images
-- waiting_for_batch_image/prompt/aspect_ratio/selecting_duration/aspect_ratio/quality
+- создаются таблицы;
+- выполняются `ALTER TABLE` для старых БД;
+- хранятся пользовательские кредиты и транзакции;
+- пишутся generation tasks;
+- живут рефералка, партнёрка, аналитика и магазинные заказы.
 
-PaymentStates: selecting_package/confirming_payment/waiting_payment
+### `bot/handlers/`
 
-AdminStates: waiting_broadcast_text/confirming_broadcast/waiting_user_id/waiting_credits_amount
+- `common.py` — `/start`, возврат после оплаты, меню, партнёрка, deep links.
+- `generation.py` — основной AI UX для image/video/motion flows.
+- `payments.py` — выбор пакета, создание платежа, webhook-обработка.
+- `admin.py` — статистика и редактирование магазинных данных.
+- `catalog.py` — пользовательский поток каталога и WebApp-заказов.
+- `batch_generation.py` — пакетное редактирование по референсам.
+- `image_analyzer.py` — фото -> промпт.
 
-BatchGenerationStates: selecting_mode/preset/entering_prompts/uploading_references/confirming_batch/selecting_batch_count
+### `bot/services/`
 
-ImageAnalyzerStates: waiting_for_photo
+Основные интеграции:
 
-AIAssistantStates: main_menu/settings/waiting_for_message
-```
+- `gemini_service.py` — Gemini/Nano Banana image flows.
+- `kling_service.py` — Kling/Kie.ai/Replicate video flows.
+- `seedream_service.py` — Seedream image generation.
+- `grok_service.py` — часть video/image сценариев.
+- `yookassa_service.py`, `robokassa_service.py` — платежи.
+- `preset_manager.py` — чтение пакетов и стоимости из `data/price.json`.
+- `delivery_service.py` — пока заглушка под будущие интеграции доставки.
 
-### User Flows (Диаграммы)
-```
-Главное меню → Создать фото/видео → Refs (опц.) → Модель/Формат → Промпт → Генерация → Результат
+### `bot/catalog_webapp.py`
 
-Платежи: Меню → Пополнить → Пакет → Провайдер → Оплата → Webhook → Credits
+Поднимает storefront `/shop` и API каталога:
 
-Motion Control: Меню → Motion → Std/Pro → Фото персонажа → Видео движения → Kling API
+- читает товары из `data/catalog.xlsx`;
+- накладывает DB-оверрайды по фото, цене, остаткам;
+- сохраняет shop-заказы в SQLite;
+- может уведомлять админов о заказе через бота.
 
-Batch: Меню → Batch → Фото → Промпт → Aspect → Запуск → Галерея/Упскейл
-```
+### `bot/miniapp_api.py`
 
-### Webhook Flows
-```
-Telegram → /webhook → Dispatcher (aiogram)
+API для Mini App:
 
-Kling/Kie/Replicate → /webhook/kling → complete_video_task() → Send to user
+- верифицирует `X-Telegram-Init-Data`;
+- управляет товарами и настройками;
+- принимает заказы;
+- пишет данные в JSON-файлы;
+- различает admin/non-admin пользователей.
 
-TBank → /tbank/webhook → add_credits() → Notify user
+## HTTP routes
 
-Yookassa → /yookassa/webhook → add_credits() → Notify user
-```
+### Системные и webhook routes
 
-## 🚀 Установка и запуск
+| Route | Назначение |
+| --- | --- |
+| `POST {WEBHOOK_PATH}` | webhook Telegram |
+| `POST /yookassa/webhook` | webhook YooKassa |
+| `POST /robokassa/result` | webhook Robokassa |
+| `GET /robokassa/result` | fallback/result check |
+| `GET /robokassa/success` | success redirect |
+| `POST /webhook/kling` | webhook AI/video задач |
+| `POST {KIE_AI_WEBHOOK_PATH}` | webhook Kie.ai |
+| `GET /health` | health check |
 
-```bash
-git clone <repo>
-cd banano_kling
-pip install -r requirements.txt
-cp .env.example .env  # Настройте ключи!
-./start.sh  # Запуск (docker-compose или systemd)
-```
+### Storefront routes
 
-**Запуск разработки:**
-```bash
-isort . && black . && ./stop.sh && ./start.sh && tail -f logs/vk_bot.log
-```
+| Route | Назначение |
+| --- | --- |
+| `GET /shop` | storefront магазина |
+| `GET /api/catalog` | JSON каталога |
+| `POST /api/shop/order` | заказ из web-каталога |
 
-## ⚙️ Конфигурация (.env)
+### Mini App routes
 
-```
-# Telegram
-BOT_TOKEN=your_bot_token
+| Route | Назначение |
+| --- | --- |
+| `GET /api/miniapp/health` | health |
+| `GET /api/miniapp/me` | Telegram user + admin status |
+| `GET /api/miniapp/products` | список товаров |
+| `POST /api/miniapp/products` | создание товара |
+| `PUT /api/miniapp/products/{id}` | обновление товара |
+| `DELETE /api/miniapp/products/{id}` | удаление товара |
+| `POST /api/miniapp/products/{id}/images` | загрузка изображения |
+| `GET /api/miniapp/settings` | настройки miniapp |
+| `PUT /api/miniapp/settings` | обновление настроек |
+| `POST /api/miniapp/promo` | применение промокода |
+| `POST /api/miniapp/orders` | создание заказа |
+| `GET /api/miniapp/orders` | список заказов |
 
-# Webhook (production)
-WEBHOOK_HOST=https://your-domain.com
+## Данные и хранение
+
+### SQLite
+
+Ключевые таблицы, которые создаёт `bot/database.py`:
+
+- `users`
+- `transactions`
+- `generation_tasks`
+- `generation_history`
+- `user_settings`
+- `referrals`
+- `partner_withdrawals`
+- `batch_jobs`
+- `analytics_events`
+- `shop_product_overrides`
+- `shop_product_images`
+- `shop_orders`
+- `shop_order_items`
+
+### JSON-файлы
+
+Используются mini app API:
+
+- `data/products.json`
+- `data/orders.json`
+- `data/settings.json`
+
+### Excel
+
+`data/catalog.xlsx` — источник товарной матрицы для `/shop`.
+
+### Static storage
+
+- `static/shop/` — витрина и картинки товаров.
+- `static/uploads/` — пользовательские загрузки, временные input/output файлы.
+
+## Платёжная модель
+
+Баланс внутри бота измеряется в `GOE`. Пакеты и стоимость лежат в `data/price.json`.
+
+Сейчас в коде поддерживаются:
+
+- `YooKassa`
+- `Robokassa`
+
+Выбор провайдера зависит от env-конфига и реально заполненных ключей.
+
+## Реферальная и партнёрская логика
+
+В проекте уже есть:
+
+- реферальные deep links через `/start ref_*`;
+- бонус за регистрацию;
+- бонус за первую оплату реферала;
+- партнёрские уровни и баланс;
+- заявки на вывод.
+
+Отдельный нюанс: в `bot/database.py` есть концепция `MASTER_PARTNER_TELEGRAM_ID`, и часть логики завязана на центрального партнёра.
+
+## Конфигурация через env
+
+Ниже перечислены основные переменные. В репозитории сейчас **нет** готового `.env.example`, поэтому `.env` нужно создать вручную.
+
+### Обязательные для базового запуска
+
+```env
+BOT_TOKEN=
+WEBHOOK_HOST=
 WEBHOOK_PATH=/webhook
 WEBHOOK_PORT=8443
-
-# AI API Keys
-NANOBANANA_API_KEY=...
-KIE_AI_API_KEY=...      # Kling 3.0 / Motion Control
-REPLICATE_API_TOKEN=... # Kling fallback
-NOVITA_API_KEY=...      # Seedream/FLUX
-GEMINI_API_KEY=...      # Legacy
-
-# Payments
-TBANK_TERMINAL_KEY=...
-TBANK_SECRET_KEY=...
-YOOKASSA_SHOP_ID=...
-YOOKASSA_SECRET_KEY=...
-
-# Admins
-ADMIN_IDS=123,456
+ADMIN_IDS=
+DATABASE_PATH=bot.db
 ```
 
-## 🗄️ База данных (SQLite: bot.db)
+### Платежи
 
-### Таблицы
-- **users**: telegram_id, credits, referral_code, referred_by, referral_earned, has_paid, partner_agreed_at, partner_total_revenue_rub, partner_balance_rub, partner_withdrawn_rub, partner_tier (basic/gold/pro)
-- **transactions**: order_id, user_id, credits, amount_rub, status (pending/completed), provider (tbank/yookassa)
-- **generation_tasks**: task_id, user_id, type (image/video), preset_id, model, duration, aspect_ratio, prompt, cost, result_url
-- **batch_jobs**: job_id, user_id, mode, total_cost, results_count
-- **user_settings**: preferred_model/video_model/i2v_model/image_service
-- **partner_withdrawals**: user_id, amount_rub, method, requisites, status (requested/completed)
-- **referrals**: referrer_id, referred_id, bonus_credits
+```env
+PAYMENT_PROVIDER=yookassa
 
-### Ключевые функции
-```python
-get_or_create_user(telegram_id) → User
-add_credits/deduct_credits(telegram_id, amount)
-add_generation_task(...) → bool
-complete_video_task(task_id, result_url)
-get_admin_stats() → dict (users, revenue, generations)
-process_referral(referred_id, code) → bool
-credit_first_payment_referral_bonus(...) → dict (mode: partner/banana, value, %)
-get_partner_overview(id) → dict (balance_rub, tier, referrals_count)
-create_partner_withdrawal(id, amount, method, requisites) → bool
+YOOKASSA_SHOP_ID=
+YOOKASSA_SECRET_KEY=
+YOOKASSA_RETURN_URL=
+YOOKASSA_WEBHOOK_SECRET=
+
+ROBOKASSA_MERCHANT_LOGIN=
+ROBOKASSA_PASSWORD1=
+ROBOKASSA_PASSWORD2=
+ROBOKASSA_TEST=0
+BOT_USERNAME=
 ```
 
-## 👥 Реферальная/Партнёрская система
+### AI провайдеры
 
-### Как работает
-1. **Регистрация:** Новый пользователь получает уникальный `referral_code` (8 символов).
-2. **Приглашение:** `t.me/bot?start=ref_XXXXXX` → `process_referral()` закрепляет за мастер-партнёром (ID: 339795159).
-3. **Бонус за регистрацию:** 5🍌 новому (signup_bonus).
-4. **Первая оплата реферала:** `credit_first_payment_referral_bonus()` начисляет мастеру:
-   - **Banana бонус:** 10% от credits (если не партнёр).
-   - **Partner %:** basic=30%, gold=35% (≥100k ₽), pro=50% (≥1M ₽) от RUB.
-5. **Уровни:** `get_partner_tier_by_total(total_revenue_rub)`.
-6. **Вывод:** `create_partner_withdrawal()` (мин. 2000₽), статус: requested → completed.
+```env
+NANOBANANA_API_KEY=
+GEMINI_API_KEY=
+FREEPIK_API_KEY=
+NOVITA_API_KEY=
+KIE_AI_API_KEY=
+KIE_AI_WEBHOOK_PATH=/webhook/kie_ai
+KIE_BASE_URL=https://api.kie.ai
+REPLICATE_API_TOKEN=
+REPLICATE_WEBHOOK_SECRET=
+KLING_API_KEY=
+PIAPI_API_KEY=
+ALLOW_NSFW=0
+```
 
-### Flows (common.py)
-- `/ref` или "Партнёрка" → `render_partner_program()` → stats, link.
-- "Принять оферту" → `accept_partner_agreement()` → tier= basic.
-- "Статистика" → `get_partner_overview()` (balance, tier, revenue).
-- "Вывод" → `create_partner_withdrawal()`.
+### Партнёрка
 
-### DB интеграция
-- `generate_referral_code()`: уникальный код (race-safe).
-- `set_user_referrer()`: one-time bind.
-- Partner fields: `partner_balance_rub += bonus_rub`, `tier` auto-update.
+```env
+MASTER_PARTNER_TELEGRAM_ID=339795159
+PARTNER_OFFER_URL=
+PARTNER_RULES_URL=
+PARTNER_MIN_WITHDRAWAL_RUB=2000
+```
 
-**Централизованно:** Все бонусы → мастер-партнёр (339795159).
+### Mini App
 
+```env
+TWOLOOP_DATA_DIR=/root/2loop/data
+TWOLOOP_UPLOAD_DIR=static/uploads/2loop
+TWOLOOP_VERIFY_INIT_DATA=1
+TWOLOOP_ADMIN_IDS=${ADMIN_IDS}
+TWOLOOP_ORDER_NOTIFY_CHAT_IDS=${ADMIN_IDS}
+```
 
-## 🎛️ FSM Состояния (aiogram StatesGroup)
+## Важное замечание по конфигу
 
-### GenerationStates
-- waiting_for_input/image/video/prompt/ref_video/motion_character/video_start_image
-- confirming_generation / selecting_batch_count
-- uploading_reference_images/videos / confirming_reference_images
-- waiting_for_batch_image/prompt/aspect_ratio
+В коде одновременно фигурируют `DATABASE_URL` и `DATABASE_PATH`, но реальная SQLite-логика в `bot/database.py` использует именно `DATABASE_PATH`. Для практической настройки проекта ориентироваться нужно на него.
 
-### PaymentStates
-- selecting_package / confirming_payment / waiting_payment
+## Локальный запуск
 
-### AdminStates
-- waiting_broadcast_text / confirming_broadcast / waiting_user_id / waiting_credits_amount
+### 1. Python-зависимости
 
-### BatchGenerationStates
-- selecting_mode/preset / entering_prompts / uploading_references / confirming_batch
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-### ImageAnalyzerStates
-- waiting_for_photo
+### 2. Создать `.env`
 
-### AIAssistantStates
-- main_menu / settings / waiting_for_message
+Минимально:
 
-## 📱 Handlers (User Flows)
+```env
+BOT_TOKEN=...
+WEBHOOK_HOST=https://your-domain.example
+WEBHOOK_PATH=/webhook
+WEBHOOK_PORT=8443
+ADMIN_IDS=123456789
+DATABASE_PATH=bot.db
+```
 
-### common.py (/start, меню)
-- Главное меню, баланс, партнёрка, настройки, ИИ-ассистент
-- Motion Control (Kling 2.6): фото персонажа + видео движения
+### 3. Запустить бот
 
-### generation.py (основная логика)
-- create_image/video (новый UX: refs → params → prompt)
-- Модели: FLUX, NanoBanana(2/Pro), Seedream(4.5/5/Lite/Edit), Z-Image Turbo
-- Видео: text/imgtxt/video modes (Kling 3/2.6, Grok)
-- Refs: до 14 img / 5 video
-- Edit: image/video input types
+Вариант через helper script:
 
-### payments.py
-- Пакеты (mini/standard/optimal/pro/studio)
-- TBank/Yookassa (webhooks)
-- Ручная проверка /check_payment_
+```bash
+./start.sh
+```
 
-### admin.py
-- /admin: stats, users (add/deduct credits), broadcast
+Или напрямую:
 
-### batch_generation.py
-- Batch edit (img + prompt + refs → multiple outputs)
-- Upscale (2K/4K)
+```bash
+python -m bot.main
+```
 
-## 🔌 Services (Интеграции)
+### 4. Остановить
 
-| Service | Функции | Webhook |
-|---------|---------|---------|
-| **Gemini/NanoBanana** | t2i/i2i/edit/refs(14)/search/4K | `/webhook/kie_ai` |
-| **Kling (Kie.ai/PiAPI/Replicate)** | t2v/i2v/v2v/motion(2.6)/omni | `/webhook/kling` |
-| **Seedream/Novita** | t2i (4.5/5/Lite/Edit) | `/webhook/seedream` |
-| **Grok** | i2v (Imagine) | - |
-| **TBank/Yookassa** | Платежи (webhooks) | `/tbank/webhook`, `/yookassa/webhook` |
-| **PresetManager** | Цены из price.json, пакеты | - |
+```bash
+./stop.sh
+```
 
-### Webhooks (main.py)
-- Telegram: `/webhook`
-- Kling/Kie/Replicate: `/webhook/kling` (signature verify)
-- Health: `/health`
+## Mini App разработка
 
-## 💰 Цены (data/price.json)
+Исходники лежат в `miniapp/`.
 
-### Пакеты GOEов
-| Пакет | GOE | ₽ | Популярный |
-|-------|--------|----|------------|
-| Mini | 15 | 150 | - |
-| Стандарт | 30 | 250 | - |
-| Оптимальный | 50 | 400 | ⭐ |
-| Pro | 100 | 700 | - |
-| Студия | 200 | 1400 | - |
+```bash
+cd miniapp
+npm install
+npm run dev
+```
 
-### Модели изображений
-| Модель | Цена |
-|--------|------|
-| FLUX.2 Pro | 5🍌 |
-| Nano Banana Pro | 5🍌 |
-| Gemini 3 Pro | 5🍌 |
-| Banana 2 | 7🍌 |
-| Seedream Edit | 7🍌 |
+Сборка:
 
-### Видео (Kling)
-| Модель/Duration | 5s | 10s | 15s |
-|-----------------|----|-----|-----|
-| v3_std | 15 | 30 | 45 |
-| v3_pro | 15 | 30 | 45 |
+```bash
+cd miniapp
+npm run build
+```
 
-## 👑 Админ-панель (/admin)
+Деплой этого фронтенда в текущем репозитории частично автоматизируется helper-скриптами `setup_2loop_miniapp.sh` и `setup_2loop_go2.sh`.
 
-- Статистика (users, generations, revenue)
-- Управление пользователями (credits +/-)
-- Рассылка (broadcast)
+## Каталог магазина
 
-## 🔧 Разработка
+Поток магазина сейчас устроен так:
 
-- **Линтинг/Форматирование:** `isort . && black .`
-- **Тесты:** `pytest tests/`
-- **Логи:** `tail -f logs/bot.log`
-- **Static cleanup:** Авто каждые 6ч (static/uploads)
+1. Excel-каталог хранится в `data/catalog.xlsx`.
+2. `bot/catalog_webapp.py` читает его и строит JSON-каталог.
+3. Таблицы `shop_product_overrides` и `shop_product_images` дополняют Excel:
+   - свои фото;
+   - override по цене;
+   - override по остаткам;
+   - скрытие товара.
+4. Заказы попадают в `shop_orders` и `shop_order_items`.
+
+Это хороший компромисс для быстрого бизнеса, но при развитии проекта почти наверняка захочется единый источник истины по товарам.
+
+## Полезные скрипты
+
+| Файл | Назначение |
+| --- | --- |
+| `start.sh` | локальный запуск бота |
+| `stop.sh` | остановка локального процесса |
+| `set_webhook.py` | ручная установка Telegram webhook |
+| `setup_2loop_miniapp.sh` | разворачивание miniapp-связки |
+| `setup_2loop_go2.sh` | донастройка miniapp/go2-потока |
+| `fix_2loop_nginx_8444.sh` | nginx/webhook helper |
+| `fix_webhook_route.sh` | исправление webhook route |
+| `scripts/poll_yookassa_pending.py` | опрос зависших платежей |
+| `scripts/update_cloudflare_conf.sh` | генерация Cloudflare real IP conf |
+
+## Тесты
+
+В репозитории есть набор unit/integration тестов:
+
+- `tests/test_config.py`
+- `tests/test_database.py`
+- `tests/test_keyboards.py`
+- `tests/test_referral_system.py`
+- `tests/test_webhook_handler.py`
+- и несколько standalone-тестов для отдельных сервисов
+
+Запуск:
+
+```bash
+pytest
+```
+
+Или точечно:
+
+```bash
+pytest tests/test_config.py tests/test_database.py
+```
+
+## Что важно знать перед доработками
+
+### 1. Проект находится в переходном состоянии
+
+Есть старые и новые магазинные сценарии, backup-файлы, setup-скрипты миграций и несколько слоёв документации. Перед крупным рефакторингом лучше сначала решить, какой storefront остаётся основным.
+
+### 2. Хранилище раздвоено
+
+- AI, платежи, аналитика и заказы web-каталога — в SQLite.
+- Mini app товары/настройки/заказы — в JSON.
+- Каталог товаров — в Excel.
+
+Для быстрой разработки это работает, но усложняет консистентность данных.
+
+### 3. Документация и инфраструктура частично устарели
+
+По текущему коду видно несколько признаков drift:
+
+- старый `README` не соответствовал реальной структуре;
+- `start.sh` ожидает `.env.example`, которого нет в репозитории;
+- `nginx.conf.example` стоит перепроверить перед продом;
+- часть setup-скриптов патчит код, а не только инфраструктуру.
+
+### 4. `database.py` очень нагружен ответственностью
+
+Там одновременно:
+
+- схемы таблиц;
+- миграции;
+- бизнес-логика;
+- аналитика;
+- магазин;
+- партнёрка.
+
+Это один из главных кандидатов на декомпозицию при следующем этапе развития.
+
+## Файлы, которые стоит смотреть в первую очередь
+
+- `bot/main.py`
+- `bot/config.py`
+- `bot/database.py`
+- `bot/handlers/generation.py`
+- `bot/handlers/payments.py`
+- `bot/catalog_webapp.py`
+- `bot/miniapp_api.py`
+- `data/price.json`
+- `tests/`
+
+## Лицензия
+
+См. файл `LICENSE`.

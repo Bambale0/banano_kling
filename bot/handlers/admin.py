@@ -1,11 +1,23 @@
 import logging
+import os
+import uuid
 
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
+from bot.database import (
+    add_credits,
+    add_shop_product_image,
+    deduct_credits,
+    get_admin_stats,
+    get_recent_shop_orders,
+    get_shop_product_images,
+    get_user_stats,
+    set_shop_product_primary_image,
+    upsert_shop_product_override,
+)
 from bot.keyboards import get_admin_keyboard, get_back_keyboard
 from bot.states import AdminStates
 
@@ -81,6 +93,337 @@ async def admin_show_stats(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         text, reply_markup=get_back_keyboard("admin_back"), parse_mode="HTML"
+    )
+
+
+def get_admin_shop_keyboard(article: str | None = None):
+    rows = []
+    if article:
+        rows.extend(
+            [
+                [
+                    types.InlineKeyboardButton(
+                        text="🖼 Добавить фото",
+                        callback_data=f"admin_shop_photo:{article}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="⭐ Выбрать главное фото",
+                        callback_data=f"admin_shop_primary:{article}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="📦 Изменить остаток",
+                        callback_data=f"admin_shop_stock:{article}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="💰 Изменить цену",
+                        callback_data=f"admin_shop_price:{article}",
+                    )
+                ],
+            ]
+        )
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text="🔎 Другой артикул", callback_data="admin_shop"
+            )
+        ]
+    )
+    rows.append(
+        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "admin_shop")
+async def admin_shop_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await callback.message.edit_text(
+        "🛍 <b>Управление магазином</b>\n\n"
+        "Введите артикул WB товара, которому нужно обновить фото, остаток или цену:",
+        reply_markup=get_back_keyboard("admin_back"),
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_shop_article)
+
+
+@router.message(AdminStates.waiting_shop_article)
+async def admin_shop_article(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    article = (message.text or "").strip()
+    if not article.isdigit():
+        await message.answer("❌ Введите числовой артикул WB:")
+        return
+
+    await state.update_data(shop_article=article)
+    await message.answer(
+        f"🛍 <b>Товар WB</b>: <code>{article}</code>\n\n" "Что обновляем?",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_shop_photo:"))
+async def admin_shop_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    article = callback.data.split(":", 1)[1]
+    await state.update_data(shop_article=article)
+    await callback.message.edit_text(
+        f"🖼 <b>Фото товара</b>\n\nWB: <code>{article}</code>\n\n"
+        "Отправьте одно или несколько фото товара.\n"
+        "Можно отправлять их по одному сообщению или альбомом.",
+        reply_markup=get_back_keyboard("admin_back"),
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_shop_photo)
+
+
+@router.message(AdminStates.waiting_shop_photo, F.photo)
+async def admin_shop_photo_save(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    article = data.get("shop_article")
+    if not article:
+        await message.answer("❌ Артикул не найден. Начните заново через /admin.")
+        await state.clear()
+        return
+
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+    os.makedirs("static/shop/products", exist_ok=True)
+    filename = f"{article}_{uuid.uuid4().hex[:8]}.jpg"
+    path = os.path.join("static", "shop", "products", filename)
+    with open(path, "wb") as output:
+        output.write(image_bytes.read())
+
+    image_url = f"/shop/assets/products/{filename}"
+    existing_images = await get_shop_product_images(article)
+    is_primary = not bool(existing_images.get(article))
+    image_id = await add_shop_product_image(
+        article,
+        image_url,
+        is_primary=is_primary,
+        created_by=message.from_user.id,
+    )
+    if is_primary:
+        await upsert_shop_product_override(
+            article, image_url=image_url, updated_by=message.from_user.id
+        )
+    await message.answer(
+        f"✅ Фото #{image_id} сохранено для WB <code>{article}</code>.\n"
+        f"{'Оно назначено главным.' if is_primary else 'Главное фото можно выбрать отдельной кнопкой.'}\n"
+        "Можно отправить ещё фото или нажать «Назад».",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminStates.waiting_shop_photo)
+async def admin_shop_photo_invalid(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "❌ Отправьте фото товара. Если закончили, нажмите «Назад» в админ-меню."
+    )
+
+
+@router.callback_query(F.data.startswith("admin_shop_primary:"))
+async def admin_shop_primary_menu(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    article = callback.data.split(":", 1)[1]
+    images = (await get_shop_product_images(article)).get(article, [])
+    if not images:
+        await callback.message.edit_text(
+            f"⭐ <b>Главное фото</b>\n\nWB: <code>{article}</code>\n\n"
+            "Фото пока нет. Сначала загрузите фото товара.",
+            reply_markup=get_admin_shop_keyboard(article),
+            parse_mode="HTML",
+        )
+        return
+
+    rows = []
+    for index, image in enumerate(images, start=1):
+        prefix = "✅ " if image["is_primary"] else ""
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"{prefix}Фото {index} · #{image['id']}",
+                    callback_data=f"admin_shop_set_primary:{article}:{image['id']}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text="🔙 Назад", callback_data=f"admin_shop_back:{article}"
+            )
+        ]
+    )
+    await callback.message.edit_text(
+        f"⭐ <b>Выберите главное фото</b>\n\nWB: <code>{article}</code>",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin_shop_set_primary:"))
+async def admin_shop_set_primary(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    _, article, image_id = callback.data.split(":", 2)
+    success = await set_shop_product_primary_image(article, int(image_id))
+    if not success:
+        await callback.answer("Фото не найдено", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"✅ Главное фото WB <code>{article}</code> обновлено.",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin_shop_back:"))
+async def admin_shop_back_to_product(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    article = callback.data.split(":", 1)[1]
+    await callback.message.edit_text(
+        f"🛍 <b>Товар WB</b>: <code>{article}</code>\n\nЧто обновляем?",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("admin_shop_stock:"))
+async def admin_shop_stock_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    article = callback.data.split(":", 1)[1]
+    await state.update_data(shop_article=article)
+    await callback.message.edit_text(
+        f"📦 <b>Остаток товара</b>\n\nWB: <code>{article}</code>\n\n"
+        "Введите общий остаток для мини-магазина:",
+        reply_markup=get_back_keyboard("admin_back"),
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_shop_stock)
+
+
+@router.message(AdminStates.waiting_shop_stock)
+async def admin_shop_stock_save(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        stock = int(message.text)
+        if stock < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        await message.answer("❌ Введите число 0 или больше:")
+        return
+
+    data = await state.get_data()
+    article = data.get("shop_article")
+    await upsert_shop_product_override(
+        article, stock_override=stock, updated_by=message.from_user.id
+    )
+    await message.answer(
+        f"✅ Остаток WB <code>{article}</code>: <code>{stock}</code>.",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_shop_price:"))
+async def admin_shop_price_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    article = callback.data.split(":", 1)[1]
+    await state.update_data(shop_article=article)
+    await callback.message.edit_text(
+        f"💰 <b>Цена товара</b>\n\nWB: <code>{article}</code>\n\n"
+        "Введите цену в рублях для мини-магазина:",
+        reply_markup=get_back_keyboard("admin_back"),
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_shop_price)
+
+
+@router.message(AdminStates.waiting_shop_price)
+async def admin_shop_price_save(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        price = float(str(message.text).replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        await message.answer("❌ Введите цену числом:")
+        return
+
+    data = await state.get_data()
+    article = data.get("shop_article")
+    await upsert_shop_product_override(
+        article, price_override=price, updated_by=message.from_user.id
+    )
+    await message.answer(
+        f"✅ Цена WB <code>{article}</code>: <code>{price:.0f} ₽</code>.",
+        reply_markup=get_admin_shop_keyboard(article),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data == "admin_shop_orders")
+async def admin_shop_orders(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    orders = await get_recent_shop_orders(10)
+    if not orders:
+        text = "📦 <b>Заказы магазина</b>\n\nПока заказов нет."
+    else:
+        parts = ["📦 <b>Последние заказы магазина</b>"]
+        for order in orders:
+            items = ", ".join(
+                f"{item['wb_article']}×{item['qty']}" for item in order["items"]
+            )
+            parts.append(
+                f"\n<b>{order['order_id']}</b>\n"
+                f"👤 <code>{order['telegram_id'] or '-'}</code> · {order['customer_name'] or '-'}\n"
+                f"📍 {order['city'] or '-'}, {order['address'] or '-'}\n"
+                f"🚚 {order['delivery_method']} / {order['delivery_status']}\n"
+                f"🛒 {items}\n"
+                f"💰 <code>{order['total_rub']:.0f} ₽</code>"
+            )
+        text = "\n".join(parts)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_back_keyboard("admin_back"),
+        parse_mode="HTML",
     )
 
 
@@ -344,8 +687,9 @@ async def admin_execute_broadcast(
 
 
 @router.callback_query(F.data == "admin_back")
-async def admin_back_to_menu(callback: types.CallbackQuery):
+async def admin_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-меню"""
+    await state.clear()
     stats = await get_admin_stats()
 
     text = f"""

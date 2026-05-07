@@ -620,6 +620,7 @@ class KlingService:
                 input_data["last_frame_url"] = end_image_url
             if image_input:
                 input_data["reference_image_urls"] = image_input[:9]
+            video_url = video_urls[0] if video_urls else None
             if video_url:
                 input_data["reference_video_urls"] = [video_url]
             payload = {

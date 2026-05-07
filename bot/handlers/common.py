@@ -13,11 +13,14 @@ from bot.database import (
     get_or_create_user,
     get_user_settings,
     get_user_stats,
+    process_referral,
     save_user_settings,
+    track_event,
 )
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
+    get_balance_keyboard,
     get_main_menu_keyboard,
 )
 from bot.services.preset_manager import preset_manager
@@ -64,14 +67,26 @@ async def cmd_start(message: types.Message):
 
     # Проверяем deep linking для возврата после оплаты
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
+    start_payload = args[0] if args else ""
+    await track_event(
+        message.from_user.id,
+        "start",
+        {"payload": start_payload or None},
+    )
 
-    if args and args[0].startswith("success_"):
+    if start_payload.startswith("success_"):
         # Извлекаем order_id из аргумента
-        order_id = args[0].replace("success_", "")
+        order_id = start_payload.replace("success_", "")
+        await track_event(
+            message.from_user.id,
+            "payment_return_success",
+            {"order_id": order_id},
+        )
 
         # Проверяем транзакцию в базе данных
         from bot.database import (
             add_credits,
+            credit_first_payment_referral_bonus,
             get_transaction_by_order,
             update_transaction_status,
         )
@@ -107,14 +122,36 @@ async def cmd_start(message: types.Message):
                     # Начисляем кредиты
                     await add_credits(message.from_user.id, transaction.credits)
                     await update_transaction_status(order_id, "completed")
+                    referral_bonus = await credit_first_payment_referral_bonus(
+                        message.from_user.id,
+                        transaction.credits,
+                        transaction.amount_rub,
+                    )
+                    await track_event(
+                        message.from_user.id,
+                        "payment_completed",
+                        {
+                            "provider": transaction.provider,
+                            "order_id": order_id,
+                            "credits": transaction.credits,
+                            "amount_rub": transaction.amount_rub,
+                            "source": "start_success",
+                        },
+                    )
 
                     # Получаем обновлённый баланс
                     user = await get_or_create_user(message.from_user.id)
+                    bonus_text = ""
+                    if referral_bonus.get("mode") == "partner":
+                        bonus_text = f"🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽\n"
+                    elif referral_bonus.get("mode") == "banana":
+                        bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> GOEов\n"
 
                     await message.answer(
                         f"🎉 <b>Оплата успешно обработана!</b>\n\n"
                         f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
+                        f"{bonus_text}"
                         f"💎 Ваш баланс: <code>{user.credits}</code> GOEов",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
@@ -138,7 +175,12 @@ async def cmd_start(message: types.Message):
             )
             return
 
-    elif args and args[0].startswith("fail_"):
+    elif start_payload.startswith("fail_"):
+        await track_event(
+            message.from_user.id,
+            "payment_return_fail",
+            {"payload": start_payload},
+        )
         await message.answer(
             "❌ <b>Оплата не была завершена</b>\n\n"
             "Вы можете попробовать снова в любое время.",
@@ -147,30 +189,65 @@ async def cmd_start(message: types.Message):
         )
         return
 
+    deeplink_note = ""
+    if start_payload.startswith("ref_"):
+        referral_code = start_payload.replace("ref_", "", 1)
+        referral_applied = await process_referral(message.from_user.id, referral_code)
+        await track_event(
+            message.from_user.id,
+            "referral_start",
+            {"code": referral_code, "applied": referral_applied},
+        )
+        if referral_applied:
+            user = await get_or_create_user(message.from_user.id)
+            deeplink_note = "\n🎁 Реферальный бонус начислен: +5 GOE\n"
+    elif start_payload.startswith("product_"):
+        product_ref = start_payload.replace("product_", "", 1)
+        await track_event(
+            message.from_user.id,
+            "product_start",
+            {"product": product_ref},
+        )
+        deeplink_note = (
+            f"\n🛒 Вы пришли за товаром: <code>{product_ref}</code>. "
+            "Откройте каталог, чтобы проверить цену и промокод.\n"
+        )
+    elif start_payload.startswith("promo_"):
+        promo_code = start_payload.replace("promo_", "", 1)
+        await track_event(
+            message.from_user.id,
+            "promo_start",
+            {"promo": promo_code},
+        )
+        deeplink_note = (
+            f"\n🎟 Ваш промокод: <code>{promo_code.upper()}</code>. "
+            "Его можно применить в каталоге.\n"
+        )
+    elif start_payload.startswith("ai_"):
+        scenario = start_payload.replace("ai_", "", 1)
+        await track_event(
+            message.from_user.id,
+            "ai_campaign_start",
+            {"scenario": scenario},
+        )
+
     # Приветственное сообщение
     welcome_text = f"""
-💎 2Loop × AI — Создавай магию льда!
-Твои идеи + наш ИИ = уникальный контент для фигурного катания
-
-🎨 Генерация артов
-Опиши образ — получи уникальный арт в стиле фигурного катания. Концепты костюмов, постеры, визуалы для соцсетей.
-
-📸 Фото-магия
-Стилизация снимков: добавь эффекты льда, зимнюю атмосферу, смени фон на каток. Замена объектов в один клик.
-
-🎬 Видео-продакшн
-Ролики из текста и фото — идеально для отчётов о соревнованиях, промо тренировок, благодарностей тренерам.
-
-✨ FX-эффекты
-Блёстки, следы на льду, динамичные переходы. Твои видео будут сиять как победные выступления.
+✨ <b>2Loop × AI</b>
+Образы, аксессуары и сторис для фигурного катания.
 
 💎 Баланс: <code>{user.credits}</code> GOE
-
+{deeplink_note}
 📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
 
-Попробуй прямо сейчас! 👇
-⚠️ ВАЖНО:
-Запрещён контент 18+, оскорбления, нарушение прав третьих лиц. Администрация оставляет за собой право блокировать нарушителей без возврата GOE. Ответственность за сгенерированный контент несёт пользователь.
+Выберите, что делаем сегодня:
+
+🎀 <b>Подобрать аксессуар</b> — к костюму, прокату или подарку.
+🧊 <b>Собрать AI-образ</b> — визуал для льда, афиши или идеи.
+🎬 <b>Сделать видео/сторис</b> — ролик для соцсетей и соревнований.
+🛒 <b>Магазин 2Loop</b> — WB, артикул, промокод и заказ.
+
+⚠️ Запрещён контент 18+, оскорбления и нарушение прав третьих лиц. Ответственность за сгенерированный контент несёт пользователь.
 """
 
     try:
@@ -299,28 +376,20 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     _set_user_menu(callback.from_user.id, "main_menu")
 
     welcome_text = f"""
-💎 2Loop & AI 
-Создавай магию льда!
-Твои идеи + наш ИИ = уникальный контент для фигурного катания
-
-🎨 Генерация артов
-Опиши образ — получи уникальный арт в стиле фигурного катания. Концепты костюмов, постеры, визуалы для соцсетей.
-
-📸 Фото-магия
-Стилизация снимков: добавь эффекты льда, зимнюю атмосферу, смени фон на каток. Замена объектов в один клик.
-🎬 Видео-продакшн
-Ролики из текста и фото — идеально для отчётов о соревнованиях, промо тренировок, благодарностей тренерам.
-
-✨ FX-эффекты
-Блёстки, следы на льду, динамичные переходы. Твои видео будут сиять как победные выступления.
+✨ <b>2Loop × AI</b>
+Образы, аксессуары и сторис для фигурного катания.
 
 💎 Баланс: <code>{user.credits}</code> GOE
-
 📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
-Попробуй прямо сейчас! 👇
 
-⚠️ ВАЖНО:
-Запрещён контент 18+, оскорбления, нарушение прав третьих лиц. Администрация оставляет за собой право блокировать нарушителей без возврата GOE. Ответственность за сгенерированный контент несёт пользователь.
+Выберите, что делаем сегодня:
+
+🎀 <b>Подобрать аксессуар</b> — к костюму, прокату или подарку.
+🧊 <b>Собрать AI-образ</b> — визуал для льда, афиши или идеи.
+🎬 <b>Сделать видео/сторис</b> — ролик для соцсетей и соревнований.
+🛒 <b>Магазин 2Loop</b> — WB, артикул, промокод и заказ.
+
+⚠️ Запрещён контент 18+, оскорбления и нарушение прав третьих лиц. Ответственность за сгенерированный контент несёт пользователь.
 """
 
     try:
@@ -357,9 +426,10 @@ async def show_balance(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         balance_text,
-        reply_markup=get_main_menu_keyboard(user.credits),
+        reply_markup=get_balance_keyboard(user.credits),
         parse_mode="HTML",
     )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "menu_settings")
@@ -444,19 +514,15 @@ async def show_support(callback: types.CallbackQuery):
     from bot.keyboards import get_support_keyboard
 
     support_text = """
-🆘 <b>Техническая поддержка</b>
+❓ <b>Помощь</b>
 
-💬 <b>Напиши свой вопрос ИИ-ассистенту</b>
-Он поможет с:
-• Генерацией изображений и видео
-• Настройками и моделями
-• Оплатой и балансом
-• Любыми другими вопросами
+Выберите раздел:
 
-📱 <b>Или свяжись с нами:</b>
-@design_2Loop7222
+💬 <b>ИИ-ассистент</b> — идеи образа, промпты, модели, видео и генерация.
+📚 <b>FAQ</b> — доставка, возврат и публичная оферта.
+💎 <b>Баланс и GOE</b> — пополнение, история и стоимость генераций.
 
-Мы ответим вам в ближайшее время!
+📱 Связь с поддержкой: @design_2Loop7222
 """
 
     await callback.message.edit_text(

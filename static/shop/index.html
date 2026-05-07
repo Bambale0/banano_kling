@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2b5f82" />
+    <title>2Loop Shop</title>
+    <link rel="stylesheet" href="/shop/assets/styles.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="shop-header">
+        <div class="brand-orb" aria-hidden="true">
+          <span>2Loop</span>
+        </div>
+        <div class="header-copy">
+          <p class="eyebrow">2Loop Shop</p>
+          <h1>Аксессуары для фигурного катания</h1>
+          <p class="tagline">с любовью к фигурному катанию</p>
+        </div>
+        <button class="icon-button" id="shareButton" type="button" aria-label="Поделиться">
+          ↗
+        </button>
+      </header>
+
+      <section class="quick-panel" aria-label="Быстрые действия">
+        <a class="primary-action" id="wbLink" href="#" target="_blank" rel="noreferrer">
+          Открыть WB
+        </a>
+        <button class="secondary-action" id="promoButton" type="button">Промокод 2LOOP</button>
+      </section>
+
+      <section class="search-area" aria-label="Поиск и фильтры">
+        <label class="search-box">
+          <span>⌕</span>
+          <input id="searchInput" type="search" placeholder="Артикул, категория, название" autocomplete="off" />
+        </label>
+        <select id="sortSelect" aria-label="Сортировка">
+          <option value="popular">Сначала в наличии</option>
+          <option value="price-asc">Цена по возрастанию</option>
+          <option value="price-desc">Цена по убыванию</option>
+          <option value="name">По названию</option>
+        </select>
+      </section>
+
+      <nav class="chips" id="categoryChips" aria-label="Категории"></nav>
+
+      <section class="status-line" id="statusLine">Загружаем каталог...</section>
+
+      <section class="product-grid" id="productGrid" aria-live="polite"></section>
+    </main>
+
+    <aside class="cart-dock" id="cartDock" aria-label="Корзина">
+      <div>
+        <strong id="cartCount">0 товаров</strong>
+        <span id="cartTotal">0 ₽</span>
+      </div>
+      <button id="openCartButton" type="button">Корзина</button>
+    </aside>
+
+    <section class="checkout-sheet" id="checkoutSheet" aria-label="Оформление заказа">
+      <div class="sheet-panel">
+        <header class="sheet-header">
+          <h2>Корзина и доставка</h2>
+          <button class="icon-button" id="closeCartButton" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div class="cart-list" id="cartList"></div>
+        <form class="checkout-form" id="checkoutForm">
+          <label>
+            Имя
+            <input name="name" type="text" autocomplete="name" required />
+          </label>
+          <label>
+            Телефон
+            <input name="phone" type="tel" autocomplete="tel" required />
+          </label>
+          <label>
+            Город
+            <input name="city" type="text" autocomplete="address-level2" required />
+          </label>
+          <label>
+            Адрес доставки
+            <input name="address" type="text" autocomplete="street-address" required />
+          </label>
+          <label>
+            Способ доставки
+            <select name="deliveryMethod">
+              <option value="manual">Согласовать с поддержкой</option>
+              <option value="yandex_later">Яндекс Доставка позже</option>
+              <option value="dpd_later">DPD позже</option>
+            </select>
+          </label>
+          <label>
+            Комментарий
+            <textarea name="comment" rows="3" placeholder="Размер, пожелания, удобное время"></textarea>
+          </label>
+          <button id="checkoutButton" type="submit">Оформить заказ</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="gallery-viewer" id="galleryViewer" aria-label="Фотографии товара">
+      <button class="gallery-close" id="galleryClose" type="button" aria-label="Закрыть">×</button>
+      <button class="gallery-nav gallery-prev" id="galleryPrev" type="button" aria-label="Предыдущее фото">‹</button>
+      <figure class="gallery-frame">
+        <img id="galleryImage" alt="" />
+        <figcaption>
+          <strong id="galleryTitle"></strong>
+          <span id="galleryCounter"></span>
+        </figcaption>
+      </figure>
+      <button class="gallery-nav gallery-next" id="galleryNext" type="button" aria-label="Следующее фото">›</button>
+      <div class="gallery-dots" id="galleryDots"></div>
+    </section>
+
+    <template id="productTemplate">
+      <article class="product-card">
+        <button class="product-visual" type="button" aria-label="Открыть фотографии">
+          <span class="category-mark"></span>
+          <span class="photo-count"></span>
+        </button>
+        <div class="product-body">
+          <div class="product-topline">
+            <span class="category"></span>
+            <span class="stock"></span>
+          </div>
+          <h2></h2>
+          <p class="article"></p>
+          <div class="price-row">
+            <strong class="price"></strong>
+            <span class="old-price"></span>
+          </div>
+          <div class="card-actions">
+            <a class="ghost-link" target="_blank" rel="noreferrer">WB</a>
+            <button class="add-button" type="button">В корзину</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/shop/assets/app.js"></script>
+  </body>
+</html>
