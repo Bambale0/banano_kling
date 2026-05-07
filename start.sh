@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 mkdir -p logs
 rm -f bot.pid
 [ -f venv/bin/activate ] && source venv/bin/activate
-nohup python -m bot.main >> logs/bot_output.log 2>&1 &
+nohup python -m bot.main >/dev/null 2>&1 &
 echo $! > bot.pid
 sleep 2
-kill -0 "$(cat bot.pid)" 2>/dev/null && echo "Bot started PID=$(cat bot.pid)" || (tail -100 logs/bot_output.log && exit 1)
+kill -0 "$(cat bot.pid)" 2>/dev/null && echo "Bot started PID=$(cat bot.pid)" || (tail -100 logs/bot.log && exit 1)

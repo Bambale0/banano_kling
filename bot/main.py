@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import time
+from logging.handlers import TimedRotatingFileHandler
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,13 +41,25 @@ from bot.handlers.payments import (
 from bot.miniapp import setup_miniapp_routes
 from bot.services.preset_manager import preset_manager
 
+CLEANUP_INTERVAL_SECONDS = 24 * 3600
+UPLOAD_RETENTION_SECONDS = 24 * 3600
+LOG_RETENTION_SECONDS = 24 * 3600
+ACTIVE_LOG_FILENAMES = {"bot.log"}
+
 # Настройка логирования
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("logs/bot.log", encoding="utf-8"),
+        TimedRotatingFileHandler(
+            "logs/bot.log",
+            when="midnight",
+            interval=1,
+            backupCount=1,
+            encoding="utf-8",
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -112,16 +125,22 @@ def _extract_task_request_data(task) -> dict:
 
 
 async def _remove_old_files(
-    base_dir: str = "static/uploads", max_age_seconds: int = 6 * 3600
+    base_dir: str,
+    max_age_seconds: int,
+    *,
+    skip_filenames: set[str] | None = None,
 ):
     """Удаляет файлы старше max_age_seconds в каталоге base_dir (рекурсивно)."""
     try:
         now = time.time()
         if not os.path.exists(base_dir):
             return
+        skip_filenames = skip_filenames or set()
 
         for root, dirs, files in os.walk(base_dir):
             for name in files:
+                if name in skip_filenames:
+                    continue
                 path = os.path.join(root, name)
                 try:
                     mtime = os.path.getmtime(path)
@@ -140,17 +159,25 @@ async def _remove_old_files(
                 # Игнорируем ошибки удаления каталогов
                 pass
     except Exception:
-        logger.exception("Error during static cleanup")
+        logger.exception("Error during cleanup for %s", base_dir)
 
 
-async def _static_cleanup_loop():
-    """Фоновая задача, очищающая static/uploads каждые 6 часов."""
+async def _cleanup_loop():
+    """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
     while True:
         try:
-            await _remove_old_files("static/uploads", max_age_seconds=6 * 3600)
+            await _remove_old_files(
+                "static/uploads",
+                max_age_seconds=UPLOAD_RETENTION_SECONDS,
+            )
+            await _remove_old_files(
+                "logs",
+                max_age_seconds=LOG_RETENTION_SECONDS,
+                skip_filenames=ACTIVE_LOG_FILENAMES,
+            )
         except Exception:
             logger.exception("Cleanup iteration failed")
-        await asyncio.sleep(6 * 3600)
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
 
 async def on_startup(bot: Bot):
@@ -168,16 +195,16 @@ async def on_startup(bot: Bot):
     # Загружаем пресеты
     preset_manager.load_all()
     logger.info(f"Loaded {len(preset_manager._presets)} presets")
-    # Запускаем задачу очистки static/uploads каждые 6 часов
+    # Запускаем фоновую очистку static/uploads и старых логов раз в 24 часа
     try:
         # aiogram.Bot does not expose an event loop attribute in some versions.
         # Use asyncio.create_task to schedule background tasks on the running loop.
-        asyncio.create_task(_static_cleanup_loop())
+        asyncio.create_task(_cleanup_loop())
         logger.info(
-            "Scheduled static/uploads cleanup task (every 6 hours) via asyncio.create_task"
+            "Scheduled cleanup task for static/uploads and logs (every 24 hours)"
         )
     except Exception:
-        logger.exception("Failed to schedule static cleanup task")
+        logger.exception("Failed to schedule cleanup task")
 
 
 async def on_shutdown(bot: Bot):
@@ -267,8 +294,25 @@ async def handle_telegram_webhook(
         # Создаём объект Update
         update = Update(**update_data)
 
-        # Обрабатываем обновление через диспетчер
-        await dp.feed_webhook_update(bot, update)
+        async def _process_update():
+            try:
+                await dp.feed_webhook_update(bot, update)
+            except TelegramBadRequest as e:
+                error_msg = str(e).lower()
+                if (
+                    "chat not found" in error_msg
+                    or "bot was blocked" in error_msg
+                    or "user is deactivated" in error_msg
+                ):
+                    logger.warning(f"Chat error (safe to ignore): {e}")
+                    return
+                logger.exception(f"Telegram API error in background task: {e}")
+            except Exception as e:
+                logger.exception(f"Webhook background task error: {e}")
+
+        # Сразу отвечаем Telegram, а обработку уводим в фон,
+        # чтобы длинные операции не вызывали повторную доставку update.
+        asyncio.create_task(_process_update())
 
         return web.Response(text="OK", status=200)
     except TelegramBadRequest as e:

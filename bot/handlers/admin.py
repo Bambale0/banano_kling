@@ -7,7 +7,16 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
+from bot.database import (
+    add_credits,
+    deduct_credits,
+    get_admin_partner_details,
+    get_admin_partner_stats,
+    get_admin_stats,
+    get_partner_withdrawal_request,
+    get_pending_partner_withdrawals,
+    get_user_stats,
+)
 from bot.keyboards import (
     get_admin_keyboard,
     get_back_keyboard,
@@ -38,6 +47,113 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
                 ),
             ],
             [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+        ]
+    )
+
+
+def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = [
+        [
+            types.InlineKeyboardButton(
+                text="💸 Заявки на вывод",
+                callback_data="admin_partner_withdrawals",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="🔎 Открыть по Telegram ID",
+                callback_data="admin_partner_lookup",
+            )
+        ]
+    ]
+
+    for partner in top_partners[:8]:
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=(
+                        f"ID {partner['telegram_id']} • "
+                        f"{partner['balance_rub']:.0f}₽ • "
+                        f"{partner['level1_count']} реф."
+                    ),
+                    callback_data=f"admin_partner_view_{partner['telegram_id']}",
+                )
+            ]
+        )
+
+    rows.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_partner_detail_keyboard(telegram_id: int) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=f"admin_partner_view_{telegram_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔎 Открыть другого", callback_data="admin_partner_lookup"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К партнёрам", callback_data="admin_partners"
+                )
+            ],
+        ]
+    )
+
+
+def _admin_withdrawals_keyboard(withdrawals: list[dict]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    for item in withdrawals[:12]:
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=(
+                        f"#{item['id']} • ID {item['telegram_id']} • "
+                        f"{item['amount_rub']:.0f}₽"
+                    ),
+                    callback_data=f"admin_partner_withdrawal_{item['id']}",
+                )
+            ]
+        )
+
+    rows.append(
+        [types.InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_partner_withdrawals")]
+    )
+    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_withdrawal_detail_keyboard(withdrawal_id: int) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Подтвердить",
+                    callback_data=f"partner_withdraw_approve_{withdrawal_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Отменить",
+                    callback_data=f"partner_withdraw_cancel_{withdrawal_id}",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=f"admin_partner_withdrawal_{withdrawal_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К заявкам", callback_data="admin_partner_withdrawals"
+                )
+            ],
         ]
     )
 
@@ -306,6 +422,115 @@ def _update_price_value(target: str, key: str, field: str, value):
 def is_admin(user_id: int) -> bool:
     """Проверяет, является ли пользователь администратором"""
     return config.is_admin(user_id)
+
+
+def _format_admin_partners_text(stats: dict) -> str:
+    lines = [
+        "🤝 <b>Партнёрская статистика</b>",
+        "",
+        f"• Партнёров всего: <code>{stats['total_partners']}</code>",
+        f"• Активных партнёров: <code>{stats['active_partners']}</code>",
+        f"• На балансах: <code>{stats['total_balance_rub']:.2f}</code> ₽",
+        f"• Выведено: <code>{stats['total_withdrawn_rub']:.2f}</code> ₽",
+        f"• Оборот рефералок: <code>{stats['total_partner_revenue_rub']:.2f}</code> ₽",
+        "",
+        "<b>Топ партнёров:</b>",
+    ]
+
+    top_partners = stats.get("top_partners") or []
+    if not top_partners:
+        lines.append("• Пока нет данных")
+    else:
+        for index, partner in enumerate(top_partners[:5], start=1):
+            lines.append(
+                f"{index}. <code>{partner['telegram_id']}</code> "
+                f"• {partner['level1_count']} / {partner['level2_count']} реф. "
+                f"• баланс <code>{partner['balance_rub']:.2f}</code> ₽"
+            )
+
+    lines.extend(["", "Можно открыть карточку партнёра по кнопке или ввести Telegram ID."])
+    return "\n".join(lines)
+
+
+def _format_admin_partner_details_text(details: dict) -> str:
+    overview = details["overview"]
+    lines = [
+        "👤 <b>Карточка партнёра</b>",
+        "",
+        f"🆔 Telegram ID: <code>{details['telegram_id']}</code>",
+        f"🔗 Рефкод: <code>{details.get('referral_code') or '—'}</code>",
+        f"🍌 Баланс пользователя: <code>{details['credits']}</code>",
+        f"🤝 Активировал партнёрку: <code>{'да' if details['is_partner'] else 'нет'}</code>",
+        f"📅 Активирована: <code>{details.get('partner_agreed_at') or '—'}</code>",
+        "",
+        "<b>Показатели:</b>",
+        f"• 1 уровень: <code>{overview.get('level1_count', 0)}</code>",
+        f"• 2 уровень: <code>{overview.get('level2_count', 0)}</code>",
+        f"• Баланс к выводу: <code>{overview.get('balance_rub', 0):.2f}</code> ₽",
+        f"• Выведено: <code>{overview.get('withdrawn_rub', 0):.2f}</code> ₽",
+        f"• Оборот: <code>{overview.get('total_revenue_rub', 0):.2f}</code> ₽",
+        f"• Оплат по 1 уровню: <code>{overview.get('total_payments', 0)}</code>",
+        f"• Выручка по оплатам 1 уровня: <code>{overview.get('monthly_revenue', 0):.2f}</code> ₽",
+        f"• Активных за 7 дней: <code>{overview.get('active_7d', 0)}</code>",
+        "",
+        "<b>Прямые рефералы:</b>",
+    ]
+
+    referrals = details.get("referrals") or []
+    if not referrals:
+        lines.append("• Нет прямых рефералов")
+    else:
+        for ref in referrals:
+            paid_label = "платил" if ref["has_paid"] else "без оплат"
+            lines.append(
+                f"• <code>{ref['telegram_id']}</code> "
+                f"({paid_label}, {ref['payments_count']} оплат) "
+                f"• потратил <code>{ref['spent_rub']:.2f}</code> ₽ "
+                f"• 🍌 <code>{ref['credits']}</code> "
+                f"• привёл <code>{ref['subrefs_count']}</code>"
+            )
+
+    return "\n".join(lines)
+
+
+def _format_admin_withdrawals_text(withdrawals: list[dict]) -> str:
+    lines = [
+        "💸 <b>Заявки на вывод</b>",
+        "",
+        f"• Ожидают обработки: <code>{len(withdrawals)}</code>",
+        "",
+    ]
+
+    if not withdrawals:
+        lines.append("• Сейчас нет ожидающих заявок")
+    else:
+        for item in withdrawals[:12]:
+            lines.append(
+                f"• <code>#{item['id']}</code> "
+                f"ID <code>{item['telegram_id']}</code> "
+                f"— <code>{item['amount_rub']:.2f}</code> ₽ "
+                f"(баланс <code>{item['current_balance_rub']:.2f}</code> ₽)"
+            )
+
+    return "\n".join(lines)
+
+
+def _format_admin_withdrawal_detail_text(withdrawal: dict) -> str:
+    return "\n".join(
+        [
+            "💸 <b>Заявка на вывод</b>",
+            "",
+            f"ID заявки: <code>{withdrawal['id']}</code>",
+            f"Telegram ID: <code>{withdrawal['telegram_id']}</code>",
+            f"Статус: <code>{withdrawal['status']}</code>",
+            f"Сумма: <code>{withdrawal['amount_rub']:.2f}</code> ₽",
+            f"Фактический баланс: <code>{withdrawal['current_balance_rub']:.2f}</code> ₽",
+            f"Создана: <code>{withdrawal['created_at']}</code>",
+            "",
+            "Реквизиты:",
+            f"<code>{withdrawal['requisites'] or '—'}</code>",
+        ]
+    )
 
 
 @router.message(Command("admin"))
@@ -711,6 +936,131 @@ async def admin_show_stats(callback: types.CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "admin_partners")
+async def admin_partners_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Сводка по партнёрам и реферальной статистике."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    stats = await get_admin_partner_stats()
+    await callback.message.edit_text(
+        _format_admin_partners_text(stats),
+        reply_markup=_admin_partners_keyboard(stats.get("top_partners", [])),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_partner_withdrawals")
+async def admin_partner_withdrawals(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает очередь заявок на вывод партнёров."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    withdrawals = await get_pending_partner_withdrawals()
+    await callback.message.edit_text(
+        _format_admin_withdrawals_text(withdrawals),
+        reply_markup=_admin_withdrawals_keyboard(withdrawals),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_partner_withdrawal_"))
+async def admin_partner_withdrawal_detail(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Показывает детальную карточку заявки на вывод."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    withdrawal_id = int(callback.data.replace("admin_partner_withdrawal_", ""))
+    withdrawal = await get_partner_withdrawal_request(withdrawal_id)
+    if not withdrawal:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        _format_admin_withdrawal_detail_text(withdrawal),
+        reply_markup=_admin_withdrawal_detail_keyboard(withdrawal_id),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_partner_lookup")
+async def admin_partner_lookup(callback: types.CallbackQuery, state: FSMContext):
+    """Запрашивает Telegram ID партнёра для просмотра статистики."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_partner_user_id)
+    await callback.message.edit_text(
+        "🤝 <b>Поиск партнёра</b>\n\n"
+        "Введите Telegram ID пользователя, чтобы открыть его реферальную статистику и баланс.",
+        reply_markup=get_back_keyboard("admin_partners"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_partner_view_"))
+async def admin_partner_view(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает детальную партнёрскую карточку."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    telegram_id = int(callback.data.replace("admin_partner_view_", ""))
+    details = await get_admin_partner_details(telegram_id)
+    if not details:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        _format_admin_partner_details_text(details),
+        reply_markup=_admin_partner_detail_keyboard(telegram_id),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_partner_user_id)
+async def admin_process_partner_user_id(message: types.Message, state: FSMContext):
+    """Открывает партнёрскую статистику по введённому Telegram ID."""
+    try:
+        telegram_id = int((message.text or "").strip())
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат ID. Введите число.",
+            reply_markup=get_back_keyboard("admin_partners"),
+        )
+        return
+
+    details = await get_admin_partner_details(telegram_id)
+    if not details:
+        await message.answer(
+            f"❌ Пользователь с ID {telegram_id} не найден.",
+            reply_markup=get_back_keyboard("admin_partners"),
+        )
+        return
+
+    await message.answer(
+        _format_admin_partner_details_text(details),
+        reply_markup=_admin_partner_detail_keyboard(telegram_id),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
 @router.callback_query(F.data == "admin_users")
 async def admin_users_menu(callback: types.CallbackQuery, state: FSMContext):
     """Меню управления пользователями"""
@@ -760,6 +1110,9 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
 📊 Генераций: <code>{stats['generations']}</code>
 💸 Потрачено: <code>{stats['total_spent']}</code>
 📅 Регистрация: <code>{stats['member_since']}</code>
+🤝 Рефералов: <code>{stats['referrals_count']}</code>
+🎁 Заработано по рефке: <code>{stats['referral_earned']}</code> 🍌
+🔗 Рефкод: <code>{stats['referral_code'] or '—'}</code>
 
 Выберите действие:
 """
@@ -778,6 +1131,12 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
                     types.InlineKeyboardButton(
                         text="➖ Списать кредиты",
                         callback_data=f"admin_deduct_credits_{user_id}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="🤝 Реферальная статистика",
+                        callback_data=f"admin_partner_view_{user_id}",
                     )
                 ],
                 [

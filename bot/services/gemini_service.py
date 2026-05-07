@@ -17,14 +17,12 @@ class GeminiService:
     MODELS = {
         "flash": "google/gemini-2.5-flash-image",  # Быстрая генерация
         "pro": "google/gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
-        "banana_2": "google/gemini-3.1-flash-image-preview",  # Banana 2 (Gemini 3.1 Flash Image Preview)
     }
 
     # Native Gemini model names (for direct API calls)
     NATIVE_MODELS = {
         "flash": "gemini-2.5-flash-image",
         "pro": "gemini-3-pro-image-preview",
-        "banana_2": "gemini-3.1-flash-image-preview",
     }
 
     # Поддерживаемые разрешения (согласно banana_api.md)
@@ -159,13 +157,10 @@ ULTIMATE DETAIL & QUALITY BOOST:
         logger.info(f"Available MODELS mapping: {self.MODELS}")
 
         # Автоматически назначаем разрешение по модели если не указано явно:
-        # - Banana 2: 4K (по требованию пользователя)
         # - Flash модели: 2K (оптимально для скорости)
         # - Pro модели: 4K (максимальное качество)
         if not resolution:
-            if "banana_2" in model.lower() or "3.1" in model.lower():
-                resolution = "4K"
-            elif "flash" in model.lower():
+            if "flash" in model.lower():
                 resolution = "2K"
             else:
                 resolution = "4K"

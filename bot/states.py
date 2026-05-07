@@ -51,6 +51,8 @@ class PaymentStates(StatesGroup):
     selecting_package = State()  # Выбор пакета
     confirming_payment = State()  # Подтверждение оплаты
     waiting_payment = State()  # Ожидание оплаты
+    waiting_partner_withdraw_requisites = State()  # Реквизиты для вывода партнёру
+    waiting_partner_withdraw_amount = State()  # Сумма вывода партнёру
 
 
 class AdminStates(StatesGroup):
@@ -59,6 +61,7 @@ class AdminStates(StatesGroup):
     waiting_broadcast_text = State()  # Ввод текста рассылки
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
+    waiting_partner_user_id = State()  # Ввод ID партнёра для статистики
     waiting_credits_amount = State()  # Ввод количества кредитов
     waiting_price_value = State()  # Ввод нового значения цены
 

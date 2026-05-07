@@ -9,7 +9,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 START_SCRIPT="$PROJECT_DIR/start.sh"
 STOP_SCRIPT="$PROJECT_DIR/stop.sh"
 PID_FILE="$PROJECT_DIR/bot.pid"
-LOG_FILE="$PROJECT_DIR/logs/bot_output.log"
+LOG_FILE="$PROJECT_DIR/logs/bot.log"
 
 # Цвета для вывода
 RED='\033[0;31m'

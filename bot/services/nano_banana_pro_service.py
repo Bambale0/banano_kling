@@ -7,8 +7,11 @@ from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
 )
+from bot.services.kie_file_upload_service import kie_file_upload_service
 
 logger = logging.getLogger(__name__)
+
+
 class NanoBananaProService:
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -77,8 +80,13 @@ class NanoBananaProService:
         callback_url: str = None,
     ) -> Optional[str]:
         supported_image_urls = image_sources_to_supported_image_urls(image_input)
+        uploaded_image_urls = await kie_file_upload_service.upload_local_image_sources(
+            supported_image_urls
+        )
         normalized_image_input = [
-            source for source in supported_image_urls if isinstance(source, str) and source
+            source
+            for source in uploaded_image_urls
+            if isinstance(source, str) and source
         ]
         if not normalized_image_input and image_input:
             # Fallback for non-path byte inputs. Kie.ai may still reject these, but
@@ -99,12 +107,17 @@ class NanoBananaProService:
         if callback_url:
             payload["callBackUrl"] = callback_url
 
+        transport = (
+            "kie_file_upload_urls"
+            if uploaded_image_urls != supported_image_urls
+            else "image_input_urls"
+        )
         logger.info(
             "Nano Banana Pro create_task: refs=%s aspect_ratio=%s resolution=%s transport=%s model=%s",
             len(normalized_image_input),
             aspect_ratio,
             resolution,
-            "image_input_urls" if normalized_image_input else "none",
+            transport if normalized_image_input else "none",
             payload["model"],
         )
 

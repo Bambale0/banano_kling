@@ -11,15 +11,20 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.database import (
     DATABASE_PATH,
     accept_partner_agreement,
+    approve_partner_withdrawal,
+    cancel_partner_withdrawal,
     create_partner_withdrawal,
+    get_partner_available_withdrawal,
     get_or_create_user,
     get_partner_overview,
     get_referral_stats,
+    get_partner_withdrawal_request,
     get_user_settings,
     get_user_stats,
     process_referral,
     save_user_settings,
 )
+from bot.config import config
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_animate_hub_keyboard,
@@ -38,6 +43,56 @@ from bot.states import AdminStates, GenerationStates, PaymentStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _partner_withdraw_admin_keyboard(withdrawal_id: int) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Подтвердить",
+                    callback_data=f"partner_withdraw_approve_{withdrawal_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Отменить",
+                    callback_data=f"partner_withdraw_cancel_{withdrawal_id}",
+                ),
+            ]
+        ]
+    )
+
+
+async def _notify_admins_about_partner_withdrawal(
+    bot: Bot, withdrawal_data: dict
+) -> None:
+    if not config.admin_ids:
+        logger.warning("Partner withdrawal request created, but ADMIN_IDS is empty")
+        return
+
+    text = (
+        "💸 <b>Новая заявка на вывод партнёра</b>\n\n"
+        f"ID заявки: <code>{withdrawal_data['id']}</code>\n"
+        f"Telegram ID: <code>{withdrawal_data['telegram_id']}</code>\n"
+        f"Сумма: <code>{withdrawal_data['amount_rub']:.2f}</code> ₽\n"
+        f"Фактический баланс: <code>{withdrawal_data['current_balance_rub']:.2f}</code> ₽\n"
+        f"Останется доступно после этой заявки: <code>{withdrawal_data['remaining_available_rub']:.2f}</code> ₽\n"
+        f"Реквизиты:\n<code>{withdrawal_data['requisites']}</code>"
+    )
+
+    for admin_id in config.admin_ids:
+        try:
+            await bot.send_message(
+                admin_id,
+                text,
+                reply_markup=_partner_withdraw_admin_keyboard(withdrawal_data["id"]),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify admin %s about partner withdrawal %s",
+                admin_id,
+                withdrawal_data["id"],
+            )
 
 
 # Состояния для ИИ-ассистента
@@ -464,8 +519,9 @@ async def cmd_partner(message: types.Message):
 
 
 @router.callback_query(F.data.in_({"menu_referrals", "menu_partner"}))
-async def show_partner(callback: types.CallbackQuery):
+async def show_partner(callback: types.CallbackQuery, state: FSMContext):
     """Показывает партнёрскую программу."""
+    await state.clear()
     await render_partner_program(callback.message, user_id=callback.from_user.id)
     await callback.answer()
 
@@ -666,29 +722,262 @@ async def partner_stats(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data == "partner_withdraw")
-async def partner_withdraw(callback: types.CallbackQuery):
-    """Показывает меню вывода."""
+async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает сценарий создания заявки на вывод."""
     stats = await get_partner_overview(callback.from_user.id)
-    min_withdraw = 1000
-    # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
-    user = await get_or_create_user(callback.from_user.id)
-    me = await callback.bot.get_me()
-    referral_code = user.referral_code
-    referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+    min_withdraw = config.PARTNER_MIN_WITHDRAWAL_RUB
+    available_amount = await get_partner_available_withdrawal(callback.from_user.id)
+
+    if not stats.get("is_partner", False):
+        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        return
+
+    if available_amount < min_withdraw:
+        await callback.message.edit_text(
+            "🎟️ <b>Вывод заработка</b>\n\n"
+            f"Сейчас доступно: <code>{available_amount:.2f}</code> ₽\n"
+            f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽\n\n"
+            "Когда баланс станет больше, здесь можно будет создать заявку на выплату.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await state.set_state(PaymentStates.waiting_partner_withdraw_requisites)
+    await state.update_data(
+        partner_withdraw_available=available_amount,
+        partner_withdraw_min=min_withdraw,
     )
 
     await callback.message.edit_text(
-        "🎟️ <b>Вывод заработка</b>"
-        f"Доступно: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽"
-        "Для оформления вывода напишите реквизиты и сумму в поддержку или добавим форму следующим шагом.",
-        reply_markup=get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
-        ),
+        "🎟️ <b>Заявка на вывод</b>\n\n"
+        f"Сейчас доступно: <code>{available_amount:.2f}</code> ₽\n"
+        f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽\n\n"
+        "Шаг 1 из 2. Отправьте платёжные данные одним сообщением.\n"
+        "Например: номер карты / СБП / USDT TRC20 и имя получателя.",
+        reply_markup=get_back_keyboard("menu_partner"),
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.message(PaymentStates.waiting_partner_withdraw_requisites)
+async def partner_withdraw_requisites(message: types.Message, state: FSMContext):
+    """Сохраняет реквизиты и запрашивает сумму."""
+    requisites = (message.text or "").strip()
+    if len(requisites) < 8:
+        await message.answer(
+            "❌ Слишком короткие платёжные данные. Отправьте реквизиты одним сообщением.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
+        return
+
+    data = await state.get_data()
+    available_amount = float(data.get("partner_withdraw_available", 0))
+    min_withdraw = int(data.get("partner_withdraw_min", config.PARTNER_MIN_WITHDRAWAL_RUB))
+
+    await state.update_data(partner_withdraw_requisites=requisites)
+    await state.set_state(PaymentStates.waiting_partner_withdraw_amount)
+    await message.answer(
+        "🎟️ <b>Заявка на вывод</b>\n\n"
+        f"Реквизиты сохранены.\n"
+        f"Доступно: <code>{available_amount:.2f}</code> ₽\n"
+        f"Минимум: <code>{min_withdraw}</code> ₽\n\n"
+        "Шаг 2 из 2. Введите сумму вывода числом.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(PaymentStates.waiting_partner_withdraw_amount)
+async def partner_withdraw_amount(message: types.Message, state: FSMContext):
+    """Создаёт заявку на вывод и уведомляет админов."""
+    raw_amount = (message.text or "").strip().replace(",", ".")
+    try:
+        amount_rub = round(float(raw_amount), 2)
+    except ValueError:
+        await message.answer(
+            "❌ Неверная сумма. Введите число, например <code>2500</code>.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    requisites = (data.get("partner_withdraw_requisites") or "").strip()
+    min_withdraw = int(data.get("partner_withdraw_min", config.PARTNER_MIN_WITHDRAWAL_RUB))
+    available_amount = await get_partner_available_withdrawal(message.from_user.id)
+
+    if amount_rub <= 0:
+        await message.answer(
+            "❌ Сумма должна быть больше нуля.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
+        return
+
+    if amount_rub < min_withdraw:
+        await message.answer(
+            f"❌ Минимальная сумма вывода: <code>{min_withdraw}</code> ₽.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    if amount_rub > available_amount:
+        await message.answer(
+            "❌ Сумма больше доступного остатка.\n\n"
+            f"Сейчас можно запросить максимум: <code>{available_amount:.2f}</code> ₽.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    withdrawal = await create_partner_withdrawal(
+        message.from_user.id,
+        amount_rub=amount_rub,
+        method="manual",
+        requisites=requisites,
+    )
+    if not withdrawal:
+        await message.answer(
+            "❌ Не удалось создать заявку. Проверьте сумму и попробуйте ещё раз.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
+        await state.clear()
+        return
+
+    await _notify_admins_about_partner_withdrawal(message.bot, withdrawal)
+    await message.answer(
+        "✅ <b>Заявка на вывод создана</b>\n\n"
+        f"ID заявки: <code>{withdrawal['id']}</code>\n"
+        f"Сумма: <code>{withdrawal['amount_rub']:.2f}</code> ₽\n\n"
+        "Заявка отправлена администратору на подтверждение. Баланс будет списан только после одобрения.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("partner_withdraw_approve_"))
+async def partner_withdraw_approve(callback: types.CallbackQuery):
+    """Подтверждает заявку на вывод администратором."""
+    if not config.is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    withdrawal_id = int(callback.data.replace("partner_withdraw_approve_", ""))
+    request_data = await get_partner_withdrawal_request(withdrawal_id)
+    result = await approve_partner_withdrawal(withdrawal_id)
+
+    if not result:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if not result.get("ok"):
+        if result.get("reason") == "insufficient_balance":
+            await callback.message.edit_text(
+                "⚠️ <b>Нельзя подтвердить выплату</b>\n\n"
+                f"Заявка: <code>{withdrawal_id}</code>\n"
+                f"Нужно: <code>{result['amount_rub']:.2f}</code> ₽\n"
+                f"Сейчас на балансе: <code>{result['current_balance_rub']:.2f}</code> ₽\n\n"
+                "Баланс пользователя уже изменился, поэтому заявка не была списана.",
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.edit_text(
+                "ℹ️ <b>Заявка уже обработана</b>\n\n"
+                f"Текущий статус: <code>{result.get('status', 'unknown')}</code>",
+                parse_mode="HTML",
+            )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "✅ <b>Выплата подтверждена</b>\n\n"
+        f"Заявка: <code>{withdrawal_id}</code>\n"
+        f"Telegram ID: <code>{result['telegram_id']}</code>\n"
+        f"Списано: <code>{result['amount_rub']:.2f}</code> ₽\n"
+        f"Было на балансе: <code>{result['current_balance_rub']:.2f}</code> ₽\n"
+        f"Осталось: <code>{result['new_balance_rub']:.2f}</code> ₽",
+        parse_mode="HTML",
+    )
+
+    try:
+        await callback.bot.send_message(
+            result["telegram_id"],
+            "✅ <b>Заявка на вывод одобрена</b>\n\n"
+            f"Сумма: <code>{result['amount_rub']:.2f}</code> ₽\n"
+            "Баланс партнёра списан. Ожидайте фактическую выплату по указанным реквизитам.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception(
+            "Failed to notify user %s about approved withdrawal %s",
+            result["telegram_id"],
+            withdrawal_id,
+        )
+
+    if request_data:
+        logger.info(
+            "Partner withdrawal %s approved by admin %s for user %s, requisites=%s",
+            withdrawal_id,
+            callback.from_user.id,
+            result["telegram_id"],
+            request_data.get("requisites", ""),
+        )
+
+    await callback.answer("Выплата подтверждена")
+
+
+@router.callback_query(F.data.startswith("partner_withdraw_cancel_"))
+async def partner_withdraw_cancel(callback: types.CallbackQuery):
+    """Отменяет заявку на вывод администратором."""
+    if not config.is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    withdrawal_id = int(callback.data.replace("partner_withdraw_cancel_", ""))
+    result = await cancel_partner_withdrawal(withdrawal_id)
+
+    if not result:
+        await callback.answer("Заявка не найдена", show_alert=True)
+        return
+
+    if not result.get("ok"):
+        await callback.message.edit_text(
+            "ℹ️ <b>Заявка уже обработана</b>\n\n"
+            f"Текущий статус: <code>{result.get('status', 'unknown')}</code>",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "❌ <b>Выплата отменена</b>\n\n"
+        f"Заявка: <code>{withdrawal_id}</code>\n"
+        f"Telegram ID: <code>{result['telegram_id']}</code>\n"
+        f"Сумма: <code>{result['amount_rub']:.2f}</code> ₽\n\n"
+        "Баланс пользователя не изменён.",
+        parse_mode="HTML",
+    )
+
+    try:
+        await callback.bot.send_message(
+            result["telegram_id"],
+            "❌ <b>Заявка на вывод отменена</b>\n\n"
+            f"Сумма: <code>{result['amount_rub']:.2f}</code> ₽\n"
+            "Баланс не списан. При необходимости можно создать новую заявку.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception(
+            "Failed to notify user %s about cancelled withdrawal %s",
+            result["telegram_id"],
+            withdrawal_id,
+        )
+
+    await callback.answer("Заявка отменена")
 
 
 @router.callback_query(F.data == "menu_settings")

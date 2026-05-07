@@ -7,12 +7,9 @@ from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
 )
+from bot.services.kie_file_upload_service import kie_file_upload_service
 
 logger = logging.getLogger(__name__)
-
-
-def _is_remote_image_reference(source) -> bool:
-    return isinstance(source, str) and source.startswith(("http://", "https://"))
 
 
 class NanoBanana2Service:
@@ -82,42 +79,45 @@ class NanoBanana2Service:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
-        fallback_image_urls = image_sources_to_supported_image_urls(image_input)
-        normalized_image_input = image_sources_to_data_uris(image_input)
-        use_image_urls = bool(fallback_image_urls) and all(
-            _is_remote_image_reference(source) for source in fallback_image_urls
+        supported_image_urls = image_sources_to_supported_image_urls(image_input)
+        uploaded_image_urls = await kie_file_upload_service.upload_local_image_sources(
+            supported_image_urls
         )
-        if use_image_urls and fallback_image_urls:
-            payload = {
-                "model": "google/nano-banana-edit",
-                "input": {
-                    "prompt": prompt,
-                    "image_urls": fallback_image_urls,
-                    "output_format": output_format,
-                    "image_size": aspect_ratio if aspect_ratio != "auto" else "1:1",
-                },
-            }
-        else:
-            payload = {
-                "model": "nano-banana-2",
-                "input": {
-                    "prompt": prompt,
-                    "aspect_ratio": aspect_ratio,
-                    "resolution": resolution,
-                    "output_format": output_format,
-                },
-            }
-            if normalized_image_input:
-                payload["input"]["image_input"] = normalized_image_input
+        normalized_image_input = [
+            source
+            for source in uploaded_image_urls
+            if isinstance(source, str) and source
+        ]
+        if not normalized_image_input and image_input:
+            # Предпочитаем URL-ы из локального upload flow, но сохраняем fallback,
+            # чтобы не ломать нестандартные источники изображений.
+            normalized_image_input = image_sources_to_data_uris(image_input)
+
+        payload = {
+            "model": "nano-banana-2",
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "output_format": output_format,
+            },
+        }
+        if normalized_image_input:
+            payload["input"]["image_input"] = normalized_image_input
         if callback_url:
             payload["callBackUrl"] = callback_url
 
+        transport = (
+            "kie_file_upload_urls"
+            if uploaded_image_urls != supported_image_urls
+            else "image_input_urls"
+        )
         logger.info(
             "Nano Banana 2 create_task: refs=%s aspect_ratio=%s resolution=%s transport=%s model=%s",
-            len(fallback_image_urls or normalized_image_input),
+            len(normalized_image_input),
             aspect_ratio,
             resolution,
-            "image_urls" if use_image_urls else "image_input",
+            transport if normalized_image_input else "none",
             payload["model"],
         )
 

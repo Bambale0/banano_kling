@@ -43,6 +43,11 @@ def _resolve_local_upload_path(source: str) -> str | None:
     return None
 
 
+def resolve_local_upload_path(source: str) -> str | None:
+    """Return the local static upload path behind a public /uploads URL, if any."""
+    return _resolve_local_upload_path(source)
+
+
 def image_source_to_data_uri(source: str | bytes | bytearray) -> str:
     if isinstance(source, (bytes, bytearray)):
         try:

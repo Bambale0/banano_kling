@@ -54,6 +54,7 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_service
+from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
@@ -65,6 +66,15 @@ from bot.utils.help_texts import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+_reference_upload_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_reference_upload_lock(user_id: int) -> asyncio.Lock:
+    lock = _reference_upload_locks.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _reference_upload_locks[user_id] = lock
+    return lock
 
 
 @router.message(CommandStart(), StateFilter("*"))
@@ -105,7 +115,7 @@ SENSITIVE_FASHION_KEYWORDS = {
 def _get_image_provider_model(img_service: str, reference_images: list[str]) -> str:
     """Return provider-facing model identifier for routing logs."""
     if img_service == "banana_2":
-        return "google/gemini-2.5-flash-image"
+        return "nano-banana-2"
     if img_service in {"banana_pro", "nanobanana"}:
         return "google/gemini-3-pro-image"
     if img_service == "seedream_edit":
@@ -209,12 +219,30 @@ Preserve exactly and do not alter unless the user explicitly requests it:
 - pose, hand shape, fingers, nails, silhouette
 - colors, materials, textures, lighting logic, camera perspective
 
+STRICT FACE LOCK - ABSOLUTE PRIORITY:
+The face must match the reference exactly. Preserve every facial detail with no simplification and no beautification:
+- exact face oval, skull shape, forehead, cheekbones, jawline, chin
+- exact eye shape, eyelids, eye spacing, iris color, gaze character, eyelashes, eyebrows
+- exact nose bridge, nostrils, tip, width, length, profile
+- exact lips, mouth shape, cupid's bow, lip fullness, teeth, smile lines
+- exact ears, temples, hairline, sideburns
+- exact skin tone, undertone, pores, texture, freckles, moles, scars, wrinkles, nasolabial folds, dimples
+- exact facial asymmetry, age signs, expression style, makeup placement
+
+Do not make the face prettier, younger, older, smoother, slimmer, wider, more symmetrical, more generic, or more model-like. Do not replace the face with a similar-looking person. If the requested edit conflicts with face preservation, keep the face from the reference and apply the edit only outside the face.
+
+APPEARANCE LOCK:
+The person's appearance is locked to the reference images. Every generated output must keep the same recognizable person with the same facial geometry, age, skin, hair, body proportions, outfit, accessories, makeup, tattoos, marks, and all visible distinctive details. Treat these visual details as immutable unless the user explicitly names a change.
+
+For batch or multiple-output requests, produce multiple camera/composition variants of the exact same referenced person/object. Do not create different people, alternate identities, redesigned faces, changed hairstyles, changed clothing, changed accessories, changed body shape, or generic lookalikes across the variants.
+
 Do not beautify, stylize, reinterpret, average out, morph, or substitute the person.
 Do not generate a similar person. Generate the exact same person from the reference.
 Do not change ethnicity, gender presentation, age, weight, body shape, facial expression style, or facial asymmetry.
 Do not add distortions, warping, extra fingers, altered eyes, altered teeth, blurred skin, or fabric redesign.
 If something is not explicitly requested, keep it identical to the reference.
 Apply only the minimum necessary change requested by the user while preserving everything else exactly.
+The uploaded images are visual references, not text content. Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
 """.strip()
     return f"{instruction}\n\nUser request: {prompt}" if prompt else instruction
 
@@ -228,13 +256,17 @@ def _build_image_variant_prompt(
         return prompt
 
     variants = [
-        "Create a distinct variation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Use a slightly different composition and micro-pose.",
-        "Create another distinct interpretation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Change camera angle, crop, and natural expression slightly.",
-        "Create a new variation while preserving the same referenced person/object, identity, key features, outfit, and visual style. Vary lighting balance, framing, and background depth slightly.",
-        "Create an alternate editorial take while preserving the same referenced person/object, identity, key features, outfit, and visual style. Use a different crop, pose nuance, and mood.",
+        "Use a slightly different composition and camera crop only. Keep the referenced face exactly identical: same facial geometry, eyes, nose, lips, skin texture, asymmetry, age signs, hairline, and all distinctive facial details.",
+        "Use a slightly different camera angle and framing only. Keep the referenced face exactly identical: same facial geometry, eyes, nose, lips, skin texture, asymmetry, age signs, hairline, and all distinctive facial details.",
+        "Use a subtle lighting/framing variation only. Keep the referenced face exactly identical: same facial geometry, eyes, nose, lips, skin texture, asymmetry, age signs, hairline, and all distinctive facial details.",
+        "Use a different crop and background depth only. Keep the referenced face exactly identical: same facial geometry, eyes, nose, lips, skin texture, asymmetry, age signs, hairline, and all distinctive facial details.",
     ]
     instruction = variants[variant_index % len(variants)]
-    return f"{prompt}\n\nVariant {variant_index + 1} of {total_count}: {instruction} Do not copy previous outputs exactly."
+    return (
+        f"{prompt}\n\n"
+        f"For this single output: {instruction} "
+        "Do not render batch numbers, labels, prompt text, file names, URLs, or UI text in the image."
+    )
 
 
 def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
@@ -908,6 +940,8 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     data = await state.get_data()
     current_service = data.get("img_service", "banana_pro")
     current_ratio = data.get("img_ratio", "1:1")
+    current_refs = len(data.get("reference_images", []))
+    max_refs = 14
 
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
@@ -915,7 +949,9 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
         "Добавьте фото, если хотите точнее передать стиль, человека или объект.\n\n"
         "<i>Можно загрузить до 14 фото.</i>\n"
         "Когда всё готово, нажмите <b>Продолжить</b> или <b>Пропустить</b>.",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        reply_markup=get_reference_images_upload_keyboard(
+            current_refs, max_refs, "new"
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -1268,6 +1304,11 @@ def _get_supported_video_durations(model: str) -> list[int]:
 
 def _normalize_video_duration_value(model: str, duration: int) -> int:
     """Snap duration to the closest supported value for the selected model."""
+    if model in {"motion_control_v26", "motion_control_v30"}:
+        # Motion Control тарифицируется по фактической длине загруженного видео,
+        # поэтому не прижимаем его к фиксированным длительностям из общего video UX.
+        return max(1, min(30, int(duration)))
+
     supported = _get_supported_video_durations(model)
     duration = int(duration)
     if duration in supported:
@@ -1562,17 +1603,47 @@ async def _show_image_creation_screen(message_or_callback, state: FSMContext):
     )
 
     try:
-        await message_or_callback.message.edit_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode="HTML",
-        )
-    except Exception:
-        await message_or_callback.answer(
-            text,
-            reply_markup=reply_markup,
-            parse_mode="HTML",
-        )
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.edit_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+    except TelegramBadRequest as e:
+        error_msg = str(e).lower()
+        if "message is not modified" in error_msg:
+            pass
+        elif isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.answer(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+    except AttributeError:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.answer(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        else:
+            await message_or_callback.answer(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
 
     await state.set_state(GenerationStates.waiting_for_input)
 
@@ -1619,6 +1690,29 @@ async def _show_video_model_selection_screen(
 async def _show_video_media_screen(
     message_or_callback, state: FSMContext, edit: bool = True
 ):
+    def _fit_telegram_text(raw: str, limit: int = 4096) -> str:
+        if len(raw) <= limit:
+            return raw
+        return raw[: limit - 1].rstrip() + "…"
+
+    async def _safe_answer_message(target_message, raw_text: str):
+        try:
+            await target_message.answer(
+                raw_text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        except TelegramBadRequest as send_error:
+            send_error_msg = str(send_error).lower()
+            if "message_too_long" in send_error_msg or "message is too long" in send_error_msg:
+                await target_message.answer(
+                    _fit_telegram_text(raw_text, 3500),
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
+            elif "message is not modified" in send_error_msg:
+                pass
+            else:
+                raise
+
     data = await state.get_data()
     current_model = data.get("v_model", "v3_pro")
     current_v_type = data.get("v_type", "text")
@@ -1677,6 +1771,7 @@ async def _show_video_media_screen(
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         f"{body}"
     )
+    text = _fit_telegram_text(text)
     keyboard = get_video_media_step_keyboard(
         current_v_type=current_v_type,
         current_model=current_model,
@@ -1699,8 +1794,21 @@ async def _show_video_media_screen(
             await message_or_callback.answer(
                 text, reply_markup=keyboard, parse_mode="HTML"
             )
+    except TelegramBadRequest as e:
+        error_msg = str(e).lower()
+        if "message is not modified" in error_msg:
+            pass
+        elif isinstance(message_or_callback, types.CallbackQuery):
+            await _safe_answer_message(message_or_callback.message, text)
+        else:
+            await _safe_answer_message(message_or_callback, text)
+    except AttributeError:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await _safe_answer_message(message_or_callback.message, text)
+        else:
+            await _safe_answer_message(message_or_callback, text)
     except Exception:
-        await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        logger.exception("Failed to render video media screen")
 
     await state.set_state(next_state)
 
@@ -1852,6 +1960,26 @@ async def handle_video_media_continue(callback: types.CallbackQuery, state: FSMC
     await state.update_data(video_flow_step="configure")
     await _show_video_creation_screen(callback, state)
     await callback.answer()
+
+
+@router.callback_query(F.data == "avatar_upload_image")
+async def handle_avatar_upload_image(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Переводит Avatar flow в режим ожидания фото."""
+    await state.update_data(video_flow_step="media", v_type="avatar")
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await callback.answer("Отправьте фото аватара")
+
+
+@router.callback_query(F.data == "avatar_upload_audio")
+async def handle_avatar_upload_audio(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Переводит Avatar flow в режим ожидания аудио."""
+    await state.update_data(video_flow_step="media", v_type="avatar")
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await callback.answer("Отправьте аудиофайл или голосовое")
 
 
 @router.callback_query(F.data == "ref_confirm_new")
@@ -2053,7 +2181,7 @@ async def _apply_video_model_selection(
     current_data = await state.get_data()
     if current_data.get("video_flow_step") == "media":
         current_type = current_data.get("v_type", "text")
-        if current_type == "imgtxt":
+        if current_type in {"imgtxt", "avatar"}:
             await state.set_state(GenerationStates.waiting_for_video_prompt)
         elif current_type == "video":
             await state.set_state(GenerationStates.uploading_reference_videos)
@@ -2230,7 +2358,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "model_banana_2")
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Banana 2 (Gemini 3.1 Flash Image Preview)"""
+    """Выбор модели Banana 2 (Kie Nano Banana 2)."""
     await state.update_data(img_service="banana_2")
     data = await state.get_data()
     if data.get("img_flow_step") == "select_model":
@@ -2525,9 +2653,9 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
     elif image_service == "z_image_turbo":
         model_name = "🚀 Z-Image Turbo LoRA"
         model_cost = str(preset_manager.get_generation_cost("z_image_turbo"))
-    else:  # nanobanana
-        model_name = "🍌 Nano Banana"
-        model_cost = str(preset_manager.get_generation_cost("gemini-2.5-flash"))
+    else:  # banana_2 / fallback banana family
+        model_name = "🍌 Nano Banana 2"
+        model_cost = str(preset_manager.get_generation_cost("banana_2"))
 
     # Шаг 1: Загрузка референсов
     await callback.message.edit_text(
@@ -3951,48 +4079,51 @@ async def upload_reference_image_for_any_image_flow(
     message: types.Message, state: FSMContext
 ):
     """Universal reference upload fallback for image flows, including Wan 2.7."""
-    data = await state.get_data()
-    img_service = data.get("img_service", "banana_pro")
-    preset_id = data.get("preset_id", "new")
-    max_refs = 9 if img_service == "wan_27" else 14
+    async with _get_reference_upload_lock(message.from_user.id):
+        data = await state.get_data()
+        img_service = data.get("img_service", "banana_pro")
+        preset_id = data.get("preset_id", "new")
+        max_refs = 9 if img_service == "wan_27" else 14
 
-    reference_images = list(data.get("reference_images") or [])
-    if len(reference_images) >= max_refs:
-        await message.answer(
-            "❌ Достигнут лимит фото. Нажмите «Продолжить».",
-            reply_markup=get_main_menu_button_keyboard(),
-        )
-        return
-
-    try:
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        downloaded = await message.bot.download_file(file.file_path)
-        image_bytes = downloaded.read()
-
-        public_url = save_uploaded_file(image_bytes, "jpg")
-        if not public_url:
+        reference_images = list(data.get("reference_images") or [])
+        if len(reference_images) >= max_refs:
             await message.answer(
-                "Не удалось сохранить фото. Попробуйте другое изображение."
+                "❌ Достигнут лимит фото. Нажмите «Продолжить».",
+                reply_markup=get_main_menu_button_keyboard(),
             )
             return
 
-        reference_images.append(public_url)
-        await state.update_data(reference_images=reference_images)
+        try:
+            photo = message.photo[-1]
+            file = await message.bot.get_file(photo.file_id)
+            downloaded = await message.bot.download_file(file.file_path)
+            image_bytes = downloaded.read()
 
-        title = "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
-        await message.answer(
-            f"{title}\n\n"
-            f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
-            "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(reference_images), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-    except Exception:
-        logger.exception("Reference image upload failed")
-        await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
+            public_url = save_uploaded_file(image_bytes, "jpg")
+            if not public_url:
+                await message.answer(
+                    "Не удалось сохранить фото. Попробуйте другое изображение."
+                )
+                return
+
+            reference_images.append(public_url)
+            await state.update_data(reference_images=reference_images)
+
+            title = (
+                "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
+            )
+            await message.answer(
+                f"{title}\n\n"
+                f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
+                "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
+                reply_markup=get_reference_images_upload_keyboard(
+                    len(reference_images), max_refs, preset_id
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("Reference image upload failed")
+            await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
 
 
 def _motion_quality_per_second(model_key: str, quality: str) -> float:
@@ -4314,101 +4445,104 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
 )
 async def process_reference_photo_upload(message: types.Message, state: FSMContext):
     """Handles reference photo uploads during image creation."""
-    data = await state.get_data()
-    reference_images = data.get("reference_images", [])
-    v_type = data.get("v_type")
-    img_service = data.get("img_service")
-    max_refs = 9 if v_type == "imgtxt" else (16 if img_service == "flux_pro" else 14)
-
-    if len(reference_images) >= max_refs:
-        await message.answer(
-            f"❌ Можно загрузить максимум {max_refs} фото. Дальше нажмите «Продолжить» или очистите список.",
-            parse_mode="HTML",
-            reply_markup=get_main_menu_button_keyboard(),
+    async with _get_reference_upload_lock(message.from_user.id):
+        data = await state.get_data()
+        reference_images = list(data.get("reference_images") or [])
+        v_type = data.get("v_type")
+        img_service = data.get("img_service")
+        max_refs = (
+            9 if v_type == "imgtxt" else (16 if img_service == "flux_pro" else 14)
         )
-        return
 
-    # Get the highest quality photo or document
-    if message.photo:
-        photo = message.photo[-1]
-    else:
-        photo = message.document
-
-    file = await message.bot.get_file(photo.file_id)
-    image_bytes = await message.bot.download_file(file.file_path)
-    image_data = image_bytes.read()
-
-    # Validate image size (min 300x300 for Kie.ai)
-    try:
-
-        img = Image.open(io.BytesIO(image_data))
-        width, height = img.size
-        if width < 300 or height < 300:
+        if len(reference_images) >= max_refs:
             await message.answer(
-                "❌ Изображение слишком маленькое (мин 300px).",
+                f"❌ Можно загрузить максимум {max_refs} фото. Дальше нажмите «Продолжить» или очистите список.",
+                parse_mode="HTML",
                 reply_markup=get_main_menu_button_keyboard(),
             )
             return
 
-    except Exception as e:
-        logger.error(f"Image validation failed: {e}")
-        await message.answer(
-            "❌ Не удалось обработать изображение. Попробуйте другое.",
-            reply_markup=get_main_menu_button_keyboard(),
-        )
-        return
-
-    # Save and get URL
-    if message.photo:
-        file_ext = "jpg"
-    else:
-        mime_type = message.document.mime_type
-        if mime_type == "image/jpeg":
-            file_ext = "jpg"
-        elif mime_type == "image/png":
-            file_ext = "png"
-        elif mime_type == "image/webp":
-            file_ext = "webp"
+        # Get the highest quality photo or document
+        if message.photo:
+            photo = message.photo[-1]
         else:
-            file_ext = "png"
-    image_url = save_uploaded_file(image_data, file_ext)
+            photo = message.document
 
-    if image_url:
-        reference_images.append(image_url)
-        await state.update_data(reference_images=reference_images)
+        file = await message.bot.get_file(photo.file_id)
+        image_bytes = await message.bot.download_file(file.file_path)
+        image_data = image_bytes.read()
 
-        preset_id = data.get("preset_id", "new")
-        current_count = len(reference_images)
-
-        text = (
-            f"📎 <b>Загрузка референсов</b>\n"
-            f"Загружено: <code>{current_count}/{max_refs}</code>\n"
-            f"✅ Фото добавлено.\n"
-            f"Можно отправить ещё одно или нажать кнопку ниже."
-        )
-
+        # Validate image size (min 300x300 for Kie.ai)
         try:
-            await message.reply(
-                text,
-                reply_markup=get_reference_images_upload_keyboard(
-                    current_count, max_refs, preset_id
-                ),
-                parse_mode="HTML",
-            )
-        except:
+
+            img = Image.open(io.BytesIO(image_data))
+            width, height = img.size
+            if width < 300 or height < 300:
+                await message.answer(
+                    "❌ Изображение слишком маленькое (мин 300px).",
+                    reply_markup=get_main_menu_button_keyboard(),
+                )
+                return
+
+        except Exception as e:
+            logger.error(f"Image validation failed: {e}")
             await message.answer(
-                text,
-                reply_markup=get_reference_images_upload_keyboard(
-                    current_count, max_refs, preset_id
-                ),
-                parse_mode="HTML",
+                "❌ Не удалось обработать изображение. Попробуйте другое.",
+                reply_markup=get_main_menu_button_keyboard(),
             )
-        logger.info(f"Reference photo {current_count} added: {image_url}")
-    else:
-        await message.answer(
-            "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
-            reply_markup=get_main_menu_button_keyboard(),
-        )
+            return
+
+        # Save and get URL
+        if message.photo:
+            file_ext = "jpg"
+        else:
+            mime_type = message.document.mime_type
+            if mime_type == "image/jpeg":
+                file_ext = "jpg"
+            elif mime_type == "image/png":
+                file_ext = "png"
+            elif mime_type == "image/webp":
+                file_ext = "webp"
+            else:
+                file_ext = "png"
+        image_url = save_uploaded_file(image_data, file_ext)
+
+        if image_url:
+            reference_images.append(image_url)
+            await state.update_data(reference_images=reference_images)
+
+            preset_id = data.get("preset_id", "new")
+            current_count = len(reference_images)
+
+            text = (
+                f"📎 <b>Загрузка референсов</b>\n"
+                f"Загружено: <code>{current_count}/{max_refs}</code>\n"
+                f"✅ Фото добавлено.\n"
+                f"Можно отправить ещё одно или нажать кнопку ниже."
+            )
+
+            try:
+                await message.reply(
+                    text,
+                    reply_markup=get_reference_images_upload_keyboard(
+                        current_count, max_refs, preset_id
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await message.answer(
+                    text,
+                    reply_markup=get_reference_images_upload_keyboard(
+                        current_count, max_refs, preset_id
+                    ),
+                    parse_mode="HTML",
+                )
+            logger.info(f"Reference photo {current_count} added: {image_url}")
+        else:
+            await message.answer(
+                "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
 
 
 @router.message(GenerationStates.waiting_for_input, F.text)
@@ -4952,6 +5086,7 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(
         generation_type="video",
+        video_flow_step="media",
         v_model="avatar_pro",
         v_type="avatar",
         v_duration=5,
@@ -4974,6 +5109,7 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
         ),
         parse_mode="HTML",
     )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
     await callback.answer()
 
 

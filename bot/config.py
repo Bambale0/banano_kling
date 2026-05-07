@@ -105,7 +105,7 @@ class Config:
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
     PARTNER_MIN_WITHDRAWAL_RUB: int = int(
-        os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "2000")
+        os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "1000")
     )
 
     # Пути к JSON
