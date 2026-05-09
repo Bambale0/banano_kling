@@ -74,7 +74,8 @@ class KieFileUploadService:
             logger.warning("KIE file upload rejected %s: %s", local_path, data)
             return source
 
-        file_url = ((data.get("data") or {}).get("fileUrl") or "").strip()
+        data_block = data.get("data") or {}
+        file_url = (data_block.get("fileUrl") or data_block.get("downloadUrl") or "").strip()
         if not file_url:
             logger.warning(
                 "KIE file upload returned no fileUrl for %s: %s", local_path, data
