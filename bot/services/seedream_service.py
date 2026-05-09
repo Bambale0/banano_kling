@@ -2,8 +2,12 @@ import logging
 from typing import Dict, List, Optional
 
 from bot.config import config
+from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
-from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
+from bot.services.media_input_utils import (
+    image_sources_to_provider_safe_png_urls,
+    image_sources_to_supported_image_urls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +92,24 @@ class SeedreamService(KlingService):
             len(safe_prompt),
         )
 
+        supported_urls = image_sources_to_supported_image_urls(image_urls[:14])
+        uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
+            supported_urls
+        )
+        effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
+        if not effective_image_urls:
+            effective_image_urls = image_urls[:14]
+        logger.info(
+            "Seedream image upload: original=%d effective=%d",
+            len(image_urls),
+            len(effective_image_urls),
+        )
+
         payload = {
             "model": model,
             "input": {
                 "prompt": safe_prompt,
-                "image_urls": image_urls[:14],
+                "image_urls": effective_image_urls,
                 "aspect_ratio": aspect_ratio,
                 "quality": quality,
                 "nsfw_checker": nsfw_checker,
@@ -110,7 +127,7 @@ class SeedreamService(KlingService):
             normalized_image_urls = image_sources_to_provider_safe_png_urls(
                 image_urls[:14]
             )
-            if normalized_image_urls != image_urls[:14]:
+            if normalized_image_urls != effective_image_urls:
                 logger.warning(
                     "Seedream retry with normalized PNG references after file type error"
                 )

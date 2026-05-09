@@ -369,8 +369,11 @@ async def check_payment_status(callback: types.CallbackQuery):
         return
 
     user = await get_or_create_user(transaction.user_id)
+    updated = await update_transaction_status(order_id, "completed")
+    if not updated:
+        await callback.answer("Оплата уже была зачислена ранее", show_alert=True)
+        return
     await add_credits(user.telegram_id, transaction.credits)
-    await update_transaction_status(order_id, "completed")
     referral_bonus = await credit_first_payment_referral_bonus(
         user.telegram_id, transaction.credits, transaction.amount_rub
     )
@@ -433,7 +436,7 @@ async def handle_cryptobot_webhook(request: web.Request):
             return web.Response(status=200)
 
         transaction = await get_transaction_by_order(order_id)
-        if not transaction or transaction.status == "completed":
+        if not transaction:
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
@@ -443,8 +446,13 @@ async def handle_cryptobot_webhook(request: web.Request):
             )
             return web.Response(status=200)
 
+        # Атомарная смена статуса — защита от двойного начисления при повторных вебхуках
+        updated = await update_transaction_status(order_id, "completed")
+        if not updated:
+            logger.info("CryptoBot webhook: order %s already processed, skipping", order_id)
+            return web.Response(status=200)
+
         await add_credits(telegram_id, transaction.credits)
-        await update_transaction_status(order_id, "completed")
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )
@@ -531,7 +539,7 @@ async def handle_lava_webhook(request: web.Request):
 
         order_id = row["order_id"]
         transaction = await get_transaction_by_order(order_id)
-        if not transaction or transaction.status == "completed":
+        if not transaction:
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
@@ -541,8 +549,12 @@ async def handle_lava_webhook(request: web.Request):
             )
             return web.Response(status=200)
 
+        updated = await update_transaction_status(order_id, "completed")
+        if not updated:
+            logger.info("Lava webhook: order %s already processed, skipping", order_id)
+            return web.Response(status=200)
+
         await add_credits(telegram_id, transaction.credits)
-        await update_transaction_status(order_id, "completed")
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )
@@ -683,7 +695,7 @@ async def handle_yookassa_webhook(request: web.Request):
             return web.Response(status=200)
 
         transaction = await get_transaction_by_order(order_id)
-        if not transaction or transaction.status == "completed":
+        if not transaction:
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
@@ -702,8 +714,12 @@ async def handle_yookassa_webhook(request: web.Request):
         if not paid:
             return web.Response(status=200)
 
+        updated = await update_transaction_status(order_id, "completed")
+        if not updated:
+            logger.info("YooKassa webhook: order %s already processed, skipping", order_id)
+            return web.Response(status=200)
+
         await add_credits(telegram_id, transaction.credits)
-        await update_transaction_status(order_id, "completed")
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )

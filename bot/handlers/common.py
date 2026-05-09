@@ -695,11 +695,11 @@ async def partner_stats(callback: types.CallbackQuery):
     """Показывает детальную статистику партнёра."""
     stats = await get_partner_overview(callback.from_user.id)
     text = (
-        "📈 <b>Детальная статистика</b>"
+        "📈 <b>Детальная статистика</b>\n\n"
         f"• Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
         f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
         f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
-        f"• Доход за месяц: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
+        f"• Доход за 30 дней: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
         f"• Новые за сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
         f"• Доход за сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
     )

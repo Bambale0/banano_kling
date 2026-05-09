@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
 
+# Партнёрская программа — единственный источник констант
+PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
+PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-го уровня
+PARTNER_NEW_USER_BONUS: int = 15   # бананы новому пользователю при регистрации
+PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему за каждую регистрацию
+
 
 class Credits(float):
     """Float subclass that displays without trailing .0"""
@@ -362,6 +368,7 @@ async def get_or_create_user(telegram_id: int) -> User:
             "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
         )
         row = await cursor.fetchone()
+        referred_by = None  # инициализация перед обеими ветками
 
         if row:
             referral_code = (
@@ -420,6 +427,13 @@ async def get_or_create_user(telegram_id: int) -> User:
             )
             await db.commit()
             logger.info(f"Created new user: {telegram_id}")
+            # Give 3 credits to referrer
+            if referred_by:
+                await db.execute(
+                    "UPDATE users SET credits = credits + 3, referral_earned = referral_earned + 3, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (referred_by,),
+                )
+                await db.commit()
         except aiosqlite.IntegrityError:
             # Пользователь уже создан другим параллельным запросом
             logger.debug(f"User {telegram_id} already exists (race condition handled)")
@@ -668,13 +682,14 @@ async def mark_user_paid(telegram_id: int) -> bool:
         return True
 
 
-async def credit_first_payment_referral_bonus(
+async def credit_referral_commission(
     telegram_id: int,
     transaction_credits: int,
     transaction_amount_rub: Optional[float] = None,
-    bonus_percent: int = 30,
+    bonus_percent: int = PARTNER_LEVEL1_PERCENT,
+    level2_percent: int = PARTNER_LEVEL2_PERCENT,
 ) -> dict:
-    """Начисляет 30% партнёру 1 уровня и 7% партнёру 2 уровня."""
+    """Начисляет партнёру 1 уровня bonus_percent% и 2 уровня level2_percent% с каждой оплаты."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -682,7 +697,7 @@ async def credit_first_payment_referral_bonus(
             (telegram_id,),
         )
         user = await cursor.fetchone()
-        if not user or not user["referred_by"] or user["has_paid"]:
+        if not user or not user["referred_by"]:
             return {"mode": "none", "value": 0, "percent": 0}
 
         base_value = float(
@@ -690,47 +705,86 @@ async def credit_first_payment_referral_bonus(
             if transaction_amount_rub is not None
             else transaction_credits
         )
-        level1_bonus = round(base_value * 30 / 100.0, 2)
+        level1_bonus = round(base_value * bonus_percent / 100.0, 2)
         level2_bonus = 0.0
 
         ref1_id = user["referred_by"]
+        ref1_tier_cursor = await db.execute(
+            "SELECT partner_total_revenue_rub, referred_by FROM users WHERE id = ?", (ref1_id,)
+        )
+        ref1_row = await ref1_tier_cursor.fetchone()
+        ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
+        ref1_tier = get_partner_tier_by_total(ref1_revenue)
         await db.execute(
-            "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = 'basic', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (base_value, level1_bonus, ref1_id),
+            "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
+            "partner_balance_rub = partner_balance_rub + ?, "
+            "partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (base_value, level1_bonus, ref1_tier, ref1_id),
         )
 
-        ref_cursor = await db.execute(
-            "SELECT referred_by FROM users WHERE id = ?", (ref1_id,)
-        )
-        ref1 = await ref_cursor.fetchone()
-        if ref1 and ref1["referred_by"]:
-            ref2_id = ref1["referred_by"]
-            level2_bonus = round(base_value * 7 / 100.0, 2)
+        if ref1_row and ref1_row["referred_by"]:
+            ref2_id = ref1_row["referred_by"]
+            level2_bonus = round(base_value * level2_percent / 100.0, 2)
+            ref2_tier_cursor = await db.execute(
+                "SELECT partner_total_revenue_rub FROM users WHERE id = ?", (ref2_id,)
+            )
+            ref2_row = await ref2_tier_cursor.fetchone()
+            ref2_revenue = float(ref2_row["partner_total_revenue_rub"] or 0) if ref2_row else 0.0
+            ref2_tier = get_partner_tier_by_total(ref2_revenue)
             await db.execute(
-                "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = 'basic', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (base_value, level2_bonus, ref2_id),
+                "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
+                "partner_balance_rub = partner_balance_rub + ?, "
+                "partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (base_value, level2_bonus, ref2_tier, ref2_id),
             )
 
-        await db.execute(
-            "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (user["id"],),
-        )
+        if not user["has_paid"]:
+            await db.execute(
+                "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (user["id"],),
+            )
         await db.commit()
         return {
             "mode": "partner",
             "value": level1_bonus,
-            "percent": 30,
+            "percent": bonus_percent,
             "level2_value": level2_bonus,
-            "level2_percent": 7,
+            "level2_percent": level2_percent,
         }
 
 
-def get_partner_percent_by_tier(tier: str) -> int:
-    return 30
+# Обратная совместимость — старое имя функции
+async def credit_first_payment_referral_bonus(
+    telegram_id: int,
+    transaction_credits: int,
+    transaction_amount_rub: Optional[float] = None,
+    bonus_percent: int = PARTNER_LEVEL1_PERCENT,
+) -> dict:
+    return await credit_referral_commission(
+        telegram_id, transaction_credits, transaction_amount_rub, bonus_percent
+    )
+
+
+_PARTNER_TIERS: list[tuple[float, str, int]] = [
+    # (min_revenue_rub, tier_name, level1_percent)
+    (50_000.0, "gold",   35),
+    (10_000.0, "silver", 32),
+    (0.0,      "basic",  PARTNER_LEVEL1_PERCENT),
+]
 
 
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
+    for threshold, name, _ in _PARTNER_TIERS:
+        if total_revenue_rub >= threshold:
+            return name
     return "basic"
+
+
+def get_partner_percent_by_tier(tier: str) -> int:
+    for _, name, pct in _PARTNER_TIERS:
+        if name == tier:
+            return pct
+    return PARTNER_LEVEL1_PERCENT
 
 
 async def accept_partner_agreement(telegram_id: int) -> bool:
@@ -781,19 +835,8 @@ async def get_partner_overview(telegram_id: int) -> dict:
     """Возвращает данные партнёрского кабинета."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        # Получаем пользователя, для которого запрошен обзор партнёрки
-        # Если пользователь ещё не активировал партнёрку, возвращаем данные master-партнёра
-        master_partner = await get_master_partner_user()
-        if not master_partner.partner_agreed_at:
-            await accept_partner_agreement(master_partner.telegram_id)
-            master_partner = await get_master_partner_user()
 
-        # Попытка получить целевого пользователя (тот, кто открыл экран партнёрки)
-        requested_user = await get_or_create_user(telegram_id)
-
-        # Если пользователь сам активировал партнёрку, показываем его статистику,
-        # иначе показываем статистику master-партнёра (текущее поведение по умолчанию)
-        target_user = requested_user
+        target_user = await get_or_create_user(telegram_id)
         target_user_id = target_user.id
 
         ref_cursor = await db.execute(
@@ -805,7 +848,7 @@ async def get_partner_overview(telegram_id: int) -> dict:
         pay_cursor = await db.execute(
             """
             SELECT COUNT(*) as count,
-                   COALESCE(SUM(t.amount_rub), 0) as revenue,
+                   COALESCE(SUM(CASE WHEN date(t.created_at) >= date('now', '-30 day') THEN t.amount_rub ELSE 0 END), 0) as monthly_revenue,
                    COALESCE(SUM(CASE WHEN date(t.created_at) = date('now') THEN t.amount_rub ELSE 0 END), 0) as today_revenue,
                    COALESCE(SUM(CASE WHEN date(t.created_at) = date('now') THEN 1 ELSE 0 END), 0) as today_payments,
                    COALESCE(SUM(CASE WHEN date(t.created_at) >= date('now', '-7 day') THEN 1 ELSE 0 END), 0) as active_7d
@@ -828,13 +871,17 @@ async def get_partner_overview(telegram_id: int) -> dict:
         )
         level2_row = await level2_cursor.fetchone()
 
-        withdrawal_cursor = await db.execute(
-            "SELECT COALESCE(SUM(amount_rub), 0) as total FROM partner_withdrawals WHERE user_id = ? AND status = 'completed'",
+        # Единственный источник истины для выведенных сумм — колонка partner_withdrawn_rub
+        pending_cur = await db.execute(
+            "SELECT COALESCE(SUM(amount_rub), 0) AS pending FROM partner_withdrawals "
+            "WHERE user_id = ? AND status = 'requested'",
             (target_user_id,),
         )
-        withdrawal_row = await withdrawal_cursor.fetchone()
+        pending_row = await pending_cur.fetchone()
+        pending_rub = float(pending_row["pending"] or 0)
+        raw_balance = float(target_user.partner_balance_rub or 0)
+        available_balance = round(max(0.0, raw_balance - pending_rub), 2)
 
-        # Используем значения целевого пользователя для вычисления уровня/процента
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
         percent = get_partner_percent_by_tier(tier)
 
@@ -849,13 +896,15 @@ async def get_partner_overview(telegram_id: int) -> dict:
             "level1_count": referrals_row["count"] or 0,
             "level2_count": level2_row["count"] or 0,
             "total_revenue_rub": round(target_user.partner_total_revenue_rub or 0, 2),
-            "balance_rub": round(target_user.partner_balance_rub or 0, 2),
-            "withdrawn_rub": round(withdrawal_row["total"] or 0, 2),
+            "balance_rub": available_balance,
+            "total_balance_rub": round(raw_balance, 2),
+            "pending_rub": round(pending_rub, 2),
+            "withdrawn_rub": round(target_user.partner_withdrawn_rub or 0, 2),
             "tier": tier,
             "percent": percent,
             "active_7d": pay_row["active_7d"] or 0,
             "total_payments": pay_row["count"] or 0,
-            "monthly_revenue": round(pay_row["revenue"] or 0, 2),
+            "monthly_revenue": round(pay_row["monthly_revenue"] or 0, 2),
             "today_payments": pay_row["today_payments"] or 0,
             "today_revenue": round(pay_row["today_revenue"] or 0, 2),
         }
@@ -1105,27 +1154,63 @@ async def get_partner_available_withdrawal(telegram_id: int) -> float:
 
 
 async def create_partner_withdrawal(
-    telegram_id: int, amount_rub: float, method: str, requisites: str
+    telegram_id: int,
+    amount_rub: float,
+    method: str,
+    requisites: str,
+    min_amount_rub: Optional[float] = None,
 ) -> Optional[dict]:
-    """Создаёт заявку на вывод без мгновенного списания баланса."""
+    """Создаёт заявку на вывод без мгновенного списания баланса.
+
+    Вся проверка баланса выполняется внутри одной транзакции (BEGIN IMMEDIATE),
+    чтобы исключить race condition при двух параллельных запросах.
+    """
+    from bot.config import config as _cfg
+
+    _min = float(getattr(_cfg, "PARTNER_MIN_WITHDRAWAL_RUB", 0)) if min_amount_rub is None else min_amount_rub
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        user = await get_or_create_user(telegram_id)
-        if not user.partner_agreed_at:
-            return None
+        # Эксклюзивная блокировка на запись — сериализует конкурентные запросы
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            user_cur = await db.execute(
+                "SELECT id, partner_agreed_at, partner_balance_rub FROM users WHERE telegram_id = ?",
+                (telegram_id,),
+            )
+            user_row = await user_cur.fetchone()
+            if not user_row or not user_row["partner_agreed_at"]:
+                await db.rollback()
+                return None
 
-        available_amount = await get_partner_available_withdrawal(telegram_id)
-        if amount_rub > available_amount:
-            return None
+            user_id = user_row["id"]
+            balance = float(user_row["partner_balance_rub"] or 0)
 
-        cursor = await db.execute(
-            """
-            INSERT INTO partner_withdrawals (user_id, amount_rub, method, requisites, status)
-            VALUES (?, ?, ?, ?, 'requested')
-            """,
-            (user.id, amount_rub, method, requisites),
-        )
-        await db.commit()
+            pending_cur = await db.execute(
+                "SELECT COALESCE(SUM(amount_rub), 0) AS total FROM partner_withdrawals "
+                "WHERE user_id = ? AND status = 'requested'",
+                (user_id,),
+            )
+            pending_row = await pending_cur.fetchone()
+            pending = float(pending_row["total"] or 0)
+            available = round(max(0.0, balance - pending), 2)
+
+            if amount_rub > available:
+                await db.rollback()
+                return None
+            if _min > 0 and amount_rub < _min:
+                await db.rollback()
+                return None
+
+            cursor = await db.execute(
+                "INSERT INTO partner_withdrawals (user_id, amount_rub, method, requisites, status) "
+                "VALUES (?, ?, ?, ?, 'requested')",
+                (user_id, amount_rub, method, requisites),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
         return {
             "id": cursor.lastrowid,
@@ -1133,8 +1218,8 @@ async def create_partner_withdrawal(
             "amount_rub": round(amount_rub, 2),
             "method": method,
             "requisites": requisites,
-            "current_balance_rub": round(float(user.partner_balance_rub or 0), 2),
-            "remaining_available_rub": round(max(0.0, available_amount - amount_rub), 2),
+            "current_balance_rub": round(balance, 2),
+            "remaining_available_rub": round(max(0.0, available - amount_rub), 2),
         }
 
 
@@ -1514,13 +1599,14 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
 
 
 async def update_transaction_status(order_id: str, status: str) -> bool:
-    """Обновляет статус транзакции"""
+    """Обновляет статус транзакции. Возвращает True, если строка была изменена."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute(
-            "UPDATE transactions SET status = ? WHERE order_id = ?", (status, order_id)
+        cursor = await db.execute(
+            "UPDATE transactions SET status = ? WHERE order_id = ? AND status != ?",
+            (status, order_id, status),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
 
 async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
