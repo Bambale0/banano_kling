@@ -233,13 +233,13 @@ async def process_batch_image(message: types.Message, state: FSMContext):
             f"Теперь вы можете:\n"
             f"• Добавить до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
             f"• Или нажать «Готово» чтобы продолжить без референсов"
-            f"📎 Референсов добавлено: <code>0/14</code>",
+            f"📎 Референсов добавлено: <code>0/9</code>",
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
         )
     else:
         # Добавляем как референс
-        if len(ref_images) >= 14:
+        if len(ref_images) >= 9:
             await message.answer(
                 f"⚠️ <b>Достигнут лимит референсов (14)</b>"
                 f"Нажмите «Готово» чтобы продолжить.",
@@ -253,7 +253,7 @@ async def process_batch_image(message: types.Message, state: FSMContext):
 
         await message.answer(
             f"✅ <b>Референс добавлен!</b>\n"
-            f"📎 Референсов: <code>{len(ref_images)}/14</code>"
+            f"📎 Референсов: <code>{len(ref_images)}/9</code>"
             f"Можете загрузить ещё референсы или нажмите «Готово»",
             reply_markup=get_batch_upload_keyboard(),
             parse_mode="HTML",
@@ -284,9 +284,9 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"✏️ <b>Введите промпт</b>"
         f"🎨 <b>Режим:</b> Редактирование по референсам\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 14 референсов)"
+        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 9 референсов)"
         f"📸 Главное фото: ✅ Загружено\n"
-        f"📎 Референсов: <code>{ref_count}/14</code>"
+        f"📎 Референсов: <code>{ref_count}/9</code>"
         f"Опишите, <b>что нужно сделать</b> с главным фото:\n"
         f"• Перенеси стиль с референсов\n"
         f"• Добавь объектов/персонажей из референсов\n"
@@ -376,7 +376,7 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
         f"📝 <b>Промпт:</b>\n<code>{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}</code>"
         f"🎨 Режим: Редактирование с референсами\n"
         f"📸 Главное фото: ✅\n"
-        f"📎 Референсов: <code>{ref_count}/14</code>\n"
+        f"📎 Референсов: <code>{ref_count}/9</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"🤖 Модель: <code>Gemini 3 Pro</code> (4K)\n"
         f"💰 Стоимость: <code>{cost}</code>🍌"

@@ -70,7 +70,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("nano-banana-pro"),
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
         "requires_reference": False,
-        "max_references": 14,
+        "max_references": 9,
     },
     {
         "id": "banana_2",
@@ -79,7 +79,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("banana_2"),
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
         "requires_reference": False,
-        "max_references": 14,
+        "max_references": 9,
     },
     {
         "id": "seedream_edit",
@@ -88,7 +88,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("seedream_edit"),
         "ratios": ["1:1", "9:16", "16:9", "3:4", "4:3", "2:3", "3:2", "21:9"],
         "requires_reference": True,
-        "max_references": 14,
+        "max_references": 9,
         "qualities": ["2K", "4K"],
         "supports_nsfw_checker": False,
     },
@@ -99,7 +99,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("flux_pro"),
         "ratios": ["auto", "1:1", "9:16", "16:9", "3:4", "4:3", "2:3"],
         "requires_reference": False,
-        "max_references": 16,
+        "max_references": 9,
         "supports_nsfw_checker": True,
     },
     {
@@ -120,7 +120,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("grok_imagine_i2i"),
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
         "requires_reference": True,
-        "max_references": 7,
+        "max_references": 9,
         "supports_nsfw_mode": True,
     },
 )
@@ -133,8 +133,8 @@ VIDEO_MODELS = (
         "durations": [5, 10, 15],
         "ratios": ["16:9", "9:16", "1:1"],
         "supports": ["text", "imgtxt", "video"],
-        "max_image_references": 12,
-        "max_video_references": 5,
+        "max_image_references": 9,
+        "max_video_references": 9,
     },
     {
         "id": "v3_std",
@@ -143,8 +143,8 @@ VIDEO_MODELS = (
         "durations": [5, 10, 15],
         "ratios": ["16:9", "9:16", "1:1"],
         "supports": ["text", "imgtxt", "video"],
-        "max_image_references": 12,
-        "max_video_references": 5,
+        "max_image_references": 9,
+        "max_video_references": 9,
     },
     {
         "id": "v26_pro",
@@ -155,7 +155,7 @@ VIDEO_MODELS = (
         "supports": ["text", "imgtxt"],
         "supports_negative_prompt": True,
         "supports_cfg_scale": True,
-        "max_image_references": 12,
+        "max_image_references": 9,
     },
     {
         "id": "grok_imagine",
@@ -165,7 +165,7 @@ VIDEO_MODELS = (
         "ratios": ["16:9", "9:16", "1:1", "3:2", "2:3"],
         "supports": ["imgtxt"],
         "grok_modes": ["normal", "fun", "spicy"],
-        "max_image_references": 6,
+        "max_image_references": 9,
     },
     {
         "id": "seedance_2",
@@ -174,8 +174,8 @@ VIDEO_MODELS = (
         "durations": [5, 10, 15],
         "ratios": ["16:9", "9:16", "1:1"],
         "supports": ["text", "imgtxt", "video"],
-        "max_image_references": 8,
-        "max_video_references": 3,
+        "max_image_references": 9,
+        "max_video_references": 9,
     },
     {
         "id": "veo3_fast",
@@ -193,7 +193,7 @@ VIDEO_MODELS = (
         "supports_translation": True,
         "supports_seed": True,
         "supports_watermark": True,
-        "max_image_references": 3,
+        "max_image_references": 9,
     },
     {
         "id": "motion_control_v26",
@@ -204,8 +204,8 @@ VIDEO_MODELS = (
         "supports": ["motion"],
         "motion_versions": ["2.6"],
         "motion_modes": ["720p", "1080p"],
-        "max_image_references": 1,
-        "max_video_references": 1,
+        "max_image_references": 9,
+        "max_video_references": 9,
     },
     {
         "id": "motion_control_v30",
@@ -216,8 +216,8 @@ VIDEO_MODELS = (
         "supports": ["motion"],
         "motion_versions": ["3.0"],
         "motion_modes": ["720p", "1080p"],
-        "max_image_references": 1,
-        "max_video_references": 1,
+        "max_image_references": 9,
+        "max_video_references": 9,
     },
     {
         "id": "avatar_std",
@@ -228,7 +228,7 @@ VIDEO_MODELS = (
         "supports": ["avatar"],
         "requires_audio": True,
         "requires_image": True,
-        "max_image_references": 1,
+        "max_image_references": 9,
         "max_audio_references": 1,
     },
     {
@@ -240,7 +240,7 @@ VIDEO_MODELS = (
         "supports": ["avatar"],
         "requires_audio": True,
         "requires_image": True,
-        "max_image_references": 1,
+        "max_image_references": 9,
         "max_audio_references": 1,
     },
 )

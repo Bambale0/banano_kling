@@ -13,7 +13,6 @@ class GeminiService:
     """Сервис для работы с Nano Banana / Gemini Image Generation API"""
 
     # Модели согласно banana_api.md
-    # OpenRouter model IDs
     MODELS = {
         "flash": "google/gemini-2.5-flash-image",  # Быстрая генерация
         "pro": "google/gemini-3-pro-image-preview",  # Профессиональная, до 4K, с thinking
@@ -169,7 +168,7 @@ ULTIMATE DETAIL & QUALITY BOOST:
         )
 
         # Limit refs per model docs
-        max_refs = 5 if "flash" in model.lower() else 14
+        max_refs = 9
         reference_images = reference_images[:max_refs] if reference_images else []
         reference_image_urls = (
             reference_image_urls[:max_refs] if reference_image_urls else []

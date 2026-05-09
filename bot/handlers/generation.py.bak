@@ -515,20 +515,20 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         "• сохранить внешность человека или предмета\n"
         "• повторить стиль и детали\n"
         "• опираться на конкретный исходник\n\n"
-        "<i>Можно загрузить до 9 фото.</i>\n"
+        "<i>Можно загрузить до 14 фото.</i>\n"
         "Когда всё готово, нажмите <b>▶️ Продолжить</b>.\n"
         "Если референсы не нужны — выберите <b>⏭ Пропустить</b>."
     )
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
             parse_mode="HTML",
         )
     except Exception:
         await callback.message.answer(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -829,8 +829,8 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         f"{title}\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         f"{hint}\n\n"
-        "<i>Можно загрузить до 9 фото.</i>",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        "<i>Можно загрузить до 14 фото.</i>",
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -855,7 +855,7 @@ async def show_grok_i2i_upload(callback: types.CallbackQuery, state: FSMContext)
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         "Загрузите фото для изменения.\n"
         "Потом нажмите <b>Продолжить</b> и напишите, что нужно поменять.",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -909,7 +909,7 @@ async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMCo
     )
     await callback.message.edit_text(
         text,
-        reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
+        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -941,13 +941,13 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     current_service = data.get("img_service", "banana_pro")
     current_ratio = data.get("img_ratio", "1:1")
     current_refs = len(data.get("reference_images", []))
-    max_refs = 9
+    max_refs = 14
 
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
         "📎 <b>Загрузка референсов</b>\n"
         "Добавьте фото, если хотите точнее передать стиль, человека или объект.\n\n"
-        "<i>Можно загрузить до 9 фото.</i>\n"
+        "<i>Можно загрузить до 14 фото.</i>\n"
         "Когда всё готово, нажмите <b>Продолжить</b> или <b>Пропустить</b>.",
         reply_markup=get_reference_images_upload_keyboard(
             current_refs, max_refs, "new"
@@ -1029,7 +1029,7 @@ async def _open_image_model_from_main(
             f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
             "Сначала загрузите фото для редактирования, затем нажмите "
             "<b>Продолжить</b> и опишите изменение.",
-            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
             parse_mode="HTML",
         )
         await state.set_state(GenerationStates.uploading_reference_images)
@@ -1066,7 +1066,7 @@ async def _open_video_model_from_main(
         )
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
+            reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
             parse_mode="HTML",
         )
         await state.set_state(GenerationStates.uploading_reference_videos)
@@ -1557,7 +1557,7 @@ async def _show_image_references_screen(
                 "стиль, одежду, товар или композицию.\n\n"
             )
         )
-        + f"<i>Можно загрузить до {9} фото. Когда всё готово, нажмите «Продолжить».</i>"
+        + f"<i>Можно загрузить до {16 if current_service == 'flux_pro' else 14} фото. Когда всё готово, нажмите «Продолжить».</i>"
     )
 
     try:
@@ -1565,7 +1565,7 @@ async def _show_image_references_screen(
             await message_or_callback.message.edit_text(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 9, "new"
+                    current_count, 16 if current_service == "flux_pro" else 14, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1573,7 +1573,7 @@ async def _show_image_references_screen(
             await message_or_callback.answer(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 9, "new"
+                    current_count, 16 if current_service == "flux_pro" else 14, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1581,7 +1581,7 @@ async def _show_image_references_screen(
         await message_or_callback.answer(
             text,
             reply_markup=get_reference_images_upload_keyboard(
-                current_count, 9, "new"
+                current_count, 16 if current_service == "flux_pro" else 14, "new"
             ),
             parse_mode="HTML",
         )
@@ -1764,7 +1764,7 @@ async def _show_video_media_screen(
             "Выбран режим <b>Текст → Видео</b>.\n"
             "Ничего загружать не нужно. Можно сразу переходить дальше."
         )
-        next_state = GenerationStates.waiting_for_video_prompt
+        next_state = GenerationStates.waiting_for_input
 
     text = (
         "🎬 <b>Создание видео</b>\n"
@@ -1811,6 +1811,33 @@ async def _show_video_media_screen(
         logger.exception("Failed to render video media screen")
 
     await state.set_state(next_state)
+
+
+@router.callback_query(F.data == "img_ref_skip_new")
+async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает загрузку референсов и переходит к вводу промпта"""
+    data = await state.get_data()
+    generation_type = data.get("generation_type")
+    current_service = data.get("img_service", "banana_pro")
+
+    if generation_type == "image" and current_service == "seedream_edit":
+        await callback.answer(
+            "Для Seedream 4.5 Edit нужно хотя бы одно исходное изображение",
+            show_alert=True,
+        )
+        return
+
+    # Очищаем референсы
+    await state.update_data(reference_images=[])
+
+    if generation_type == "video":
+        # Для видео - показываем параметры видео и промпт
+        await _show_video_creation_screen(callback.message, state)
+        await callback.answer()
+    else:
+        await state.update_data(img_flow_step="configure")
+        await _show_image_creation_screen(callback, state)
+        await callback.answer()
 
 
 @router.callback_query(F.data == "img_ref_continue_new")
@@ -1860,7 +1887,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
         f"📎 <b>Перезагрузка референсов</b>"
         f"Загружено: <code>0/14</code>"
         f"Отправьте новые фотографии для загрузки референсов:",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, preset_id),
+        reply_markup=get_reference_images_upload_keyboard(0, 14, preset_id),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -2012,6 +2039,15 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Для режима Видео + Текст выбрана модель Kling Glow")
 
 
+@router.callback_query(F.data == "vid_ref_skip_new")
+async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
+    """Пропускает загрузку видео референсов для video+text"""
+    await state.update_data(v_reference_videos=[])
+    await state.update_data(video_flow_step="configure")
+    await _show_video_creation_screen(callback.message, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "vid_ref_continue_new")
 async def handle_vid_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
     """Продолжает после загрузки видео референсов"""
@@ -2147,12 +2183,10 @@ async def _apply_video_model_selection(
         current_type = current_data.get("v_type", "text")
         if current_type in {"imgtxt", "avatar"}:
             await state.set_state(GenerationStates.waiting_for_video_prompt)
-        elif current_type == "text":
-            await state.set_state(GenerationStates.waiting_for_video_prompt)
         elif current_type == "video":
             await state.set_state(GenerationStates.uploading_reference_videos)
         else:
-            await state.set_state(GenerationStates.waiting_for_video_prompt)
+            await state.set_state(GenerationStates.waiting_for_input)
     else:
         await state.set_state(GenerationStates.waiting_for_video_prompt)
 
@@ -2635,7 +2669,7 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
         f"• Персонажей (до 4 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "generate_image"),
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "generate_image"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -2679,8 +2713,8 @@ async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "generate_video")
 async def start_video_generation(callback: types.CallbackQuery, state: FSMContext):
     """Начинает генерацию видео без пресета - сразу запрашивает промпт"""
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-    await state.update_data(generation_type="video", video_flow_step="configure")
+    await state.set_state(GenerationStates.waiting_for_input)
+    await state.update_data(generation_type="video")
 
     user_credits = await get_user_credits(callback.from_user.id)
     settings = await get_user_settings(callback.from_user.id)
@@ -2773,7 +2807,7 @@ async def handle_video_options_change(callback: types.CallbackQuery, state: FSMC
         parse_mode="HTML",
     )
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data == "edit_video")
@@ -3216,29 +3250,6 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
     await state.set_state(GenerationStates.waiting_for_input)
 
 
-async def _show_preset_details(
-    message_or_callback,
-    preset,
-    user_id: int,
-):
-    """Show preset details screen."""
-    desc_line = f"— {preset.description}\n" if preset.description else ""
-    text = (
-        f"📋 <b>{preset.name}</b>\n"
-        f"💰 Стоимость: <code>{preset.cost}🍌</code>\n"
-        f"{desc_line}\n"
-        f"Выберите действие:\n"
-    )
-    await message_or_callback.edit_text(
-        text,
-        reply_markup=get_preset_action_keyboard(
-            preset.id, preset.requires_input, preset.category
-        ),
-        parse_mode="HTML",
-    )
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
 @router.callback_query(F.data.startswith("ref_"))
 async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
     """
@@ -3247,11 +3258,11 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
     """
     parts = callback.data.split("_")
     action = parts[1] if len(parts) > 1 else ""
-    preset_id = "_".join(parts[2:]) if len(parts) > 2 else None
+    preset_id = parts[2] if len(parts) > 2 else None
 
     data = await state.get_data()
     current_refs = data.get("reference_images", [])
-    max_refs = 9
+    max_refs = 14
 
     if action == "upload":
         # Начинаем загрузку референсных изображений
@@ -3279,18 +3290,6 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
         )
-
-    elif action == "skip":
-        # Skip loading references
-        if preset_id and preset_id != "new":
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await _show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-                await callback.answer()
-                return
-        await _show_image_creation_screen(callback, state)
 
     elif action == "confirm":
         # Переходим к подтверждению
@@ -3680,7 +3679,7 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     v_type = data.get("v_type", "")
     if (
         generation_type == "video"
-        and v_type in ("imgtxt", "avatar", "video")
+        and v_type != "motion"
         and data.get("video_flow_step") != "configure"
     ):
         await message.answer(
@@ -4084,7 +4083,7 @@ async def upload_reference_image_for_any_image_flow(
         data = await state.get_data()
         img_service = data.get("img_service", "banana_pro")
         preset_id = data.get("preset_id", "new")
-        max_refs = 9
+        max_refs = 9 if img_service == "wan_27" else 14
 
         reference_images = list(data.get("reference_images") or [])
         if len(reference_images) >= max_refs:
@@ -4404,13 +4403,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
 
             if data.get("video_flow_step") == "media":
                 await message.answer(
-                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/9</code>",
+                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/5</code>",
                     parse_mode="HTML",
                 )
                 await _show_video_media_screen(message, state, edit=False)
             else:
                 current_count = len(v_reference_videos)
-                max_refs = 9
+                max_refs = 5
                 text = (
                     f"📹 <b>Загрузка видео-референсов</b>\n"
                     f"Загружено: <code>{current_count}/{max_refs}</code>\n"
@@ -4451,7 +4450,9 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         reference_images = list(data.get("reference_images") or [])
         v_type = data.get("v_type")
         img_service = data.get("img_service")
-        max_refs = 9
+        max_refs = (
+            9 if v_type == "imgtxt" else (16 if img_service == "flux_pro" else 14)
+        )
 
         if len(reference_images) >= max_refs:
             await message.answer(
