@@ -1858,7 +1858,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
 
     await callback.message.edit_text(
         f"📎 <b>Перезагрузка референсов</b>"
-        f"Загружено: <code>0/14</code>"
+        f"Загружено: <code>0/9</code>"
         f"Отправьте новые фотографии для загрузки референсов:",
         reply_markup=get_reference_images_upload_keyboard(0, 9, preset_id),
         parse_mode="HTML",
@@ -3216,10 +3216,11 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
     await state.set_state(GenerationStates.waiting_for_input)
 
 
-async def _show_preset_details(
+async def show_preset_details(
     message_or_callback,
     preset,
     user_id: int,
+    state: FSMContext = None,
 ):
     """Show preset details screen."""
     desc_line = f"— {preset.description}\n" if preset.description else ""
@@ -3236,7 +3237,8 @@ async def _show_preset_details(
         ),
         parse_mode="HTML",
     )
-    await state.set_state(GenerationStates.waiting_for_input)
+    if state:
+        await state.set_state(GenerationStates.waiting_for_input)
 
 
 @router.callback_query(F.data.startswith("ref_"))
@@ -3246,8 +3248,13 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
     Поддерживает загрузку, управление и подтверждение референсов
     """
     parts = callback.data.split("_")
+    # parts[0] is "ref", parts[1] is action (upload, clear, skip, confirm, reload, accept)
     action = parts[1] if len(parts) > 1 else ""
-    preset_id = "_".join(parts[2:]) if len(parts) > 2 else None
+    # Handle preset_id that may contain underscores (e.g. "my_preset")
+    if len(parts) > 2:
+        preset_id = "_".join(parts[2:])
+    else:
+        preset_id = None
 
     data = await state.get_data()
     current_refs = data.get("reference_images", [])
@@ -3285,12 +3292,16 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         if preset_id and preset_id != "new":
             preset = preset_manager.get_preset(preset_id)
             if preset:
-                await _show_preset_details(
-                    callback.message, preset, callback.from_user.id
+                await show_preset_details(
+                    callback.message, preset, callback.from_user.id, state
                 )
                 await callback.answer()
                 return
-        await _show_image_creation_screen(callback, state)
+        skip_data = await state.get_data()
+        if skip_data.get("generation_type") == "video":
+            await _show_video_creation_screen(callback.message, state)
+        else:
+            await _show_image_creation_screen(callback, state)
 
     elif action == "confirm":
         # Переходим к подтверждению
@@ -3301,7 +3312,11 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         # Для нового UX (preset_id == "new") - сразу переходим к выбору модели
         # (пропускаем экран подтверждения референсов)
         if preset_id == "new":
-            await _show_image_creation_screen(callback, state)
+            accept_gen_type = data.get("generation_type", "")
+            if accept_gen_type == "video":
+                await _show_video_creation_screen(callback.message, state)
+            else:
+                await _show_image_creation_screen(callback, state)
             await callback.answer()
             await state.set_state(GenerationStates.waiting_for_input)
         else:
@@ -3309,10 +3324,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             preset = preset_manager.get_preset(preset_id)
             if preset:
                 await show_preset_details(
-                    callback.message, preset, callback.from_user.id
+                    callback.message, preset, callback.from_user.id, state
                 )
             else:
-                # Fallback - показать параметры генерации
                 await _show_image_creation_screen(callback, state)
                 await state.set_state(GenerationStates.waiting_for_input)
 
@@ -3345,7 +3359,7 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             preset = preset_manager.get_preset(preset_id)
             if preset:
                 await show_preset_details(
-                    callback.message, preset, callback.from_user.id
+                    callback.message, preset, callback.from_user.id, state
                 )
             else:
                 # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
@@ -3365,7 +3379,12 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         )
 
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    # Route state based on generation type
+    gen_type_final = (await state.get_data()).get("generation_type", "")
+    if gen_type_final == "video":
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+    else:
+        await state.set_state(GenerationStates.waiting_for_input)
 
 
 # =============================================================================
