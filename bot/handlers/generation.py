@@ -515,7 +515,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         "• сохранить внешность человека или предмета\n"
         "• повторить стиль и детали\n"
         "• опираться на конкретный исходник\n\n"
-        "<i>Можно загрузить до 14 фото.</i>\n"
+        "<i>Можно загрузить до 9 фото.</i>\n"
         "Когда всё готово, нажмите <b>▶️ Продолжить</b>.\n"
         "Если референсы не нужны — выберите <b>⏭ Пропустить</b>."
     )
@@ -829,7 +829,7 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         f"{title}\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         f"{hint}\n\n"
-        "<i>Можно загрузить до 14 фото.</i>",
+        "<i>Можно загрузить до 9 фото.</i>",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
@@ -941,13 +941,13 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     current_service = data.get("img_service", "banana_pro")
     current_ratio = data.get("img_ratio", "1:1")
     current_refs = len(data.get("reference_images", []))
-    max_refs = 14
+    max_refs = 9
 
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
         "📎 <b>Загрузка референсов</b>\n"
         "Добавьте фото, если хотите точнее передать стиль, человека или объект.\n\n"
-        "<i>Можно загрузить до 14 фото.</i>\n"
+        "<i>Можно загрузить до 9 фото.</i>\n"
         "Когда всё готово, нажмите <b>Продолжить</b> или <b>Пропустить</b>.",
         reply_markup=get_reference_images_upload_keyboard(
             current_refs, max_refs, "new"
@@ -1557,7 +1557,7 @@ async def _show_image_references_screen(
                 "стиль, одежду, товар или композицию.\n\n"
             )
         )
-        + f"<i>Можно загрузить до {16 if current_service == 'flux_pro' else 14} фото. Когда всё готово, нажмите «Продолжить».</i>"
+        + f"<i>Можно загрузить до {9} фото. Когда всё готово, нажмите «Продолжить».</i>"
     )
 
     try:
@@ -1565,7 +1565,7 @@ async def _show_image_references_screen(
             await message_or_callback.message.edit_text(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 16 if current_service == "flux_pro" else 14, "new"
+                    current_count, 9, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1573,7 +1573,7 @@ async def _show_image_references_screen(
             await message_or_callback.answer(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 16 if current_service == "flux_pro" else 14, "new"
+                    current_count, 9, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1581,7 +1581,7 @@ async def _show_image_references_screen(
         await message_or_callback.answer(
             text,
             reply_markup=get_reference_images_upload_keyboard(
-                current_count, 16 if current_service == "flux_pro" else 14, "new"
+                current_count, 9, "new"
             ),
             parse_mode="HTML",
         )
@@ -3249,7 +3249,7 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
 
     data = await state.get_data()
     current_refs = data.get("reference_images", [])
-    max_refs = 14
+    max_refs = 9
 
     if action == "upload":
         # Начинаем загрузку референсных изображений
@@ -4082,7 +4082,7 @@ async def upload_reference_image_for_any_image_flow(
         data = await state.get_data()
         img_service = data.get("img_service", "banana_pro")
         preset_id = data.get("preset_id", "new")
-        max_refs = 9 if img_service == "wan_27" else 14
+        max_refs = 9
 
         reference_images = list(data.get("reference_images") or [])
         if len(reference_images) >= max_refs:
@@ -4402,13 +4402,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
 
             if data.get("video_flow_step") == "media":
                 await message.answer(
-                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/5</code>",
+                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/9</code>",
                     parse_mode="HTML",
                 )
                 await _show_video_media_screen(message, state, edit=False)
             else:
                 current_count = len(v_reference_videos)
-                max_refs = 5
+                max_refs = 9
                 text = (
                     f"📹 <b>Загрузка видео-референсов</b>\n"
                     f"Загружено: <code>{current_count}/{max_refs}</code>\n"
@@ -4449,9 +4449,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         reference_images = list(data.get("reference_images") or [])
         v_type = data.get("v_type")
         img_service = data.get("img_service")
-        max_refs = (
-            9 if v_type == "imgtxt" else (16 if img_service == "flux_pro" else 14)
-        )
+        max_refs = 9
 
         if len(reference_images) >= max_refs:
             await message.answer(

@@ -563,7 +563,7 @@ def get_create_video_keyboard(
 
 
 def get_reference_videos_upload_keyboard(
-    current_count: int = 0, max_count: int = 5, preset_id: str = None
+    current_count: int = 0, max_count: int = 9, preset_id: str = None
 ):
     """Клавиатура загрузки референсных видео"""
     builder = InlineKeyboardBuilder()
@@ -584,7 +584,7 @@ def get_reference_videos_upload_keyboard(
 
 
 def get_reference_images_upload_keyboard(
-    current_count: int = 0, max_count: int = 14, preset_id: str = None
+    current_count: int = 0, max_count: int = 9, preset_id: str = None
 ):
     """Клавиатура загрузки референсных изображений"""
     builder = InlineKeyboardBuilder()
