@@ -522,13 +522,13 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
             parse_mode="HTML",
         )
     except Exception:
         await callback.message.answer(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -830,7 +830,7 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         f"{hint}\n\n"
         "<i>Можно загрузить до 9 фото.</i>",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -855,7 +855,7 @@ async def show_grok_i2i_upload(callback: types.CallbackQuery, state: FSMContext)
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         "Загрузите фото для изменения.\n"
         "Потом нажмите <b>Продолжить</b> и напишите, что нужно поменять.",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -909,7 +909,7 @@ async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMCo
     )
     await callback.message.edit_text(
         text,
-        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
+        reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -1029,7 +1029,7 @@ async def _open_image_model_from_main(
             f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
             "Сначала загрузите фото для редактирования, затем нажмите "
             "<b>Продолжить</b> и опишите изменение.",
-            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
             parse_mode="HTML",
         )
         await state.set_state(GenerationStates.uploading_reference_images)
@@ -1066,7 +1066,7 @@ async def _open_video_model_from_main(
         )
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
+            reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
             parse_mode="HTML",
         )
         await state.set_state(GenerationStates.uploading_reference_videos)
@@ -1860,7 +1860,7 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
         f"📎 <b>Перезагрузка референсов</b>"
         f"Загружено: <code>0/14</code>"
         f"Отправьте новые фотографии для загрузки референсов:",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, preset_id),
+        reply_markup=get_reference_images_upload_keyboard(0, 9, preset_id),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -2146,6 +2146,8 @@ async def _apply_video_model_selection(
     if current_data.get("video_flow_step") == "media":
         current_type = current_data.get("v_type", "text")
         if current_type in {"imgtxt", "avatar"}:
+            await state.set_state(GenerationStates.waiting_for_video_prompt)
+        elif current_type == "text":
             await state.set_state(GenerationStates.waiting_for_video_prompt)
         elif current_type == "video":
             await state.set_state(GenerationStates.uploading_reference_videos)
@@ -2633,7 +2635,7 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
         f"• Персонажей (до 4 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны",
-        reply_markup=get_reference_images_upload_keyboard(0, 14, "generate_image"),
+        reply_markup=get_reference_images_upload_keyboard(0, 9, "generate_image"),
         parse_mode="HTML",
     )
     await callback.answer()
