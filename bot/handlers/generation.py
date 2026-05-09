@@ -1813,33 +1813,6 @@ async def _show_video_media_screen(
     await state.set_state(next_state)
 
 
-@router.callback_query(F.data == "img_ref_skip_new")
-async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
-    """Пропускает загрузку референсов и переходит к вводу промпта"""
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    current_service = data.get("img_service", "banana_pro")
-
-    if generation_type == "image" and current_service == "seedream_edit":
-        await callback.answer(
-            "Для Seedream 4.5 Edit нужно хотя бы одно исходное изображение",
-            show_alert=True,
-        )
-        return
-
-    # Очищаем референсы
-    await state.update_data(reference_images=[])
-
-    if generation_type == "video":
-        # Для видео - показываем параметры видео и промпт
-        await _show_video_creation_screen(callback.message, state)
-        await callback.answer()
-    else:
-        await state.update_data(img_flow_step="configure")
-        await _show_image_creation_screen(callback, state)
-        await callback.answer()
-
-
 @router.callback_query(F.data == "img_ref_continue_new")
 async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
     """Продолжает после загрузки референсов - сразу к параметрам видео (без проверки наличия референсов)"""
@@ -2037,15 +2010,6 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(**updates)
     await _show_video_media_screen(callback, state)
     await callback.answer("Для режима Видео + Текст выбрана модель Kling Glow")
-
-
-@router.callback_query(F.data == "vid_ref_skip_new")
-async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
-    """Пропускает загрузку видео референсов для video+text"""
-    await state.update_data(v_reference_videos=[])
-    await state.update_data(video_flow_step="configure")
-    await _show_video_creation_screen(callback.message, state)
-    await callback.answer()
 
 
 @router.callback_query(F.data == "vid_ref_continue_new")
@@ -3250,6 +3214,29 @@ async def handle_search_grounding(callback: types.CallbackQuery, state: FSMConte
     await state.set_state(GenerationStates.waiting_for_input)
 
 
+async def _show_preset_details(
+    message_or_callback,
+    preset,
+    user_id: int,
+):
+    """Show preset details screen."""
+    desc_line = f"— {preset.description}\n" if preset.description else ""
+    text = (
+        f"📋 <b>{preset.name}</b>\n"
+        f"💰 Стоимость: <code>{preset.cost}🍌</code>\n"
+        f"{desc_line}\n"
+        f"Выберите действие:\n"
+    )
+    await message_or_callback.edit_text(
+        text,
+        reply_markup=get_preset_action_keyboard(
+            preset.id, preset.requires_input, preset.category
+        ),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
 @router.callback_query(F.data.startswith("ref_"))
 async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
     """
@@ -3258,7 +3245,7 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
     """
     parts = callback.data.split("_")
     action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
+    preset_id = "_".join(parts[2:]) if len(parts) > 2 else None
 
     data = await state.get_data()
     current_refs = data.get("reference_images", [])
@@ -3290,6 +3277,18 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
             reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
             parse_mode="HTML",
         )
+
+    elif action == "skip":
+        # Skip loading references
+        if preset_id and preset_id != "new":
+            preset = preset_manager.get_preset(preset_id)
+            if preset:
+                await _show_preset_details(
+                    callback.message, preset, callback.from_user.id
+                )
+                await callback.answer()
+                return
+        await _show_image_creation_screen(callback, state)
 
     elif action == "confirm":
         # Переходим к подтверждению

@@ -571,12 +571,12 @@ def get_reference_videos_upload_keyboard(
         text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
     )
     if preset_id == "video_new":
-        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip_new")
+        builder.button(text="⏭ Пропустить", callback_data="ref_skip_new")
         builder.button(text="✅ Продолжить", callback_data="vid_ref_continue_new")
     else:
-        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
+        builder.button(text="⏭ Пропустить", callback_data="ref_skip")
         builder.button(
-            text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
+            text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}"
         )
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1, 2, 1)
@@ -592,19 +592,19 @@ def get_reference_images_upload_keyboard(
         text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
     )
     if preset_id == "new":
-        builder.button(text="⏭ Пропустить", callback_data="img_ref_skip_new")
+        builder.button(text="⏭ Пропустить", callback_data="ref_skip_new")
         builder.button(text="✅ Продолжить", callback_data="img_ref_continue_new")
     elif preset_id == "generate_image":
-        builder.button(text="⏭ Пропустить", callback_data="img_ref_skip")
+        builder.button(text="⏭ Пропустить", callback_data="ref_skip")
         builder.button(
-            text="✅ Продолжить", callback_data="img_ref_confirm_generate_image"
+            text="✅ Продолжить", callback_data="ref_confirm_generate_image"
         )
     else:
-        builder.button(text="⏭ Пропустить", callback_data="img_ref_skip")
+        builder.button(text="⏭ Пропустить", callback_data="ref_skip")
         builder.button(
-            text="✅ Продолжить", callback_data=f"img_ref_confirm_{preset_id}"
+            text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}"
         )
-    builder.button(text="🔄 Перезагрузить", callback_data="ref_reload_new")
+    builder.button(text="🔄 Перезагрузить", callback_data=f"ref_reload_{preset_id}")
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1, 2, 2)
     return builder.as_markup()
