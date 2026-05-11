@@ -530,6 +530,50 @@ def get_payment_confirmation_keyboard(payment_url: str, order_id: str):
     return builder.as_markup()
 
 
+def get_payment_success_keyboard():
+    """Быстрые действия после успешной оплаты."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧊 Создать AI-образ", callback_data="create_image_refs_new")
+    builder.button(text="🎬 Сделать видео", callback_data="create_video_new")
+    builder.button(text="💎 Баланс", callback_data="menu_balance")
+    builder.button(text="🛒 Магазин", callback_data="menu_catalog")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 2, 1)
+    return builder.as_markup()
+
+
+def get_generation_started_keyboard():
+    """Быстрые действия, пока генерация выполняется."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💎 Баланс", callback_data="menu_balance")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_generation_error_keyboard():
+    """Клавиатура для восстановления после ошибки генерации."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔁 Попробовать снова", callback_data="create_image_refs_new")
+    builder.button(text="⚙️ Сменить модель", callback_data="create_image_refs_new")
+    builder.button(text="💎 Баланс", callback_data="menu_balance")
+    builder.button(text="💬 Поддержка", callback_data="menu_support")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 2, 1)
+    return builder.as_markup()
+
+
+def get_image_result_actions_keyboard():
+    """Следующие шаги после готового изображения."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧊 Создать ещё", callback_data="create_image_refs_new")
+    builder.button(text="🎬 Сделать видео", callback_data="create_video_new")
+    builder.button(text="🛒 Магазин", callback_data="menu_catalog")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 2)
+    return builder.as_markup()
+
+
 def get_back_keyboard(callback_data: str = "back_main"):
     """Простая кнопка назад"""
     builder = InlineKeyboardBuilder()

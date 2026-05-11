@@ -94,3 +94,12 @@ async def analyze_photo(message: Message, state: FSMContext):
         )
 
     await state.clear()
+
+
+@router.message(ImageAnalyzerStates.waiting_for_photo)
+async def invalid_photo_to_prompt_input(message: Message):
+    """Просит пользователя отправить фото, если в FSM пришёл другой тип сообщения."""
+    await message.answer(
+        "❌ Отправьте фото для анализа или нажмите «Назад».",
+        reply_markup=get_back_keyboard("back_main"),
+    )

@@ -1121,13 +1121,12 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
 
-    os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip("/")
     fname = f"{uuid.uuid4().hex}.jpg"
-    fpath = f"static/uploads/{fname}"
+    fpath = config.public_upload_dir(fname)
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
     with open(fpath, "wb") as f:
         f.write(image_data)
-    v_image_url = f"{host}/uploads/{fname}"
+    v_image_url = config.public_upload_url(fname)
 
     await state.update_data(v_image_url=v_image_url)
     await message.answer(
@@ -1165,13 +1164,12 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     video_bytes = await message.bot.download_file(file.file_path)
     video_data = video_bytes.read()
 
-    os.makedirs("static/uploads", exist_ok=True)
-    host = config.WEBHOOK_HOST.rstrip("/")
     fname = f"{uuid.uuid4().hex}.mp4"
-    fpath = f"static/uploads/{fname}"
+    fpath = config.public_upload_dir(fname)
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
     with open(fpath, "wb") as f:
         f.write(video_data)
-    v_video_url = f"{host}/uploads/{fname}"
+    v_video_url = config.public_upload_url(fname)
 
     telegram_id = message.from_user.id
     user = await get_or_create_user(telegram_id)

@@ -105,7 +105,10 @@ async def on_startup(bot: Bot):
 
     # Устанавливаем вебхук для Telegram (если используем webhook mode)
     if config.WEBHOOK_HOST:
-        await bot.set_webhook(config.webhook_url)
+        webhook_kwargs = {}
+        if config.WEBHOOK_IP:
+            webhook_kwargs["ip_address"] = config.WEBHOOK_IP
+        await bot.set_webhook(config.webhook_url, **webhook_kwargs)
         logger.info(f"Webhook set to {config.webhook_url}")
 
     # Загружаем пресеты
@@ -1294,9 +1297,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if telegram_id:
                     bot_instance = Bot(token=config.BOT_TOKEN)
                     try:
+                        from bot.keyboards import get_generation_error_keyboard
+
                         await bot_instance.send_message(
                             chat_id=telegram_id,
-                            text=f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nНет результата от API.",
+                            text=(
+                                f"❌ <b>Не получилось создать результат</b>\n\n"
+                                f"{service_name} не вернул файл. "
+                                "Попробуйте ещё раз или смените модель."
+                            ),
+                            reply_markup=get_generation_error_keyboard(),
                             parse_mode="HTML",
                         )
                     finally:
@@ -1314,13 +1324,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 f"Found {service_name} task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
 
-            source_links = ""
+            source_urls = []
             try:
                 param_str = webhook_data.get("param", "{}")
                 param_json = json.loads(param_str)
                 input_str = param_json.get("input", "{}")
                 input_json = json.loads(input_str)
-                sources = []
                 for key in [
                     "image_urls",
                     "image_input",
@@ -1331,16 +1340,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     val = input_json.get(key)
                     if val:
                         if isinstance(val, list):
-                            sources.extend([str(u) for u in val[:3]])
+                            source_urls.extend([str(u) for u in val[:3]])
                         else:
-                            sources.append(str(val))
-                if sources:
-                    source_links = f"\n🖼 <b>Исходники:</b>\n" + "\n".join(
-                        [
-                            f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>"
-                            for u in sources[:3]
-                        ]
-                    )
+                            source_urls.append(str(val))
             except:
                 pass
 
@@ -1353,36 +1355,51 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 elif "video" in model_lower:
                     is_video = True
 
-            # Build ultra-compact caption with minimal line breaks
+            from html import escape
+
+            # Build a clean user-facing caption; keep task ids and raw URLs in logs only.
             info_lines = []
             if task.cost:
-                info_lines.append(f"💰{task.cost}💎")
+                info_lines.append(f"{task.cost}💎")
             if task.duration:
-                info_lines.append(f"⏱{task.duration}с")
+                info_lines.append(f"{task.duration}с")
             if task.aspect_ratio:
-                info_lines.append(f"📐{task.aspect_ratio}")
-            info_str = " | ".join(info_lines) if info_lines else ""
+                info_lines.append(task.aspect_ratio)
+            info_str = " · ".join(info_lines)
 
-            prompt_or_preset = (
-                f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                if task.preset_id == "no_preset" and task.prompt
-                else task.preset_id
-            )
-            label = "Промпт" if task.preset_id == "no_preset" else "Пресет"
+            media_title = "Видео готово" if is_video else "Изображение готово"
+            caption_lines = [f"✅ <b>{media_title}</b>", f"<b>{escape(service_name)}</b>"]
+            if info_str:
+                caption_lines[-1] += f" · {escape(info_str)}"
+            if task.prompt:
+                prompt = task.prompt.strip()
+                if len(prompt) > 120:
+                    prompt = prompt[:117] + "..."
+                caption_lines.append(f"🎯 <i>{escape(prompt)}</i>")
+            elif task.preset_id:
+                caption_lines.append(f"🎯 {escape(task.preset_id)}")
 
-            full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
-\n🎯 {label}: {prompt_or_preset}{source_links}
-\n🔗 <a href='{result_url}'>📥 Ссылка</a>"""
+            full_caption = "\n".join(caption_lines)
 
-            kb_link = types.InlineKeyboardMarkup(
-                inline_keyboard=[
+            keyboard_rows = [
+                [types.InlineKeyboardButton(text="Скачать оригинал", url=result_url)]
+            ]
+            if source_urls:
+                keyboard_rows.append(
                     [
                         types.InlineKeyboardButton(
-                            text="📥 Скачать оригинал", url=result_url
+                            text="Исходник", url=source_urls[0]
                         )
                     ]
+                )
+            keyboard_rows.append(
+                [
+                    types.InlineKeyboardButton(
+                        text="Создать ещё", callback_data="create_image_refs_new"
+                    )
                 ]
             )
+            kb_link = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:
@@ -1488,14 +1505,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             )
                             sent_media = True
                         else:
-                            doc_caption = f"{full_caption}\\n\\n📎 Файл (более 10MB)"
                             document = types.BufferedInputFile(
                                 image_bytes, filename="generated.png"
                             )
                             await bot_instance.send_document(
                                 chat_id=telegram_id,
                                 document=document,
-                                caption=doc_caption,
+                                caption=full_caption,
                                 parse_mode="HTML",
                                 reply_markup=kb_link,
                             )
@@ -1541,10 +1557,22 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)
                 try:
-                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>\n\nID: <code>{task_id}</code>\n\nКод: <code>{fail_code}</code>\nСообщение: {fail_msg}\n\n{'💎 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
+                    from bot.keyboards import get_generation_error_keyboard
+
+                    refund_text = (
+                        "GOE вернулись на баланс."
+                        if task and task.cost and task.cost > 0
+                        else "Баланс не изменился."
+                    )
+                    error_msg = (
+                        f"❌ <b>Не получилось создать результат</b>\n\n"
+                        f"{refund_text} Попробуйте ещё раз, смените модель "
+                        "или загрузите другое фото."
+                    )
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=error_msg,
+                        reply_markup=get_generation_error_keyboard(),
                         parse_mode="HTML",
                     )
                     logger.info(f"Failure notification sent to {telegram_id}")
@@ -1587,6 +1615,8 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Вебхук YooKassa
     app.router.add_post("/yookassa/webhook", handle_yookassa_webhook)
+    # Совместимость со старым URL, который мог быть указан в кабинете YooKassa.
+    app.router.add_post("/webhook/yookassa", handle_yookassa_webhook)
 
     # Robokassa webhooks
     app.router.add_post("/robokassa/result", handle_robokassa_result)

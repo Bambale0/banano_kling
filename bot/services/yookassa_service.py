@@ -195,7 +195,10 @@ class YooKassaService:
 
     @staticmethod
     def extract_order_id(payment: Any) -> Optional[str]:
-        metadata = getattr(payment, "metadata", None) or {}
+        if isinstance(payment, dict):
+            metadata = payment.get("metadata") or {}
+        else:
+            metadata = getattr(payment, "metadata", None) or {}
         order_id = metadata.get("order_id")
         return str(order_id) if order_id else None
 

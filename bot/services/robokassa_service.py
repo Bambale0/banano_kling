@@ -1,7 +1,7 @@
 import asyncio
 import decimal
 from typing import Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl
 
 from aiorobokassa import RoboKassaClient
 
@@ -29,12 +29,15 @@ class RobokassaService:
             self.client = None
 
     def parse_response(self, query_str: str) -> Dict[str, str]:
-        params = {}
-        for item in urlparse(query_str).query.split("&"):
-            if "=" in item:
-                key, value = item.split("=", 1)
-                params[key] = value
-        return params
+        return dict(parse_qsl(query_str or "", keep_blank_values=True))
+
+    @staticmethod
+    def shp_params(params: Dict[str, str]) -> Dict[str, str]:
+        return {
+            k[4:]: v
+            for k, v in params.items()
+            if k.lower().startswith("shp_")
+        }
 
     async def create_payment(
         self,
@@ -64,7 +67,7 @@ class RobokassaService:
         except Exception as e:
             return {"Success": False, "Message": str(e)}
 
-    def verify_result(self, params: Dict[str, str]) -> Dict[str, Any]:
+    def _verify_common(self, params: Dict[str, str], *, success: bool) -> Dict[str, Any]:
         if not self.enabled or not self.client:
             return {"valid": False, "message": "Robokassa not configured"}
         if (
@@ -74,8 +77,16 @@ class RobokassaService:
         ):
             return {"valid": False, "message": "Missing required params"}
         try:
-            self.client.verify_result_url(
-                params["OutSum"], params["InvId"], params["SignatureValue"]
+            verify = (
+                self.client.verify_success_url
+                if success
+                else self.client.verify_result_url
+            )
+            verify(
+                params["OutSum"],
+                params["InvId"],
+                params["SignatureValue"],
+                shp_params=self.shp_params(params),
             )
             out_sum = decimal.Decimal(params["OutSum"])
             inv_id = params["InvId"]
@@ -86,6 +97,12 @@ class RobokassaService:
             }
         except Exception as e:
             return {"valid": False, "message": str(e)}
+
+    def verify_result(self, params: Dict[str, str]) -> Dict[str, Any]:
+        return self._verify_common(params, success=False)
+
+    def verify_success(self, params: Dict[str, str]) -> Dict[str, Any]:
+        return self._verify_common(params, success=True)
 
     async def close(self):
         if self.client:

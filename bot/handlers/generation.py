@@ -8,6 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Optional
+from urllib.parse import unquote, urlparse
 
 from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
@@ -34,10 +35,13 @@ from bot.keyboards import (
     get_create_image_keyboard,
     get_create_video_keyboard,
     get_duration_keyboard,
+    get_generation_error_keyboard,
+    get_generation_started_keyboard,
     get_image_aspect_ratio_keyboard,
     get_image_aspect_ratio_no_preset_edit_keyboard,
     get_image_aspect_ratio_no_preset_keyboard,
     get_image_editing_options_keyboard,
+    get_image_result_actions_keyboard,
     get_main_menu_keyboard,
     get_model_selection_keyboard,
     get_motion_control_keyboard,
@@ -1313,12 +1317,12 @@ async def handle_img_ratio_3_2(callback: types.CallbackQuery, state: FSMContext)
 
 def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
     """
-    Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL.
+    Сохраняет загруженный файл в публичную папку uploads и возвращает URL.
     """
     try:
         # Создаём поддиректорию по дате
         date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
+        upload_dir = config.public_upload_dir(date_str)
         os.makedirs(upload_dir, exist_ok=True)
 
         # Генерируем уникальное имя файла
@@ -1331,9 +1335,7 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
             f.write(file_bytes)
 
         # Формируем публичный URL
-        # nginx настроен на /uploads/ -> static/uploads/
-        base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        public_url = config.public_upload_url(date_str, filename)
 
         logger.info(f"Saved uploaded file: {public_url}")
         return public_url
@@ -1341,6 +1343,60 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
     except Exception as e:
         logger.exception(f"Error saving uploaded file: {e}")
         return None
+
+
+def _public_upload_path_from_url(url: str) -> Optional[str]:
+    """Resolve own /uploads URL to a local file path."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.path.startswith("/uploads/"):
+            return None
+        relative_path = unquote(parsed.path[len("/uploads/") :])
+        safe_path = os.path.normpath(relative_path).lstrip(os.sep)
+        if safe_path.startswith(".."):
+            return None
+        return config.public_upload_dir(*safe_path.split(os.sep))
+    except Exception as e:
+        logger.warning("Failed to resolve upload URL %s: %s", url, e)
+        return None
+
+
+def _convert_local_image_to_seedream_jpeg(url: str) -> str:
+    """Seedream rejects some formats, so convert local refs to plain RGB JPEG."""
+    local_path = _public_upload_path_from_url(url)
+    if not local_path or not os.path.exists(local_path):
+        return url
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(local_path) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ("RGBA", "LA", "P"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                background.paste(img, mask=img.getchannel("A") if "A" in img.getbands() else None)
+                img = background
+            else:
+                img = img.convert("RGB")
+
+            date_str = datetime.now().strftime("%Y%m%d")
+            filename = f"{uuid.uuid4().hex[:8]}_seedream.jpg"
+            output_path = config.public_upload_dir(date_str, filename)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            img.save(output_path, "JPEG", quality=92, optimize=True)
+
+        converted_url = config.public_upload_url(date_str, filename)
+        logger.info("Converted Seedream reference image: %s -> %s", url, converted_url)
+        return converted_url
+    except Exception as e:
+        logger.warning("Failed to convert Seedream reference image %s: %s", url, e)
+        return url
+
+
+def _prepare_seedream_reference_images(image_urls: list[str]) -> list[str]:
+    return [_convert_local_image_to_seedream_jpeg(url) for url in image_urls or []]
 
 
 async def _send_original_document(
@@ -2657,11 +2713,14 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 "seedream_5_lite": "seedream 4.5",
             }
             api_model = model_map.get(img_service, "seedream 4.5")
+            seedream_reference_images = _prepare_seedream_reference_images(
+                reference_images
+            )
             result = await seedream_service.generate_image(
                 prompt=prompt,
                 model=api_model,
                 aspect_ratio=img_ratio,
-                image_urls=reference_images,
+                image_urls=seedream_reference_images,
                 callback_url=callback_url,
             )
         else:
@@ -2689,7 +2748,10 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 )
                 await db.commit()
             await message.answer(
-                f"🚀 Генерация запущена!\n🆔 <code>{api_task_id}</code>\n💰 <code>{cost}</code>💎 списано\n\nОжидайте результат (1-3 мин).",
+                f"🚀 <b>Генерация запущена</b>\n\n"
+                f"💎 Списано: <code>{cost}</code> GOE\n"
+                f"⏱ Обычно результат приходит за 1-3 минуты.",
+                reply_markup=get_generation_started_keyboard(),
                 parse_mode="HTML",
             )
         elif result:  # bytes
@@ -2697,7 +2759,11 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             saved_url = save_uploaded_file(result, "png")
             await message.answer_photo(
                 photo=types.BufferedInputFile(result, filename="generated.png"),
-                caption=f"✅ Изображение готово!\n💰 <code>{cost}</code>💎 списано",
+                caption=(
+                    f"✅ <b>Изображение готово</b>\n\n"
+                    f"💎 Списано: <code>{cost}</code> GOE"
+                ),
+                reply_markup=get_image_result_actions_keyboard(),
                 parse_mode="HTML",
             )
             await _send_original_document(message.answer_document, result, saved_url)
@@ -2705,13 +2771,23 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         else:
             await add_credits(message.from_user.id, cost)
             await complete_video_task(local_task_id, None)
-            await message.answer("❌ Ошибка генерации. GOE возвращены.")
+            await message.answer(
+                "❌ <b>Не получилось создать изображение</b>\n\n"
+                "GOE вернулись на баланс. Попробуйте ещё раз или смените модель.",
+                reply_markup=get_generation_error_keyboard(),
+                parse_mode="HTML",
+            )
 
     except Exception as e:
         logger.exception(f"Image generation error: {e}")
         await add_credits(message.from_user.id, cost)
         await complete_video_task(local_task_id, None)
-        await message.answer("❌ Ошибка генерации.")
+        await message.answer(
+            "❌ <b>Не получилось создать изображение</b>\n\n"
+            "GOE вернулись на баланс. Попробуйте ещё раз или напишите в поддержку.",
+            reply_markup=get_generation_error_keyboard(),
+            parse_mode="HTML",
+        )
 
     await state.clear()
 
@@ -2980,22 +3056,32 @@ async def run_no_preset_video_from_message(
                 cost=cost,
             )
             await message.answer(
-                f"✅ <b>Видео задача запущена!</b>\n\n"
-                f"🆔 <code>{result['task_id']}</code>\n"
+                f"✅ <b>Видео запущено</b>\n\n"
                 f"🎯 <code>{v_model}</code> | {v_duration}s | {v_ratio}\n"
-                f"💰 <code>{cost}</code>💎 {'списано' if not is_admin else '(админ бесплатно)'}\n\n"
-                f"⏳ Результат через 1-5 мин в этом чате.",
+                f"💎 <code>{cost}</code> GOE {'списано' if not is_admin else '(админ бесплатно)'}\n\n"
+                f"⏳ Результат придёт сюда обычно за 1-5 минут.",
+                reply_markup=get_generation_started_keyboard(),
                 parse_mode="HTML",
             )
         else:
             if not is_admin:
                 await add_credits(message.from_user.id, cost)
-            await message.answer("❌ Не удалось создать задачу. GOE возвращены.")
+            await message.answer(
+                "❌ <b>Не получилось запустить видео</b>\n\n"
+                "GOE вернулись на баланс. Попробуйте ещё раз или смените модель.",
+                reply_markup=get_generation_error_keyboard(),
+                parse_mode="HTML",
+            )
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
         if not is_admin:
             await add_credits(message.from_user.id, cost)
-        await message.answer("❌ Ошибка генерации. GOE возвращены.")
+        await message.answer(
+            "❌ <b>Не получилось создать видео</b>\n\n"
+            "GOE вернулись на баланс. Попробуйте ещё раз или напишите в поддержку.",
+            reply_markup=get_generation_error_keyboard(),
+            parse_mode="HTML",
+        )
 
     await state.clear()
 

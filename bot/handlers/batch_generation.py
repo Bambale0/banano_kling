@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -93,16 +94,12 @@ _batch_upload_urls: dict[int, list[str]] = {}
 
 
 def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
-    """Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL."""
+    """Сохраняет загруженный файл в публичную папку uploads и возвращает URL."""
     try:
-        import os
-        import uuid
         from datetime import datetime
 
-        from bot.config import config
-
         date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
+        upload_dir = config.public_upload_dir(date_str)
         os.makedirs(upload_dir, exist_ok=True)
 
         file_id = str(uuid.uuid4())[:8]
@@ -112,8 +109,7 @@ def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[st
         with open(filepath, "wb") as f:
             f.write(file_bytes)
 
-        base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        public_url = config.public_upload_url(date_str, filename)
 
         logger.info(f"Saved batch upload: {public_url}")
         return public_url
@@ -237,7 +233,10 @@ async def process_batch_image(message: types.Message, state: FSMContext):
         )
 
 
-@router.callback_query(F.data == "batch_done_upload")
+@router.callback_query(
+    StateFilter(GenerationStates.waiting_for_batch_image),
+    F.data == "batch_done_upload",
+)
 async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     """Пользователь завершил загрузку фото и референсов"""
 
@@ -274,7 +273,7 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(GenerationStates.waiting_for_batch_prompt)
+@router.message(GenerationStates.waiting_for_batch_prompt, F.text)
 async def process_batch_prompt(message: types.Message, state: FSMContext):
     """Обрабатывает введённый пользователем промпт"""
 
@@ -308,7 +307,15 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("batch_aspect_"))
+@router.message(GenerationStates.waiting_for_batch_prompt)
+async def invalid_batch_prompt(message: types.Message):
+    await message.answer("❌ Пожалуйста, введите промпт текстом.")
+
+
+@router.callback_query(
+    StateFilter(GenerationStates.waiting_for_batch_aspect_ratio),
+    F.data.startswith("batch_aspect_"),
+)
 async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMContext):
     """Обрабатывает выбор aspect ratio для редактирования с референсами"""
 

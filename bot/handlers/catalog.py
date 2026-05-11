@@ -204,7 +204,7 @@ async def handle_catalog_webapp_order(message: Message):
     await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
-@router.message(StateFilter(CatalogStates.waiting_for_article))
+@router.message(StateFilter(CatalogStates.waiting_for_article), F.text)
 async def process_article(message: Message, state: FSMContext):
     if catalog_df.empty or catalog_df.shape[1] < 13:
         await track_event(message.from_user.id, "catalog_unavailable")
@@ -261,7 +261,7 @@ async def process_article(message: Message, state: FSMContext):
     await state.set_state(CatalogStates.waiting_for_promo)
 
 
-@router.message(StateFilter(CatalogStates.waiting_for_promo))
+@router.message(StateFilter(CatalogStates.waiting_for_promo), F.text)
 async def process_promo(message: Message, state: FSMContext):
     promo = message.text.strip().upper()
     data = await state.get_data()
@@ -318,7 +318,10 @@ async def process_promo(message: Message, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(F.data == "catalog_no_promo")
+@router.callback_query(
+    StateFilter(CatalogStates.waiting_for_promo),
+    F.data == "catalog_no_promo",
+)
 async def no_promo(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     article = data["article"]

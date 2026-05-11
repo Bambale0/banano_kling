@@ -88,12 +88,12 @@ class BatchEditingService:
         self, file_bytes: bytes, file_ext: str = "png"
     ) -> Optional[str]:
         """
-        Сохраняет результат в папку static/uploads и возвращает публичный URL.
+        Сохраняет результат в публичную папку uploads и возвращает URL.
         """
         try:
             # Создаём поддиректорию по дате
             date_str = datetime.now().strftime("%Y%m%d")
-            upload_dir = os.path.join("static", "uploads", date_str)
+            upload_dir = config.public_upload_dir(date_str)
             os.makedirs(upload_dir, exist_ok=True)
 
             # Генерируем уникальное имя файла
@@ -106,8 +106,7 @@ class BatchEditingService:
                 f.write(file_bytes)
 
             # Формируем публичный URL
-            base_url = config.static_base_url
-            public_url = f"{base_url}/uploads/{date_str}/{filename}"
+            public_url = config.public_upload_url(date_str, filename)
 
             logger.info(f"Saved batch result: {public_url}")
             return public_url

@@ -1,5 +1,6 @@
 import logging
 import time
+from decimal import Decimal, InvalidOperation
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -23,6 +24,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_keyboard,
     get_payment_confirmation_keyboard,
+    get_payment_success_keyboard,
     get_payment_packages_keyboard,
 )
 from bot.services.preset_manager import preset_manager
@@ -31,6 +33,22 @@ from bot.services.yookassa_service import yookassa_service
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _amounts_match(left, right) -> bool:
+    try:
+        return Decimal(str(left)).quantize(Decimal("0.01")) == Decimal(
+            str(right)
+        ).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _payment_amount_value(payment) -> str:
+    amount = (payment or {}).get("amount")
+    if isinstance(amount, dict):
+        return amount.get("value")
+    return getattr(amount, "value", None)
 
 
 def _is_ignored_telegram_error(error: Exception) -> bool:
@@ -45,14 +63,38 @@ def _is_ignored_telegram_error(error: Exception) -> bool:
     )
 
 
-async def _notify_user(bot: Bot, telegram_id: int, text: str, *, parse_mode=None):
+async def _notify_user(
+    bot: Bot,
+    telegram_id: int,
+    text: str,
+    *,
+    parse_mode=None,
+    reply_markup=None,
+):
     """Send a Telegram message using the shared bot instance."""
     try:
-        await bot.send_message(telegram_id, text, parse_mode=parse_mode)
+        await bot.send_message(
+            telegram_id,
+            text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
     except TelegramBadRequest as e:
         if _is_ignored_telegram_error(e):
             raise
         raise
+
+
+def _format_payment_success_message(transaction, balance: int, bonus_text: str = "") -> str:
+    bonus_block = f"{bonus_text}\n" if bonus_text else ""
+    return (
+        f"✅ <b>Оплата подтверждена</b>\n\n"
+        f"💎 Зачислено: <code>{transaction.credits}</code> GOE\n"
+        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
+        f"💼 Баланс: <code>{balance}</code> GOE\n"
+        f"{bonus_block}\n"
+        f"Выберите, что сделать дальше:"
+    )
 
 
 async def _render_topup_menu(message: types.Message, provider: str = None):
@@ -277,12 +319,11 @@ async def check_payment_status(callback: types.CallbackQuery):
         return
 
     if transaction.status == "completed":
+        telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+        balance = await get_user_credits(telegram_id)
         await callback.message.edit_text(
-            f"✅ <b>Оплата подтверждена!</b>\n\n"
-            f"💎 Начислено <code>{transaction.credits}</code> GOEов\n"
-            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n\n"
-            f"Теперь вы можете создавать контент!",
-            reply_markup=get_main_menu_keyboard(),
+            _format_payment_success_message(transaction, balance),
+            reply_markup=get_payment_success_keyboard(),
             parse_mode="HTML",
         )
         return
@@ -333,17 +374,16 @@ async def check_payment_status(callback: types.CallbackQuery):
             bonus_text = (
                 f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> GOEов\n"
             )
-        message_text = (
-            f"✅ <b>Оплата подтверждена!</b>\n\n"
-            f"💎 Начислено <code>{transaction.credits}</code> GOEов\n"
-            f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
-            f"{bonus_text}\n"
-            f"Теперь вы можете создавать контент!"
+        balance = await get_user_credits(telegram_id)
+        message_text = _format_payment_success_message(
+            transaction,
+            balance,
+            bonus_text,
         )
 
         await callback.message.edit_text(
             message_text,
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_payment_success_keyboard(),
             parse_mode="HTML",
         )
     else:
@@ -385,7 +425,20 @@ async def handle_robokassa_result(request):
         if verification["valid"]:
             order_id = verification["order_id"]
             transaction = await get_transaction_by_order(order_id)
-            if transaction and transaction.status == "pending":
+            if not transaction:
+                logger.warning("Robokassa ResultURL: transaction %s not found", order_id)
+                return web.Response(text=f"OK{order_id}")
+
+            if not _amounts_match(verification["amount_rub"], transaction.amount_rub):
+                logger.warning(
+                    "Robokassa amount mismatch for order %s: got=%s expected=%s",
+                    order_id,
+                    verification["amount_rub"],
+                    transaction.amount_rub,
+                )
+                return web.Response(text="bad sign")
+
+            if transaction.status == "pending":
                 telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
                 await add_credits(telegram_id, transaction.credits)
                 await update_transaction_status(order_id, "completed")
@@ -413,17 +466,19 @@ async def handle_robokassa_result(request):
                     bonus_text = (
                         f"🎁 Реферальный бонус: {referral_bonus['value']} GOEов"
                     )
+                balance = await get_user_credits(telegram_id)
 
                 try:
                     await _notify_user(
                         request.app["bot"],
                         telegram_id,
-                        f"🎉 <b>Оплата успешна!</b>\n\n"
-                        f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
-                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
-                        f"{bonus_text}\n"
-                        f"Теперь вы можете создавать контент!",
+                        _format_payment_success_message(
+                            transaction,
+                            balance,
+                            bonus_text,
+                        ),
                         parse_mode="HTML",
+                        reply_markup=get_payment_success_keyboard(),
                     )
                 except Exception as e:
                     logger.error(f"Failed to notify Robokassa user {telegram_id}: {e}")
@@ -446,9 +501,21 @@ async def handle_robokassa_success(request):
         logger.info(f"Robokassa SuccessURL: {query_str}")
 
         params = robokassa_service.parse_response(query_str)
-        verification = robokassa_service.verify_result(params)
+        verification = robokassa_service.verify_success(params)
         if verification["valid"]:
             order_id = verification["order_id"]
+            transaction = await get_transaction_by_order(order_id)
+            if transaction and not _amounts_match(
+                verification["amount_rub"], transaction.amount_rub
+            ):
+                logger.warning(
+                    "Robokassa SuccessURL amount mismatch for order %s: got=%s expected=%s",
+                    order_id,
+                    verification["amount_rub"],
+                    transaction.amount_rub,
+                )
+                return web.Response(text="bad sign")
+
             # HTML with deeplink or success message
             bot_username = config.BOT_USERNAME or "your_bot_username"
             deeplink = f"https://t.me/{bot_username}?start=success_{order_id}"
@@ -536,6 +603,52 @@ async def handle_yookassa_webhook(request):
 
         if status == "succeeded" or event == "payment.succeeded":
             try:
+                fetched_payment = await yookassa_service.get_payment(str(payment_id))
+                fetched_status = (fetched_payment or {}).get("status")
+                fetched_paid = bool((fetched_payment or {}).get("paid"))
+                if not fetched_payment or not (
+                    fetched_paid or fetched_status == "succeeded"
+                ):
+                    logger.warning(
+                        "YooKassa webhook ignored: API verification failed for payment %s",
+                        payment_id,
+                    )
+                    return web.Response(status=200)
+
+                fetched_order_id = yookassa_service.extract_order_id(fetched_payment)
+                if fetched_order_id and fetched_order_id != order_id:
+                    logger.warning(
+                        "YooKassa API order_id mismatch: webhook_order=%s api_order=%s payment=%s",
+                        order_id,
+                        fetched_order_id,
+                        payment_id,
+                    )
+                    return web.Response(status=200)
+
+                if not _amounts_match(
+                    payment.get("amount", {}).get("value"),
+                    transaction.amount_rub,
+                ):
+                    logger.warning(
+                        "YooKassa webhook amount mismatch for order %s: got=%s expected=%s",
+                        order_id,
+                        payment.get("amount", {}).get("value"),
+                        transaction.amount_rub,
+                    )
+                    return web.Response(status=200)
+
+                if not _amounts_match(
+                    _payment_amount_value(fetched_payment),
+                    transaction.amount_rub,
+                ):
+                    logger.warning(
+                        "YooKassa API amount mismatch for order %s: got=%s expected=%s",
+                        order_id,
+                        _payment_amount_value(fetched_payment),
+                        transaction.amount_rub,
+                    )
+                    return web.Response(status=200)
+
                 telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
                 logger.info(
                     "Crediting %s credits to user %s for order %s (payment %s)",
@@ -578,17 +691,19 @@ async def handle_yookassa_webhook(request):
                 )
             elif referral_bonus.get("mode") == "banana":
                 bonus_text = f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> GOEов\n"
+            balance = await get_user_credits(telegram_id)
 
             try:
                 await _notify_user(
                     request.app["bot"],
                     telegram_id,
-                    f"🎉 <b>Оплата успешна!</b>\n\n"
-                    f"💎 Начислено: <code>{transaction.credits}</code> GOEов\n"
-                    f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
-                    f"{bonus_text}\n"
-                    f"Теперь вы можете создавать контент!",
+                    _format_payment_success_message(
+                        transaction,
+                        balance,
+                        bonus_text,
+                    ),
                     parse_mode="HTML",
+                    reply_markup=get_payment_success_keyboard(),
                 )
             except TelegramBadRequest as e:
                 if _is_ignored_telegram_error(e):

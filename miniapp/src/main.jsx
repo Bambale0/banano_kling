@@ -22,6 +22,7 @@ const fallbackProducts = [
 ];
 
 const categoryLabels = ['Все', 'Украшения', 'Перчатки', 'Сумки', 'Уход за лезвиями', 'Подарки', 'Соревнования'];
+const defaultProductImage = fallbackProducts[0].images[0];
 const nav = [
   ['home', 'Главная', '✦'],
   ['catalog', 'Каталог', '⌕'],
@@ -32,7 +33,7 @@ const nav = [
 ];
 
 function fmt(value) { return `${Number(value || 0).toLocaleString('ru-RU')} ₽`; }
-function mainImage(product) { return product.images?.[product.mainImageIndex || 0] || product.images?.[0] || ''; }
+function mainImage(product) { return product.images?.[product.mainImageIndex || 0] || product.images?.[0] || defaultProductImage; }
 function safeProducts(products) { return products.filter(Boolean).map((p) => ({ ...p, images: Array.isArray(p.images) ? p.images : [] })); }
 
 function App() {
@@ -49,11 +50,17 @@ function App() {
   useEffect(() => {
     tg?.ready?.();
     tg?.expand?.();
-    Promise.allSettled([api.products(true), api.settings(), api.me?.()])
-      .then(([productsResult, settingsResult, meResult]) => {
-        if (productsResult.status === 'fulfilled') setProducts(safeProducts(productsResult.value.products || []));
+    Promise.allSettled([api.me(), api.settings()])
+      .then(async ([meResult, settingsResult]) => {
+        const nextMe = meResult.status === 'fulfilled' ? meResult.value : { user: null, isAdmin: false };
+        setMe(nextMe);
         if (settingsResult.status === 'fulfilled') setTheme(settingsResult.value.settings?.theme || 'dark');
-        if (meResult?.status === 'fulfilled') setMe(meResult.value || { user: null, isAdmin: false });
+        try {
+          const productsResult = await api.products(Boolean(nextMe?.isAdmin));
+          setProducts(safeProducts(productsResult.products || []));
+        } catch (error) {
+          showToast(error.message || 'Не удалось загрузить каталог', 'warn');
+        }
       })
       .finally(() => setLoading(false));
   }, []);

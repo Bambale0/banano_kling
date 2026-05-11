@@ -72,6 +72,7 @@ class Config:
     # Вебхуки
     # WEBHOOK_HOST must be the full external URL, e.g. "https://example.com"
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")
+    WEBHOOK_IP: str = os.getenv("WEBHOOK_IP", "")
     # NOTE: previously a typo included a leading space in the env var name
     # which caused WEBHOOK_PATH to be empty even when WEBHOOK_PATH was set.
     # Default to "/webhook" to avoid registering an empty route in aiohttp.
@@ -91,6 +92,12 @@ class Config:
     # Пути к JSON
     PRESETS_PATH: str = "data/presets.json"
     PRICE_PATH: str = "data/price.json"
+
+    # Публичная статика, которую nginx раздаёт наружу.
+    STATIC_ROOT: str = os.getenv("TWOLOOP_STATIC_ROOT", "/var/www/2loop/static")
+    UPLOADS_ROOT: str = os.getenv(
+        "TWOLOOP_UPLOADS_ROOT", os.path.join(STATIC_ROOT, "uploads")
+    )
 
     # Админы (список ID через запятую)
     ADMIN_IDS_STR: str = os.getenv("ADMIN_IDS", "")
@@ -186,6 +193,15 @@ class Config:
         return (
             self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
         )
+
+    def public_upload_dir(self, *parts: str) -> str:
+        """Физический путь для файлов, доступных по /uploads/..."""
+        return os.path.join(self.UPLOADS_ROOT, *parts)
+
+    def public_upload_url(self, *parts: str) -> str:
+        """Публичный URL для файлов из public_upload_dir."""
+        path = "/".join(part.strip("/") for part in parts if part)
+        return f"{self.static_base_url.rstrip('/')}/uploads/{path}"
 
 
 config = Config()

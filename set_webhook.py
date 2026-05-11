@@ -35,14 +35,19 @@ async def get_webhook_info(bot: Bot):
     return info
 
 
-async def set_webhook(bot: Bot, webhook_url: str, secret_token: str = None):
+async def set_webhook(
+    bot: Bot, webhook_url: str, secret_token: str = None, ip_address: str = None
+):
     """Установить вебхук"""
     print(f"\n🚀 Установка вебхука: {webhook_url}")
 
     try:
-        await bot.set_webhook(
-            url=webhook_url, secret_token=secret_token, drop_pending_updates=True
-        )
+        kwargs = {"url": webhook_url, "drop_pending_updates": True}
+        if secret_token:
+            kwargs["secret_token"] = secret_token
+        if ip_address:
+            kwargs["ip_address"] = ip_address
+        await bot.set_webhook(**kwargs)
         print("✅ Вебхук успешно установлен!\n")
         return True
     except Exception as e:
@@ -69,6 +74,7 @@ async def main():
     bot_token = os.getenv("BOT_TOKEN")
     webhook_host = os.getenv("WEBHOOK_HOST")
     webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+    webhook_ip = os.getenv("WEBHOOK_IP")
 
     if not bot_token:
         print("❌ Ошибка: BOT_TOKEN не найден в .env")
@@ -86,6 +92,7 @@ async def main():
     print(f"   • BOT_TOKEN: {'*' * 10}{bot_token[-5:]}")
     print(f"   • WEBHOOK_HOST: {webhook_host or '❌ Не задан'}")
     print(f"   • WEBHOOK_PATH: {webhook_path}")
+    print(f"   • WEBHOOK_IP: {webhook_ip or 'не задан'}")
 
     # Показываем текущий статус
     await get_webhook_info(bot)
@@ -115,7 +122,7 @@ async def main():
         webhook_url = f"{webhook_host.rstrip('/')}{webhook_path}"
         secret_token = os.getenv("WEBHOOK_SECRET_TOKEN")
 
-        await set_webhook(bot, webhook_url, secret_token)
+        await set_webhook(bot, webhook_url, secret_token, webhook_ip)
         await get_webhook_info(bot)
 
     elif action in ["3", "delete"]:

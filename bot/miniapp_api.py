@@ -14,7 +14,14 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.getenv("TWOLOOP_DATA_DIR", "/root/2loop/data"))
-UPLOAD_DIR = Path(os.getenv("TWOLOOP_UPLOAD_DIR", "static/uploads/2loop"))
+PUBLIC_STATIC_ROOT = Path(os.getenv("TWOLOOP_STATIC_ROOT", "/var/www/2loop/static"))
+_upload_dir_raw = Path(os.getenv("TWOLOOP_UPLOAD_DIR", "uploads/2loop"))
+if _upload_dir_raw.is_absolute():
+    UPLOAD_DIR = _upload_dir_raw
+elif _upload_dir_raw.parts and _upload_dir_raw.parts[0] == "static":
+    UPLOAD_DIR = PUBLIC_STATIC_ROOT / Path(*_upload_dir_raw.parts[1:])
+else:
+    UPLOAD_DIR = PUBLIC_STATIC_ROOT / _upload_dir_raw
 PRODUCTS_FILE = DATA_DIR / "products.json"
 ORDERS_FILE = DATA_DIR / "orders.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -314,6 +321,18 @@ async def upload_product_image(request: web.Request) -> web.Response:
         return denied
 
     product_id = int(request.match_info["product_id"])
+    products = _read_json(PRODUCTS_FILE, [])
+    product_index = next(
+        (
+            idx
+            for idx, product in enumerate(products)
+            if int(product.get("id")) == product_id
+        ),
+        None,
+    )
+    if product_index is None:
+        return _json({"error": "product_not_found"}, 404)
+
     reader = await request.multipart()
     field = await reader.next()
 
@@ -328,6 +347,7 @@ async def upload_product_image(request: web.Request) -> web.Response:
 
     safe_name = f"product-{product_id}-{int(time.time() * 1000)}{ext}"
     target = UPLOAD_DIR / safe_name
+    target.parent.mkdir(parents=True, exist_ok=True)
 
     with target.open("wb") as file:
         while True:
@@ -338,18 +358,13 @@ async def upload_product_image(request: web.Request) -> web.Response:
 
     public_url = f"/static/uploads/2loop/{safe_name}"
 
-    products = _read_json(PRODUCTS_FILE, [])
-
-    for idx, product in enumerate(products):
-        if int(product.get("id")) == product_id:
-            images = product.get("images") or []
-            images.append(public_url)
-            product["images"] = images
-            products[idx] = _normalize_product(product, product_id)
-            _write_json(PRODUCTS_FILE, products)
-            return _json({"url": public_url, "product": products[idx]})
-
-    return _json({"error": "product_not_found"}, 404)
+    product = products[product_index]
+    images = product.get("images") or []
+    images.append(public_url)
+    product["images"] = images
+    products[product_index] = _normalize_product(product, product_id)
+    _write_json(PRODUCTS_FILE, products)
+    return _json({"url": public_url, "product": products[product_index]})
 
 
 async def get_settings(_: web.Request) -> web.Response:
