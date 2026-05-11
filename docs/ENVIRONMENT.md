@@ -40,6 +40,11 @@ YOOKASSA_SHOP_ID=
 YOOKASSA_SECRET_KEY=
 YOOKASSA_RETURN_URL=https://2loop.chillcreative.ru/shop
 YOOKASSA_WEBHOOK_SECRET=
+YOOKASSA_RECEIPT_EMAIL=payments@2loop.chillcreative.ru
+YOOKASSA_RECEIPT_PHONE=
+YOOKASSA_VAT_CODE=1
+YOOKASSA_PAYMENT_SUBJECT=service
+YOOKASSA_PAYMENT_MODE=full_prepayment
 ```
 
 Webhook URL:
@@ -53,6 +58,10 @@ Production also accepts the legacy alias:
 ```text
 https://2loop.chillcreative.ru/webhook/yookassa
 ```
+
+If YooKassa online receipts are enabled, each payment request must include `receipt`.
+The code builds one receipt item for the GOE package. Set either `YOOKASSA_RECEIPT_PHONE`
+or `YOOKASSA_RECEIPT_EMAIL`; phone has priority when both are set.
 
 ## Robokassa
 

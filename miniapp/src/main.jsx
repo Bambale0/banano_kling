@@ -164,14 +164,168 @@ function OrderSummary({ subtotal, delivery, total }) { return <div className="su
 function Profile({ tg }) { const user = tg?.initDataUnsafe?.user; return <motion.section initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} className="screen"><div className="profile"><div className="avatar">◌</div><div><span>Клиент 2loop</span><h2>{user?.first_name || 'Профиль'}</h2><p>Бонусная программа скоро появится</p></div></div><Menu title="Мои заказы" text="История и статусы заказов"/><Menu title="Доставка" text="Адреса и способы доставки"/><Menu title="Поддержка" text="Связь с магазином в Telegram"/></motion.section>; }
 
 function Admin({ products, setProducts, refreshProducts, theme, saveTheme, isAdmin, showToast }) {
+  const [section, setSection] = useState('overview');
   const [selectedId, setSelectedId] = useState(products[0]?.id);
-  const selected = products.find(p=>p.id===selectedId) || products[0];
-  async function add(){ try { const r = await api.createProduct({ name:'Новый товар', category:'Украшения', price:2500, stock:1, badge:'Новинка', description:'Описание товара', details:'Информация о товаре', active:true, images:[] }); await refreshProducts(true); setSelectedId(r.product.id); showToast('Товар создан'); } catch(e){ showToast(e.message, 'warn'); } }
-  async function patch(payload){ try { const r = await api.updateProduct(selected.id, payload); setProducts(cur=>cur.map(p=>p.id===selected.id?r.product:p)); } catch(e){ showToast(e.message, 'warn'); } }
-  async function upload(file){ if(!file) return; try { const r = await api.uploadImage(selected.id, file); setProducts(cur=>cur.map(p=>p.id===selected.id?r.product:p)); showToast('Фото загружено'); } catch(e){ showToast(e.message, 'warn'); } }
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const selected = products.find(p => p.id === selectedId) || products[0];
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setOrdersLoading(true);
+    api.orders()
+      .then((data) => setOrders(data.orders || []))
+      .catch((error) => showToast(error.message || 'Не удалось загрузить заказы', 'warn'))
+      .finally(() => setOrdersLoading(false));
+  }, [isAdmin]);
+
+  const stats = useMemo(() => {
+    const active = products.filter(p => p.active !== false).length;
+    const hidden = products.length - active;
+    const noPhoto = products.filter(p => !p.images?.length).length;
+    const lowStock = products.filter(p => Number(p.stock || 0) <= 5).length;
+    const stock = products.reduce((sum, p) => sum + Number(p.stock || 0), 0);
+    const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    return { active, hidden, noPhoto, lowStock, stock, revenue };
+  }, [products, orders]);
+
+  const filteredProducts = useMemo(() => products.filter((product) => {
+    const matchesQuery = `${product.name} ${product.article} ${product.category}`.toLowerCase().includes(query.toLowerCase());
+    if (!matchesQuery) return false;
+    if (filter === 'active') return product.active !== false;
+    if (filter === 'hidden') return product.active === false;
+    if (filter === 'low') return Number(product.stock || 0) <= 5;
+    if (filter === 'photo') return !product.images?.length;
+    return true;
+  }), [products, query, filter]);
+
+  async function add() {
+    try {
+      const r = await api.createProduct({ name:'Новый товар', category:'Украшения', price:2500, stock:1, badge:'Новинка', description:'Описание товара', details:'Информация о товаре', active:true, images:[] });
+      await refreshProducts(true);
+      setSelectedId(r.product.id);
+      setSection('products');
+      showToast('Товар создан');
+    } catch(e) { showToast(e.message, 'warn'); }
+  }
+
+  async function patch(payload) {
+    if (!selected) return;
+    try {
+      const r = await api.updateProduct(selected.id, payload);
+      setProducts(cur => cur.map(p => p.id === selected.id ? r.product : p));
+    } catch(e) { showToast(e.message, 'warn'); }
+  }
+
+  async function removeProduct() {
+    if (!selected) return;
+    if (!confirm(`Удалить товар «${selected.name}»?`)) return;
+    try {
+      await api.deleteProduct(selected.id);
+      await refreshProducts(true);
+      setSelectedId(products.find(p => p.id !== selected.id)?.id);
+      showToast('Товар удалён');
+    } catch(e) { showToast(e.message, 'warn'); }
+  }
+
+  async function upload(file) {
+    if (!file || !selected) return;
+    try {
+      const r = await api.uploadImage(selected.id, file);
+      setProducts(cur => cur.map(p => p.id === selected.id ? r.product : p));
+      showToast('Фото загружено');
+    } catch(e) { showToast(e.message, 'warn'); }
+  }
+
+  async function reload() {
+    try {
+      await refreshProducts(true);
+      const data = await api.orders();
+      setOrders(data.orders || []);
+      showToast('Данные обновлены');
+    } catch(e) { showToast(e.message, 'warn'); }
+  }
+
   if(!isAdmin) return <motion.section initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} className="screen"><Empty title="Доступ только администратору" text="Откройте мини-приложение из Telegram аккаунта администратора."/></motion.section>;
-  if(!selected) return <motion.section className="screen"><button onClick={add} className="primary wide">Создать первый товар</button></motion.section>;
-  return <motion.section initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} className="screen admin-screen"><div className="admin-head"><div><h2>Админка</h2><p>Товары, фото, остатки и оформление магазина.</p></div><button onClick={add} className="primary">Добавить</button></div><div className="admin-stats"><Card title={products.length} text="Товаров"/><Card title={products.reduce((s,p)=>s+Number(p.stock||0),0)} text="Остаток"/><Card title={products.filter(p=>Number(p.stock||0)<=5).length} text="Мало"/></div><div className="editor compact"><label>Тема магазина <button onClick={()=>saveTheme(theme==='dark'?'light':'dark')}>{theme==='dark'?'Светлая':'Тёмная'}</button></label></div><div className="strip">{products.map(p=><button key={p.id} onClick={()=>setSelectedId(p.id)} className={p.id===selected.id?'sel':''}><img src={mainImage(p)}/><b>{p.name}</b><small>{p.stock} шт. · {fmt(p.price)}</small></button>)}</div><div className="editor"><h3>Редактирование товара</h3><Field label="Название" value={selected.name} on={v=>patch({name:v})}/><div className="two"><Field label="Категория" value={selected.category} on={v=>patch({category:v})}/><Field label="Бейдж" value={selected.badge} on={v=>patch({badge:v})}/></div><div className="two"><Field label="Цена" type="number" value={selected.price} on={v=>patch({price:Number(v)})}/><Field label="Остаток" type="number" value={selected.stock} on={v=>patch({stock:Number(v)})}/></div><label className="switch"><input type="checkbox" checked={selected.active !== false} onChange={e=>patch({active:e.target.checked})}/><span>Показывать товар в магазине</span></label><Area label="Краткое описание" value={selected.description} on={v=>patch({description:v})}/><Area label="Информация о товаре" value={selected.details} on={v=>patch({details:v})}/><label className="upload">Загрузить фото<input type="file" accept="image/*" onChange={e=>upload(e.target.files?.[0])}/></label><div className="photos">{(selected.images||[]).map((img,idx)=><div key={img+idx}><img src={img}/><button onClick={()=>patch({mainImageIndex:idx})}>{selected.mainImageIndex===idx?'✓ Главное':'Сделать главным'}</button><button onClick={()=>patch({images:selected.images.filter((_,i)=>i!==idx),mainImageIndex:0})}>Удалить</button></div>)}</div></div></motion.section>;
+
+  return <motion.section initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} className="screen admin-screen pro-admin">
+    <div className="admin-topbar">
+      <div>
+        <small>Операционная панель</small>
+        <h2>Админка</h2>
+        <p>Товары, заказы, остатки и внешний вид магазина.</p>
+      </div>
+      <button onClick={reload} className="icon-action" aria-label="Обновить">↻</button>
+    </div>
+
+    <div className="admin-tabs">
+      {[
+        ['overview', 'Обзор'],
+        ['products', 'Товары'],
+        ['orders', `Заказы${orders.length ? ` · ${orders.length}` : ''}`],
+        ['settings', 'Настройки'],
+      ].map(([key, label]) => <button key={key} onClick={() => setSection(key)} className={section === key ? 'active' : ''}>{label}</button>)}
+    </div>
+
+    {section === 'overview' ? <div className="admin-panel">
+      <div className="metric-grid">
+        <Metric value={products.length} label="Всего товаров" />
+        <Metric value={stats.active} label="В продаже" />
+        <Metric value={stats.stock} label="Остаток" />
+        <Metric value={orders.length} label="Заказов" />
+      </div>
+      <div className="ops-list">
+        <OpsItem tone={stats.lowStock ? 'warn' : 'ok'} title="Низкие остатки" text={stats.lowStock ? `${stats.lowStock} товаров требуют внимания` : 'Остатки выглядят спокойно'} action="Открыть" onClick={() => { setFilter('low'); setSection('products'); }} />
+        <OpsItem tone={stats.noPhoto ? 'warn' : 'ok'} title="Фото товаров" text={stats.noPhoto ? `${stats.noPhoto} товаров без фото` : 'У всех товаров есть фото'} action="Проверить" onClick={() => { setFilter('photo'); setSection('products'); }} />
+        <OpsItem tone={stats.hidden ? 'muted' : 'ok'} title="Скрытые товары" text={stats.hidden ? `${stats.hidden} товаров скрыто` : 'Скрытых товаров нет'} action="Список" onClick={() => { setFilter('hidden'); setSection('products'); }} />
+      </div>
+      <div className="admin-actions-grid"><button className="primary" onClick={add}>Добавить товар</button><button onClick={() => setSection('orders')}>Открыть заказы</button></div>
+    </div> : null}
+
+    {section === 'products' ? <div className="admin-panel">
+      <div className="admin-toolbar">
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Поиск: название, артикул, категория" />
+        <button className="primary" onClick={add}>Добавить</button>
+      </div>
+      <div className="admin-filters">{[
+        ['all', 'Все'], ['active', 'В продаже'], ['hidden', 'Скрытые'], ['low', 'Мало'], ['photo', 'Без фото']
+      ].map(([key, label]) => <button key={key} onClick={() => setFilter(key)} className={filter === key ? 'active' : ''}>{label}</button>)}</div>
+      {!filteredProducts.length ? <Empty title="Товаров нет" text="Измените фильтр или добавьте новый товар." /> : <div className="admin-products-layout">
+        <div className="admin-product-list">{filteredProducts.map(product => <button key={product.id} onClick={() => setSelectedId(product.id)} className={selected?.id === product.id ? 'selected' : ''}>
+          <img src={mainImage(product)} />
+          <span><b>{product.name}</b><small>{product.category} · {fmt(product.price)}</small></span>
+          <em className={Number(product.stock || 0) <= 5 ? 'bad' : ''}>{product.stock} шт.</em>
+        </button>)}</div>
+        <ProductEditor selected={selected} patch={patch} upload={upload} removeProduct={removeProduct} />
+      </div>}
+    </div> : null}
+
+    {section === 'orders' ? <div className="admin-panel">
+      <div className="admin-section-head"><div><h3>Заказы</h3><p>{ordersLoading ? 'Загружаем...' : `${orders.length} заказов в mini app`}</p></div><button onClick={reload}>Обновить</button></div>
+      {!orders.length ? <Empty title="Заказов пока нет" text="Когда клиент оформит заказ, он появится здесь." /> : <div className="orders-list">{orders.map(order => <OrderCard key={order.id} order={order} />)}</div>}
+    </div> : null}
+
+    {section === 'settings' ? <div className="admin-panel settings-panel">
+      <div className="admin-section-head"><div><h3>Настройки магазина</h3><p>Быстрые параметры интерфейса.</p></div></div>
+      <div className="setting-row"><div><b>Тема</b><p>Меняет внешний вид магазина для клиентов.</p></div><button onClick={() => saveTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? 'Светлая' : 'Тёмная'}</button></div>
+      <div className="setting-row"><div><b>Проверка витрины</b><p>Быстрый переход в пользовательский каталог.</p></div><button onClick={() => setSection('products')}>Товары</button></div>
+    </div> : null}
+  </motion.section>;
+}
+
+function Metric({ value, label }) { return <div className="metric"><b>{value}</b><span>{label}</span></div>; }
+function OpsItem({ tone, title, text, action, onClick }) { return <div className={`ops-item ${tone}`}><div><b>{title}</b><p>{text}</p></div><button onClick={onClick}>{action}</button></div>; }
+function OrderCard({ order }) {
+  const items = order.items || [];
+  const customer = order.customer || {};
+  const delivery = order.delivery || {};
+  return <div className="order-card"><div className="order-head"><div><b>Заказ #{order.id}</b><p>{customer.name || 'Без имени'} · {customer.phone || 'телефон не указан'}</p></div><strong>{fmt(order.total)}</strong></div><div className="order-lines">{items.map((item, idx) => <p key={idx}>{item.name} × {item.qty}</p>)}</div><small>{delivery.city || '-'} · {delivery.address || '-'}</small></div>;
+}
+function ProductEditor({ selected, patch, upload, removeProduct }) {
+  if (!selected) return <Empty title="Выберите товар" text="Слева откройте товар для редактирования." />;
+  return <div className="editor admin-editor"><div className="editor-title"><div><h3>{selected.name}</h3><p>{selected.article || `ID ${selected.id}`}</p></div><button className="danger" onClick={removeProduct}>Удалить</button></div><Field label="Название" value={selected.name} on={v=>patch({name:v})}/><div className="two"><Field label="Категория" value={selected.category} on={v=>patch({category:v})}/><Field label="Бейдж" value={selected.badge} on={v=>patch({badge:v})}/></div><div className="two"><Field label="Цена" type="number" value={selected.price} on={v=>patch({price:Number(v)})}/><Field label="Остаток" type="number" value={selected.stock} on={v=>patch({stock:Number(v)})}/></div><label className="switch"><input type="checkbox" checked={selected.active !== false} onChange={e=>patch({active:e.target.checked})}/><span>Показывать товар в магазине</span></label><Area label="Краткое описание" value={selected.description} on={v=>patch({description:v})}/><Area label="Информация о товаре" value={selected.details} on={v=>patch({details:v})}/><label className="upload">Загрузить фото<input type="file" accept="image/*" onChange={e=>upload(e.target.files?.[0])}/></label><div className="photos">{(selected.images||[]).map((img,idx)=><div key={img+idx}><img src={img}/><button onClick={()=>patch({mainImageIndex:idx})}>{selected.mainImageIndex===idx?'✓ Главное':'Сделать главным'}</button><button onClick={()=>patch({images:selected.images.filter((_,i)=>i!==idx),mainImageIndex:0})}>Удалить</button></div>)}</div></div>;
 }
 
 function Gallery({ gallery, onClose, addToCart }) { const [idx,setIdx]=useState(gallery?.index||0); useEffect(()=>setIdx(gallery?.index||0),[gallery]); if(!gallery) return null; const p=gallery.product; const imgs=p.images?.length?p.images:[mainImage(p)]; const move=d=>setIdx((idx+d+imgs.length)%imgs.length); return <AnimatePresence><motion.div className="modal" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><div className="modal-head"><div><small>{p.category}</small><h3>{p.name}</h3></div><button onClick={onClose}>×</button></div><div className="photo"><img src={imgs[idx]}/>{imgs.length>1?<><button className="prev" onClick={()=>move(-1)}>‹</button><button className="next" onClick={()=>move(1)}>›</button></>:null}<span>{idx+1}/{imgs.length}</span></div><div className="thumbs">{imgs.map((img,i)=><button key={img+i} onClick={()=>setIdx(i)} className={i===idx?'on':''}><img src={img}/></button>)}</div><div className="modal-card"><div><b>{fmt(p.price)}</b><p>{p.description}</p></div><button onClick={()=>addToCart(p)}>В корзину</button></div></motion.div></AnimatePresence>; }

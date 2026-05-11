@@ -1,4 +1,5 @@
 import logging
+import ast
 import time
 from decimal import Decimal, InvalidOperation
 
@@ -49,6 +50,38 @@ def _payment_amount_value(payment) -> str:
     if isinstance(amount, dict):
         return amount.get("value")
     return getattr(amount, "value", None)
+
+
+def _format_payment_create_error(provider: str, raw_error: str) -> str:
+    error_text = str(raw_error or "")
+    parsed = None
+    try:
+        parsed = ast.literal_eval(error_text)
+    except Exception:
+        parsed = None
+
+    code = ""
+    description = error_text
+    parameter = ""
+    if isinstance(parsed, dict):
+        code = str(parsed.get("code") or "")
+        description = str(parsed.get("description") or "")
+        parameter = str(parsed.get("parameter") or "")
+
+    if provider == "yookassa" and (
+        "receipt" in parameter.lower()
+        or "receipt" in description.lower()
+        or "receipt" in error_text.lower()
+    ):
+        return (
+            "YooKassa не приняла данные чека. "
+            "Я уже настроен отправлять чек с платежом; попробуйте создать оплату ещё раз."
+        )
+
+    if code == "invalid_request":
+        return "Платёжный провайдер не принял параметры платежа. Попробуйте ещё раз."
+
+    return "Не удалось создать платёж. Попробуйте позже или напишите в поддержку."
 
 
 def _is_ignored_telegram_error(error: Exception) -> bool:
@@ -278,11 +311,12 @@ async def initiate_payment(callback: types.CallbackQuery):
             parse_mode="HTML",
         )
     else:
-        error_msg = (
+        raw_error_msg = (
             result.get("Message", "Неизвестная ошибка")
             if result
             else "Нет соединения с банком"
         )
+        error_msg = _format_payment_create_error(provider, raw_error_msg)
         await callback.message.edit_text(
             f"❌ <b>Ошибка создания платежа</b>\n\n"
             f"{error_msg}\n\n"

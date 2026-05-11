@@ -18,6 +18,15 @@ class Config:
     YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
     YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
     YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
+    YOOKASSA_RECEIPT_EMAIL: str = os.getenv(
+        "YOOKASSA_RECEIPT_EMAIL", "payments@2loop.chillcreative.ru"
+    )
+    YOOKASSA_RECEIPT_PHONE: str = os.getenv("YOOKASSA_RECEIPT_PHONE", "")
+    YOOKASSA_VAT_CODE: int = int(os.getenv("YOOKASSA_VAT_CODE", "1"))
+    YOOKASSA_PAYMENT_SUBJECT: str = os.getenv("YOOKASSA_PAYMENT_SUBJECT", "service")
+    YOOKASSA_PAYMENT_MODE: str = os.getenv(
+        "YOOKASSA_PAYMENT_MODE", "full_prepayment"
+    )
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "yookassa")
 
     # Robokassa

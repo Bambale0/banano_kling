@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +47,7 @@ class YooKassaService:
             },
             "description": description[:128],
             "metadata": {"order_id": order_id},
+            "receipt": self._build_receipt(amount_rub, description),
         }
 
         if notification_url:
@@ -67,6 +69,31 @@ class YooKassaService:
         except Exception as exc:
             logger.exception("YooKassa payment creation failed: %s", exc)
             return {"Success": False, "Message": str(exc)}
+
+    def _build_receipt(self, amount_rub: float, description: str) -> Dict[str, Any]:
+        customer: Dict[str, str] = {}
+        phone = re.sub(r"\D", "", config.YOOKASSA_RECEIPT_PHONE or "")
+        if phone:
+            customer["phone"] = phone
+        else:
+            customer["email"] = config.YOOKASSA_RECEIPT_EMAIL
+
+        return {
+            "customer": customer,
+            "items": [
+                {
+                    "description": description[:128],
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{amount_rub:.2f}",
+                        "currency": "RUB",
+                    },
+                    "vat_code": config.YOOKASSA_VAT_CODE,
+                    "payment_mode": config.YOOKASSA_PAYMENT_MODE,
+                    "payment_subject": config.YOOKASSA_PAYMENT_SUBJECT,
+                }
+            ],
+        }
 
     async def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
         if not self.enabled:

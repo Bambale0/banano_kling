@@ -27,6 +27,11 @@ PAYMENT_PROVIDER=yookassa
 YOOKASSA_SHOP_ID=
 YOOKASSA_SECRET_KEY=
 YOOKASSA_RETURN_URL=https://2loop.chillcreative.ru/shop
+YOOKASSA_RECEIPT_EMAIL=payments@2loop.chillcreative.ru
+YOOKASSA_RECEIPT_PHONE=
+YOOKASSA_VAT_CODE=1
+YOOKASSA_PAYMENT_SUBJECT=service
+YOOKASSA_PAYMENT_MODE=full_prepayment
 ```
 
 ## YooKassa Dashboard
@@ -52,14 +57,25 @@ Flow:
 1. User chooses a GOE package.
 2. Bot creates a YooKassa payment via `bot/services/yookassa_service.py`.
 3. Transaction is saved locally as pending.
-4. YooKassa sends webhook to `/yookassa/webhook` or the compatibility alias `/webhook/yookassa`.
-5. Handler fetches payment details from YooKassa.
-6. Handler verifies:
+4. Payment request includes a `receipt` item for the GOE package.
+5. YooKassa sends webhook to `/yookassa/webhook` or the compatibility alias `/webhook/yookassa`.
+6. Handler fetches payment details from YooKassa.
+7. Handler verifies:
    - payment status is successful;
    - `paid` is true;
    - metadata order id matches when present;
    - amount matches local transaction.
-7. Credits are added idempotently.
+8. Credits are added idempotently.
+
+## Receipt Notes
+
+YooKassa returns `Receipt is missing or illegal` when online receipts are enabled but the
+payment request has no valid `receipt`. The app sends:
+
+- `receipt.customer.phone` when `YOOKASSA_RECEIPT_PHONE` is set;
+- otherwise `receipt.customer.email`;
+- one `receipt.items[]` entry equal to the GOE package amount;
+- `vat_code`, `payment_subject`, and `payment_mode` from env.
 
 ## Manual Checks
 
