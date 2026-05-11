@@ -540,6 +540,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         status = _extract_first(
             webhook_data, ("status", "state", "result", "prediction_status")
         )
+        direct_video_url = _extract_first(
+            webhook_data, ("video_url", "videoUrl", "resource_without_watermark")
+        )
+        provider_code = data.get("code") if isinstance(data, dict) else None
+        provider_message = str(data.get("msg", "") if isinstance(data, dict) else "")
 
         if not task_id:
             logger.error(
@@ -547,6 +552,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 + f"payload: {webhook_data}"
             )
             return web.Response(status=200)
+
+        if not status and direct_video_url and (
+            str(provider_code) == "200" or "success" in provider_message.lower()
+        ):
+            status = "success"
 
         logger.info(f"Processing Kling task {task_id} with status {status}")
 
@@ -558,7 +568,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 webhook_data.get("output", {}) if isinstance(webhook_data, dict) else {}
             )
             video_url = (
-                (output.get("video_url") if isinstance(output, dict) else None)
+                direct_video_url
+                or (output.get("video_url") if isinstance(output, dict) else None)
                 or (output.get("video") if isinstance(output, dict) else None)
                 or (output if isinstance(output, str) else None)
                 or (

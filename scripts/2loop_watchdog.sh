@@ -82,10 +82,25 @@ result = info.get("result") or {}
 current_url = result.get("url")
 current_ip = result.get("ip_address") or ""
 last_error = result.get("last_error_message")
+last_error_date = result.get("last_error_date")
 
-needs_reset = current_url != expected_url or bool(last_error)
+needs_reset = current_url != expected_url
 if expected_ip:
     needs_reset = needs_reset or current_ip != expected_ip
+
+if last_error:
+    print(
+        "webhook last_error observed:",
+        json.dumps(
+            {
+                "url": current_url,
+                "ip": current_ip,
+                "last_error": last_error,
+                "last_error_date": last_error_date,
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 if needs_reset:
     data = {"url": expected_url, "drop_pending_updates": "false"}

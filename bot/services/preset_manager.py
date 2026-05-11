@@ -198,13 +198,18 @@ class PresetManager:
             "flash": "gemini_2_5_flash",
             "pro": "gemini_3_pro",
             "banana_2": "banana_2",
-            "banana_pro": "nano-banana-pro",
-            "nano_banana_pro": "nano-banana-pro",
+            "banana_pro": "nano_banana_pro",
+            "nanobanana": "nano_banana_pro",
+            "nano_banana_pro": "nano_banana_pro",
+            "nano-banana-pro": "nano_banana_pro",
             "z_image_turbo": "z_image_turbo",
+            "z_image_turbo_lora": "z_image_turbo",
             "z-image-turbo": "z_image_turbo",
             "seedream": "seedream",
             "flux_pro": "flux_pro",
             "seedream_lite": "seedream_lite",
+            "seedream_5_lite": "seedream_5_lite",
+            "seedream_edit": "seedream_edit",
         }
 
         mapped_key = model_map.get(model_lower)
@@ -241,9 +246,6 @@ class PresetManager:
         video_models = costs.get("video_models", {})
         video_duration_costs = costs.get("video_duration_costs", {})
 
-        # Normalize duration
-        duration = max(3, min(15, duration))
-
         # Normalize model name
         model_lower = model.lower()
 
@@ -262,12 +264,16 @@ class PresetManager:
 
         # Check if model exists in video_models
         if mapped_model in video_models:
+            duration = max(1, int(duration))
             model_config = video_models[mapped_model]
             duration_costs = model_config.get("duration_costs", {})
             if str(duration) in duration_costs:
                 return duration_costs[str(duration)]
             # If duration not found, return base cost
             return model_config.get("base", 8)
+
+        # Normalize legacy/fallback duration
+        duration = max(3, min(15, int(duration)))
 
         # Fallback to legacy video_duration_costs
         if str(duration) in video_duration_costs:

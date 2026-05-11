@@ -386,7 +386,7 @@ def get_create_image_keyboard(
     builder = InlineKeyboardBuilder()
 
     # Модели - Kei.ai only
-    pro_cost = IMAGE_COSTS.get("banana_pro", 5)
+    pro_cost = IMAGE_COSTS.get("nano_banana_pro", 5)
     banana2_cost = IMAGE_COSTS.get("banana_2", 7)
     seedream_5_lite_cost = IMAGE_COSTS.get("seedream_5_lite", 6)
     seedream_edit_cost = IMAGE_COSTS.get("seedream_edit", 7)
@@ -1149,10 +1149,10 @@ def get_image_generation_model_keyboard(current_service: str = "flux_pro"):
     """Клавиатура выбора модели для генерации изображений"""
     builder = InlineKeyboardBuilder()
     for service, label, cost in [
-        ("flux_pro", "✨ FLUX.2 Pro", 3),
-        ("nanobanana", "💎 Nano Banana", 3),
-        ("banana_pro", "💎 Banana Pro", 5),
-        ("seedream", "🎨 Seedream", 3),
+        ("flux_pro", "✨ FLUX.2 Pro", IMAGE_COSTS.get("flux_pro", 5)),
+        ("nanobanana", "💎 Nano Banana", IMAGE_COSTS.get("nano_banana_pro", 5)),
+        ("banana_pro", "💎 Banana Pro", IMAGE_COSTS.get("nano_banana_pro", 5)),
+        ("seedream", "🎨 Seedream", IMAGE_COSTS.get("seedream", 5)),
     ]:
         check = "✅ " if service == current_service else ""
         builder.button(
@@ -1197,11 +1197,11 @@ def get_image_options_keyboard(
     builder = InlineKeyboardBuilder()
 
     # Модели - из price.json
-    novita_cost = IMAGE_COSTS.get("flux_pro", 3)
-    nano_cost = IMAGE_COSTS.get("nanobanana", 3)
-    pro_cost = IMAGE_COSTS.get("banana_pro", 5)
-    seedream_cost = IMAGE_COSTS.get("seedream", 3)
-    z5_cost = IMAGE_COSTS.get("z_image_turbo_lora", 3)
+    novita_cost = IMAGE_COSTS.get("flux_pro", 5)
+    nano_cost = IMAGE_COSTS.get("nano_banana_pro", 5)
+    pro_cost = IMAGE_COSTS.get("nano_banana_pro", 5)
+    seedream_cost = IMAGE_COSTS.get("seedream", 5)
+    z5_cost = IMAGE_COSTS.get("z_image_turbo", 5)
 
     novita_check = "✅ " if current_service == "flux_pro" else ""
     nano_check = "✅ " if current_service == "nanobanana" else ""

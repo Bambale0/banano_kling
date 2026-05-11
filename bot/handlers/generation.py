@@ -1320,6 +1320,24 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
     Сохраняет загруженный файл в публичную папку uploads и возвращает URL.
     """
     try:
+        file_ext = (file_ext or "png").lower().lstrip(".")
+        if file_ext in {"jpg", "jpeg", "png", "webp"}:
+            try:
+                from PIL import Image
+
+                with Image.open(io.BytesIO(file_bytes)) as img:
+                    detected = (img.format or "").lower()
+                detected_ext = {"jpeg": "jpg"}.get(detected, detected)
+                if detected_ext in {"jpg", "png", "webp"} and detected_ext != file_ext:
+                    logger.info(
+                        "Corrected uploaded image extension: %s -> %s",
+                        file_ext,
+                        detected_ext,
+                    )
+                    file_ext = detected_ext
+            except Exception:
+                logger.warning("Could not detect uploaded image format", exc_info=True)
+
         # Создаём поддиректорию по дате
         date_str = datetime.now().strftime("%Y%m%d")
         upload_dir = config.public_upload_dir(date_str)
@@ -2899,7 +2917,6 @@ async def run_no_preset_video_from_message(
     v_model = data.get("v_model", "v3_std")
     if v_type == "video":
         v_model = "aleph"
-    v_model = data.get("v_model", "v3_std")
     v_duration = int(data.get("v_duration", 5))
     # Cap duration for imgtxt except for Grok Imagine which supports up to 30s
     if v_type == "imgtxt" and v_model != "grok_imagine":
