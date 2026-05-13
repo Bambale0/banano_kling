@@ -12,6 +12,7 @@ from bot.database import add_credits, check_can_afford, deduct_credits, get_user
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.gemini_service import gemini_service
+from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
 
@@ -92,7 +93,7 @@ _batch_uploads: dict[int, list[bytes]] = {}
 _batch_upload_urls: dict[int, list[str]] = {}
 
 
-def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
+def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png", *, is_reference: bool = False) -> Optional[str]:
     """Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL."""
     try:
         import os
@@ -102,18 +103,18 @@ def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[st
         from bot.config import config
 
         date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
-        os.makedirs(upload_dir, exist_ok=True)
+        category = choose_upload_category(file_ext, is_reference=is_reference)
 
         file_id = str(uuid.uuid4())[:8]
         filename = f"{file_id}.{file_ext}"
-        filepath = os.path.join(upload_dir, filename)
+        filepath = upload_path(os.path.join("static", "uploads"), category, date_str, filename)
+        os.makedirs(filepath.parent, exist_ok=True)
 
         with open(filepath, "wb") as f:
             f.write(file_bytes)
 
         base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        public_url = public_upload_url(base_url, category, date_str, filename)
 
         logger.info(f"Saved batch upload: {public_url}")
         return public_url

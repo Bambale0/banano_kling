@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PaymentStatus(str, Enum):
@@ -113,8 +113,7 @@ class Receipt(BaseModel):
     phone: Optional[str] = Field(None, alias="Phone")
     email_company: Optional[str] = Field(None, alias="EmailCompany")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ReceiptPayments(BaseModel):
@@ -144,8 +143,7 @@ class InitPaymentRequest(BaseModel):
     data: Optional[Dict[str, str]] = Field(None, alias="DATA")
     receipt: Optional[Receipt] = Field(None, alias="Receipt")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class InitPaymentResponse(BaseModel):
@@ -162,8 +160,7 @@ class InitPaymentResponse(BaseModel):
     payment_url: Optional[str] = Field(None, alias="PaymentURL")
     details: Optional[str] = Field(None, alias="Details")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FinishAuthorizeRequest(BaseModel):
@@ -181,8 +178,7 @@ class FinishAuthorizeRequest(BaseModel):
     amount: Optional[int] = Field(None, alias="Amount")
     device_channel: Optional[str] = Field("02", alias="deviceChannel")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FinishAuthorizeResponse(BaseModel):
@@ -205,8 +201,7 @@ class FinishAuthorizeResponse(BaseModel):
     pa_req: Optional[str] = Field(None, alias="PaReq")
     term_url: Optional[str] = Field(None, alias="TermUrl")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GetStateRequest(BaseModel):
@@ -215,8 +210,7 @@ class GetStateRequest(BaseModel):
     payment_id: str = Field(..., alias="PaymentId")
     ip: Optional[str] = Field(None, alias="IP")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GetStateResponse(BaseModel):
@@ -232,8 +226,7 @@ class GetStateResponse(BaseModel):
     rebill_id: Optional[str] = Field(None, alias="RebillId")
     params: Optional[List[Dict[str, Any]]] = Field(None, alias="Params")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class CancelRequest(BaseModel):
@@ -242,8 +235,7 @@ class CancelRequest(BaseModel):
     payment_id: str = Field(..., alias="PaymentId")
     amount: Optional[int] = Field(None, alias="Amount")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class CancelResponse(BaseModel):
@@ -258,8 +250,7 @@ class CancelResponse(BaseModel):
     original_amount: Optional[int] = Field(None, alias="OriginalAmount")
     new_amount: Optional[int] = Field(None, alias="NewAmount")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ConfirmRequest(BaseModel):
@@ -269,8 +260,7 @@ class ConfirmRequest(BaseModel):
     amount: Optional[int] = Field(None, alias="Amount")
     receipt: Optional[Receipt] = Field(None, alias="Receipt")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ConfirmResponse(BaseModel):
@@ -283,8 +273,7 @@ class ConfirmResponse(BaseModel):
     status: Optional[PaymentStatus] = Field(None, alias="Status")
     payment_id: Optional[str] = Field(None, alias="PaymentId")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ChargeRequest(BaseModel):
@@ -297,8 +286,7 @@ class ChargeRequest(BaseModel):
     info_email: Optional[str] = Field(None, alias="InfoEmail")
     description: Optional[str] = Field(None, alias="Description")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ChargeResponse(BaseModel):
@@ -312,8 +300,7 @@ class ChargeResponse(BaseModel):
     payment_id: Optional[str] = Field(None, alias="PaymentId")
     amount: Optional[int] = Field(None, alias="Amount")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SendClosingReceiptRequest(BaseModel):
@@ -322,8 +309,7 @@ class SendClosingReceiptRequest(BaseModel):
     payment_id: str = Field(..., alias="PaymentId")
     receipt: Receipt = Field(..., alias="Receipt")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SendClosingReceiptResponse(BaseModel):
@@ -333,8 +319,7 @@ class SendClosingReceiptResponse(BaseModel):
     error_code: Optional[str] = Field(None, alias="ErrorCode")
     error_message: Optional[str] = Field(None, alias="Message")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Notification(BaseModel):
@@ -354,5 +339,4 @@ class Notification(BaseModel):
     token: str = Field(..., alias="Token")
     expiration_date: Optional[str] = Field(None, alias="ExpDate")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)

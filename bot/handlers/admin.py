@@ -229,13 +229,13 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
     action = data.get("action")
 
     if action == "add":
-        success = await add_credits(user_id, amount)
+        success = await add_credits(user_id, amount, reason="admin_adjustment_add", external_id=f"admin:{message.from_user.id}:add:{user_id}:{message.message_id}")
         action_text = f"добавлено <code>{amount}</code> кредитов"
     else:
         # Для списания нужно реализовать deduct_credits_by_admin
         from bot.database import deduct_credits
 
-        success = await deduct_credits(user_id, amount)
+        success = await deduct_credits(user_id, amount, reason="admin_adjustment_deduct", external_id=f"admin:{message.from_user.id}:deduct:{user_id}:{message.message_id}")
         action_text = f"списано <code>{amount}</code> кредитов"
 
     if success:

@@ -28,7 +28,7 @@ class NullRedisService:
     def _purge(self) -> None:
         now = time.time()
         self._keys = {k: exp for k, exp in self._keys.items() if exp > now}
-        self._locks = {k: exp for k, exp in self._locks.items() if exp > now}
+        self._locks = {k: v for k, v in self._locks.items() if (v[1] if isinstance(v, tuple) else v) > now}
         self._counters = {k: v for k, v in self._counters.items() if v[1] > now}
 
     async def mark_once(self, key: str, ttl_seconds: int) -> bool:
@@ -39,14 +39,22 @@ class NullRedisService:
         return True
 
     async def acquire_lock(self, key: str, ttl_seconds: int) -> bool:
+        return await self.acquire_lock_value(key, "1", ttl_seconds)
+
+    async def acquire_lock_value(self, key: str, value: str, ttl_seconds: int) -> bool:
         self._purge()
         if key in self._locks:
             return False
-        self._locks[key] = time.time() + ttl_seconds
+        self._locks[key] = (value, time.time() + ttl_seconds)
         return True
 
     async def release_lock(self, key: str) -> None:
         self._locks.pop(key, None)
+
+    async def release_lock_value(self, key: str, value: str) -> None:
+        current = self._locks.get(key)
+        if current and current[0] == value:
+            self._locks.pop(key, None)
 
     async def increment_rate(self, key: str, window_seconds: int) -> int:
         self._purge()
@@ -77,10 +85,22 @@ class RedisService:
         return bool(await self.client.set(key, "1", ex=ttl_seconds, nx=True))
 
     async def acquire_lock(self, key: str, ttl_seconds: int) -> bool:
-        return bool(await self.client.set(f"lock:{key}", "1", ex=ttl_seconds, nx=True))
+        return await self.acquire_lock_value(key, "1", ttl_seconds)
+
+    async def acquire_lock_value(self, key: str, value: str, ttl_seconds: int) -> bool:
+        return bool(await self.client.set(f"lock:{key}", value, ex=ttl_seconds, nx=True))
 
     async def release_lock(self, key: str) -> None:
         await self.client.delete(f"lock:{key}")
+
+    async def release_lock_value(self, key: str, value: str) -> None:
+        script = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+        """
+        await self.client.eval(script, 1, f"lock:{key}", value)
 
     async def increment_rate(self, key: str, window_seconds: int) -> int:
         pipe = self.client.pipeline()

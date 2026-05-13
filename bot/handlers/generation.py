@@ -18,6 +18,7 @@ from aiogram.fsm.context import FSMContext
 from bot.config import config
 from bot.database import (
     add_credits,
+    add_credits_once,
     add_generation_history,
     add_generation_task,
     check_can_afford,
@@ -46,6 +47,8 @@ from bot.keyboards import (
 )
 from bot.services.aleph_service import aleph_service
 from bot.services.gemini_service import gemini_service
+from bot.services.generation_guard import generation_lock_guard
+from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.hailuo_service import hailuo_service
@@ -1360,20 +1363,20 @@ async def handle_img_ratio_3_2(callback: types.CallbackQuery, state: FSMContext)
 # =============================================================================
 
 
-def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
+def save_uploaded_file(file_bytes: bytes, file_ext: str = "png", *, is_reference: bool = False, category: str | None = None) -> Optional[str]:
     """
     Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL.
     """
     try:
-        # Создаём поддиректорию по дате
+        # Создаём поддиректорию по policy: uploads/<category>/<date>/file
         date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
-        os.makedirs(upload_dir, exist_ok=True)
+        category = category or choose_upload_category(file_ext, is_reference=is_reference)
 
         # Генерируем уникальное имя файла
         file_id = str(uuid.uuid4())[:8]
         filename = f"{file_id}.{file_ext}"
-        filepath = os.path.join(upload_dir, filename)
+        filepath = upload_path(os.path.join("static", "uploads"), category, date_str, filename)
+        os.makedirs(filepath.parent, exist_ok=True)
 
         # Сохраняем файл
         with open(filepath, "wb") as f:
@@ -1382,7 +1385,7 @@ def save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str
         # Формируем публичный URL
         # nginx настроен на /uploads/ -> static/uploads/
         base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        public_url = public_upload_url(base_url, category, date_str, filename)
 
         logger.info(f"Saved uploaded file: {public_url}")
         return public_url
@@ -2447,7 +2450,7 @@ async def process_photo_for_video_prompt_state(
         await message.answer("❌ Не удалось обработать изображение.")
         return
 
-    image_url = save_uploaded_file(image_data, "png")
+    image_url = save_uploaded_file(image_data, "png", is_reference=True)
     if not image_url:
         await message.answer("❌ Не удалось сохранить фото.")
         return
@@ -2563,7 +2566,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
         if video_url:
             v_reference_videos.append(video_url)
             await state.update_data(v_reference_videos=v_reference_videos)
@@ -2655,7 +2658,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
             file_ext = "webp"
         else:
             file_ext = "png"
-    image_url = save_uploaded_file(image_data, file_ext)
+    image_url = save_uploaded_file(image_data, file_ext, is_reference=True)
 
     if image_url:
         reference_images.append(image_url)
@@ -2719,14 +2722,46 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         )
         return
 
-    await deduct_credits(message.from_user.id, total_cost)
+    generation_lock = await generation_lock_guard.acquire(message.from_user.id)
+    if not generation_lock:
+        await message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
+        return
 
-    if img_count == 1:
-        processing_msg = await message.answer("🖼 Генерирую изображение...")
-    else:
-        processing_msg = await message.answer(
-            f"🖼 Запускаю {img_count} генераций параллельно..."
+    processing_msg = None
+    try:
+        charged = await deduct_credits(
+            message.from_user.id,
+            total_cost,
+            reason="image_generation_charge",
+            external_id=f"image_submit:{message.from_user.id}:{message.message_id}",
+            metadata={"model": img_service, "count": img_count},
         )
+        if not charged:
+            await generation_lock_guard.release(generation_lock)
+            await state.clear()
+            await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+            return
+
+        if img_count == 1:
+            processing_msg = await message.answer("🖼 Генерирую изображение...")
+        else:
+            processing_msg = await message.answer(
+                f"🖼 Запускаю {img_count} генераций параллельно..."
+            )
+    except Exception:
+        logger.exception("Image generation setup failed")
+        if not config.is_admin(message.from_user.id):
+            await add_credits_once(
+                message.from_user.id,
+                total_cost,
+                reason="generation_refund",
+                external_id=f"image_setup:{message.from_user.id}:{message.message_id}",
+                metadata={"handler": "image_setup"},
+            )
+        await generation_lock_guard.release(generation_lock)
+        await state.clear()
+        await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
+        return
 
     async def _run_single(idx: int) -> None:
         local_tid = f"img_{uuid.uuid4().hex[:12]}"
@@ -2844,13 +2879,15 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 )
                 await complete_video_task(local_tid, saved_url)
             else:
-                await add_credits(message.from_user.id, cost)
+                if not config.is_admin(message.from_user.id):
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=local_tid)
                 await complete_video_task(local_tid, None)
                 await message.answer(f"❌ {prefix}Ошибка генерации. Бананы возвращены.")
 
         except Exception as e:
             logger.exception(f"Image generation error (idx={idx}): {e}")
-            await add_credits(message.from_user.id, cost)
+            if not config.is_admin(message.from_user.id):
+                await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=local_tid)
             await complete_video_task(local_tid, None)
             await message.answer(f"❌ Ошибка генерации #{idx}.")
 
@@ -2861,6 +2898,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             await processing_msg.delete()
         except Exception:
             pass
+        await generation_lock_guard.release(generation_lock)
 
     await state.clear()
 
@@ -2894,24 +2932,54 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer(f"❌ Нужно {cost}🍌", show_alert=True)
         return
 
-    await callback.answer("🔄 Запускаю повтор...")
-    await deduct_credits(callback.from_user.id, cost)
+    generation_lock = await generation_lock_guard.acquire(callback.from_user.id)
+    if not generation_lock:
+        await callback.answer("⏳ Предыдущая генерация ещё запускается", show_alert=True)
+        return
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-    await add_generation_task(
-        user.id,
-        callback.from_user.id,
-        local_task_id,
-        "image",
-        img_service,
-        model=img_service,
-        aspect_ratio=aspect_ratio,
-        prompt=prompt,
-        cost=cost,
-        reference_images=_serialize_reference_images(reference_images),
-    )
+    processing_msg = None
+    try:
+        await callback.answer("🔄 Запускаю повтор...")
+        charged = await deduct_credits(
+            callback.from_user.id,
+            cost,
+            reason="image_retry_charge",
+            external_id=f"retry:{task_id}:{callback.id}",
+            metadata={"model": img_service, "source_task_id": task_id},
+        )
+        if not charged:
+            await generation_lock_guard.release(generation_lock)
+            await callback.message.answer("❌ Не удалось списать бананы. Повтор не запущен.")
+            return
 
-    processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
+        await add_generation_task(
+            user.id,
+            callback.from_user.id,
+            local_task_id,
+            "image",
+            img_service,
+            model=img_service,
+            aspect_ratio=aspect_ratio,
+            prompt=prompt,
+            cost=cost,
+            reference_images=_serialize_reference_images(reference_images),
+        )
+
+        processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
+    except Exception:
+        logger.exception("Retry image setup failed")
+        if not config.is_admin(callback.from_user.id):
+            await add_credits_once(
+                callback.from_user.id,
+                cost,
+                reason="generation_refund",
+                external_id=local_task_id,
+                metadata={"handler": "retry_image_setup"},
+            )
+        await generation_lock_guard.release(generation_lock)
+        await callback.message.answer("❌ Ошибка запуска повтора. Бананы возвращены.")
+        return
 
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -3008,15 +3076,25 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             )
             await complete_video_task(local_task_id, saved_url)
         else:
-            await add_credits(callback.from_user.id, cost)
+            if not config.is_admin(callback.from_user.id):
+                await add_credits_once(callback.from_user.id, cost, reason="generation_refund", external_id=local_task_id if "local_task_id" in locals() else f"retry:{task_id}")
             await complete_video_task(local_task_id, None)
             await callback.message.answer("❌ Ошибка повтора. Бананы возвращены.")
 
     except Exception as e:
         logger.exception(f"Retry image error: {e}")
-        await add_credits(callback.from_user.id, cost)
+        if not config.is_admin(callback.from_user.id):
+            await add_credits_once(
+                callback.from_user.id,
+                cost,
+                reason="generation_refund",
+                external_id=local_task_id,
+                metadata={"handler": "retry_image"},
+            )
         await complete_video_task(local_task_id, None)
         await callback.message.answer("❌ Ошибка повтора.")
+    finally:
+        await generation_lock_guard.release(generation_lock)
 
 
 @router.message(GenerationStates.waiting_for_reference_video)
@@ -3157,6 +3235,8 @@ async def run_no_preset_video_from_message(
     user = await get_or_create_user(message.from_user.id)
     is_admin = config.is_admin(message.from_user.id)
 
+    generation_lock = None
+
     # Admin free access
     if is_admin:
         logger.info(
@@ -3173,17 +3253,50 @@ async def run_no_preset_video_from_message(
             )
             await state.clear()
             return
-        await deduct_credits(message.from_user.id, cost)
+        generation_lock = await generation_lock_guard.acquire(message.from_user.id)
+        if not generation_lock:
+            await message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
+            await state.clear()
+            return
+        charged = await deduct_credits(
+            message.from_user.id,
+            cost,
+            reason="video_generation_charge",
+            external_id=f"video_submit:{message.from_user.id}:{message.message_id}",
+            metadata={"model": v_model, "duration": v_duration, "ratio": v_ratio},
+        )
+        if not charged:
+            await generation_lock_guard.release(generation_lock)
+            await state.clear()
+            await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+            return
 
-    processing_msg = await message.answer(
-        f"🎬 <b>Видео генерируется...</b>"
-        f"🤖 Модель: <code>{v_model}</code>\n"
-        f"⏱ Длительность: <code>{v_duration}s</code>\n"
-        f"📐 Формат: <code>{v_ratio}</code>\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌"
-        f"<i>Ожидайте 1-5 минут</i>",
-        parse_mode="HTML",
-    )
+    refund_external_id = f"video:{message.from_user.id}:{message.message_id}"
+    processing_msg = None
+    try:
+        processing_msg = await message.answer(
+            f"🎬 <b>Видео генерируется...</b>"
+            f"🤖 Модель: <code>{v_model}</code>\n"
+            f"⏱ Длительность: <code>{v_duration}s</code>\n"
+            f"📐 Формат: <code>{v_ratio}</code>\n"
+            f"💰 Стоимость: <code>{cost}</code>🍌"
+            f"<i>Ожидайте 1-5 минут</i>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("Video generation setup failed")
+        if not is_admin:
+            await add_credits_once(
+                message.from_user.id,
+                cost,
+                reason="generation_refund",
+                external_id=refund_external_id,
+                metadata={"handler": "video_setup"},
+            )
+        await generation_lock_guard.release(generation_lock)
+        await state.clear()
+        await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
+        return
 
     try:
         from bot.services.kling_service import kling_service
@@ -3194,8 +3307,9 @@ async def run_no_preset_video_from_message(
                     "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
 
@@ -3221,8 +3335,9 @@ async def run_no_preset_video_from_message(
                     "❌ Aleph Video требует референсное видео (видео+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
             result = await aleph_service.generate_video(
@@ -3242,8 +3357,9 @@ async def run_no_preset_video_from_message(
                     "❌ Runway не поддерживает видео референсы. Используйте текст или фото+текст."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
             callback_url = (
@@ -3287,8 +3403,9 @@ async def run_no_preset_video_from_message(
                     f"❌ {v_model} требует стартовое изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
             result = await hailuo_service.generate_video(
@@ -3326,8 +3443,9 @@ async def run_no_preset_video_from_message(
                     f"❌ {v_model} требует минимум одно изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
             if v_model in HAPPYHORSE_VIDEO_REQUIRED and not video_urls:
@@ -3335,8 +3453,9 @@ async def run_no_preset_video_from_message(
                     "❌ HappyHorse Edit требует видео-референс (режим видео+текст)."
                 )
                 if not is_admin:
-                    await add_credits(message.from_user.id, cost)
+                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
 
@@ -3405,14 +3524,15 @@ async def run_no_preset_video_from_message(
             )
         else:
             if not is_admin:
-                await add_credits(message.from_user.id, cost)
+                await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
             await message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
         if not is_admin:
-            await add_credits(message.from_user.id, cost)
+            await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
         await message.answer("❌ Ошибка генерации. Бананы возвращены.")
 
+    await generation_lock_guard.release(generation_lock)
     await state.clear()
 
 
@@ -3784,7 +3904,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
             await state.update_data(v_video_url=video_url)
@@ -4255,7 +4375,7 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
             logger.error(f"Image validation failed: {e}")
 
         # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
+        image_url = save_uploaded_file(image_data, "png", is_reference=True)
 
         if image_url:
             await state.update_data(v_image_url=image_url)
@@ -4349,7 +4469,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
             await state.update_data(v_video_url=video_url)
@@ -4812,7 +4932,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
             await state.update_data(v_video_url=video_url)
@@ -5275,7 +5395,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
             await state.update_data(v_video_url=video_url)

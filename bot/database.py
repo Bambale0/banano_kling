@@ -702,6 +702,15 @@ async def process_referral(
             "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (referrer["id"], signup_bonus, referred_telegram_id),
         )
+        if signup_bonus:
+            await _record_credit_transaction(
+                db,
+                referred["id"],
+                signup_bonus,
+                "referral_signup_bonus",
+                f"referral_signup:{referred_telegram_id}:{referrer['id']}",
+                {"referrer_id": referrer["id"]},
+            )
         await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, ?)",
             (referrer["id"], referred["id"], 0),
@@ -791,14 +800,23 @@ async def credit_first_payment_referral_bonus(
             banana_bonus = max(
                 1, round(float(transaction_credits) * bonus_percent / 100)
             )
-            await db.execute(
-                "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (banana_bonus, banana_bonus, referrer["id"]),
+            inserted_bonus = await _record_credit_transaction(
+                db,
+                referrer["id"],
+                banana_bonus,
+                "referral_first_payment_bonus",
+                f"first_payment:{telegram_id}",
+                {"referred_user_id": user["id"], "transaction_credits": transaction_credits},
             )
-            await db.execute(
-                "UPDATE referrals SET bonus_credits = bonus_credits + ? WHERE referrer_id = ? AND referred_id = ?",
-                (banana_bonus, referrer["id"], user["id"]),
-            )
+            if inserted_bonus:
+                await db.execute(
+                    "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (banana_bonus, banana_bonus, referrer["id"]),
+                )
+                await db.execute(
+                    "UPDATE referrals SET bonus_credits = bonus_credits + ? WHERE referrer_id = ? AND referred_id = ?",
+                    (banana_bonus, referrer["id"], user["id"]),
+                )
             result = {"mode": "banana", "value": banana_bonus, "percent": bonus_percent}
 
         await db.execute(
@@ -1126,11 +1144,18 @@ async def add_credits(
                 "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
             )
             user = await cursor.fetchone()
+        if external_id:
+            inserted = await _record_credit_transaction(db, user["id"], amount, reason, external_id, metadata)
+            if not inserted:
+                await db.rollback()
+                logger.info("Skipped duplicate credit add reason=%s external_id=%s", reason, external_id)
+                return False
         await db.execute(
             "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (amount, telegram_id),
         )
-        await _record_credit_transaction(db, user["id"], amount, reason, external_id, metadata)
+        if not external_id:
+            await _record_credit_transaction(db, user["id"], amount, reason, external_id, metadata)
         await db.commit()
         logger.info(f"Added {amount} credits to user {telegram_id}")
         return True
@@ -1215,14 +1240,21 @@ async def deduct_credits(
         if not row or row["credits"] < amount:
             return False
 
+        user_cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+        user_row = await user_cursor.fetchone()
+        if external_id and user_row:
+            inserted = await _record_credit_transaction(db, user_row["id"], -amount, reason, external_id, metadata)
+            if not inserted:
+                await db.rollback()
+                logger.info("Skipped duplicate credit deduction reason=%s external_id=%s", reason, external_id)
+                return False
+
         # Списываем
         await db.execute(
             "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (amount, telegram_id),
         )
-        user_cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
-        user_row = await user_cursor.fetchone()
-        if user_row:
+        if user_row and not external_id:
             await _record_credit_transaction(db, user_row["id"], -amount, reason, external_id, metadata)
         await db.commit()
         logger.info(f"Deducted {amount} credits from user {telegram_id}")
