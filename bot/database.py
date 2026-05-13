@@ -13,6 +13,25 @@ logger = logging.getLogger(__name__)
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 
 
+def _get_master_partner_telegram_id() -> int:
+    explicit = os.getenv("MASTER_PARTNER_TELEGRAM_ID", "").strip()
+    if explicit:
+        try:
+            return int(explicit)
+        except ValueError:
+            logger.warning("Invalid MASTER_PARTNER_TELEGRAM_ID: %s", explicit)
+    first_admin = (os.getenv("ADMIN_IDS", "").split(",")[0] or "").strip()
+    if first_admin:
+        try:
+            return int(first_admin)
+        except ValueError:
+            logger.warning("Invalid first ADMIN_IDS value for master partner: %s", first_admin)
+    return 0
+
+
+MASTER_PARTNER_TELEGRAM_ID = _get_master_partner_telegram_id()
+
+
 @dataclass
 class User:
     id: int
@@ -374,6 +393,26 @@ async def init_db():
         """
         )
 
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS credit_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                external_id TEXT,
+                metadata_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(reason, external_id)
+            )
+        """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id)"
+        )
+
         await db.commit()
         logger.info("Database initialized successfully")
 
@@ -676,6 +715,14 @@ async def process_referral(
             signup_bonus,
         )
         return True
+
+
+async def get_master_partner_user() -> User:
+    """Return the configured master partner user, creating it if needed.
+
+    Kept for backwards compatibility with referral/admin tests and older code.
+    """
+    return await get_or_create_user(MASTER_PARTNER_TELEGRAM_ID)
 
 
 async def mark_user_paid(telegram_id: int) -> bool:
@@ -1038,20 +1085,115 @@ async def get_user_credits(telegram_id: int) -> int:
     return user.credits
 
 
-async def add_credits(telegram_id: int, amount: int) -> bool:
-    """Добавляет кредиты пользователю"""
+async def _record_credit_transaction(
+    db: aiosqlite.Connection,
+    user_id: int,
+    amount: int,
+    reason: str,
+    external_id: str | None = None,
+    metadata: dict | None = None,
+) -> bool:
+    try:
+        await db.execute(
+            """
+            INSERT INTO credit_transactions (user_id, amount, reason, external_id, metadata_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, amount, reason, external_id, json.dumps(metadata or {}, ensure_ascii=False)),
+        )
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def add_credits(
+    telegram_id: int,
+    amount: int,
+    reason: str = "manual_add",
+    external_id: str | None = None,
+    metadata: dict | None = None,
+) -> bool:
+    """Добавляет кредиты пользователю и пишет audit ledger entry."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
+        user = await cursor.fetchone()
+        if not user:
+            await get_or_create_user(telegram_id)
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+            )
+            user = await cursor.fetchone()
         await db.execute(
             "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (amount, telegram_id),
         )
+        await _record_credit_transaction(db, user["id"], amount, reason, external_id, metadata)
         await db.commit()
         logger.info(f"Added {amount} credits to user {telegram_id}")
         return True
 
 
+async def add_credits_once(
+    telegram_id: int,
+    amount: int,
+    reason: str,
+    external_id: str,
+    metadata: dict | None = None,
+) -> bool:
+    """Idempotently add credits once for a reason/external id pair."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
+        user = await cursor.fetchone()
+        if not user:
+            await get_or_create_user(telegram_id)
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+            )
+            user = await cursor.fetchone()
+        inserted = await _record_credit_transaction(db, user["id"], amount, reason, external_id, metadata)
+        if not inserted:
+            await db.rollback()
+            logger.info("Skipped duplicate credit transaction reason=%s external_id=%s", reason, external_id)
+            return False
+        await db.execute(
+            "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (amount, telegram_id),
+        )
+        await db.commit()
+        logger.info("Idempotently added %s credits to user %s (%s/%s)", amount, telegram_id, reason, external_id)
+        return True
+
+
+async def get_credit_transactions(telegram_id: int) -> list[dict]:
+    """Return credit ledger entries for a Telegram user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT ct.*
+            FROM credit_transactions ct
+            JOIN users u ON u.id = ct.user_id
+            WHERE u.telegram_id = ?
+            ORDER BY ct.id ASC
+            """,
+            (telegram_id,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
 async def deduct_credits(
-    telegram_id: int, amount: int, check_balance: bool = True
+    telegram_id: int,
+    amount: int,
+    check_balance: bool = True,
+    reason: str = "generation_charge",
+    external_id: str | None = None,
+    metadata: dict | None = None,
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
@@ -1078,6 +1220,10 @@ async def deduct_credits(
             "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (amount, telegram_id),
         )
+        user_cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+        user_row = await user_cursor.fetchone()
+        if user_row:
+            await _record_credit_transaction(db, user_row["id"], -amount, reason, external_id, metadata)
         await db.commit()
         logger.info(f"Deducted {amount} credits from user {telegram_id}")
         return True

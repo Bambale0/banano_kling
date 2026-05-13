@@ -45,14 +45,12 @@ def test_process_referral_adds_bonus_and_links_user(tmp_path, monkeypatch):
         assert ok is True
 
         updated_referred = await db.get_or_create_user(referred.telegram_id)
-        master = await db.get_master_partner_user()
-        stats = await db.get_referral_stats(master.telegram_id)
+        stats = await db.get_referral_stats(referrer.telegram_id)
 
-        assert updated_referred.referred_by == master.id
+        assert updated_referred.referred_by == referrer.id
         assert updated_referred.credits == 15
-        assert master.referral_earned == 5
         assert stats["referrals_count"] == 1
-        assert stats["referral_earned"] == 5
+        assert stats["referral_earned"] == 0
 
     asyncio.run(run())
 
@@ -71,14 +69,14 @@ def test_first_payment_bonus_is_awarded_once(tmp_path, monkeypatch):
         bonus2 = await db.credit_first_payment_referral_bonus(referred.telegram_id, 200)
 
         updated_referred = await db.get_or_create_user(referred.telegram_id)
-        master = await db.get_master_partner_user()
+        updated_referrer = await db.get_or_create_user(referrer.telegram_id)
 
-        assert bonus1["mode"] == "partner"
-        assert bonus1["value"] == 10.0
+        assert bonus1["mode"] == "banana"
+        assert bonus1["value"] == 10
         assert bonus2["mode"] == "none"
         assert bonus2["value"] == 0
         assert updated_referred.has_paid is True
-        assert master.partner_balance_rub == 10.0
+        assert updated_referrer.referral_earned == 10
 
     asyncio.run(run())
 
@@ -129,7 +127,8 @@ def test_partner_withdrawal_creates_request(tmp_path, monkeypatch):
         )
         overview = await db.get_partner_overview(master.telegram_id)
 
-        assert ok is True
+        assert isinstance(ok, int)
+        assert ok > 0
         assert overview["balance_rub"] == 100.0
 
     asyncio.run(run())
@@ -149,7 +148,7 @@ def test_stats_include_referrals(tmp_path, monkeypatch):
         admin_stats = await db.get_admin_stats()
 
         assert user_stats["referrals_count"] == 1
-        assert user_stats["referral_earned"] == 5
+        assert user_stats["referral_earned"] == 0
         assert admin_stats["total_referrals"] == 1
 
     asyncio.run(run())

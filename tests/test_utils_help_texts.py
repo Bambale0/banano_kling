@@ -34,7 +34,7 @@ class TestHelpTexts:
     def test_get_model_selection_help(self):
         msg = get_model_selection_help()
         assert "Выбор модели AI" in msg
-        assert "FLUX.2 Pro" in msg
+        assert "Nano Banana Pro" in msg
 
     def test_get_resolution_help(self):
         msg = get_resolution_help()

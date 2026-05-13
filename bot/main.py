@@ -187,6 +187,15 @@ async def handle_telegram_webhook(
         # Получаем данные из запроса
         update_data = await request.json()
 
+        # Idempotency: Telegram can retry the same update.
+        update_id = update_data.get("update_id")
+        if update_id is not None:
+            from bot.services.reliability import runtime_reliability
+
+            if not await runtime_reliability.mark_telegram_update(int(update_id)):
+                logger.info("Skipping duplicate Telegram update_id=%s", update_id)
+                return web.Response(text="OK", status=200)
+
         # Создаём объект Update
         update = Update(**update_data)
 
@@ -1187,6 +1196,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             logger.error(f"Kie.ai webhook missing task id. Payload: {webhook_data}")
             return web.Response(status=200)
 
+        from bot.services.reliability import runtime_reliability
+        event_status = normalized_status or "unknown"
+        if not await runtime_reliability.mark_provider_event("kie_ai", str(task_id), event_status):
+            logger.info("Skipping duplicate Kie.ai webhook task_id=%s status=%s", task_id, event_status)
+            return web.Response(status=200)
+
         # Find task in DB early for both success and failure
         task = await get_task_by_id(task_id)
         telegram_id = None
@@ -1471,8 +1486,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 f"{service_name} task {task_id} FAILED: failCode={fail_code}, failMsg={fail_msg}, full data: {webhook_data}"
             )
 
-            if task and task.cost and task.cost > 0:
-                await add_credits(telegram_id, task.cost)
+            if task and task.cost and task.cost > 0 and telegram_id:
+                from bot.database import add_credits_once
+
+                await add_credits_once(
+                    telegram_id,
+                    task.cost,
+                    reason="generation_refund",
+                    external_id=str(task_id),
+                    metadata={"provider": "kie_ai", "status": normalized_status},
+                )
 
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)

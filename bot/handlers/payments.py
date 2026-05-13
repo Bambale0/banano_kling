@@ -8,6 +8,7 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     add_credits,
+    add_credits_once,
     create_transaction,
     credit_first_payment_referral_bonus,
     get_or_create_user,
@@ -118,8 +119,16 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
         logger.error("Telegram user not found for transaction %s", order_id)
         return False
 
-    await add_credits(telegram_id, transaction.credits)
+    credited = await add_credits_once(
+        telegram_id,
+        transaction.credits,
+        reason="payment_completed",
+        external_id=order_id,
+        metadata={"provider": transaction.provider, "amount_rub": transaction.amount_rub},
+    )
     await update_transaction_status(order_id, "completed")
+    if not credited:
+        logger.info("Payment credits already applied for order_id=%s", order_id)
     referral_bonus = await credit_first_payment_referral_bonus(
         telegram_id,
         transaction.credits,

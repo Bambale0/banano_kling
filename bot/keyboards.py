@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -22,6 +23,25 @@ from bot.video_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def load_prices() -> dict:
+    """Load price configuration from data/price.json.
+
+    Backwards-compatible helper used by tests and older admin code. Runtime code
+    primarily uses preset_manager, but keeping this helper makes keyboard module
+    importable and easy to test.
+    """
+    price_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "price.json")
+    with open(price_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+try:
+    PACKAGES = load_prices().get("packages", [])
+except Exception:
+    logger.exception("Failed to load package prices for keyboard fallback")
+    PACKAGES = []
 
 
 # =============================================================================
@@ -504,9 +524,8 @@ def get_settings_keyboard_with_ai(
 
 def get_topup_keyboard():
     """Меню пополнения баланса"""
-    return get_payment_packages_keyboard(
-        preset_manager.get_packages(), provider=config.payment_provider
-    )
+    packages = PACKAGES or preset_manager.get_packages()
+    return get_payment_packages_keyboard(packages, provider=config.payment_provider)
 
 
 def get_payment_provider_keyboard(current_provider: str = "tbank"):

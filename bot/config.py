@@ -28,6 +28,11 @@ class Config:
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
+    # YooKassa (legacy/optional)
+    YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
+    YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
+    YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
+
     # Crypto Bot
     # Backward-compatible fallback for older env files that still use
     # CRYPTOBOT_API_KEY instead of CRYPTOBOT_API_TOKEN.
@@ -93,6 +98,7 @@ class Config:
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
 
     # Партнёрская программа
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
@@ -158,13 +164,17 @@ class Config:
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"cryptobot", "tbank"}:
+        if self.PAYMENT_PROVIDER in {"cryptobot", "tbank", "yookassa"}:
             return self.PAYMENT_PROVIDER
         return "tbank"
 
     @property
     def has_cryptobot(self) -> bool:
         return bool(self.CRYPTOBOT_API_TOKEN)
+
+    @property
+    def has_yookassa(self) -> bool:
+        return bool(self.YOOKASSA_SHOP_ID and self.YOOKASSA_SECRET_KEY)
 
     @property
     def has_jump_finance(self) -> bool:

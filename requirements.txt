@@ -23,3 +23,10 @@ typing-extensions>=4.0.0
 # Then install the package:
 # pip install face_recognition
 # If you cannot build dlib, skip this — the service will fall back to center-crop.
+
+# Optional Redis reliability layer (idempotency, locks, rate limits)
+redis>=5.0.0
+
+# Future PostgreSQL backend
+asyncpg>=0.29.0
+
