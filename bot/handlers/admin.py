@@ -28,6 +28,21 @@ from bot.states import AdminStates
 logger = logging.getLogger(__name__)
 router = Router()
 PRICE_PATH = Path(config.PRICE_PATH)
+BROADCAST_MESSAGE_LIMIT = 4096
+BROADCAST_PHOTO_CAPTION_LIMIT = 1024
+
+
+def _broadcast_confirm_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Отправить", callback_data="admin_broadcast_confirm"
+                ),
+                types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back"),
+            ]
+        ]
+    )
 
 
 def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
@@ -1240,15 +1255,16 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
 
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает текст рассылки"""
+    """Запрашивает текст или фото для рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
 
     await callback.message.edit_text(
         "📢 <b>Рассылка всем пользователям</b>\n\n"
-        "Введите текст сообщения для рассылки:\n"
-        "<i>Поддерживается HTML-форматирование</i>",
+        "Отправьте текст сообщения или фото с подписью.\n"
+        "Можно отправить фото без подписи — пользователи получат только изображение.\n\n"
+        "<i>В тексте и подписи поддерживается HTML-форматирование</i>",
         reply_markup=get_back_keyboard("admin_back"),
         parse_mode="HTML",
     )
@@ -1259,28 +1275,72 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
 @router.message(AdminStates.waiting_broadcast_text)
 async def admin_process_broadcast_text(message: types.Message, state: FSMContext):
     """Показывает превью рассылки"""
-    await state.update_data(broadcast_text=message.text)
+    broadcast_photo_file_id = None
 
-    await message.answer(
-        "📢 <b>Превью рассылки:</b>\n"
-        "───────────────\n"
-        f"{message.text}\n"
-        "───────────────\n"
-        "Подтверждаете отправку?",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Отправить", callback_data="admin_broadcast_confirm"
-                    ),
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data="admin_back"
-                    ),
-                ]
-            ]
-        ),
-        parse_mode="HTML",
+    if message.photo:
+        broadcast_photo_file_id = message.photo[-1].file_id
+        broadcast_text = (message.caption or "").strip()
+
+        if len(broadcast_text) > BROADCAST_PHOTO_CAPTION_LIMIT:
+            await message.answer(
+                "❌ Подпись к фото слишком длинная.\n"
+                f"Максимум: <code>{BROADCAST_PHOTO_CAPTION_LIMIT}</code> символов.",
+                reply_markup=get_back_keyboard("admin_back"),
+                parse_mode="HTML",
+            )
+            return
+    elif message.text:
+        broadcast_text = message.text.strip()
+
+        if not broadcast_text:
+            await message.answer(
+                "❌ Текст рассылки пустой. Отправьте текст или фото.",
+                reply_markup=get_back_keyboard("admin_back"),
+            )
+            return
+
+        if len(broadcast_text) > BROADCAST_MESSAGE_LIMIT:
+            await message.answer(
+                "❌ Текст рассылки слишком длинный.\n"
+                f"Максимум: <code>{BROADCAST_MESSAGE_LIMIT}</code> символов.",
+                reply_markup=get_back_keyboard("admin_back"),
+                parse_mode="HTML",
+            )
+            return
+    else:
+        await message.answer(
+            "❌ Для рассылки отправьте текст или фото с необязательной подписью.",
+            reply_markup=get_back_keyboard("admin_back"),
+        )
+        return
+
+    await state.update_data(
+        broadcast_text=broadcast_text,
+        broadcast_photo_file_id=broadcast_photo_file_id,
     )
+
+    if broadcast_photo_file_id:
+        await message.answer_photo(
+            photo=broadcast_photo_file_id,
+            caption=broadcast_text or None,
+            parse_mode="HTML" if broadcast_text else None,
+        )
+        await message.answer(
+            "📢 <b>Превью рассылки с фото выше.</b>\n\n"
+            "Подтверждаете отправку?",
+            reply_markup=_broadcast_confirm_keyboard(),
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            "📢 <b>Превью рассылки:</b>\n"
+            "───────────────\n"
+            f"{broadcast_text}\n"
+            "───────────────\n"
+            "Подтверждаете отправку?",
+            reply_markup=_broadcast_confirm_keyboard(),
+            parse_mode="HTML",
+        )
 
     await state.set_state(AdminStates.confirming_broadcast)
 
@@ -1296,6 +1356,15 @@ async def admin_execute_broadcast(
 
     data = await state.get_data()
     broadcast_text = data.get("broadcast_text")
+    broadcast_photo_file_id = data.get("broadcast_photo_file_id")
+
+    if not broadcast_text and not broadcast_photo_file_id:
+        await callback.message.edit_text(
+            "❌ Не найден текст или фото для рассылки.",
+            reply_markup=get_admin_keyboard(),
+        )
+        await state.clear()
+        return
 
     await callback.message.edit_text(
         "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
@@ -1316,9 +1385,17 @@ async def admin_execute_broadcast(
 
     for user in users:
         try:
-            await bot.send_message(
-                user["telegram_id"], broadcast_text, parse_mode="HTML"
-            )
+            if broadcast_photo_file_id:
+                await bot.send_photo(
+                    user["telegram_id"],
+                    photo=broadcast_photo_file_id,
+                    caption=broadcast_text or None,
+                    parse_mode="HTML" if broadcast_text else None,
+                )
+            else:
+                await bot.send_message(
+                    user["telegram_id"], broadcast_text, parse_mode="HTML"
+                )
             success_count += 1
         except Exception as e:
             logger.warning(f"Broadcast failed for {user['telegram_id']}: {e}")
@@ -1336,8 +1413,9 @@ async def admin_execute_broadcast(
 
 
 @router.callback_query(F.data == "admin_back")
-async def admin_back_to_menu(callback: types.CallbackQuery):
+async def admin_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-меню"""
+    await state.clear()
     stats = await get_admin_stats()
 
     text = f"""
