@@ -3,7 +3,7 @@ import logging
 import os
 
 from aiogram import types
-from aiogram.types import InlineKeyboardButton, WebAppInfo
+from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
@@ -604,9 +604,38 @@ def get_reference_images_upload_keyboard(
         builder.button(
             text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}"
         )
+    builder.button(text="📚 Мои сохранённые рефы", callback_data="ref_saved_library")
     builder.button(text="🔄 Перезагрузить", callback_data=f"ref_reload_{preset_id}")
     builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1, 2, 2)
+    builder.adjust(1, 2, 1, 2)
+    return builder.as_markup()
+
+
+def get_saved_reference_picker_keyboard(
+    reference_id: int,
+    current_index: int,
+    total_count: int,
+    *,
+    already_selected: bool = False,
+):
+    """Клавиатура просмотра сохранённых референсов."""
+    builder = InlineKeyboardBuilder()
+    if total_count > 1:
+        if current_index > 0:
+            builder.button(text="⬅️", callback_data=f"savedref_nav_{current_index - 1}")
+        builder.button(text=f"{current_index + 1}/{total_count}", callback_data="savedref_noop")
+        if current_index < total_count - 1:
+            builder.button(text="➡️", callback_data=f"savedref_nav_{current_index + 1}")
+    builder.button(
+        text="✅ Уже добавлен" if already_selected else "✅ Использовать",
+        callback_data=f"savedref_use_{reference_id}",
+    )
+    builder.button(text="🗑 Удалить", callback_data=f"savedref_delete_{reference_id}_{current_index}")
+    builder.button(text="❌ Закрыть", callback_data="savedref_close")
+    if total_count > 1:
+        builder.adjust(3, 2, 1)
+    else:
+        builder.adjust(2, 1)
     return builder.as_markup()
 
 
@@ -887,9 +916,10 @@ def get_payment_confirmation_keyboard(payment_url: str, order_id: str):
     """Клавиатура подтверждения оплаты"""
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Перейти к оплате", url=payment_url)
+    builder.button(text="✅ Проверить оплату", callback_data=f"check_payment_{order_id}")
     builder.button(text="🔙 Назад", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2)
+    builder.adjust(1, 1, 2)
     return builder.as_markup()
 
 
@@ -897,6 +927,15 @@ def get_main_menu_button_keyboard():
     """Одна кнопка возврата в главное меню."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🏠 Главное меню", callback_data="back_main")
+    return builder.as_markup()
+
+
+def get_photo_prompt_result_keyboard(prompt_en: str, prompt_ru: str = "", negative_prompt: str = ""):
+    """Клавиатура для результата функции «Промпт по фото»."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🆕 Новый промпт", callback_data="photo_to_prompt")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -947,8 +986,19 @@ def get_image_result_keyboard(image_url: str, task_id: str = None):
     builder.button(text="📥 Скачать оригинал", url=image_url)
     if task_id:
         builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
+        builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2)
+    builder.adjust(1, 2, 1)
+    return builder.as_markup()
+
+
+def get_failed_image_retry_keyboard(task_id: str):
+    """Клавиатура для неудачной фото-генерации."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Другой промпт", callback_data=f"retry_prompt_image_{task_id}")
+    builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 

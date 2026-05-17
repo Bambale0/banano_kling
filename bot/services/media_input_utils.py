@@ -15,32 +15,60 @@ def _guess_mime_type(source: str) -> str:
     return mime or "image/png"
 
 
-def _resolve_local_upload_path(source: str) -> str | None:
-    if not isinstance(source, str) or not source:
-        return None
-    if source.startswith("data:image/"):
+def _local_upload_candidate(source: str) -> str | None:
+    if not isinstance(source, str) or not source or source.startswith("data:image/"):
         return None
 
     parsed = urlparse(source)
+    static_base = (config.static_base_url or "").rstrip("/")
+
     path = parsed.path or source
+    is_local_path = not parsed.scheme and not parsed.netloc
+    is_own_static_url = bool(static_base and source.startswith(static_base))
 
-    if path.startswith("/uploads/"):
+    # Only map bare /uploads paths or this app's configured public host to local
+    # files. Do not reinterpret arbitrary external https://host/uploads/... URLs.
+    if (is_local_path or is_own_static_url) and path.startswith("/uploads/"):
         rel_path = path[len("/uploads/") :].lstrip("/")
-        candidate = os.path.join("static", "uploads", rel_path)
-        return candidate if os.path.exists(candidate) else None
+        return os.path.join("static", "uploads", rel_path)
 
-    if path.startswith("static/uploads/") and os.path.exists(path):
+    if is_local_path and path.startswith("static/uploads/"):
         return path
 
-    static_base = (config.static_base_url or "").rstrip("/")
-    if static_base and isinstance(source, str) and source.startswith(static_base):
-        base_path = source[len(static_base) :]
-        if base_path.startswith("/uploads/"):
-            rel_path = base_path[len("/uploads/") :].lstrip("/")
-            candidate = os.path.join("static", "uploads", rel_path)
-            return candidate if os.path.exists(candidate) else None
-
     return None
+
+
+def is_local_upload_source(source: str) -> bool:
+    """Return True when source points to this app's static/uploads storage."""
+    return _local_upload_candidate(source) is not None
+
+
+def _resolve_existing_upload_variant(candidate: str | None) -> str | None:
+    if not candidate:
+        return None
+    if os.path.exists(candidate):
+        return candidate
+
+    parent = os.path.dirname(candidate)
+    stem, _ext = os.path.splitext(candidate)
+    if not parent or not os.path.isdir(parent):
+        return None
+
+    try:
+        for entry in sorted(os.listdir(parent)):
+            full_path = os.path.join(parent, entry)
+            if not os.path.isfile(full_path):
+                continue
+            if os.path.splitext(full_path)[0] == stem:
+                return full_path
+    except OSError:
+        return None
+    return None
+
+
+def _resolve_local_upload_path(source: str) -> str | None:
+    candidate = _local_upload_candidate(source)
+    return _resolve_existing_upload_variant(candidate)
 
 
 def resolve_local_upload_path(source: str) -> str | None:

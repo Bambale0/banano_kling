@@ -26,10 +26,12 @@ from bot.database import (
     check_can_afford,
     complete_video_task,
     deduct_credits,
+    delete_saved_reference,
     get_or_create_user,
     get_task_by_id,
     get_user_credits,
     get_user_settings,
+    list_saved_references,
 )
 from bot.keyboards import (
     get_back_keyboard,
@@ -42,6 +44,7 @@ from bot.keyboards import (
     get_main_menu_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
+    get_saved_reference_picker_keyboard,
     get_video_media_step_keyboard,
     get_video_model_label,
     get_video_model_selection_keyboard,
@@ -54,6 +57,7 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_service
+from bot.services.reference_storage_service import save_reference_file
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
 from bot.states import GenerationStates
@@ -63,6 +67,7 @@ from bot.utils.help_texts import (
     get_prompt_tips,
     get_reference_images_help,
 )
+from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -75,6 +80,28 @@ def _get_reference_upload_lock(user_id: int) -> asyncio.Lock:
         lock = asyncio.Lock()
         _reference_upload_locks[user_id] = lock
     return lock
+
+
+async def _persist_reusable_image_reference(
+    telegram_id: int,
+    image_data: bytes,
+    file_ext: str,
+    *,
+    original_filename: str | None = None,
+    content_type: str | None = None,
+) -> Optional[str]:
+    public_url, _saved_reference = await save_reference_file(
+        telegram_id,
+        image_data,
+        file_ext=file_ext,
+        kind="image",
+        original_filename=original_filename,
+        content_type=content_type,
+        source="telegram_bot",
+    )
+    if public_url:
+        return public_url
+    return save_uploaded_file(image_data, file_ext)
 
 
 @router.message(CommandStart(), StateFilter("*"))
@@ -135,6 +162,12 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
     return img_service
 
 
+def _get_max_image_references(img_service: str | None) -> int:
+    # Product rule: users may attach up to 8 reference images before generation.
+    # Saved-reference library is limited separately in storage.
+    return 8
+
+
 def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
     """Normalize provider responses into queued/done/failed states."""
     if isinstance(result, dict):
@@ -147,6 +180,19 @@ def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
     if result:
         return "failed", f"Unexpected result type: {type(result).__name__}"
     return "failed", None
+
+
+def _enforce_generation_prompt_policy(prompt: str, *, medium: str) -> Optional[str]:
+    """Local prompt moderation is disabled; let the upstream provider decide."""
+    return None
+
+
+def _enforce_image_prompt_policy(prompt: str) -> Optional[str]:
+    return _enforce_generation_prompt_policy(prompt, medium="image")
+
+
+def _enforce_video_prompt_policy(prompt: str) -> Optional[str]:
+    return _enforce_generation_prompt_policy(prompt, medium="video")
 
 
 def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
@@ -191,12 +237,16 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
 def _apply_reference_detail_preservation(
     img_service: str, prompt: str, reference_images: list[str]
 ) -> str:
-    """For Banana models, ask provider to keep reference details stable."""
+    """For reference-based generation, strongly lock identity and outfit details."""
     prompt = (prompt or "").strip()
     if not reference_images or img_service not in {
         "banana_pro",
         "banana_2",
         "nanobanana",
+        "grok_imagine_i2i",
+        "seedream_edit",
+        "wan_27",
+        "flux_pro",
     }:
         return prompt
     instruction = """
@@ -228,6 +278,13 @@ The face must match the reference exactly. Preserve every facial detail with no 
 - exact ears, temples, hairline, sideburns
 - exact skin tone, undertone, pores, texture, freckles, moles, scars, wrinkles, nasolabial folds, dimples
 - exact facial asymmetry, age signs, expression style, makeup placement
+
+OUTFIT LOCK - ABSOLUTE PRIORITY:
+Keep the exact same clothing and wearable details from the reference unless the user explicitly asks to change them:
+- same garments, layers, sleeves, neckline, length, fit, silhouette
+- same fabric type, texture, folds, seams, stitching, buttons, zippers
+- same colors, color blocking, patterns, logos, prints, labels, trims
+- same shoes, bags, jewelry, glasses, hats, belts, gloves, watches and other accessories
 
 Do not make the face prettier, younger, older, smoother, slimmer, wider, more symmetrical, more generic, or more model-like. Do not replace the face with a similar-looking person. If the requested edit conflicts with face preservation, keep the face from the reference and apply the edit only outside the face.
 
@@ -273,7 +330,28 @@ def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
     """Freeze the exact reference set for every launched image task."""
     if not reference_images:
         return []
-    return [str(image).strip() for image in reference_images if str(image).strip()]
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for image in reference_images:
+        value = str(image).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _prepare_banana_reference_images(
+    img_service: str, reference_images: list[str] | None
+) -> list[str]:
+    normalized = _snapshot_reference_images(reference_images)
+    if img_service not in {"banana_pro", "banana_2", "nanobanana"}:
+        return normalized
+    if len(normalized) <= 1:
+        return normalized
+    # For identity-sensitive Banana edits, extra refs often cause identity blending.
+    # Keep the first user-selected reference as the source-of-truth person image.
+    return normalized[:8]
 
 
 async def _start_image_generation_task(
@@ -292,6 +370,24 @@ async def _start_image_generation_task(
 ):
     """Launch one image generation task and persist enough data for repeats."""
     runtime_img_service = img_service
+    policy_error = _enforce_image_prompt_policy(prompt)
+    if policy_error:
+        logger.warning(
+            "Blocked image prompt by policy: user_id=%s telegram_id=%s model=%s prompt_prefix=%s",
+            getattr(user, "id", None),
+            telegram_id,
+            runtime_img_service,
+            (prompt or "")[:200],
+        )
+        return {
+            "status": "failed",
+            "task_id": None,
+            "runtime_img_service": runtime_img_service,
+            "error": policy_error,
+        }
+    reference_images = _prepare_banana_reference_images(
+        runtime_img_service, reference_images
+    )
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
@@ -522,13 +618,13 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("banana_pro"), "new"),
             parse_mode="HTML",
         )
     except Exception:
         await callback.message.answer(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+            reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("banana_pro"), "new"),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -585,10 +681,60 @@ async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("wan_27"), "new"),
         parse_mode="HTML",
     )
     await callback.answer("Wan 2.7 Pro выбран")
+
+
+async def _restore_image_task_to_state(task, state: FSMContext) -> tuple[bool, str | None]:
+    if not task or task.type != "image" or not task.request_data:
+        return False, "Не удалось найти данные задачи."
+
+    try:
+        request_data = json.loads(task.request_data)
+    except Exception:
+        return False, "Данные исходной задачи повреждены."
+
+    img_service = request_data.get("img_service", task.model or "banana_pro")
+    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    reference_images = _snapshot_reference_images(
+        request_data.get("reference_images", [])
+    )
+    img_quality = request_data.get("img_quality", "2K")
+    img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
+    nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+
+    await state.clear()
+    await state.update_data(
+        generation_type="image",
+        img_service=img_service,
+        img_ratio=img_ratio,
+        img_count=1,
+        reference_images=reference_images,
+        img_quality=img_quality,
+        img_nsfw_checker=img_nsfw_checker,
+        nsfw_enabled=nsfw_enabled,
+        preset_id="new",
+        img_flow_step="configure",
+    )
+    await state.set_state(GenerationStates.waiting_for_input)
+    return True, None
+
+
+@router.callback_query(F.data.startswith("retry_prompt_image_"))
+async def retry_image_with_new_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Открывает тот же image flow с теми же референсами и настройками, но ждёт новый промпт."""
+    task_id = callback.data.replace("retry_prompt_image_", "", 1)
+    task = await get_task_by_id(task_id)
+
+    restored, error_message = await _restore_image_task_to_state(task, state)
+    if not restored:
+        await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
+        return
+
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("Отправь новый промпт — рефы и настройки сохранены")
 
 
 @router.callback_query(F.data.startswith("repeat_image_"))
@@ -829,8 +975,8 @@ async def show_edit_reference_upload(callback: types.CallbackQuery, state: FSMCo
         f"{title}\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         f"{hint}\n\n"
-        "<i>Можно загрузить до 9 фото.</i>",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        f"<i>Можно загрузить до {_get_max_image_references('seedream_edit')} фото.</i>",
+        reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("seedream_edit"), "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -855,7 +1001,7 @@ async def show_grok_i2i_upload(callback: types.CallbackQuery, state: FSMContext)
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         "Загрузите фото для изменения.\n"
         "Потом нажмите <b>Продолжить</b> и напишите, что нужно поменять.",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "new"),
+        reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("grok_imagine_i2i"), "new"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -941,7 +1087,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     current_service = data.get("img_service", "banana_pro")
     current_ratio = data.get("img_ratio", "1:1")
     current_refs = len(data.get("reference_images", []))
-    max_refs = 9
+    max_refs = _get_max_image_references(current_service)
 
     # Показываем клавиатуру загрузки референсов
     await callback.message.edit_text(
@@ -1497,6 +1643,7 @@ async def _show_image_model_selection_screen(
         else None
     )
     user_credits = await get_user_credits(user_id) if user_id else 0
+    max_refs = _get_max_image_references(current_service)
     text = (
         "🖼 <b>Создание фото</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
@@ -1539,6 +1686,7 @@ async def _show_image_references_screen(
         else None
     )
     user_credits = await get_user_credits(user_id) if user_id else 0
+    max_refs = _get_max_image_references(current_service)
     text = (
         "🖼 <b>Создание фото</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
@@ -1557,7 +1705,7 @@ async def _show_image_references_screen(
                 "стиль, одежду, товар или композицию.\n\n"
             )
         )
-        + f"<i>Можно загрузить до {9} фото. Когда всё готово, нажмите «Продолжить».</i>"
+        + f"<i>Можно загрузить до {max_refs} фото. Когда всё готово, нажмите «Продолжить».</i>"
     )
 
     try:
@@ -1565,7 +1713,7 @@ async def _show_image_references_screen(
             await message_or_callback.message.edit_text(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 9, "new"
+                    current_count, max_refs, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1573,7 +1721,7 @@ async def _show_image_references_screen(
             await message_or_callback.answer(
                 text,
                 reply_markup=get_reference_images_upload_keyboard(
-                    current_count, 9, "new"
+                    current_count, max_refs, "new"
                 ),
                 parse_mode="HTML",
             )
@@ -1581,7 +1729,7 @@ async def _show_image_references_screen(
         await message_or_callback.answer(
             text,
             reply_markup=get_reference_images_upload_keyboard(
-                current_count, 9, "new"
+                current_count, max_refs, "new"
             ),
             parse_mode="HTML",
         )
@@ -1844,6 +1992,235 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
         await callback.answer()
 
 
+async def _update_reference_upload_message(bot: Bot, chat_id: int, message_id: int, state: FSMContext) -> None:
+    data = await state.get_data()
+    img_service = data.get("img_service", "banana_pro")
+    preset_id = data.get("preset_id", "new")
+    reference_images = list(data.get("reference_images") or [])
+    max_refs = _get_max_image_references(img_service)
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=(
+            f"📎 <b>Загрузка референсов</b>\n"
+            f"Загружено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
+            "Можно отправить ещё фото или открыть сохранённые рефы."
+        ),
+        reply_markup=get_reference_images_upload_keyboard(
+            len(reference_images), max_refs, preset_id
+        ),
+        parse_mode="HTML",
+    )
+
+
+async def _send_saved_reference_preview(
+    target_message: types.Message,
+    state: FSMContext,
+    *,
+    refs: list,
+    index: int,
+) -> types.Message | None:
+    if not refs:
+        return None
+
+    safe_index = max(0, min(index, len(refs) - 1))
+    ref = refs[safe_index]
+    data = await state.get_data()
+    reference_images = list(data.get("reference_images") or [])
+    already_selected = ref.file_url in reference_images
+    created_at = ref.created_at.strftime("%d.%m.%Y %H:%M") if ref.created_at else "—"
+    filename = ref.original_filename or os.path.basename(ref.file_url or "") or "reference"
+    caption = (
+        f"📚 <b>Сохранённый реф</b>\n"
+        f"• {safe_index + 1} из {len(refs)}\n"
+        f"• Файл: <code>{filename[:64]}</code>\n"
+        f"• Сохранён: <code>{created_at}</code>\n"
+        f"• Статус: <code>{'уже добавлен в текущую сессию' if already_selected else 'готов к использованию'}</code>"
+    )
+    reply_markup = get_saved_reference_picker_keyboard(
+        ref.id,
+        safe_index,
+        len(refs),
+        already_selected=already_selected,
+    )
+
+    try:
+        return await target_message.answer_photo(
+            photo=ref.file_url,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+    except TelegramBadRequest:
+        from bot.services.media_input_utils import resolve_local_upload_path
+
+        local_path = resolve_local_upload_path(ref.file_url)
+        if not local_path or not os.path.exists(local_path):
+            await target_message.answer(
+                "Не удалось открыть сохранённый реф. Возможно, файл больше недоступен.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
+            return None
+
+        with open(local_path, "rb") as f:
+            image_bytes = f.read()
+        return await target_message.answer_photo(
+            photo=types.BufferedInputFile(image_bytes, filename=filename),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+
+
+@router.callback_query(F.data == "savedref_noop")
+async def saved_reference_noop(callback: types.CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data == "savedref_close")
+async def close_saved_reference_preview(callback: types.CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer("Закрыл")
+
+
+@router.callback_query(F.data == "ref_saved_library")
+async def open_saved_reference_library(callback: types.CallbackQuery, state: FSMContext):
+    saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    if not saved_refs:
+        await callback.answer("Сохранённых рефов пока нет", show_alert=True)
+        return
+
+    await state.update_data(
+        saved_ref_return_chat_id=callback.message.chat.id,
+        saved_ref_return_message_id=callback.message.message_id,
+    )
+    await _send_saved_reference_preview(callback.message, state, refs=saved_refs, index=0)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("savedref_nav_"))
+async def navigate_saved_reference_library(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        index = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        await callback.answer("Не удалось открыть реф", show_alert=True)
+        return
+
+    saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    if not saved_refs:
+        await callback.answer("Сохранённых рефов больше нет", show_alert=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        return
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await _send_saved_reference_preview(callback.message, state, refs=saved_refs, index=index)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("savedref_use_"))
+async def use_saved_reference_from_library(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        reference_id = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        await callback.answer("Не удалось добавить реф", show_alert=True)
+        return
+
+    saved_refs = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    candidate = next((ref for ref in saved_refs if ref.id == reference_id), None)
+    if not candidate:
+        await callback.answer("Реф не найден", show_alert=True)
+        return
+
+    data = await state.get_data()
+    img_service = data.get("img_service", "banana_pro")
+    max_refs = _get_max_image_references(img_service)
+    reference_images = list(data.get("reference_images") or [])
+    if candidate.file_url in reference_images:
+        await callback.answer("Этот реф уже добавлен", show_alert=True)
+        return
+    if len(reference_images) >= max_refs:
+        await callback.answer("Уже достигнут лимит референсов", show_alert=True)
+        return
+
+    reference_images.append(candidate.file_url)
+    await state.update_data(reference_images=reference_images)
+
+    return_chat_id = data.get("saved_ref_return_chat_id")
+    return_message_id = data.get("saved_ref_return_message_id")
+    if return_chat_id and return_message_id:
+        try:
+            await _update_reference_upload_message(callback.bot, return_chat_id, return_message_id, state)
+        except Exception:
+            logger.exception("Failed to refresh upload screen after selecting saved ref")
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer("Реф добавлен")
+    await callback.message.answer(
+        f"✅ Сохранённый реф добавлен. Сейчас в сессии: <code>{len(reference_images)}/{max_refs}</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("savedref_delete_"))
+async def delete_saved_reference_from_library(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("Не удалось удалить реф", show_alert=True)
+        return
+    try:
+        reference_id = int(parts[2])
+        current_index = int(parts[3])
+    except ValueError:
+        await callback.answer("Не удалось удалить реф", show_alert=True)
+        return
+
+    deleted = await delete_saved_reference(callback.from_user.id, reference_id)
+    if not deleted:
+        await callback.answer("Реф уже удалён", show_alert=True)
+        return
+
+    data = await state.get_data()
+    reference_images = list(data.get("reference_images") or [])
+    saved_refs_after = await list_saved_references(callback.from_user.id, kind="image", limit=50)
+    valid_urls = {ref.file_url for ref in saved_refs_after}
+    updated_reference_images = [url for url in reference_images if url in valid_urls]
+    if len(updated_reference_images) != len(reference_images):
+        await state.update_data(reference_images=updated_reference_images)
+        return_chat_id = data.get("saved_ref_return_chat_id")
+        return_message_id = data.get("saved_ref_return_message_id")
+        if return_chat_id and return_message_id:
+            try:
+                await _update_reference_upload_message(callback.bot, return_chat_id, return_message_id, state)
+            except Exception:
+                logger.exception("Failed to refresh upload screen after deleting saved ref")
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+    if not saved_refs_after:
+        await callback.answer("Реф удалён")
+        await callback.message.answer("Сохранённых рефов больше нет.")
+        return
+
+    next_index = min(current_index, len(saved_refs_after) - 1)
+    await _send_saved_reference_preview(callback.message, state, refs=saved_refs_after, index=next_index)
+    await callback.answer("Реф удалён")
+
+
 @router.callback_query(F.data == "ref_reload_new")
 async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext):
     """Перезагружает референсы (очищает и начинает заново) для нового UX"""
@@ -1855,12 +2232,16 @@ async def handle_ref_reload_new(callback: types.CallbackQuery, state: FSMContext
 
     # Определяем preset_id для клавиатуры
     preset_id = "new" if generation_type != "video" else "video_new"
+    current_service = data.get("img_service", "banana_pro")
+    max_refs = _get_max_image_references(current_service)
 
     await callback.message.edit_text(
-        f"📎 <b>Перезагрузка референсов</b>"
-        f"Загружено: <code>0/9</code>"
-        f"Отправьте новые фотографии для загрузки референсов:",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, preset_id),
+        (
+            f"📎 <b>Перезагрузка референсов</b>\n"
+            f"Загружено: <code>0/{max_refs}</code>\n"
+            f"Отправьте новые фотографии для загрузки референсов:"
+        ),
+        reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -2341,7 +2722,7 @@ async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMCo
     await state.update_data(
         img_service="seedream_edit",
         img_ratio="1:1",
-        img_quality="2K",
+        img_quality="basic",
         img_nsfw_checker=False,
     )
     data = await state.get_data()
@@ -2635,7 +3016,7 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
         f"• Персонажей (до 4 фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны",
-        reply_markup=get_reference_images_upload_keyboard(0, 9, "generate_image"),
+        reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("banana_pro"), "generate_image"),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -3257,8 +3638,9 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
         preset_id = None
 
     data = await state.get_data()
+    img_service = data.get("img_service", "banana_pro")
     current_refs = data.get("reference_images", [])
-    max_refs = 9
+    max_refs = _get_max_image_references(img_service)
 
     if action == "upload":
         # Начинаем загрузку референсных изображений
@@ -3572,7 +3954,14 @@ async def process_photo_for_video_prompt_state(
             else "png" if mime_type == "image/png" else "webp"
         )
 
-    image_url = save_uploaded_file(image_data, file_ext)
+    content_type = "image/jpeg" if file_ext == "jpg" else f"image/{file_ext}"
+    image_url = await _persist_reusable_image_reference(
+        message.from_user.id,
+        image_data,
+        file_ext,
+        original_filename=f"video_ref_{photo.file_id}.{file_ext}",
+        content_type=content_type,
+    )
     if not image_url:
         await message.answer(
             "❌ Не удалось сохранить фото.",
@@ -4103,7 +4492,7 @@ async def upload_reference_image_for_any_image_flow(
         data = await state.get_data()
         img_service = data.get("img_service", "banana_pro")
         preset_id = data.get("preset_id", "new")
-        max_refs = 9
+        max_refs = _get_max_image_references(img_service)
 
         reference_images = list(data.get("reference_images") or [])
         if len(reference_images) >= max_refs:
@@ -4119,7 +4508,13 @@ async def upload_reference_image_for_any_image_flow(
             downloaded = await message.bot.download_file(file.file_path)
             image_bytes = downloaded.read()
 
-            public_url = save_uploaded_file(image_bytes, "jpg")
+            public_url = await _persist_reusable_image_reference(
+                message.from_user.id,
+                image_bytes,
+                "jpg",
+                original_filename=f"telegram_photo_{photo.file_id}.jpg",
+                content_type="image/jpeg",
+            )
             if not public_url:
                 await message.answer(
                     "Не удалось сохранить фото. Попробуйте другое изображение."
@@ -4470,7 +4865,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         reference_images = list(data.get("reference_images") or [])
         v_type = data.get("v_type")
         img_service = data.get("img_service")
-        max_refs = 9
+        max_refs = _get_max_image_references(img_service) if img_service else 9
 
         if len(reference_images) >= max_refs:
             await message.answer(
@@ -4523,7 +4918,15 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
                 file_ext = "webp"
             else:
                 file_ext = "png"
-        image_url = save_uploaded_file(image_data, file_ext)
+
+        content_type = "image/jpeg" if file_ext == "jpg" else f"image/{file_ext}"
+        image_url = await _persist_reusable_image_reference(
+            message.from_user.id,
+            image_data,
+            file_ext,
+            original_filename=f"reference_{photo.file_id}.{file_ext}",
+            content_type=content_type,
+        )
 
         if image_url:
             reference_images.append(image_url)
@@ -4640,7 +5043,9 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-        stable_reference_images = _snapshot_reference_images(reference_images)
+        stable_reference_images = _prepare_banana_reference_images(
+            img_service, reference_images
+        )
 
         for index in range(img_count):
             variant_prompt = _build_image_variant_prompt(prompt, index, img_count)

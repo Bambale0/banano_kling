@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
+SAVED_REFERENCES_MAX_PER_KIND = int(os.getenv("SAVED_REFERENCES_MAX_PER_KIND", "3"))
 
 # Партнёрская программа — единственный источник констант
 PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
@@ -63,6 +64,77 @@ class Transaction:
     amount_rub: float
     status: str
     created_at: datetime
+
+
+@dataclass
+class SavedReference:
+    id: int
+    user_id: int
+    kind: str
+    file_url: str
+    file_hash: str
+    original_filename: Optional[str] = None
+    content_type: Optional[str] = None
+    source: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+async def _ensure_saved_references_schema(db: aiosqlite.Connection) -> None:
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS saved_references (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            file_hash TEXT,
+            original_filename TEXT,
+            content_type TEXT,
+            source TEXT DEFAULT 'telegram',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+
+    cursor = await db.execute("PRAGMA table_info(saved_references)")
+    columns = {row[1] for row in await cursor.fetchall()}
+
+    column_migrations = [
+        ("file_hash", "ALTER TABLE saved_references ADD COLUMN file_hash TEXT"),
+        ("original_filename", "ALTER TABLE saved_references ADD COLUMN original_filename TEXT"),
+        ("content_type", "ALTER TABLE saved_references ADD COLUMN content_type TEXT"),
+        ("source", "ALTER TABLE saved_references ADD COLUMN source TEXT DEFAULT 'telegram'"),
+        ("updated_at", "ALTER TABLE saved_references ADD COLUMN updated_at TIMESTAMP"),
+        ("last_used_at", "ALTER TABLE saved_references ADD COLUMN last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ]
+    for column_name, statement in column_migrations:
+        if column_name not in columns:
+            try:
+                await db.execute(statement)
+            except aiosqlite.OperationalError:
+                pass
+
+    await db.execute(
+        "UPDATE saved_references SET file_hash = COALESCE(file_hash, file_url) WHERE file_hash IS NULL OR TRIM(file_hash) = ''"
+    )
+    await db.execute(
+        "UPDATE saved_references SET source = COALESCE(NULLIF(source, ''), 'telegram')"
+    )
+    await db.execute(
+        "UPDATE saved_references SET last_used_at = COALESCE(last_used_at, created_at, CURRENT_TIMESTAMP) WHERE last_used_at IS NULL"
+    )
+    await db.execute(
+        "UPDATE saved_references SET updated_at = COALESCE(updated_at, last_used_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_saved_references_user_kind_last_used ON saved_references(user_id, kind, last_used_at DESC, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_references_user_kind_hash ON saved_references(user_id, kind, file_hash)"
+    )
 
 
 @dataclass
@@ -220,6 +292,15 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN updated_at TIMESTAMP"
+            )
+            await db.execute(
+                "UPDATE generation_tasks SET updated_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"
+            )
+        except aiosqlite.OperationalError:
+            pass
 
         # Миграция: добавляем provider в transactions
         try:
@@ -341,6 +422,8 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+
+        await _ensure_saved_references_schema(db)
 
         await db.commit()
         logger.info("Database initialized successfully")
@@ -1420,6 +1503,395 @@ async def cancel_partner_withdrawal(withdrawal_id: int) -> Optional[dict]:
             "telegram_id": row["telegram_id"],
             "amount_rub": round(float(row["amount_rub"] or 0), 2),
         }
+
+
+def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _saved_reference_from_row(row: aiosqlite.Row) -> SavedReference:
+    return SavedReference(
+        id=row["id"],
+        user_id=row["user_id"],
+        kind=row["kind"],
+        file_url=row["file_url"],
+        file_hash=row["file_hash"],
+        original_filename=row["original_filename"],
+        content_type=row["content_type"],
+        source=row["source"],
+        created_at=_parse_optional_datetime(row["created_at"]),
+        updated_at=_parse_optional_datetime(row["updated_at"]),
+        last_used_at=_parse_optional_datetime(row["last_used_at"]),
+    )
+
+
+def _saved_reference_to_payload(reference: SavedReference) -> dict:
+    return {
+        "id": reference.id,
+        "user_id": reference.user_id,
+        "kind": reference.kind,
+        "file_url": reference.file_url,
+        "file_hash": reference.file_hash,
+        "original_filename": reference.original_filename,
+        "content_type": reference.content_type,
+        "source": reference.source,
+        "created_at": reference.created_at.isoformat() if reference.created_at else None,
+        "updated_at": reference.updated_at.isoformat() if reference.updated_at else None,
+        "last_used_at": reference.last_used_at.isoformat() if reference.last_used_at else None,
+    }
+
+
+def _saved_reference_from_payload(payload: dict) -> SavedReference:
+    return SavedReference(
+        id=int(payload.get("id", 0)),
+        user_id=int(payload.get("user_id", 0)),
+        kind=str(payload.get("kind", "image")),
+        file_url=str(payload.get("file_url", "")),
+        file_hash=str(payload.get("file_hash", "")),
+        original_filename=payload.get("original_filename"),
+        content_type=payload.get("content_type"),
+        source=payload.get("source"),
+        created_at=_parse_optional_datetime(payload.get("created_at")),
+        updated_at=_parse_optional_datetime(payload.get("updated_at")),
+        last_used_at=_parse_optional_datetime(payload.get("last_used_at")),
+    )
+
+
+async def _invalidate_saved_reference_cache(telegram_id: int) -> None:
+    try:
+        from bot.services.redis_service import redis_service
+
+        keys = []
+        for kind in ("all", "image", "video", "audio"):
+            for limit in (12, 24, 50):
+                keys.append(redis_service.build_key(f"saved_refs:{telegram_id}:{kind}:{limit}"))
+        for key in keys:
+            await redis_service.delete(key)
+    except Exception:
+        logger.exception("Failed to invalidate saved reference cache for telegram_id=%s", telegram_id)
+
+
+async def _remove_saved_reference_file(file_url: str) -> None:
+    try:
+        from bot.services.media_input_utils import resolve_local_upload_path
+
+        local_path = resolve_local_upload_path(file_url)
+        if not local_path or not os.path.exists(local_path):
+            return
+
+        os.remove(local_path)
+
+        uploads_root = os.path.abspath(os.path.join("static", "uploads"))
+        current_dir = os.path.dirname(os.path.abspath(local_path))
+        while current_dir.startswith(uploads_root) and current_dir != uploads_root:
+            try:
+                if os.listdir(current_dir):
+                    break
+                os.rmdir(current_dir)
+                current_dir = os.path.dirname(current_dir)
+            except OSError:
+                break
+    except FileNotFoundError:
+        return
+    except Exception:
+        logger.exception("Failed to remove saved reference file: %s", file_url)
+
+
+async def _prune_saved_references_for_user_id(
+    db: aiosqlite.Connection,
+    *,
+    user_id: int,
+    kind: str,
+    keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
+) -> tuple[int, list[str]]:
+    safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
+    db.row_factory = aiosqlite.Row
+    cursor = await db.execute(
+        """
+        SELECT id, file_url
+        FROM saved_references
+        WHERE user_id = ? AND kind = ?
+        ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC
+        LIMIT -1 OFFSET ?
+        """,
+        (user_id, kind, safe_keep_latest),
+    )
+    stale_rows = await cursor.fetchall()
+    if not stale_rows:
+        return 0, []
+
+    delete_ids = [int(row["id"]) for row in stale_rows]
+    deleted_urls = [str(row["file_url"]) for row in stale_rows if row["file_url"]]
+
+    id_placeholders = ", ".join("?" for _ in delete_ids)
+    url_placeholders = ", ".join("?" for _ in deleted_urls)
+    removable_urls = deleted_urls
+
+    if deleted_urls:
+        cursor = await db.execute(
+            f"SELECT DISTINCT file_url FROM saved_references WHERE file_url IN ({url_placeholders}) AND id NOT IN ({id_placeholders})",
+            [*deleted_urls, *delete_ids],
+        )
+        still_used_urls = {str(row[0]) for row in await cursor.fetchall() if row[0]}
+        removable_urls = [url for url in deleted_urls if url not in still_used_urls]
+
+    await db.execute(
+        f"DELETE FROM saved_references WHERE id IN ({id_placeholders})",
+        delete_ids,
+    )
+    return len(delete_ids), removable_urls
+
+
+async def prune_saved_references_for_user(
+    telegram_id: int,
+    *,
+    kind: Optional[str] = None,
+    keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
+) -> int:
+    user = await get_or_create_user(telegram_id)
+    target_kinds = [kind] if kind in {"image", "video", "audio"} else ["image", "video", "audio"]
+    removed_count = 0
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        for target_kind in target_kinds:
+            deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+                db,
+                user_id=user.id,
+                kind=target_kind,
+                keep_latest=keep_latest,
+            )
+            removed_count += deleted_count
+        await db.commit()
+
+    if removed_count:
+        await _invalidate_saved_reference_cache(telegram_id)
+    return removed_count
+
+
+async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND) -> int:
+    safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
+    removed_count = 0
+    telegram_ids: set[int] = set()
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT sr.user_id, u.telegram_id, sr.kind, COUNT(*) AS refs_count
+            FROM saved_references sr
+            JOIN users u ON u.id = sr.user_id
+            GROUP BY sr.user_id, u.telegram_id, sr.kind
+            HAVING refs_count > ?
+            """,
+            (safe_keep_latest,),
+        )
+        groups = await cursor.fetchall()
+
+        for group in groups:
+            deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+                db,
+                user_id=int(group["user_id"]),
+                kind=str(group["kind"]),
+                keep_latest=safe_keep_latest,
+            )
+            removed_count += deleted_count
+            if group["telegram_id"]:
+                telegram_ids.add(int(group["telegram_id"]))
+
+        await db.commit()
+
+    for telegram_id in telegram_ids:
+        await _invalidate_saved_reference_cache(telegram_id)
+
+    return removed_count
+
+
+async def get_saved_reference_by_hash(telegram_id: int, kind: str, file_hash: str) -> Optional[SavedReference]:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM saved_references
+            WHERE user_id = ? AND kind = ? AND file_hash = ?
+            LIMIT 1
+            """,
+            (user.id, kind, file_hash),
+        )
+        row = await cursor.fetchone()
+        return _saved_reference_from_row(row) if row else None
+
+
+async def get_saved_reference_by_id(telegram_id: int, reference_id: int) -> Optional[SavedReference]:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM saved_references WHERE id = ? AND user_id = ? LIMIT 1",
+            (reference_id, user.id),
+        )
+        row = await cursor.fetchone()
+        return _saved_reference_from_row(row) if row else None
+
+
+async def delete_saved_reference(telegram_id: int, reference_id: int) -> bool:
+    user = await get_or_create_user(telegram_id)
+    file_url: str | None = None
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT file_url FROM saved_references WHERE id = ? AND user_id = ? LIMIT 1",
+            (reference_id, user.id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+
+        file_url = row["file_url"]
+        await db.execute(
+            "DELETE FROM saved_references WHERE id = ? AND user_id = ?",
+            (reference_id, user.id),
+        )
+        await db.commit()
+
+        if file_url:
+            cursor = await db.execute(
+                "SELECT 1 FROM saved_references WHERE file_url = ? LIMIT 1",
+                (file_url,),
+            )
+            still_used = await cursor.fetchone()
+        else:
+            still_used = True
+
+    if file_url and not still_used:
+        await _remove_saved_reference_file(file_url)
+    await _invalidate_saved_reference_cache(telegram_id)
+    return True
+
+
+async def save_user_reference(
+    telegram_id: int,
+    *,
+    kind: str,
+    file_url: str,
+    file_hash: str,
+    original_filename: Optional[str] = None,
+    content_type: Optional[str] = None,
+    source: str = "telegram",
+) -> SavedReference:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            INSERT INTO saved_references (user_id, kind, file_url, file_hash, original_filename, content_type, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, kind, file_hash) DO UPDATE SET
+                file_url = excluded.file_url,
+                original_filename = COALESCE(excluded.original_filename, saved_references.original_filename),
+                content_type = COALESCE(excluded.content_type, saved_references.content_type),
+                source = COALESCE(excluded.source, saved_references.source),
+                updated_at = CURRENT_TIMESTAMP,
+                last_used_at = CURRENT_TIMESTAMP
+            """,
+            (user.id, kind, file_url, file_hash, original_filename, content_type, source),
+        )
+        await db.commit()
+        deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+            db,
+            user_id=user.id,
+            kind=kind,
+            keep_latest=SAVED_REFERENCES_MAX_PER_KIND,
+        )
+        await db.commit()
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM saved_references
+            WHERE user_id = ? AND kind = ? AND file_hash = ?
+            LIMIT 1
+            """,
+            (user.id, kind, file_hash),
+        )
+        row = await cursor.fetchone()
+    await _invalidate_saved_reference_cache(telegram_id)
+    return _saved_reference_from_row(row)
+
+
+async def touch_saved_references(telegram_id: int, file_urls: list[str], kind: Optional[str] = None) -> None:
+    urls = [str(url).strip() for url in (file_urls or []) if str(url).strip()]
+    if not urls:
+        return
+
+    user = await get_or_create_user(telegram_id)
+    placeholders = ", ".join("?" for _ in urls)
+    params: list = [user.id, *urls]
+    where_kind = ""
+    if kind:
+        where_kind = " AND kind = ?"
+        params.append(kind)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            f"UPDATE saved_references SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND file_url IN ({placeholders}){where_kind}",
+            params,
+        )
+        await db.commit()
+    await _invalidate_saved_reference_cache(telegram_id)
+
+
+async def list_saved_references(telegram_id: int, kind: Optional[str] = None, limit: int = 24) -> list[SavedReference]:
+    safe_kind = kind if kind in {"image", "video", "audio"} else None
+    safe_limit = max(1, min(int(limit or 24), 50))
+    cache_kind = safe_kind or "all"
+    cache_key_suffix = f"saved_refs:{telegram_id}:{cache_kind}:{safe_limit}"
+
+    try:
+        from bot.services.redis_service import redis_service
+
+        cached = await redis_service.get(redis_service.build_key(cache_key_suffix))
+        if cached:
+            payload = json.loads(cached)
+            if isinstance(payload, list):
+                return [_saved_reference_from_payload(item) for item in payload if isinstance(item, dict)]
+    except Exception:
+        logger.exception("Failed to read saved references cache for telegram_id=%s", telegram_id)
+
+    user = await get_or_create_user(telegram_id)
+    query = "SELECT * FROM saved_references WHERE user_id = ?"
+    params: list = [user.id]
+    if safe_kind:
+        query += " AND kind = ?"
+        params.append(safe_kind)
+    query += " ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC LIMIT ?"
+    params.append(safe_limit)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(query, params)
+        rows = await cursor.fetchall()
+
+    references = [_saved_reference_from_row(row) for row in rows]
+
+    try:
+        from bot.services.redis_service import redis_service
+
+        await redis_service.set(
+            redis_service.build_key(cache_key_suffix),
+            json.dumps([_saved_reference_to_payload(item) for item in references], ensure_ascii=False),
+            ttl_seconds=3600,
+        )
+    except Exception:
+        logger.exception("Failed to write saved references cache for telegram_id=%s", telegram_id)
+
+    return references
 
 
 async def get_referral_stats(telegram_id: int) -> dict:

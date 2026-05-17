@@ -45,6 +45,25 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _should_log_edit_warning(error: Exception) -> bool:
+    if isinstance(error, TelegramBadRequest):
+        message = str(error).lower()
+        if "there is no text in the message to edit" in message:
+            return False
+    return True
+
+
+async def _safe_callback_answer(callback: types.CallbackQuery, text: str | None = None, *, show_alert: bool = False) -> None:
+    try:
+        await callback.answer(text=text, show_alert=show_alert)
+    except TelegramBadRequest as e:
+        error_msg = str(e).lower()
+        if "query is too old" in error_msg or "query id is invalid" in error_msg:
+            logger.info("Ignoring stale callback answer for user_id=%s data=%s: %s", callback.from_user.id if callback.from_user else None, callback.data, e)
+            return
+        raise
+
+
 def _partner_withdraw_admin_keyboard(withdrawal_id: int) -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -278,18 +297,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
         order_id = args[0].replace("success_", "")
 
         # Проверяем транзакцию в базе данных
-        from bot.database import (
-            add_credits,
-            get_transaction_by_order,
-            update_transaction_status,
-        )
-        from bot.services.cryptobot_service import cryptobot_service
+        from bot.database import get_transaction_by_order, update_transaction_status
+        from bot.handlers.payments import _complete_transaction, _resolve_payment_state
 
         transaction = await get_transaction_by_order(order_id)
 
         if transaction:
             if transaction.status == "completed":
-                # Кредиты уже были начислены
                 await message.answer(
                     f"✅ <b>Оплата уже обработана!</b>"
                     f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
@@ -298,42 +312,40 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 )
                 return
             elif transaction.status == "pending":
-                paid = False
-                if transaction.provider == "cryptobot" and cryptobot_service.enabled:
-                    try:
-                        invoice = await cryptobot_service.get_invoice(
-                            transaction.payment_id
-                        )
-                        paid = bool(invoice and (invoice.get("status") == "paid"))
-                    except Exception:
-                        paid = False
+                state = await _resolve_payment_state(transaction)
 
-                if paid:
-                    # Начисляем кредиты
-                    await add_credits(message.from_user.id, transaction.credits)
-                    await update_transaction_status(order_id, "completed")
+                if state.get("paid"):
+                    await _complete_transaction(order_id)
 
-                    # Получаем обновлённый баланс
                     user = await get_or_create_user(message.from_user.id)
 
                     await message.answer(
                         f"🎉 <b>Оплата успешно обработана!</b>"
                         f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
-                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽"
+                        f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
                         f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
                     )
                     return
-                else:
-                    # Ожидаем подтверждения от платёжного провайдера
+
+                if state.get("failed"):
+                    await update_transaction_status(order_id, "failed")
                     await message.answer(
-                        "⏳ <b>Оплата в обработке...</b>"
-                        "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
+                        "⚠️ <b>Оплата не подтверждена</b>\n"
+                        "Похоже, платёж отменён или истёк. Попробуй создать новый.",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
                     )
                     return
+
+                await message.answer(
+                    "⏳ <b>Оплата в обработке...</b>"
+                    "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
+                    reply_markup=get_main_menu_keyboard(user.credits),
+                    parse_mode="HTML",
+                )
+                return
         else:
             await message.answer(
                 "❌ <b>Транзакция не найдена</b>" "Пожалуйста, свяжитесь с поддержкой.",
@@ -437,7 +449,8 @@ async def show_help(callback: types.CallbackQuery):
             help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
         )
     except Exception as e:
-        logger.warning(f"Cannot edit message in show_help: {e}")
+        if _should_log_edit_warning(e):
+            logger.warning(f"Cannot edit message in show_help: {e}")
         await callback.message.answer(
             help_text, reply_markup=get_back_keyboard(), parse_mode="HTML"
         )
@@ -460,7 +473,8 @@ async def show_prompt_channel(callback: types.CallbackQuery):
             text, reply_markup=get_back_keyboard(), parse_mode="HTML"
         )
     except Exception as e:
-        logger.warning(f"Cannot edit message in show_prompt_channel: {e}")
+        if _should_log_edit_warning(e):
+            logger.warning(f"Cannot edit message in show_prompt_channel: {e}")
         await callback.message.answer(
             text, reply_markup=get_back_keyboard(), parse_mode="HTML"
         )
@@ -487,7 +501,8 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         )
     except Exception as e:
         # Если сообщение нельзя отредактировать (например, нет текста или сообщение удалено)
-        logger.warning(f"Cannot edit message: {e}")
+        if _should_log_edit_warning(e):
+            logger.warning(f"Cannot edit message: {e}")
         # Отправляем новое сообщение
         await callback.message.answer(
             welcome_text,
@@ -521,9 +536,9 @@ async def cmd_partner(message: types.Message):
 @router.callback_query(F.data.in_({"menu_referrals", "menu_partner"}))
 async def show_partner(callback: types.CallbackQuery, state: FSMContext):
     """Показывает партнёрскую программу."""
+    await _safe_callback_answer(callback)
     await state.clear()
     await render_partner_program(callback.message, user_id=callback.from_user.id)
-    await callback.answer()
 
 
 @router.callback_query(F.data == "partner_offer")
@@ -1081,7 +1096,8 @@ async def show_history(callback: types.CallbackQuery):
         )
     except Exception as e:
         # Если сообщение нельзя отредактировать
-        logger.warning(f"Cannot edit message: {e}")
+        if _should_log_edit_warning(e):
+            logger.warning(f"Cannot edit message: {e}")
         await callback.message.answer(
             history_text,
             reply_markup=get_main_menu_keyboard(user.credits),

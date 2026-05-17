@@ -37,6 +37,9 @@ interface VideoGeneratorFormProps {
   onUploadImageReference?: (file: File) => Promise<UploadedFile>
   onUploadVideoReference?: (file: File) => Promise<UploadedFile>
   onUploadAudioReference?: (file: File) => Promise<UploadedFile>
+  savedImageReferences?: UploadedFile[]
+  savedVideoReferences?: UploadedFile[]
+  savedAudioReferences?: UploadedFile[]
   isSubmitting: boolean
   credits: number
 }
@@ -47,6 +50,9 @@ export function VideoGeneratorForm({
   onUploadImageReference,
   onUploadVideoReference,
   onUploadAudioReference,
+  savedImageReferences = [],
+  savedVideoReferences = [],
+  savedAudioReferences = [],
   isSubmitting,
   credits,
 }: VideoGeneratorFormProps) {
@@ -443,6 +449,8 @@ export function VideoGeneratorForm({
               accept="image/*"
               required
               onUpload={onUploadImageReference}
+              libraryFiles={savedImageReferences}
+              libraryLabel="Сохранённые стартовые кадры"
             />
           </div>
         )}
@@ -460,6 +468,8 @@ export function VideoGeneratorForm({
             accept="video/*"
             required
             onUpload={onUploadVideoReference}
+            libraryFiles={savedVideoReferences}
+            libraryLabel="Сохранённые видео-референсы"
           />
           </div>
         )}
@@ -475,6 +485,8 @@ export function VideoGeneratorForm({
             maxFiles={1}
             accept="audio/*"
             onUpload={onUploadAudioReference}
+            libraryFiles={savedAudioReferences}
+            libraryLabel="Сохранённые аудио-референсы"
           />
         </div>
 
@@ -489,6 +501,8 @@ export function VideoGeneratorForm({
             maxFiles={model?.max_image_references || 8}
             accept="image/*"
             onUpload={onUploadImageReference}
+            libraryFiles={savedImageReferences}
+            libraryLabel="Сохранённые image-референсы"
           />
         </div>
 

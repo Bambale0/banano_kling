@@ -8,7 +8,7 @@ import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import { generateVideo, uploadFile } from '@/lib/api'
 
 export function VideoTab() {
-  const { state, addTask, setCredits, setTaskDetail, selectTask } = useApp()
+  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -81,7 +81,9 @@ export function VideoTab() {
         size: file.size,
       }
     }
-    return uploadFile('image_reference', file)
+    const uploaded = await uploadFile('image_reference', file)
+    addSavedReference(uploaded)
+    return uploaded
   }
 
   const handleUploadVideoReference = async (file: File): Promise<UploadedFile> => {
@@ -94,7 +96,9 @@ export function VideoTab() {
         size: file.size,
       }
     }
-    return uploadFile('video_reference', file)
+    const uploaded = await uploadFile('video_reference', file)
+    addSavedReference(uploaded)
+    return uploaded
   }
 
 
@@ -108,7 +112,9 @@ export function VideoTab() {
         size: file.size,
       }
     }
-    return uploadFile('audio_reference', file)
+    const uploaded = await uploadFile('audio_reference', file)
+    addSavedReference(uploaded)
+    return uploaded
   }
 
   return (
@@ -129,6 +135,9 @@ export function VideoTab() {
           onUploadImageReference={handleUploadImageReference}
           onUploadVideoReference={handleUploadVideoReference}
           onUploadAudioReference={handleUploadAudioReference}
+          savedImageReferences={state.savedReferences.filter((item) => item.type === 'image')}
+          savedVideoReferences={state.savedReferences.filter((item) => item.type === 'video')}
+          savedAudioReferences={state.savedReferences.filter((item) => item.type === 'audio')}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
         />

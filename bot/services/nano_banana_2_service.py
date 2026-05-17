@@ -6,10 +6,35 @@ import aiohttp
 from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
+    is_local_upload_source,
 )
 from bot.services.kie_file_upload_service import kie_file_upload_service
 
 logger = logging.getLogger(__name__)
+MAX_IMAGE_INPUTS = 8
+RESOLUTION_ALIASES = {
+    "BASIC": "2K",
+    "HIGH": "4K",
+    "1K": "1K",
+    "2K": "2K",
+    "4K": "4K",
+}
+
+
+def _normalize_resolution(resolution: str) -> str:
+    raw = str(resolution or "2K").strip().upper()
+    normalized = RESOLUTION_ALIASES.get(raw, raw)
+    if normalized not in {"1K", "2K", "4K"}:
+        logger.warning(
+            "Nano Banana 2 unsupported resolution %s, fallback to 2K",
+            resolution,
+        )
+        return "2K"
+    if normalized != raw:
+        logger.info(
+            "Nano Banana 2 resolution normalized: %s -> %s", raw, normalized
+        )
+    return normalized
 
 
 class NanoBanana2Service:
@@ -88,17 +113,34 @@ class NanoBanana2Service:
             for source in uploaded_image_urls
             if isinstance(source, str) and source
         ]
+        if len(normalized_image_input) > MAX_IMAGE_INPUTS:
+            logger.warning(
+                "Nano Banana 2 create_task collapsing references from %s to %s for identity safety",
+                len(normalized_image_input),
+                MAX_IMAGE_INPUTS,
+            )
+            normalized_image_input = normalized_image_input[:MAX_IMAGE_INPUTS]
+
         if not normalized_image_input and image_input:
+            fallback_inputs = [
+                source
+                for source in image_input
+                if not (isinstance(source, str) and is_local_upload_source(source))
+            ]
+            if not fallback_inputs:
+                logger.error("Nano Banana 2 create_task aborted: all local reference files are missing")
+                return None
             # Предпочитаем URL-ы из локального upload flow, но сохраняем fallback,
             # чтобы не ломать нестандартные источники изображений.
-            normalized_image_input = image_sources_to_data_uris(image_input)
+            normalized_image_input = image_sources_to_data_uris(fallback_inputs)
 
+        normalized_resolution = _normalize_resolution(resolution)
         payload = {
             "model": "nano-banana-2",
             "input": {
                 "prompt": prompt,
                 "aspect_ratio": aspect_ratio,
-                "resolution": resolution,
+                "resolution": normalized_resolution,
                 "output_format": output_format,
             },
         }

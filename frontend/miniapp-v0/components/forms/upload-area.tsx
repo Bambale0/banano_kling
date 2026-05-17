@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Upload, X, Loader2, Image as ImageIcon, Video, Music } from 'lucide-react'
+import { Upload, X, Loader2, Video, Music, Plus } from 'lucide-react'
 
 interface UploadAreaProps {
   files: UploadedFile[]
@@ -12,6 +12,8 @@ interface UploadAreaProps {
   accept: string
   required?: boolean
   onUpload?: (file: File) => Promise<UploadedFile>
+  libraryFiles?: UploadedFile[]
+  libraryLabel?: string
 }
 
 export function UploadArea({ 
@@ -21,6 +23,8 @@ export function UploadArea({
   accept,
   required,
   onUpload,
+  libraryFiles = [],
+  libraryLabel = 'Сохранённые референсы',
 }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -38,6 +42,10 @@ export function UploadArea({
       }
       if (accept.startsWith('video/') && !file.type.startsWith('video/')) {
         setUploadError('Можно загружать только видео')
+        continue
+      }
+      if (accept.startsWith('audio/') && !file.type.startsWith('audio/')) {
+        setUploadError('Можно загружать только аудио')
         continue
       }
 
@@ -86,6 +94,13 @@ export function UploadArea({
   }
 
   const canUploadMore = files.length < maxFiles
+  const availableLibraryFiles = libraryFiles.filter((item) => !files.some((selected) => selected.url === item.url))
+
+  const handleAddFromLibrary = (file: UploadedFile) => {
+    if (!canUploadMore) return
+    onFilesChange([...files, { ...file, id: `${file.id}_${Date.now()}` }])
+    setUploadError(null)
+  }
 
   return (
     <div className="space-y-3">
@@ -135,6 +150,42 @@ export function UploadArea({
         </div>
       )}
 
+      {availableLibraryFiles.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{libraryLabel}</p>
+            <span className="text-[11px] text-muted-foreground">Можно добавить без повторной загрузки</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {availableLibraryFiles.slice(0, Math.max(0, maxFiles - files.length) + 8).map((file) => (
+              <button
+                key={file.id}
+                type="button"
+                onClick={() => handleAddFromLibrary(file)}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-all duration-200",
+                  "border-border/50 bg-secondary/40 text-foreground hover:border-gold/40 hover:bg-secondary/70"
+                )}
+              >
+                {file.type === 'image' ? (
+                  <img src={file.url} alt="" className="h-7 w-7 rounded object-cover" />
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded bg-secondary">
+                    {file.type === 'audio' ? (
+                      <Music className="h-3.5 w-3.5 text-cyan" />
+                    ) : (
+                      <Video className="h-3.5 w-3.5 text-cyan" />
+                    )}
+                  </div>
+                )}
+                <span className="max-w-[120px] truncate">{file.name}</span>
+                <Plus className="h-3.5 w-3.5 text-gold" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* File chips */}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -157,7 +208,11 @@ export function UploadArea({
                   <img src={file.url} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <Video className="w-4 h-4 text-cyan" />
+                    {file.type === 'audio' ? (
+                      <Music className="w-4 h-4 text-cyan" />
+                    ) : (
+                      <Video className="w-4 h-4 text-cyan" />
+                    )}
                   </div>
                 )}
               </div>

@@ -24,6 +24,7 @@ interface ImageGeneratorFormProps {
     references: string[]
   }) => Promise<void>
   onUploadReference?: (file: File) => Promise<UploadedFile>
+  savedReferences?: UploadedFile[]
   isSubmitting: boolean
   credits: number
 }
@@ -32,6 +33,7 @@ export function ImageGeneratorForm({
   models, 
   onSubmit, 
   onUploadReference,
+  savedReferences = [],
   isSubmitting,
   credits,
 }: ImageGeneratorFormProps) {
@@ -238,6 +240,8 @@ export function ImageGeneratorForm({
             accept="image/*"
             required={model?.requires_reference}
             onUpload={onUploadReference}
+            libraryFiles={savedReferences.filter((item) => item.type === 'image')}
+            libraryLabel="Сохранённые фото-референсы"
           />
           <p className="text-xs text-muted-foreground">
             {model?.requires_reference

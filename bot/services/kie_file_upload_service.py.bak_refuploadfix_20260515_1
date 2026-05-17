@@ -1,0 +1,108 @@
+import logging
+import mimetypes
+import os
+import time
+from typing import Iterable
+
+import aiohttp
+
+from bot.config import config
+from bot.services.media_input_utils import is_local_upload_source, resolve_local_upload_path
+
+logger = logging.getLogger(__name__)
+
+
+class KieFileUploadService:
+    """Uploads local static media to KIE's temporary file store."""
+
+    def __init__(self, api_key: str, base_url: str = "https://kieai.redpandaai.co"):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self._cache: dict[str, tuple[str, float]] = {}
+
+    def _cache_key(self, local_path: str) -> str:
+        try:
+            stat = os.stat(local_path)
+            return f"{local_path}:{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            return local_path
+
+    async def upload_local_image_source(self, source: str) -> str:
+        local_path = resolve_local_upload_path(source)
+        if not local_path:
+            if is_local_upload_source(source):
+                logger.warning("Local upload reference is missing; dropping stale source: %s", source)
+                return ""
+            return source
+        if not self.api_key:
+            return source
+
+        cache_key = self._cache_key(local_path)
+        cached_entry = self._cache.get(cache_key)
+        if cached_entry and time.time() - cached_entry[1] < 48 * 60 * 60:
+            cached_url = cached_entry[0]
+            return cached_url
+
+        try:
+            rel_name = os.path.relpath(local_path, os.path.join("static", "uploads"))
+            filename = rel_name.replace(os.sep, "_")
+        except ValueError:
+            filename = os.path.basename(local_path)
+        mime_type = mimetypes.guess_type(local_path)[0] or "image/png"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        form = aiohttp.FormData()
+
+        try:
+            with open(local_path, "rb") as file_obj:
+                form.add_field(
+                    "file",
+                    file_obj,
+                    filename=filename,
+                    content_type=mime_type,
+                )
+                form.add_field("uploadPath", "nano-banana-refs")
+                form.add_field("fileName", filename)
+
+                timeout = aiohttp.ClientTimeout(total=45)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        f"{self.base_url}/api/file-stream-upload",
+                        headers=headers,
+                        data=form,
+                    ) as resp:
+                        data = await resp.json(content_type=None)
+        except Exception:
+            logger.exception("KIE file upload failed for %s", local_path)
+            return source
+
+        if not isinstance(data, dict) or not data.get("success"):
+            logger.warning("KIE file upload rejected %s: %s", local_path, data)
+            return source
+
+        data_block = data.get("data") or {}
+        file_url = (data_block.get("fileUrl") or data_block.get("downloadUrl") or "").strip()
+        if not file_url:
+            logger.warning(
+                "KIE file upload returned no fileUrl for %s: %s", local_path, data
+            )
+            return source
+
+        self._cache[cache_key] = (file_url, time.time())
+        logger.info("KIE file upload ready for Nano Banana reference: %s", file_url)
+        return file_url
+
+    async def upload_local_image_sources(
+        self, sources: Iterable[str] | None
+    ) -> list[str]:
+        if not sources:
+            return []
+        uploaded_sources = []
+        for source in sources:
+            if isinstance(source, str) and source:
+                uploaded_sources.append(await self.upload_local_image_source(source))
+        return uploaded_sources
+
+
+kie_file_upload_service = KieFileUploadService(
+    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY
+)

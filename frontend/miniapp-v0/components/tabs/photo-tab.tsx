@@ -8,7 +8,7 @@ import type { Task, UploadedFile } from '@/lib/types'
 import { generateImage, uploadFile } from '@/lib/api'
 
 export function PhotoTab() {
-  const { state, addTask, setCredits, setTaskDetail, selectTask } = useApp()
+  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +88,9 @@ export function PhotoTab() {
         size: file.size,
       }
     }
-    return uploadFile('image_reference', file)
+    const uploaded = await uploadFile('image_reference', file)
+    addSavedReference(uploaded)
+    return uploaded
   }
 
   return (
@@ -107,6 +109,7 @@ export function PhotoTab() {
           models={state.imageModels}
           onSubmit={handleSubmit}
           onUploadReference={handleUploadReference}
+          savedReferences={state.savedReferences}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
         />

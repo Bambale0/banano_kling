@@ -7,7 +7,7 @@ from typing import Iterable
 import aiohttp
 
 from bot.config import config
-from bot.services.media_input_utils import resolve_local_upload_path
+from bot.services.media_input_utils import is_local_upload_source, resolve_local_upload_path
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,12 @@ class KieFileUploadService:
 
     async def upload_local_image_source(self, source: str) -> str:
         local_path = resolve_local_upload_path(source)
-        if not local_path or not self.api_key:
+        if not local_path:
+            if is_local_upload_source(source):
+                logger.warning("Local upload reference is missing on disk; falling back to original source URL: %s", source)
+                return source
+            return source
+        if not self.api_key:
             return source
 
         cache_key = self._cache_key(local_path)

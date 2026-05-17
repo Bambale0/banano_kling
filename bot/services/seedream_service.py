@@ -27,6 +27,12 @@ class SeedreamService(KlingService):
         "21:9",
     }
     SUPPORTED_QUALITIES = {"basic", "high"}
+    QUALITY_ALIASES = {
+        "2K": "basic",
+        "4K": "high",
+        "BASIC": "basic",
+        "HIGH": "high",
+    }
 
     async def generate_image(
         self,
@@ -56,38 +62,17 @@ class SeedreamService(KlingService):
                 "Unsupported Seedream aspect ratio %s, fallback to 1:1", aspect_ratio
             )
             aspect_ratio = "1:1"
+        quality = self.QUALITY_ALIASES.get(str(quality or "").strip().upper(), quality)
         if quality not in self.SUPPORTED_QUALITIES:
             logger.warning(
                 "Unsupported Seedream quality %s, fallback to basic", quality
             )
             quality = "basic"
 
-        import re
-
-        # Sensitive content filter bypass via euphemisms
-        sensitive_replacements = {
-            r"\bстринг[аи]?\b": "нижнее белье",
-            r"\bбикини\b": "купальник",
-            r"\bоголи\s+груд[ьи]?\b": "topless стиль",
-            r"\bсними\s+(бикини|грудь|груди)\b": "удали верх",
-            r"\bореол[аы]\b": "натуральные детали",
-            r"\bсос[окк]и?\b": "реалистичные акценты",
-            r"\bгруд[ьии]?\b": "натуральные формы",
-            r"\bягодицы?\b": "фигура сзади",
-            r"\bтоплес\b": "без верха",
-            r"\bню\b": "ню художественное",
-            r"\bогол[иа]т[ье]\b": "ню стиль",
-            r"\bсос[окк]и\b": "детали тела",
-            r"\bдетали\s+груд[ьи]?\b": "натуральные формы",
-            r"\bакурт[н]ые\b": "аккуратные",
-            r"\bнебольш[ие]\b": "естественные",
-        }
-        safe_prompt = prompt
-        for pattern, replacement in sensitive_replacements.items():
-            safe_prompt = re.sub(pattern, replacement, safe_prompt, flags=re.IGNORECASE)
+        safe_prompt = " ".join(prompt.split())
 
         logger.info(
-            "Seedream prompt sanitized: len=%d -> %d chars",
+            "Seedream prompt normalized: len=%d -> %d chars",
             len(prompt),
             len(safe_prompt),
         )

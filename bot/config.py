@@ -36,6 +36,10 @@ class Config:
         "CRYPTOBOT_WEBHOOK_PATH", "/cryptobot/webhook"
     )
 
+    CRYPTOBOT_PENDING_TTL_DAYS: int = int(
+        os.getenv("CRYPTOBOT_PENDING_TTL_DAYS", "7")
+    )
+
     # Lava.top payments
     LAVA_API_KEY: str = os.getenv("LAVA_API_KEY", "")
     LAVA_API_BASE_URL: str = os.getenv("LAVA_API_BASE_URL", "https://gate.lava.top")
@@ -101,6 +105,10 @@ class Config:
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
 
+    # Redis
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    REDIS_PREFIX: str = os.getenv("REDIS_PREFIX", "banano_kling")
+
     # Партнёрская программа
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
@@ -131,6 +139,10 @@ class Config:
     def is_admin(self, telegram_id: int) -> bool:
         """Проверяет, является ли пользователь админом"""
         return telegram_id in self.admin_ids
+
+    @property
+    def redis_url(self) -> str:
+        return (self.REDIS_URL or "redis://127.0.0.1:6379/0").strip()
 
     @property
     def webhook_url(self) -> str:

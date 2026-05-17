@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Optional
 
 from bot.config import config
+from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
 
@@ -25,10 +26,22 @@ class GrokService(KlingService):
         callBackUrl: Optional[str] = None,
     ) -> Optional[Dict]:
         """Generate video from images using Grok Imagine"""
+        safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls[:7])  # max 7
+        uploaded_image_urls = [
+            url
+            for url in await kie_file_upload_service.upload_local_image_sources(safe_image_urls)
+            if isinstance(url, str) and url
+        ]
+        if image_urls and not uploaded_image_urls:
+            logger.error("Grok image-to-video create_task aborted: no usable reference images")
+            return None
+        logger.info(
+            "Grok image-to-video payload prepared: refs=%s transport=%s",
+            len(uploaded_image_urls),
+            "kie_file_upload_urls" if uploaded_image_urls != safe_image_urls else "image_input_urls",
+        )
         input_data = {
-            "image_urls": image_sources_to_provider_safe_png_urls(
-                image_urls[:7]
-            ),  # max 7
+            "image_urls": uploaded_image_urls,
             "prompt": prompt,
             "mode": mode,
             "duration": duration,
@@ -57,15 +70,23 @@ class GrokService(KlingService):
             return None
 
         safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls)
+        uploaded_image_urls = [
+            url
+            for url in await kie_file_upload_service.upload_local_image_sources(safe_image_urls)
+            if isinstance(url, str) and url
+        ]
+        if not uploaded_image_urls:
+            logger.error("Grok i2i create_task aborted: no usable reference images")
+            return None
 
-        image_refs = " ".join(f"@image{i + 1}" for i in range(len(safe_image_urls)))
+        image_refs = " ".join(f"@image{i + 1}" for i in range(len(uploaded_image_urls)))
         clean_prompt = str(prompt or "").strip()
         if image_refs and not clean_prompt.startswith("@image"):
             clean_prompt = f"{image_refs} {clean_prompt}".strip()
 
         input_data = {
             "prompt": clean_prompt,
-            "image_urls": safe_image_urls,
+            "image_urls": uploaded_image_urls,
             # Kie checker must stay disabled for Grok i2i.
             # The model/provider will handle generation rules itself.
             "nsfw_checker": False,
@@ -79,7 +100,7 @@ class GrokService(KlingService):
 
         logger.info(
             "Grok i2i payload prepared: refs=%s nsfw_checker=false prompt_prefix=%s",
-            len(safe_image_urls),
+            len(uploaded_image_urls),
             clean_prompt[:80],
         )
         return await self._kie_post("/api/v1/jobs/createTask", payload)

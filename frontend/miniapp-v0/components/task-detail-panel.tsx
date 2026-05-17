@@ -12,10 +12,19 @@ import { Button } from '@/components/ui/button'
 export function TaskDetailPanel() {
   const { taskDetail, isTaskDetailOpen, closeTaskDetail } = useApp()
 
-  const handleCopy = async () => {
+  const handleCopyTaskId = async () => {
     if (!taskDetail || typeof navigator === 'undefined') return
     try {
       await navigator.clipboard.writeText(taskDetail.task_id)
+    } catch {
+      // Ignore clipboard failures in constrained webviews
+    }
+  }
+
+  const handleCopyPrompt = async () => {
+    if (!taskDetail?.prompt || typeof navigator === 'undefined') return
+    try {
+      await navigator.clipboard.writeText(taskDetail.prompt)
     } catch {
       // Ignore clipboard failures in constrained webviews
     }
@@ -171,7 +180,7 @@ export function TaskDetailPanel() {
                   {taskDetail.task_id}
                 </code>
                 <button
-                  onClick={handleCopy}
+                  onClick={handleCopyTaskId}
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Copy className="w-4 h-4" />
@@ -180,9 +189,22 @@ export function TaskDetailPanel() {
 
               {/* Prompt */}
               <div>
-                <h3 className="text-sm font-medium text-foreground mb-2">Промпт</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50">
-                  {taskDetail.prompt}
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-medium text-foreground">Промпт</h3>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={handleCopyPrompt}
+                    disabled={!taskDetail.prompt}
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    Скопировать
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50 whitespace-pre-wrap break-words">
+                  {taskDetail.prompt || '—'}
                 </p>
               </div>
 

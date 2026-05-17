@@ -1,7 +1,10 @@
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 
+
+from typing import Any
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiohttp import web
@@ -53,6 +56,183 @@ async def _notify_user(bot: Bot, telegram_id: int, text: str, *, parse_mode=None
             raise
         raise
 
+
+def _build_bonus_text(referral_bonus: dict[str, Any]) -> str:
+    if referral_bonus.get("mode") == "partner":
+        return f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+    if referral_bonus.get("mode") == "banana":
+        return f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+    return ""
+
+
+async def _resolve_payment_state(transaction) -> dict[str, Any]:
+    provider = (getattr(transaction, "provider", None) or "cryptobot").lower()
+    payment_id = getattr(transaction, "payment_id", None)
+
+    if not payment_id:
+        return {"provider": provider, "status": "", "paid": False, "failed": False}
+
+    try:
+        if provider == "lava":
+            if not lava_service.enabled:
+                return {"provider": provider, "status": "service_disabled", "paid": False, "failed": False}
+            invoice = await lava_service.get_invoice(payment_id)
+            status = str((invoice or {}).get("status") or "").lower()
+            return {
+                "provider": provider,
+                "status": status,
+                "paid": status == "completed",
+                "failed": status in {"cancelled", "canceled", "failed", "expired"},
+                "invoice": invoice,
+            }
+
+        if provider == "yookassa":
+            if not yookassa_service.enabled:
+                return {"provider": provider, "status": "service_disabled", "paid": False, "failed": False}
+            invoice = await yookassa_service.get_payment(payment_id)
+            status = str((invoice or {}).get("status") or "").lower()
+            paid = bool((invoice or {}).get("paid")) or status in {"succeeded", "paid", "captured"}
+            failed = status in {"canceled", "cancelled", "failed", "rejected"}
+            return {
+                "provider": provider,
+                "status": status,
+                "paid": paid,
+                "failed": failed,
+                "invoice": invoice,
+            }
+
+        if not cryptobot_service.enabled:
+            return {"provider": provider, "status": "service_disabled", "paid": False, "failed": False}
+        invoice = await cryptobot_service.get_invoice(payment_id)
+        status = str((invoice or {}).get("status") or "").lower()
+        failed = status in {"expired", "cancelled", "canceled", "invalid"}
+        if status == "active" and _is_pending_past_ttl(transaction):
+            failed = True
+            status = "expired_local_ttl"
+        return {
+            "provider": provider,
+            "status": status,
+            "paid": status == "paid",
+            "failed": failed,
+            "invoice": invoice,
+        }
+    except Exception as exc:
+        logger.exception(
+            "Payment state resolve failed for order=%s provider=%s: %s",
+            getattr(transaction, "order_id", "?"),
+            provider,
+            exc,
+        )
+        return {
+            "provider": provider,
+            "status": "lookup_error",
+            "paid": False,
+            "failed": False,
+            "error": str(exc),
+        }
+
+
+def _is_pending_past_ttl(transaction, ttl_days: int | None = None) -> bool:
+    ttl_days = ttl_days or max(1, int(config.CRYPTOBOT_PENDING_TTL_DAYS or 7))
+    created_at = getattr(transaction, "created_at", None)
+    if not created_at:
+        return False
+
+    try:
+        cutoff = datetime.now(created_at.tzinfo) - timedelta(days=ttl_days)
+    except Exception:
+        cutoff = datetime.utcnow() - timedelta(days=ttl_days)
+    return created_at < cutoff
+
+
+async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
+    import aiosqlite
+
+    from bot.database import DATABASE_PATH
+
+    stats = {"checked": 0, "failed": 0, "kept": 0}
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            "SELECT order_id, payment_id, created_at FROM transactions WHERE provider = 'cryptobot' AND status = 'pending' ORDER BY created_at ASC LIMIT ?",
+            (limit,),
+        )).fetchall()
+
+    for row in rows:
+        stats["checked"] += 1
+        created_at_raw = row["created_at"]
+        try:
+            created_at = datetime.fromisoformat(created_at_raw)
+        except Exception:
+            stats["kept"] += 1
+            continue
+
+        stub = type("TxStub", (), {
+            "created_at": created_at,
+            "order_id": row["order_id"],
+        })()
+        if not _is_pending_past_ttl(stub):
+            stats["kept"] += 1
+            continue
+
+        payment_id = row["payment_id"]
+        invoice = await cryptobot_service.get_invoice(payment_id)
+        status = str((invoice or {}).get("status") or "").lower()
+
+        if status in {"paid"}:
+            stats["kept"] += 1
+            continue
+
+        if status in {"active", "expired", "cancelled", "canceled", "invalid", ""}:
+            if await update_transaction_status(row["order_id"], "failed"):
+                stats["failed"] += 1
+            else:
+                stats["kept"] += 1
+            continue
+
+        stats["kept"] += 1
+
+    logger.info(
+        "CryptoBot stale pending cleanup finished: checked=%s failed=%s kept=%s ttl_days=%s",
+        stats["checked"],
+        stats["failed"],
+        stats["kept"],
+        config.CRYPTOBOT_PENDING_TTL_DAYS,
+    )
+    return stats
+
+
+async def _complete_transaction(order_id: str) -> dict[str, Any]:
+    transaction = await get_transaction_by_order(order_id)
+    if not transaction:
+        return {"ok": False, "reason": "not_found"}
+
+    telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+    if not telegram_id:
+        return {"ok": False, "reason": "telegram_not_found", "transaction": transaction}
+
+    updated = await update_transaction_status(order_id, "completed")
+    if not updated:
+        return {
+            "ok": True,
+            "already_completed": True,
+            "transaction": transaction,
+            "telegram_id": telegram_id,
+            "referral_bonus": {},
+        }
+
+    await add_credits(telegram_id, transaction.credits)
+    referral_bonus = await credit_first_payment_referral_bonus(
+        telegram_id, transaction.credits, transaction.amount_rub
+    )
+    return {
+        "ok": True,
+        "already_completed": False,
+        "transaction": transaction,
+        "telegram_id": telegram_id,
+        "referral_bonus": referral_bonus,
+    }
 
 async def _render_topup_menu(message: types.Message):
     packages = preset_manager.get_packages()
@@ -315,7 +495,7 @@ async def initiate_payment(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("check_payment_"))
 async def check_payment_status(callback: types.CallbackQuery):
-    """Ручная проверка статуса платежа в CryptoBot."""
+    """Ручная проверка статуса платежа у текущего провайдера."""
     order_id = callback.data.replace("check_payment_", "")
     transaction = await get_transaction_by_order(order_id)
 
@@ -333,59 +513,27 @@ async def check_payment_status(callback: types.CallbackQuery):
         )
         return
 
-    if transaction.provider == "lava":
-        if not lava_service.enabled:
-            await callback.answer(
-                "Платёжный сервис временно недоступен", show_alert=True
-            )
-            return
+    state = await _resolve_payment_state(transaction)
+    if state.get("failed"):
+        await update_transaction_status(order_id, "failed")
+        await callback.answer("Платёж отменён или не прошёл", show_alert=True)
+        return
 
-        invoice = await lava_service.get_invoice(transaction.payment_id)
-        status = (invoice or {}).get("status", "")
-        paid = status == "completed"
-    elif transaction.provider == "yookassa":
-        if not yookassa_service.enabled:
-            await callback.answer(
-                "Платёжный сервис временно недоступен", show_alert=True
-            )
-            return
-
-        invoice = await yookassa_service.get_payment(transaction.payment_id)
-        status = (invoice or {}).get("status", "")
-        paid = bool((invoice or {}).get("paid"))
-    else:
-        if not cryptobot_service.enabled:
-            await callback.answer(
-                "Платёжный сервис временно недоступен", show_alert=True
-            )
-            return
-
-        invoice = await cryptobot_service.get_invoice(transaction.payment_id)
-        status = (invoice or {}).get("status", "")
-        paid = status == "paid"
-
-    if not paid:
+    if not state.get("paid"):
         await callback.answer("Платёж ещё в обработке", show_alert=True)
         return
 
-    user = await get_or_create_user(transaction.user_id)
-    updated = await update_transaction_status(order_id, "completed")
-    if not updated:
+    result = await _complete_transaction(order_id)
+    if not result.get("ok"):
+        await callback.answer("Не удалось завершить оплату", show_alert=True)
+        return
+
+    if result.get("already_completed"):
         await callback.answer("Оплата уже была зачислена ранее", show_alert=True)
         return
-    await add_credits(user.telegram_id, transaction.credits)
-    referral_bonus = await credit_first_payment_referral_bonus(
-        user.telegram_id, transaction.credits, transaction.amount_rub
-    )
 
-    bonus_text = ""
-    if referral_bonus.get("mode") == "partner":
-        bonus_text = f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
-    elif referral_bonus.get("mode") == "banana":
-        bonus_text = (
-            f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
-        )
-
+    bonus_text = _build_bonus_text(result.get("referral_bonus") or {})
+    transaction = result["transaction"]
     await callback.message.edit_text(
         "✅ <b>Оплата подтверждена</b>\n"
         f"• Начислено: <code>{transaction.credits}</code> бананов\n"
@@ -393,7 +541,6 @@ async def check_payment_status(callback: types.CallbackQuery):
         reply_markup=get_main_menu_keyboard(),
         parse_mode="HTML",
     )
-
 
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: types.CallbackQuery):

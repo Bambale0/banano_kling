@@ -26,3 +26,6 @@ yookassa>=3.4.0
 # Then install the package:
 # pip install face_recognition
 # If you cannot build dlib, skip this — the service will fall back to center-crop.
+
+# Redis cache / FSM storage
+redis>=5.0.0

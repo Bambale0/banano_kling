@@ -15,6 +15,7 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     DATABASE_PATH,
+    SavedReference,
     add_credits,
     add_generation_task,
     check_can_afford,
@@ -25,6 +26,8 @@ from bot.database import (
     get_or_create_user,
     get_partner_overview,
     get_user_stats,
+    list_saved_references,
+    touch_saved_references,
 )
 from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
@@ -57,10 +60,25 @@ from bot.keyboards import (
 )
 from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
+from bot.services.reference_storage_service import save_reference_file
 from bot.services.preset_manager import preset_manager
 from bot.services.yookassa_service import yookassa_service
+from bot.utils.validators import detect_explicit_prompt_policy_violation
 
 logger = logging.getLogger(__name__)
+
+
+def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
+    return {
+        "id": str(reference.id),
+        "kind": reference.kind,
+        "url": reference.file_url,
+        "filename": reference.original_filename or Path(reference.file_url).name,
+        "content_type": reference.content_type,
+        "source": reference.source,
+        "created_at": reference.created_at.isoformat() if reference.created_at else None,
+        "last_used_at": reference.last_used_at.isoformat() if reference.last_used_at else None,
+    }
 
 IMAGE_MODELS = (
     {
@@ -70,7 +88,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("nano-banana-pro"),
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
         "requires_reference": False,
-        "max_references": 9,
+        "max_references": 8,
     },
     {
         "id": "banana_2",
@@ -79,7 +97,7 @@ IMAGE_MODELS = (
         "cost": preset_manager.get_generation_cost("banana_2"),
         "ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
         "requires_reference": False,
-        "max_references": 9,
+        "max_references": 8,
     },
     {
         "id": "seedream_edit",
@@ -765,7 +783,7 @@ async def _send_create_image(app: web.Application, telegram_id: int):
         img_service="banana_pro",
         img_ratio="1:1",
         img_count=1,
-        img_quality="basic",
+        img_quality="2K",
         img_nsfw_checker=False,
         reference_images=[],
         img_flow_step="select_model",
@@ -1100,6 +1118,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 for item in VIDEO_MODELS
             ],
             "recent_tasks": recent_tasks,
+            "saved_references": [
+                _saved_reference_payload(item)
+                for item in await list_saved_references(telegram_id, limit=24)
+            ],
             "notifications": await get_and_clear_miniapp_notifications(telegram_id),
         }
         return web.json_response(data)
@@ -1176,7 +1198,20 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             content_type,
             config_entry["fallback_ext"],
         )
-        public_url = save_uploaded_file(bytes(raw), extension)
+        public_url = None
+        saved_reference = None
+        if file_kind.endswith("_reference"):
+            public_url, saved_reference = await save_reference_file(
+                telegram_id,
+                bytes(raw),
+                file_ext=extension,
+                kind=config_entry["group"],
+                original_filename=getattr(upload, "filename", "") or None,
+                content_type=content_type or None,
+                source="miniapp",
+            )
+        if not public_url:
+            public_url = save_uploaded_file(bytes(raw), extension)
         if not public_url:
             return web.json_response(
                 {"ok": False, "error": "Не удалось сохранить файл"}, status=500
@@ -1189,6 +1224,9 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 "kind": config_entry["group"],
                 "filename": getattr(upload, "filename", "") or Path(public_url).name,
                 "content_type": content_type,
+                "reference": (
+                    _saved_reference_payload(saved_reference) if saved_reference else None
+                ),
             }
         )
     except Exception as e:
@@ -1319,7 +1357,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         img_service = str(body.get("img_service", "banana_pro"))
         img_ratio = str(body.get("img_ratio", "1:1"))
         references = list(body.get("reference_images", []) or [])
-        img_quality = str(body.get("img_quality", "basic"))
+        img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
 
@@ -1351,6 +1389,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+
+        if references:
+            await touch_saved_references(telegram_id, references, kind="image")
 
         if img_service in ("banana_pro", "banana_2"):
             unit_cost = QUALITY_COSTS.get(
@@ -1455,7 +1496,6 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Введите промпт для генерации видео"},
                 status=400,
             )
-
         model_meta = next((item for item in VIDEO_MODELS if item["id"] == model), None)
         if not model_meta:
             return web.json_response(
@@ -1526,6 +1566,15 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+
+        if image_url:
+            await touch_saved_references(telegram_id, [image_url], kind="image")
+        if image_references:
+            await touch_saved_references(telegram_id, image_references, kind="image")
+        if video_references:
+            await touch_saved_references(telegram_id, video_references, kind="video")
+        if audio_url:
+            await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
         cost = preset_manager.get_video_cost(model, duration)
         is_admin = config.is_admin(telegram_id)
@@ -1631,10 +1680,25 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         from bot.services.kling_service import kling_service
 
         raw_duration = body.get("motion_duration")
-        try:
-            duration = max(1, min(300, int(raw_duration))) if raw_duration else 5
-        except (TypeError, ValueError):
+        if raw_duration in (None, ""):
             duration = 5
+        else:
+            try:
+                duration = int(raw_duration)
+            except (TypeError, ValueError):
+                return web.json_response(
+                    {"ok": False, "error": "Длительность Motion Control должна быть целым числом от 3 до 30 секунд"},
+                    status=400,
+                )
+            if duration < 3 or duration > 30:
+                return web.json_response(
+                    {"ok": False, "error": "Длительность Motion Control должна быть от 3 до 30 секунд"},
+                    status=400,
+                )
+
+        await touch_saved_references(telegram_id, [image_url], kind="image")
+        await touch_saved_references(telegram_id, [video_url], kind="video")
+
         cost = preset_manager.get_video_cost_with_quality(model, duration, mode)
 
         is_admin = config.is_admin(telegram_id)
@@ -1885,12 +1949,38 @@ def setup_miniapp_routes(app: web.Application):
             name="miniapp_next_static",
         )
 
+    async def _miniapp_root_file(request: web.Request) -> web.Response:
+        asset_name = request.match_info.get("asset", "") or "icon-light-32x32.png"
+        asset_path = miniapp_out_dir / asset_name
+        if asset_path.exists() and asset_path.is_file():
+            return web.FileResponse(asset_path)
+        if asset_name == "favicon.ico":
+            for fallback_name in ("icon.svg", "icon-light-32x32.png"):
+                fallback_path = miniapp_out_dir / fallback_name
+                if fallback_path.exists() and fallback_path.is_file():
+                    return web.FileResponse(fallback_path)
+        raise web.HTTPNotFound()
+
+    async def _empty_vercel_insights(request: web.Request) -> web.Response:
+        # The exported miniapp can request Vercel Insights from the site root.
+        # We do not run Vercel here, so serve a no-op script instead of noisy 404s.
+        return web.Response(
+            text="/* Vercel Insights disabled on self-hosted deployment. */\n",
+            content_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
     # Do not mount the full `out/` directory as a static resource here.
     # Serving of `index.html` and other files is handled explicitly by
     # `miniapp_index` and `miniapp_asset` so we avoid conflicts where the
     # static resource would match `/mini-app/` and return 403 for directory
     # requests when `show_index` is disabled. Keep only `_next/static`
     # mounted above for Next.js runtime assets.
+    app.router.add_get("/icon-light-32x32.png", _miniapp_root_file)
+    app.router.add_get("/icon.svg", _miniapp_root_file)
+    app.router.add_get("/icon-dark-32x32.png", _miniapp_root_file)
+    app.router.add_get("/favicon.ico", _miniapp_root_file)
+    app.router.add_get("/_vercel/insights/script.js", _empty_vercel_insights)
     app.router.add_get(miniapp_root, _redirect_to_slash)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)

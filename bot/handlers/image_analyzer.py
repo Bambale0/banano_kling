@@ -1,17 +1,50 @@
 """Photo to prompt handler."""
 
+import html
 import logging
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from bot.keyboards import get_back_keyboard, get_main_menu_button_keyboard
+from bot.keyboards import (
+    get_back_keyboard,
+    get_main_menu_button_keyboard,
+    get_photo_prompt_result_keyboard,
+)
 from bot.services.photo_prompt_service import photo_prompt_service
 from bot.states import ImageAnalyzerStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _clip_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+async def _safe_edit_or_answer(processing: Message, source_message: Message, text: str, reply_markup=None, parse_mode=None, disable_web_page_preview=None) -> None:
+    try:
+        await processing.edit_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    except TelegramBadRequest as e:
+        error_text = str(e).lower()
+        if "message to edit not found" in error_text or "there is no text in the message to edit" in error_text:
+            await source_message.answer(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return
+        raise
 
 
 @router.callback_query(F.data == "photo_to_prompt")
@@ -37,7 +70,8 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.warning("Cannot edit message in photo_to_prompt_handler: %s", e)
+        if not (isinstance(e, TelegramBadRequest) and "there is no text in the message to edit" in str(e).lower()):
+            logger.warning("Cannot edit message in photo_to_prompt_handler: %s", e)
         await callback.message.answer(
             text,
             reply_markup=get_back_keyboard("back_main"),
@@ -62,7 +96,9 @@ async def analyze_photo(message: Message, state: FSMContext):
         image_url = save_uploaded_file(image_bytes, "jpg")
 
         if not image_url:
-            await processing.edit_text(
+            await _safe_edit_or_answer(
+                processing,
+                message,
                 "❌ Не удалось сохранить фото. Попробуйте загрузить другое изображение.",
                 reply_markup=get_main_menu_button_keyboard(),
             )
@@ -74,21 +110,25 @@ async def analyze_photo(message: Message, state: FSMContext):
             goal="создать максимально похожее изображение по этому референсу",
         )
 
-        prompt_en = result["prompt_en"]
-        prompt_ru = result["prompt_ru"]
-        negative_prompt = result["negative_prompt"]
-        model_hint = result["model_hint"]
+        prompt_en = (result.get("prompt_en") or "").strip()
+        prompt_ru = (result.get("prompt_ru") or "").strip()
+        negative_prompt = (result.get("negative_prompt") or "").strip()
+        model_hint = html.escape((result.get("model_hint") or "").strip())
+
+        escaped_prompt_en = html.escape(prompt_en)
+        escaped_prompt_ru = html.escape(prompt_ru)
+        escaped_negative_prompt = html.escape(negative_prompt)
 
         text = (
             "✅ <b>Промпт по фото готов</b>\n\n"
+            "<b>Prompt RU:</b>\n"
+            f"<pre>{escaped_prompt_ru or '—'}</pre>\n\n"
             "<b>Prompt EN:</b>\n"
-            f"<code>{prompt_en}</code>\n\n"
-            "<b>Описание RU:</b>\n"
-            f"{prompt_ru}\n\n"
+            f"<pre>{escaped_prompt_en or '—'}</pre>\n\n"
             "<b>Negative prompt:</b>\n"
-            f"<code>{negative_prompt}</code>\n\n"
+            f"<pre>{escaped_negative_prompt or '—'}</pre>\n\n"
             "<b>Рекомендация:</b>\n"
-            f"{model_hint}"
+            f"{model_hint or '—'}"
         )
 
         try:
@@ -100,17 +140,41 @@ async def analyze_photo(message: Message, state: FSMContext):
             text,
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=get_photo_prompt_result_keyboard(
+                prompt_en=prompt_en,
+                prompt_ru=prompt_ru,
+                negative_prompt=negative_prompt,
+            ),
         )
-        await message.answer(
-            "Готово. Промпт выше останется в чате — можно скопировать его или использовать для генерации.",
-            reply_markup=get_main_menu_button_keyboard(),
+        full_prompt_text = (
+            "PROMPT RU\n"
+            "---------\n"
+            f"{prompt_ru or '—'}\n\n"
+            "PROMPT EN\n"
+            "---------\n"
+            f"{prompt_en or '—'}\n\n"
+            "NEGATIVE PROMPT\n"
+            "---------------\n"
+            f"{negative_prompt or '—'}\n\n"
+            "РЕКОМЕНДАЦИЯ\n"
+            "------------\n"
+            f"{result.get('model_hint') or '—'}\n"
+        )
+        await message.answer_document(
+            document=BufferedInputFile(
+                full_prompt_text.encode("utf-8"),
+                filename="photo_prompt_full.txt",
+            ),
+            caption="📝 Полный prompt: RU + EN + negative",
         )
         await state.clear()
 
     except Exception as e:
         logger.exception("Photo to prompt analysis failed")
-        await processing.edit_text(
-            f"❌ Не удалось разобрать фото: {e}",
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            _clip_text(f"❌ Не удалось разобрать фото: {e}", 700),
             reply_markup=get_main_menu_button_keyboard(),
         )
         await state.clear()
