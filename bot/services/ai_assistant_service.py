@@ -124,8 +124,8 @@ class AIAssistantService:
             Ответ ассистента или None
         """
         if not config.KIE_AI_API_KEY:
-            logger.error("Kie.ai API key not configured for AI Assistant")
-            return None
+            logger.warning("Kie.ai API key not configured for AI Assistant; using local assistant")
+            return self.get_local_response(user_message, context=context, history=history)
 
         system_prompt = self._get_system_prompt()
 
@@ -197,11 +197,65 @@ class AIAssistantService:
                 logger.error(
                     f"Kie.ai GPT 5.2 call failed: status={response.status}, text preview: {text[:200]}"
                 )
-            return None
+            return self.get_local_response(user_message, context=context, history=history)
 
         except Exception as e:
             logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
-            return None
+            return self.get_local_response(user_message, context=context, history=history)
+
+    def get_local_response(
+        self,
+        user_message: str,
+        context: dict = None,
+        history: list = None,
+    ) -> str:
+        """Локальный ассистент, чтобы бот оставался полезным без внешней LLM."""
+        msg = (user_message or "").lower()
+        pricing = self.get_pricing_info()
+        balance = (context or {}).get("user_credits")
+        balance_line = f"\n\n💎 Ваш баланс: <b>{balance}</b> GOE" if balance is not None else ""
+
+        if any(word in msg for word in ("цена", "стоим", "тариф", "goe", "баланс", "пополн")):
+            return (
+                "Вот актуальная логика GOE и тарифов. Пополнение выполняется автоматически через ЮKassa: "
+                "нажмите <b>Пополнить GOE</b>, выберите пакет и оплатите ссылку. После webhook GOE начисляются для фигуристок."
+                f"{balance_line}\n\n{pricing}"
+            )
+
+        if any(word in msg for word in ("видео", "сторис", "motion", "ролик", "анимац")):
+            return (
+                "Для видео нажмите <b>Создать контент → Видео / сторис</b>. "
+                "Если есть стартовое фото — выберите режим <b>Фото + Текст → Видео</b>; "
+                "если нужен перенос движения — <b>Motion Control</b>.\n\n"
+                "Шаблон промпта: <code>вертикальное 9:16 видео, [герой], [действие], [камера], [свет], [стиль], плавное движение, без текста на экране</code>."
+                f"{balance_line}"
+            )
+
+        if any(word in msg for word in ("промпт", "prompt", "улучш", "напиши", "идея")):
+            idea = user_message.strip() or "ваша идея"
+            return (
+                "Готовый универсальный промпт:\n\n"
+                f"<code>{idea}. Детализированная композиция, чистый фон, выразительный главный объект, профессиональное освещение, высокая детализация, гармоничные цвета, без лишнего текста и артефактов.</code>\n\n"
+                "Для изображения используйте <b>Создать контент → Изображение</b>. Для ролика добавьте движение камеры и выберите <b>Видео / сторис</b>."
+                f"{balance_line}"
+            )
+
+        if any(word in msg for word in ("модель", "какую", "выбрать", "качество")):
+            return (
+                "Быстрый выбор модели:\n"
+                "• <b>Banana Pro</b> — фотореализм, продукт, портреты.\n"
+                "• <b>Banana 2</b> — сложные сцены и качество.\n"
+                "• <b>Seedream</b> — стилизация и редактирование.\n"
+                "• <b>Kling/Runway/Seedance</b> — видео и сторис.\n\n"
+                "Если сомневаетесь: начните с Banana Pro для фото и Kling Std для видео."
+                f"{balance_line}"
+            )
+
+        return (
+            "Я ассистент 2Loop. Могу помочь с промптом, выбором модели, тарифами GOE, оплатой через ЮKassa и запуском генерации.\n\n"
+            "Напишите, что хотите получить: изображение, видео, сторис, аватар, рекламный креатив или редактирование фото."
+            f"{balance_line}"
+        )
 
     def _get_system_prompt(self) -> str:
         """Загрузка системной инструкции из файла"""

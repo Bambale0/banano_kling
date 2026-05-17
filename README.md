@@ -48,6 +48,14 @@ tests/                    pytest suite
 - [Recommendations](docs/RECOMMENDATIONS.md): prioritized engineering roadmap.
 - [UX Guide](docs/UX_GUIDE.md): message patterns, button rules, error wording.
 - [YooKassa](docs/yookassa.md): payment setup and webhook behavior.
+- [API + Bot Capabilities](artifacts/10-api-bot-capabilities.md): HTTP API inventory,
+  OpenAPI docs, bot capabilities, auth gaps, and next implementation phases.
+
+After backend restart, API docs are exposed by the aiohttp app:
+
+- Swagger UI: `/api/docs`
+- ReDoc: `/api/redoc`
+- OpenAPI JSON: `/api/openapi.json`
 
 ## Local Development
 

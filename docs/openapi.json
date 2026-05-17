@@ -1,0 +1,814 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "2Loop API",
+    "version": "2026.05.16",
+    "description": "OpenAPI reference for the current 2Loop aiohttp backend: landing/site cabinet, shop, Telegram Mini App, admin and provider webhooks."
+  },
+  "servers": [
+    {
+      "url": "https://2loop.chillcreative.ru",
+      "description": "Production"
+    },
+    {
+      "url": "http://127.0.0.1:8443",
+      "description": "Local aiohttp backend"
+    }
+  ],
+  "tags": [
+    { "name": "System", "description": "Health and API documentation." },
+    { "name": "Site", "description": "Public site cabinet, demo GOE wallet and generation history." },
+    { "name": "Shop", "description": "Catalog, checkout, leads and delivery/payment helpers." },
+    { "name": "Mini App", "description": "Telegram Mini App user API." },
+    { "name": "Mini App Admin", "description": "Telegram-admin protected Mini App product/order management." },
+    { "name": "Shop Admin", "description": "Shop admin endpoints protected by X-Shop-Admin-Key or Telegram admin init data." },
+    { "name": "Webhooks", "description": "Telegram, payment and AI provider callbacks." }
+  ],
+  "components": {
+    "securitySchemes": {
+      "SiteSession": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-2Loop-Session",
+        "description": "Site session id stored by frontend as 2loop.siteSession."
+      },
+      "TelegramInitData": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Telegram-Init-Data",
+        "description": "Telegram WebApp initData. Verified with BOT_TOKEN when TWOLOOP_VERIFY_INIT_DATA=1."
+      },
+      "ShopAdminKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Shop-Admin-Key"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "SiteProfile": {
+        "type": "object",
+        "properties": {
+          "sessionId": { "type": "string" },
+          "name": { "type": "string" },
+          "contact": { "type": "string" },
+          "telegramId": { "type": ["integer", "null"] },
+          "balanceGoe": { "type": "integer" },
+          "demoBalanceGoe": { "type": "integer" },
+          "walletType": { "type": "string" },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "generations": { "type": "integer" },
+              "spentGoe": { "type": "integer" }
+            }
+          },
+          "createdAt": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "Product": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "integer"] },
+          "wbArticle": { "type": "string" },
+          "article": { "type": "string" },
+          "name": { "type": "string" },
+          "category": { "type": "string" },
+          "price": { "type": "number" },
+          "stockTotal": { "type": "integer" },
+          "available": { "type": "boolean" },
+          "imageUrl": { "type": "string" },
+          "images": { "type": "array", "items": {} },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "OrderItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "integer"] },
+          "productId": { "type": ["string", "integer"] },
+          "wbArticle": { "type": "string" },
+          "name": { "type": "string" },
+          "qty": { "type": "integer", "minimum": 1 },
+          "price": { "type": "number" },
+          "total": { "type": "number" }
+        },
+        "additionalProperties": true
+      },
+      "ShopOrderRequest": {
+        "type": "object",
+        "required": ["type", "items", "customer", "delivery"],
+        "properties": {
+          "type": { "const": "catalog_order" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/OrderItem" } },
+          "customer": {
+            "type": "object",
+            "required": ["name", "phone"],
+            "properties": {
+              "name": { "type": "string" },
+              "phone": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "delivery": {
+            "type": "object",
+            "required": ["city", "address"],
+            "properties": {
+              "method": { "type": "string" },
+              "city": { "type": "string" },
+              "address": { "type": "string" }
+            },
+            "additionalProperties": true
+          },
+          "telegramUser": { "type": "object", "additionalProperties": true },
+          "promoCode": { "type": "string" },
+          "total": { "type": "number" }
+        },
+        "additionalProperties": true
+      },
+      "GenerationRequest": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "type": { "type": "string", "enum": ["content", "image", "video", "tryon", "prompt", "smm"] },
+          "kind": { "type": "string" },
+          "prompt": { "type": "string" },
+          "topic": { "type": "string" },
+          "aspectRatio": { "type": "string" },
+          "presetId": { "type": "string" },
+          "duration": { "type": "integer" },
+          "model": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "GenerationTask": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "taskId": { "type": "string" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "prompt": { "type": "string" },
+          "cost": { "type": "integer" },
+          "status": { "type": "string" },
+          "result": { "type": "object", "additionalProperties": true },
+          "createdAt": { "type": ["integer", "string"] }
+        },
+        "additionalProperties": true
+      },
+      "MiniappProduct": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "article": { "type": "string" },
+          "name": { "type": "string" },
+          "category": { "type": "string" },
+          "price": { "type": "number" },
+          "stock": { "type": "integer" },
+          "badge": { "type": "string" },
+          "description": { "type": "string" },
+          "details": { "type": "string" },
+          "images": { "type": "array", "items": { "type": "string" } },
+          "mainImageIndex": { "type": "integer" },
+          "active": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Unauthorized": {
+        "description": "Authentication required.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "Admin access required.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Backend health check",
+        "responses": {
+          "200": { "description": "OK", "content": { "text/plain": { "schema": { "type": "string" } } } }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": ["System"],
+        "summary": "OpenAPI specification",
+        "responses": {
+          "200": { "description": "OpenAPI JSON" }
+        }
+      }
+    },
+    "/api/docs": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Swagger UI",
+        "responses": {
+          "200": { "description": "Interactive API docs HTML" }
+        }
+      }
+    },
+    "/api/redoc": {
+      "get": {
+        "tags": ["System"],
+        "summary": "ReDoc UI",
+        "responses": {
+          "200": { "description": "API reference HTML" }
+        }
+      }
+    },
+    "/api/catalog": {
+      "get": {
+        "tags": ["Shop"],
+        "summary": "List storefront catalog products",
+        "responses": {
+          "200": {
+            "description": "Catalog with products and categories.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brand": { "type": "string" },
+                    "currency": { "type": "string" },
+                    "categories": { "type": "array", "items": { "type": "string" } },
+                    "products": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/order": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Create storefront order",
+        "description": "Server rebuilds trusted cart items from catalog prices and stock. Client totals are not trusted.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ShopOrderRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Order accepted." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "description": "Product unavailable or stock conflict." }
+        }
+      }
+    },
+    "/api/shop/lead": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Submit site lead/contact request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["contact"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "contact": { "type": "string" },
+                  "phone": { "type": "string" },
+                  "email": { "type": "string" },
+                  "message": { "type": "string" },
+                  "source": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Lead sent." },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/shop/analytics": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Track public shop analytics event",
+        "responses": {
+          "200": { "description": "Tracked." }
+        }
+      }
+    },
+    "/api/shop/bot-capabilities": {
+      "get": {
+        "tags": ["Shop"],
+        "summary": "Describe available user/admin modules",
+        "responses": {
+          "200": { "description": "Bot and site capabilities." }
+        }
+      }
+    },
+    "/api/shop/delivery/methods": {
+      "get": {
+        "tags": ["Shop"],
+        "summary": "List configured delivery method options",
+        "responses": {
+          "200": { "description": "Delivery methods." }
+        }
+      }
+    },
+    "/api/shop/payment/session": {
+      "post": {
+        "tags": ["Shop"],
+        "summary": "Payment session stub",
+        "description": "Current endpoint returns manual payment placeholder. YooKassa/CloudPayments/Robokassa can be attached here.",
+        "responses": {
+          "200": { "description": "Payment integration placeholder." }
+        }
+      }
+    },
+    "/api/site/session": {
+      "post": {
+        "tags": ["Site"],
+        "summary": "Create or update public site session",
+        "security": [{ "SiteSession": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionId": { "type": "string" },
+                  "name": { "type": "string" },
+                  "contact": { "type": "string" }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Site profile.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "profile": { "$ref": "#/components/schemas/SiteProfile" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/site/cabinet": {
+      "get": {
+        "tags": ["Site"],
+        "summary": "Get public site cabinet profile and generation features",
+        "security": [{ "SiteSession": [] }],
+        "responses": {
+          "200": {
+            "description": "Cabinet data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "profile": { "$ref": "#/components/schemas/SiteProfile" },
+                    "features": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/site/generate": {
+      "post": {
+        "tags": ["Site"],
+        "summary": "Run public site demo generation",
+        "security": [{ "SiteSession": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenerationRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Generation result and updated site profile." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "402": { "description": "Not enough demo GOE." }
+        }
+      }
+    },
+    "/api/site/history": {
+      "get": {
+        "tags": ["Site"],
+        "summary": "List public site generation history and GOE transactions",
+        "security": [{ "SiteSession": [] }],
+        "responses": {
+          "200": { "description": "History and transactions." }
+        }
+      }
+    },
+    "/api/miniapp/health": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "Mini App API health",
+        "responses": {
+          "200": { "description": "OK" }
+        }
+      }
+    },
+    "/api/miniapp/me": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "Get Telegram Mini App user context",
+        "security": [{ "TelegramInitData": [] }],
+        "responses": {
+          "200": { "description": "Current Telegram user, admin flag, GOE balance and stats." }
+        }
+      }
+    },
+    "/api/miniapp/goe": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "Get authenticated GOE balance",
+        "security": [{ "TelegramInitData": [] }],
+        "responses": {
+          "200": { "description": "GOE balance." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/miniapp/history": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "List authenticated Mini App generation history",
+        "security": [{ "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "History items." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/miniapp/tasks": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "List authenticated generation tasks",
+        "security": [{ "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Task items." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/miniapp/presets": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "List Mini App generation presets",
+        "responses": {
+          "200": { "description": "Presets." }
+        }
+      }
+    },
+    "/api/miniapp/generate": {
+      "post": {
+        "tags": ["Mini App"],
+        "summary": "Create authenticated Mini App generation",
+        "security": [{ "TelegramInitData": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenerationRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Generation created." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "402": { "description": "Not enough GOE." }
+        }
+      }
+    },
+    "/api/miniapp/generate/smm": {
+      "post": {
+        "tags": ["Mini App"],
+        "summary": "Create authenticated SMM plan/caption generation",
+        "security": [{ "TelegramInitData": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GenerationRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "SMM generation created." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/miniapp/products": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "List Mini App products",
+        "parameters": [
+          { "name": "include_inactive", "in": "query", "schema": { "type": "string", "enum": ["1"] }, "description": "Requires Telegram admin." }
+        ],
+        "responses": {
+          "200": { "description": "Products." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Mini App Admin"],
+        "summary": "Create Mini App product",
+        "security": [{ "TelegramInitData": [] }],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MiniappProduct" } } }
+        },
+        "responses": {
+          "201": { "description": "Product created." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/miniapp/products/{product_id}": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "Get Mini App product",
+        "parameters": [
+          { "name": "product_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Product." },
+          "404": { "description": "Product not found." }
+        }
+      },
+      "put": {
+        "tags": ["Mini App Admin"],
+        "summary": "Update Mini App product",
+        "security": [{ "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "product_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MiniappProduct" } } }
+        },
+        "responses": {
+          "200": { "description": "Product updated." },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Product not found." }
+        }
+      },
+      "delete": {
+        "tags": ["Mini App Admin"],
+        "summary": "Delete Mini App product",
+        "security": [{ "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "product_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Deleted." },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Product not found." }
+        }
+      }
+    },
+    "/api/miniapp/products/{product_id}/images": {
+      "post": {
+        "tags": ["Mini App Admin"],
+        "summary": "Upload Mini App product image",
+        "security": [{ "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "product_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Image uploaded." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/miniapp/settings": {
+      "get": {
+        "tags": ["Mini App"],
+        "summary": "Get Mini App settings",
+        "responses": {
+          "200": { "description": "Settings." }
+        }
+      },
+      "put": {
+        "tags": ["Mini App Admin"],
+        "summary": "Update Mini App settings",
+        "security": [{ "TelegramInitData": [] }],
+        "responses": {
+          "200": { "description": "Settings updated." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/miniapp/promo": {
+      "post": {
+        "tags": ["Mini App"],
+        "summary": "Apply promo code",
+        "responses": {
+          "200": { "description": "Promo calculation." }
+        }
+      }
+    },
+    "/api/miniapp/orders": {
+      "post": {
+        "tags": ["Mini App"],
+        "summary": "Create Mini App order",
+        "security": [{ "TelegramInitData": [] }],
+        "responses": {
+          "201": { "description": "Order created." },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      },
+      "get": {
+        "tags": ["Mini App Admin"],
+        "summary": "List Mini App orders",
+        "security": [{ "TelegramInitData": [] }],
+        "responses": {
+          "200": { "description": "Orders." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/shop/admin/orders": {
+      "get": {
+        "tags": ["Shop Admin"],
+        "summary": "List storefront orders",
+        "security": [{ "ShopAdminKey": [] }, { "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "maximum": 500 } }
+        ],
+        "responses": {
+          "200": { "description": "Orders." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/shop/admin/orders/{order_id}/status": {
+      "put": {
+        "tags": ["Shop Admin"],
+        "summary": "Update storefront order status",
+        "security": [{ "ShopAdminKey": [] }, { "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "order_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": ["new", "pending", "confirmed", "paid", "shipped", "done", "cancelled"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Status updated." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/shop/admin/products/{wb_article}": {
+      "put": {
+        "tags": ["Shop Admin"],
+        "summary": "Update storefront product override",
+        "security": [{ "ShopAdminKey": [] }, { "TelegramInitData": [] }],
+        "parameters": [
+          { "name": "wb_article", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Product override saved." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/shop/admin/overview": {
+      "get": {
+        "tags": ["Shop Admin"],
+        "summary": "Admin overview for users, tasks, orders and events",
+        "security": [{ "ShopAdminKey": [] }, { "TelegramInitData": [] }],
+        "responses": {
+          "200": { "description": "Overview stats and recent tasks." },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/webhook": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Telegram webhook",
+        "description": "Path is configurable with WEBHOOK_PATH. Default is /webhook.",
+        "responses": {
+          "200": { "description": "Telegram update accepted." }
+        }
+      }
+    },
+    "/yookassa/webhook": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "YooKassa webhook",
+        "responses": {
+          "200": { "description": "Webhook consumed." }
+        }
+      }
+    },
+    "/webhook/yookassa": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Legacy YooKassa webhook alias",
+        "responses": {
+          "200": { "description": "Webhook consumed." }
+        }
+      }
+    },
+    "/robokassa/result": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Robokassa result callback",
+        "responses": {
+          "200": { "description": "Robokassa result processed." }
+        }
+      },
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "Robokassa result callback GET compatibility",
+        "responses": {
+          "200": { "description": "Robokassa result processed." }
+        }
+      }
+    },
+    "/robokassa/success": {
+      "get": {
+        "tags": ["Webhooks"],
+        "summary": "Robokassa success page",
+        "responses": {
+          "200": { "description": "Payment success HTML or redirect." }
+        }
+      }
+    },
+    "/webhook/kling": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Kling/PiAPI/Replicate provider webhook",
+        "responses": {
+          "200": { "description": "Provider callback consumed." }
+        }
+      }
+    },
+    "/webhook/kie_ai": {
+      "post": {
+        "tags": ["Webhooks"],
+        "summary": "Kie.ai provider webhook",
+        "description": "Actual path is configurable via KIE_AI_WEBHOOK_PATH.",
+        "responses": {
+          "200": { "description": "Provider callback consumed." },
+          "403": { "description": "Webhook secret verification failed." }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "2Loop Pastel Grunge",
+  "tokens": {
+    "colors": {
+      "paper": "#f3ede4",
+      "paper2": "#fffaf1",
+      "paper3": "#ebe2d6",
+      "ice": "#d9eef1",
+      "blush": "#efd4d2",
+      "mint": "#dbe9d7",
+      "butter": "#f1e6bb",
+      "ink": "#252125",
+      "inkSoft": "#51494d",
+      "muted": "#7a7172"
+    },
+    "radius": "8px",
+    "shadow": "0 20px 58px rgba(57, 45, 45, 0.14)",
+    "letterSpacing": "0",
+    "texture": "paper grain, dotted noise, torn tape bands"
+  },
+  "typography": {
+    "display": "Newsreader",
+    "body": "Inter",
+    "mono": "JetBrains Mono"
+  },
+  "components": [
+    "sticky translucent topbar",
+    "paper dashboard shell",
+    "zine generation cards",
+    "dark output console",
+    "GOE wallet panels",
+    "product archive cards",
+    "drawer and command dialog"
+  ],
+  "guardrails": [
+    "cards use 8px radius",
+    "no negative letter spacing",
+    "no decorative orb/bokeh backgrounds",
+    "mobile navigation keeps 44px minimum targets"
+  ]
+}

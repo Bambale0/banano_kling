@@ -7,7 +7,7 @@ import pytest
 from aiohttp import web
 
 from bot.config import config
-from bot.main import handle_kling_webhook
+from bot.main import _verify_kie_ai_webhook_secret, handle_kling_webhook
 
 
 @pytest.mark.asyncio
@@ -40,3 +40,36 @@ async def test_handle_kling_webhook_signature_ok(monkeypatch):
 
     resp = await handle_kling_webhook(req)
     assert resp.status == 200
+
+
+def test_kie_ai_webhook_secret_rejects_when_required_and_missing():
+    assert not _verify_kie_ai_webhook_secret(
+        secret="",
+        require_secret=True,
+        body=b"{}",
+        headers={},
+        query={},
+    )
+
+
+def test_kie_ai_webhook_secret_accepts_shared_header():
+    assert _verify_kie_ai_webhook_secret(
+        secret="kie-secret",
+        require_secret=True,
+        body=b"{}",
+        headers={"x-kie-webhook-secret": "kie-secret"},
+        query={},
+    )
+
+
+def test_kie_ai_webhook_secret_accepts_hmac_signature():
+    body = b'{"taskId":"abc"}'
+    signature = hmac.new(b"kie-secret", body, hashlib.sha256).hexdigest()
+
+    assert _verify_kie_ai_webhook_secret(
+        secret="kie-secret",
+        require_secret=True,
+        body=body,
+        headers={"x-kie-signature": f"sha256={signature}"},
+        query={},
+    )

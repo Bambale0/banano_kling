@@ -84,6 +84,8 @@ https://2loop.chillcreative.ru/robokassa/success
 ```env
 KIE_AI_API_KEY=
 KIE_AI_WEBHOOK_PATH=/webhook/kie_ai
+KIE_AI_WEBHOOK_SECRET=
+KIE_AI_REQUIRE_WEBHOOK_SECRET=1
 KIE_BASE_URL=https://api.kie.ai
 
 NANOBANANA_API_KEY=

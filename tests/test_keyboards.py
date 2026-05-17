@@ -42,13 +42,25 @@ def test_get_main_menu_keyboard():
         for row in kb.inline_keyboard
         for btn in row
     )
+    assert not any(
+        getattr(btn, "web_app", None) for row in kb.inline_keyboard for btn in row
+    )
+
+
+def test_get_main_menu_keyboard_can_show_miniapp_for_admin():
+    kb = get_main_menu_keyboard(10, show_miniapp=True)
+    assert any(
+        getattr(btn, "web_app", None) for row in kb.inline_keyboard for btn in row
+    )
 
 
 def test_get_admin_keyboard():
     kb = get_admin_keyboard()
     assert kb.inline_keyboard
     assert any(
-        "admin_reload" in btn.callback_data for row in kb.inline_keyboard for btn in row
+        "admin_reload" in (btn.callback_data or "")
+        for row in kb.inline_keyboard
+        for btn in row
     )
 
 

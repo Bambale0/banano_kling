@@ -338,6 +338,21 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_analytics_events_telegram_created ON analytics_events(telegram_id, created_at)"
         )
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_reference_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                image_url TEXT NOT NULL,
+                title TEXT,
+                source_task_id TEXT,
+                is_primary BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_reference_assets_user_kind ON user_reference_assets(telegram_id, kind, created_at)"
+        )
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS shop_product_overrides (
@@ -1037,30 +1052,58 @@ async def deduct_credits(
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
 
+    if amount <= 0:
+        return True
+
     # Админы не платят
     if config.is_admin(telegram_id):
         logger.info(f"Admin {telegram_id} - free access (skipped {amount} credits)")
         return True
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-
-        # Проверяем баланс
-        cursor = await db.execute(
-            "SELECT credits FROM users WHERE telegram_id = ?", (telegram_id,)
-        )
-        row = await cursor.fetchone()
-
-        if not row or row["credits"] < amount:
+        if check_balance:
+            result = await db.execute(
+                """
+                UPDATE users
+                SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_id = ? AND credits >= ?
+                """,
+                (amount, telegram_id, amount),
+            )
+        else:
+            result = await db.execute(
+                """
+                UPDATE users
+                SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_id = ?
+                """,
+                (amount, telegram_id),
+            )
+        await db.commit()
+        if result.rowcount != 1:
             return False
+        logger.info(f"Deducted {amount} credits from user {telegram_id}")
+        return True
 
-        # Списываем
-        await db.execute(
-            "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (amount, telegram_id),
+
+async def admin_adjust_user_credits(telegram_id: int, delta: int) -> bool:
+    """Меняет баланс пользователя из админки без правила бесплатного админа."""
+    if delta == 0:
+        return True
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        result = await db.execute(
+            """
+            UPDATE users
+            SET credits = MAX(0, credits + ?), updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            """,
+            (delta, telegram_id),
         )
         await db.commit()
-        logger.info(f"Deducted {amount} credits from user {telegram_id}")
+        if result.rowcount != 1:
+            return False
+        logger.info("Admin adjusted credits for %s by %+d", telegram_id, delta)
         return True
 
 
@@ -1288,6 +1331,109 @@ async def get_user_stats(telegram_id: int) -> dict:
         }
 
 
+async def get_admin_user_profile(telegram_id: int) -> Optional[dict]:
+    """Возвращает профиль пользователя для админки без автосоздания."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                u.*,
+                COALESCE(g.generation_tasks, 0) AS generation_tasks,
+                COALESCE(g.generation_spent, 0) AS generation_spent,
+                COALESCE(p.payments_count, 0) AS payments_count,
+                COALESCE(p.payments_rub, 0) AS payments_rub
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS generation_tasks, COALESCE(SUM(cost), 0) AS generation_spent
+                FROM generation_tasks
+                GROUP BY user_id
+            ) g ON g.user_id = u.id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS payments_count, COALESCE(SUM(amount_rub), 0) AS payments_rub
+                FROM transactions
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) p ON p.user_id = u.id
+            WHERE u.telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        referrals_cursor = await db.execute(
+            "SELECT COUNT(*) AS count FROM users WHERE referred_by = ?",
+            (row["id"],),
+        )
+        referrals = await referrals_cursor.fetchone()
+
+        return {
+            "id": row["id"],
+            "telegram_id": row["telegram_id"],
+            "credits": int(row["credits"] or 0),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "referral_code": row["referral_code"] if "referral_code" in row.keys() else None,
+            "referred_by": row["referred_by"] if "referred_by" in row.keys() else None,
+            "referrals_count": referrals["count"] if referrals else 0,
+            "has_paid": bool(row["has_paid"]) if "has_paid" in row.keys() else False,
+            "generation_tasks": int(row["generation_tasks"] or 0),
+            "generation_spent": int(row["generation_spent"] or 0),
+            "payments_count": int(row["payments_count"] or 0),
+            "payments_rub": float(row["payments_rub"] or 0),
+            "partner_balance_rub": (
+                float(row["partner_balance_rub"] or 0)
+                if "partner_balance_rub" in row.keys()
+                else 0.0
+            ),
+        }
+
+
+async def get_admin_users_page(limit: int = 10, offset: int = 0) -> dict:
+    """Возвращает страницу пользователей для админки."""
+    limit = max(1, min(int(limit), 50))
+    offset = max(0, int(offset))
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        total_cursor = await db.execute("SELECT COUNT(*) AS count FROM users")
+        total_row = await total_cursor.fetchone()
+        cursor = await db.execute(
+            """
+            SELECT
+                u.telegram_id,
+                u.credits,
+                u.created_at,
+                COALESCE(g.generation_tasks, 0) AS generation_tasks,
+                COALESCE(p.payments_rub, 0) AS payments_rub
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS generation_tasks
+                FROM generation_tasks
+                GROUP BY user_id
+            ) g ON g.user_id = u.id
+            LEFT JOIN (
+                SELECT user_id, COALESCE(SUM(amount_rub), 0) AS payments_rub
+                FROM transactions
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) p ON p.user_id = u.id
+            ORDER BY u.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return {
+            "total": int(total_row["count"] or 0),
+            "limit": limit,
+            "offset": offset,
+            "users": [dict(row) for row in rows],
+        }
+
+
 async def get_admin_stats() -> dict:
     """Получает общую статистику для админа"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -1322,6 +1468,161 @@ async def get_admin_stats() -> dict:
             "total_batch_jobs": batch_row["count"] or 0,
             "total_referrals": referrals_row["count"] or 0,
         }
+
+
+async def get_admin_finance_overview() -> dict:
+    """Сводка по платежам, балансам и расходу GOE."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        payments_cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS completed_count,
+                COALESCE(SUM(amount_rub), 0) AS completed_rub,
+                COALESCE(SUM(credits), 0) AS sold_credits,
+                COALESCE(SUM(CASE WHEN date(created_at) = date('now') THEN amount_rub ELSE 0 END), 0) AS today_rub,
+                COALESCE(SUM(CASE WHEN date(created_at) >= date('now', '-7 day') THEN amount_rub ELSE 0 END), 0) AS week_rub,
+                COALESCE(SUM(CASE WHEN date(created_at) >= date('now', '-30 day') THEN amount_rub ELSE 0 END), 0) AS month_rub
+            FROM transactions
+            WHERE status = 'completed'
+            """
+        )
+        payments = await payments_cursor.fetchone()
+
+        pending_cursor = await db.execute(
+            "SELECT COUNT(*) AS count, COALESCE(SUM(amount_rub), 0) AS rub FROM transactions WHERE status = 'pending'"
+        )
+        pending = await pending_cursor.fetchone()
+
+        users_cursor = await db.execute(
+            "SELECT COALESCE(SUM(credits), 0) AS credits_on_users FROM users"
+        )
+        users = await users_cursor.fetchone()
+
+        tasks_cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS tasks_count,
+                COALESCE(SUM(cost), 0) AS spent_credits,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_tasks,
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_tasks
+            FROM generation_tasks
+            """
+        )
+        tasks = await tasks_cursor.fetchone()
+
+        return {
+            "completed_count": int(payments["completed_count"] or 0),
+            "completed_rub": float(payments["completed_rub"] or 0),
+            "sold_credits": int(payments["sold_credits"] or 0),
+            "today_rub": float(payments["today_rub"] or 0),
+            "week_rub": float(payments["week_rub"] or 0),
+            "month_rub": float(payments["month_rub"] or 0),
+            "pending_count": int(pending["count"] or 0),
+            "pending_rub": float(pending["rub"] or 0),
+            "credits_on_users": int(users["credits_on_users"] or 0),
+            "tasks_count": int(tasks["tasks_count"] or 0),
+            "spent_credits": int(tasks["spent_credits"] or 0),
+            "completed_tasks": int(tasks["completed_tasks"] or 0),
+            "pending_tasks": int(tasks["pending_tasks"] or 0),
+        }
+
+
+async def get_admin_recent_transactions(limit: int = 10) -> List[dict]:
+    """Последние транзакции с Telegram ID."""
+    limit = max(1, min(int(limit), 30))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT t.order_id, t.payment_id, t.provider, t.credits, t.amount_rub,
+                   t.status, t.created_at, u.telegram_id
+            FROM transactions t
+            LEFT JOIN users u ON u.id = t.user_id
+            ORDER BY t.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def save_user_reference_asset(
+    telegram_id: int,
+    kind: str,
+    image_url: str,
+    title: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    is_primary: bool = False,
+) -> Optional[int]:
+    """Сохраняет пользовательский референс: главный образ или одежду."""
+    kind = (kind or "").strip().lower()
+    if kind not in {"main", "clothing"}:
+        raise ValueError("Unsupported reference asset kind")
+    if not image_url:
+        return None
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        if is_primary and kind == "main":
+            await db.execute(
+                "UPDATE user_reference_assets SET is_primary = 0 WHERE telegram_id = ? AND kind = 'main'",
+                (telegram_id,),
+            )
+        cursor = await db.execute(
+            """
+            INSERT INTO user_reference_assets
+                (telegram_id, kind, image_url, title, source_task_id, is_primary)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                telegram_id,
+                kind,
+                image_url,
+                title,
+                source_task_id,
+                1 if is_primary else 0,
+            ),
+        )
+        await db.commit()
+        return int(cursor.lastrowid)
+
+
+async def get_user_reference_assets(
+    telegram_id: int, kind: Optional[str] = None, limit: int = 20
+) -> List[dict]:
+    """Возвращает сохранённые референсы пользователя."""
+    limit = max(1, min(int(limit), 50))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if kind:
+            cursor = await db.execute(
+                """
+                SELECT * FROM user_reference_assets
+                WHERE telegram_id = ? AND kind = ?
+                ORDER BY is_primary DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (telegram_id, kind, limit),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT * FROM user_reference_assets
+                WHERE telegram_id = ?
+                ORDER BY kind ASC, is_primary DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (telegram_id, limit),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_primary_reference_asset(telegram_id: int) -> Optional[dict]:
+    """Возвращает главный референс пользователя."""
+    assets = await get_user_reference_assets(telegram_id, kind="main", limit=1)
+    return assets[0] if assets else None
 
 
 async def _ensure_shop_tables(db):

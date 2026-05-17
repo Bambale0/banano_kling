@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import uuid
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
@@ -426,7 +428,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
 
         if result:
             # Сохраняем результат
-            saved_url = save_uploaded_file(result, "png")
+            saved_url = _save_uploaded_file(result, "png")
 
             # Отправляем результат
             await callback.message.answer_photo(

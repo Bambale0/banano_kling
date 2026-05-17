@@ -69,16 +69,21 @@ class SeedreamLiteService:
         nsfw_checker: bool = False,
         callback_url: str = None,
     ) -> Optional[str]:
+        image_urls = image_urls or []
         payload = {
             "model": model,
             "input": {
                 "prompt": prompt,
-                "image_urls": image_urls or [],
                 "aspect_ratio": aspect_ratio,
                 "quality": quality,
                 "nsfw_checker": nsfw_checker,
             },
         }
+        if image_urls:
+            if model.startswith(("flux-2/", "gpt-image-")):
+                payload["input"]["input_urls"] = image_urls
+            else:
+                payload["input"]["image_urls"] = image_urls
         if callback_url:
             payload["callBackUrl"] = callback_url
 

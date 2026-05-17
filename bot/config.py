@@ -1,9 +1,17 @@
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
 logger = logging.getLogger(__name__)
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+except Exception:
+    pass
 
 
 @dataclass
@@ -51,6 +59,10 @@ class Config:
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
+    KIE_AI_WEBHOOK_SECRET: str = os.getenv("KIE_AI_WEBHOOK_SECRET", "")
+    KIE_AI_REQUIRE_WEBHOOK_SECRET: bool = os.getenv(
+        "KIE_AI_REQUIRE_WEBHOOK_SECRET", "1"
+    ).lower() in ("1", "true", "yes", "on")
     KIE_BASE_URL: str = os.getenv("KIE_BASE_URL", "https://api.kie.ai")
 
     # Legacy API Keys (optional fallbacks)
@@ -90,6 +102,15 @@ class Config:
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+    POSTGRES_DSN: str = os.getenv("POSTGRES_DSN", "")
+    REQUIRE_POSTGRES_REDIS: bool = os.getenv(
+        "REQUIRE_POSTGRES_REDIS", "1"
+    ).lower() in ("1", "true", "yes", "on")
+
+    # Redis / FSM storage
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+    FSM_STORAGE: str = os.getenv("FSM_STORAGE", "redis")
+    FSM_REDIS_PREFIX: str = os.getenv("FSM_REDIS_PREFIX", "2loop:fsm")
 
     # Партнёрская программа
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
@@ -107,6 +128,9 @@ class Config:
     UPLOADS_ROOT: str = os.getenv(
         "TWOLOOP_UPLOADS_ROOT", os.path.join(STATIC_ROOT, "uploads")
     )
+    MINIAPP_ADMIN_ONLY: bool = os.getenv(
+        "TWOLOOP_MINIAPP_ADMIN_ONLY", "1"
+    ).lower() in ("1", "true", "yes", "on")
 
     # Админы (список ID через запятую)
     ADMIN_IDS_STR: str = os.getenv("ADMIN_IDS", "")
@@ -127,6 +151,28 @@ class Config:
     def is_admin(self, telegram_id: int) -> bool:
         """Проверяет, является ли пользователь админом"""
         return telegram_id in self.admin_ids
+
+    @property
+    def effective_postgres_dsn(self) -> str:
+        """Postgres DSN can be provided explicitly or via DATABASE_URL."""
+        if self.POSTGRES_DSN:
+            return self.POSTGRES_DSN
+        if self.DATABASE_URL.startswith(("postgres://", "postgresql://")):
+            return self.DATABASE_URL
+        return ""
+
+    def validate_required_infra_config(self) -> None:
+        """Fail fast when mandatory Redis/Postgres config is absent."""
+        if not self.REQUIRE_POSTGRES_REDIS:
+            return
+        if not self.effective_postgres_dsn:
+            raise RuntimeError(
+                "PostgreSQL is required: set POSTGRES_DSN or DATABASE_URL=postgresql://..."
+            )
+        if not self.REDIS_URL:
+            raise RuntimeError("Redis is required: set REDIS_URL")
+        if (self.FSM_STORAGE or "").lower() != "redis":
+            raise RuntimeError("Redis FSM is required: set FSM_STORAGE=redis")
 
     @property
     def webhook_url(self) -> str:

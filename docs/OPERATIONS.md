@@ -39,11 +39,19 @@ Systemd units:
 
 The timer runs every minute and checks:
 
+- Redis connectivity through `REDIS_URL`;
+- PostgreSQL connectivity through `POSTGRES_DSN`;
 - nginx service state;
 - bot service state;
+- local backend `/health`;
 - local Mini App API health;
 - external Mini App API health;
 - Telegram webhook URL/IP and last error.
+
+The watchdog uses a process lock, so slow checks do not overlap with the next
+timer tick. If Redis or PostgreSQL are unreachable, it attempts to restart the
+matching systemd service and then restarts the bot if the dependency is still
+unavailable.
 
 Logs:
 
@@ -92,6 +100,12 @@ Expected response:
 
 ```json
 {"ok": true, "service": "2loop-miniapp"}
+```
+
+The plain backend `/health` endpoint returns:
+
+```text
+OK
 ```
 
 ## Deploy Backend Changes

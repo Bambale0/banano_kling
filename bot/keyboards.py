@@ -1,8 +1,11 @@
 import json
+from math import ceil
 import os
 
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+MINIAPP_URL = "https://2loop.chillcreative.ru/app"
 
 
 # Загрузка цен из price.json
@@ -25,21 +28,25 @@ def load_prices():
                     "seedream": 3,
                 },
                 "video_models": {
-                    "v26_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
+                    "v26_pro": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14}},
                     "v3_std": {
                         "base": 6,
+                        "per_second_cost": 2,
                         "duration_costs": {"5": 6, "10": 8, "15": 10},
                     },
                     "v3_pro": {
                         "base": 8,
+                        "per_second_cost": 2,
                         "duration_costs": {"5": 8, "10": 14, "15": 16},
                     },
                     "v3_omni_std": {
                         "base": 8,
+                        "per_second_cost": 2,
                         "duration_costs": {"5": 8, "10": 14, "15": 16},
                     },
                     "v3_omni_pro": {
                         "base": 8,
+                        "per_second_cost": 2,
                         "duration_costs": {"5": 8, "10": 14, "15": 16},
                     },
                 },
@@ -69,19 +76,46 @@ IMAGE_COSTS = PRICES.get("costs_reference", {}).get(
 VIDEO_COSTS = PRICES.get("costs_reference", {}).get(
     "video_models",
     {
-        "v3_std": {"base": 6, "duration_costs": {"5": 6, "10": 8, "15": 10}},
-        "v3_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14, "15": 16}},
-        "v3_omni_std": {"base": 8, "duration_costs": {"5": 8, "10": 14, "15": 16}},
-        "v3_omni_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14, "15": 16}},
-        "v26_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
-        "v26_motion_pro": {"base": 10, "duration_costs": {"5": 10, "10": 18}},
-        "v26_motion_std": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
-        "z_image_turbo_lora": {"base": 3, "duration_costs": {"5": 3, "10": 6, "15": 9}},
-        "grok_imagine": {"base": 15, "duration_costs": {"6": 15, "20": 40, "30": 60}},
+        "v3_std": {"base": 6, "per_second_cost": 2, "duration_costs": {"5": 6, "10": 8, "15": 10}},
+        "v3_pro": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14, "15": 16}},
+        "v3_omni_std": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14, "15": 16}},
+        "v3_omni_pro": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14, "15": 16}},
+        "v26_pro": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14}},
+        "v26_motion_pro": {"base": 10, "per_second_cost": 2, "duration_costs": {"5": 10, "10": 18}},
+        "v26_motion_std": {"base": 8, "per_second_cost": 2, "duration_costs": {"5": 8, "10": 14}},
+        "z_image_turbo_lora": {"base": 3, "per_second_cost": 1, "duration_costs": {"5": 3, "10": 6, "15": 9}},
+        "grok_imagine": {"base": 15, "per_second_cost": 2.5, "duration_costs": {"6": 15, "20": 40, "30": 60}},
     },
 )
 
 PACKAGES = PRICES.get("packages", [])
+
+
+def get_video_per_second_cost(model_config: dict) -> float:
+    for key in ("per_second_cost", "credits_per_second"):
+        value = model_config.get(key)
+        if value is not None:
+            return float(value)
+
+    duration_costs = model_config.get("duration_costs", {})
+    if duration_costs:
+        first_duration = min(int(duration) for duration in duration_costs.keys())
+        return float(duration_costs[str(first_duration)]) / first_duration
+
+    return float(model_config.get("base", 8)) / 5
+
+
+def get_video_total_cost(model: str, duration: int = 5) -> int:
+    model_config = VIDEO_COSTS.get(model, {"per_second_cost": 3})
+    return ceil(get_video_per_second_cost(model_config) * max(1, int(duration)))
+
+
+def get_video_available_durations(model: str) -> list[int]:
+    model_config = VIDEO_COSTS.get(model, {})
+    duration_costs = model_config.get("duration_costs", {})
+    if duration_costs:
+        return sorted(int(duration) for duration in duration_costs.keys())
+    return [5, 10, 15]
 
 
 # =============================================================================
@@ -89,32 +123,79 @@ PACKAGES = PRICES.get("packages", [])
 # =============================================================================
 
 
-def get_main_menu_keyboard(user_credits: int = 0):
-    """Главное меню бота."""
+def get_main_menu_keyboard(user_credits: int = 0, show_miniapp: bool = False):
+    """Главное меню 2Loop в UX-логике flowchart: от материала к готовому контенту."""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🎀 Подобрать аксессуар", callback_data="accessory_finder")
-    builder.button(text="🧊 Собрать AI-образ", callback_data="create_image_refs_new")
-    builder.button(text="🎬 Сделать видео/сторис", callback_data="create_video_new")
-    builder.button(text="🛒 Магазин 2Loop", callback_data="menu_catalog")
-    builder.button(text="🤖 AI-стилист", callback_data="menu_ai_assistant")
-    builder.button(text="💎 Баланс и GOE", callback_data="menu_balance")
-    builder.button(text="❓ Помощь", callback_data="menu_support")
+    builder.button(text="🚀 Создать контент", callback_data="menu_content")
+    builder.button(text="📝 SMM-пост / идея", callback_data="flow_post_content")
+    builder.button(text="🎬 Видео / Reels", callback_data="create_video_new")
+    builder.button(text="🎨 AI-образ / референсы", callback_data="create_image_refs_new")
+    builder.button(text="👗 Примерка / образ", callback_data="flow_try_on")
+    builder.button(text="✨ Улучшить промпт", callback_data="assistant_prompt_help")
+    builder.button(text="📤 Форматы вывода", callback_data="menu_output_formats")
+    if show_miniapp:
+        builder.add(
+            InlineKeyboardButton(
+                text="🛍 Каталог / Mini App", web_app=WebAppInfo(url=MINIAPP_URL)
+            )
+        )
+    builder.button(text="🛒 Каталог в чате", callback_data="menu_catalog")
+    builder.button(text=f"💎 Баланс: {user_credits} GOE", callback_data="menu_balance")
+    builder.button(text="➕ Пополнить GOE", callback_data="menu_topup")
+    builder.button(text="📚 История", callback_data="menu_history")
+    builder.button(text="🤖 Модели и цены", callback_data="menu_tariffs")
+    builder.button(text="💬 Помощь", callback_data="menu_support")
 
-    builder.adjust(1, 1, 1, 1, 2, 1)
+    builder.adjust(1, 2, 2, 2, 2, 2, 2, 1)
 
+    return builder.as_markup()
+
+
+def get_content_menu_keyboard():
+    """Flowchart UX: входной материал → AI обработка → стилизация → формат."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="1️⃣ Материал: фото / видео / идея", callback_data="menu_output_formats")
+    builder.button(text="2️⃣ Улучшить промпт", callback_data="assistant_prompt_help")
+    builder.button(text="3️⃣ AI-образ / референсы", callback_data="create_image_refs_new")
+    builder.button(text="4️⃣ Выбрать формат", callback_data="menu_output_formats")
+    builder.button(text="📝 SMM-пост", callback_data="flow_post_content")
+    builder.button(text="🎬 Видео / Reels", callback_data="create_video_new")
+    builder.button(text="👗 Примерка / образ", callback_data="flow_try_on")
+    builder.button(text="➕ Пополнить GOE", callback_data="menu_topup")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1, 1, 3, 2)
+    return builder.as_markup()
+
+
+def get_flow_output_keyboard():
+    """Три финальные ветки генерации из flowchart."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 SMM-пост: текст + caption", callback_data="flow_post_content")
+    builder.button(text="🎬 Видео / Reels: Kling / Runway", callback_data="create_video_new")
+    builder.button(text="👗 Примерка / образ: Try-On AI", callback_data="flow_try_on")
+    builder.button(text="✨ Улучшить идею промптом", callback_data="assistant_prompt_help")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1, 1, 1)
     return builder.as_markup()
 
 
 def get_admin_keyboard():
     """Админ-панель"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🛍 Магазин", callback_data="admin_shop")
-    builder.button(text="📦 Заказы", callback_data="admin_shop_orders")
-    builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
-    builder.button(text="📊 Статистика", callback_data="admin_stats")
+    builder.button(text="📊 Обзор", callback_data="admin_stats")
+    builder.button(text="💳 Финансы", callback_data="admin_finance")
+    builder.button(text="💎 Цены", callback_data="admin_prices")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
+    builder.button(text="🛠 Админка: каталог", callback_data="admin_shop")
+    builder.button(text="📦 Заказы", callback_data="admin_shop_orders")
+    builder.add(
+        InlineKeyboardButton(
+            text="🧪 Mini App dev", web_app=WebAppInfo(url=MINIAPP_URL)
+        )
+    )
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
+    builder.button(text="🔄 Перезагрузить конфиг", callback_data="admin_reload")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -134,6 +215,7 @@ SUPPORTED_RATIOS = {
     "runway": ["16:9", "9:16", "1:1"],
     "glow": ["16:9", "9:16", "1:1"],
     "seedance2": ["16:9", "9:16", "1:1"],
+    "wan_27": ["16:9", "9:16", "1:1"],
 }
 
 
@@ -185,81 +267,68 @@ def get_create_video_keyboard(
     grok_data = VIDEO_COSTS.get(
         "grok_imagine", {"base": 15, "duration_costs": {"6": 15}}
     )
-    grok_cost = grok_data.get("duration_costs", {}).get(
-        str(current_duration), grok_data.get("base", 15)
-    )
+    grok_cost = get_video_total_cost("grok_imagine", current_duration)
 
-    v26_cost = v26_data.get("duration_costs", {}).get(
-        str(current_duration), v26_data.get("base", 8)
-    )
-    v3_std_cost = v3_std_data.get("duration_costs", {}).get(
-        str(current_duration), v3_std_data.get("base", 6)
-    )
-    v3_pro_cost = v3_pro_data.get("duration_costs", {}).get(
-        str(current_duration), v3_pro_data.get("base", 8)
-    )
-    omni_cost = omni_data.get("duration_costs", {}).get(
-        str(current_duration), omni_data.get("base", 8)
-    )
-    v26_motion_cost = v26_motion_data.get("duration_costs", {}).get(
-        str(current_duration), v26_motion_data.get("base", 10)
-    )
+    v26_cost = get_video_total_cost("v26_pro", current_duration)
+    v3_std_cost = get_video_total_cost("v3_std", current_duration)
+    v3_pro_cost = get_video_total_cost("v3_pro", current_duration)
+    omni_cost = get_video_total_cost("v3_omni_std", current_duration)
+    v26_motion_cost = get_video_total_cost("v26_motion_pro", current_duration)
 
-    v3_omni_std_cost = omni_data.get("duration_costs", {}).get(
-        str(current_duration), omni_data.get("base", 8)
-    )
-    v3_omni_pro_cost = v3_omni_pro_data.get("duration_costs", {}).get(
-        str(current_duration), v3_omni_pro_data.get("base", 8)
-    )
+    v3_omni_std_cost = get_video_total_cost("v3_omni_std", current_duration)
+    v3_omni_pro_cost = get_video_total_cost("v3_omni_pro", current_duration)
 
     seedance_data = VIDEO_COSTS.get("seedance2", {"duration_costs": {"5": 8}})
-    seedance_cost = seedance_data.get("duration_costs", {}).get(
-        str(current_duration), 8
-    )
+    seedance_cost = get_video_total_cost("seedance2", current_duration)
+    wan_27_cost = get_video_total_cost("wan_27", current_duration)
 
     runway_data = VIDEO_COSTS.get(
         "runway", {"base": 15, "duration_costs": {"5": 15, "10": 25}}
     )
-    runway_cost = runway_data.get("duration_costs", {}).get(
-        str(current_duration), runway_data.get("base", 15)
-    )
+    runway_cost = get_video_total_cost("runway", current_duration)
 
     models = [
-        {"key": "v3_std", "label": "⚡ Kling 3 Std", "cost": v3_std_cost},
-        {"key": "v3_pro", "label": "💎 Kling 3 Pro", "cost": v3_pro_cost},
+        {"key": "v3_std", "label": "⚡ KIE Kling 3 Std", "cost": v3_std_cost},
+        {"key": "v3_pro", "label": "💎 KIE Kling 3 Pro", "cost": v3_pro_cost},
+        {"key": "v3_omni_std", "label": "🎞 KIE Kling Omni Std", "cost": v3_omni_std_cost},
+        {"key": "v3_omni_pro", "label": "🏆 KIE Kling Omni Pro", "cost": v3_omni_pro_cost},
     ]
     if current_v_type != "text":
         models.append(
             {
                 "key": "seedance2",
-                "label": "🌱 Seedance 2.0",
+                "label": "🌱 KIE Seedance 2.0",
                 "cost": seedance_cost,
+            }
+        )
+    if current_v_type == "imgtxt":
+        models.append(
+            {
+                "key": "wan_27",
+                "label": "🌊 KIE Wan 2.7",
+                "cost": wan_27_cost,
             }
         )
     if current_v_type == "video":
         aleph_data = VIDEO_COSTS.get(
             "aleph", {"base": 15, "duration_costs": {"5": 15, "10": 25}}
         )
-        aleph_cost = aleph_data.get("duration_costs", {}).get(
-            str(current_duration), aleph_data.get("base", 15)
-        )
+        aleph_cost = get_video_total_cost("aleph", current_duration)
         glow_data = VIDEO_COSTS.get(
             "glow", {"base": 25, "duration_costs": {"5": 25, "10": 40}}
         )
-        glow_cost = glow_data.get("duration_costs", {}).get(
-            str(current_duration), glow_data.get("base", 25)
-        )
+        glow_cost = get_video_total_cost("glow", current_duration)
         models.append(
             {
                 "key": "aleph",
-                "label": "🔮 Aleph Video (требует видео реф.)",
+                "label": "🔮 KIE Aleph Video (требует видео реф.)",
                 "cost": aleph_cost,
             }
         )
         models.append(
             {
                 "key": "glow",
-                "label": "✨ Kling Glow (требует видео реф.)",
+                "label": "✨ KIE Kling Glow (требует видео реф.)",
                 "cost": glow_cost,
             }
         )
@@ -267,14 +336,14 @@ def get_create_video_keyboard(
         models.append(
             {
                 "key": "runway",
-                "label": "🎥 Runway AI",
+                "label": "🎥 KIE Runway AI",
                 "cost": runway_cost,
             }
         )
         models.append(
             {
                 "key": "grok_imagine",
-                "label": "🧠 Grok Imagine",
+                "label": "🧠 KIE Grok Imagine",
                 "cost": grok_cost,
             }
         )
@@ -300,14 +369,7 @@ def get_create_video_keyboard(
     builder.row(*ratio_buttons)
 
     # Длительности: показываем только поддерживаемые моделью значения
-    model_data_for_durations = VIDEO_COSTS.get(current_model, {})
-    duration_costs = model_data_for_durations.get("duration_costs", {})
-    if duration_costs:
-        # Используем отсортированный список доступных длительностей из конфигурации
-        available_durations = sorted([int(k) for k in duration_costs.keys()])
-    else:
-        # По умолчанию показываем 5/10/15
-        available_durations = [5, 10, 15]
+    available_durations = get_video_available_durations(current_model)
 
     for dur in available_durations:
         check = "✅ " if current_duration == dur else ""
@@ -336,10 +398,7 @@ def get_create_video_keyboard(
         )
 
     # Рассчитываем цену
-    model_data = VIDEO_COSTS.get(current_model, {"base": 6, "duration_costs": {"5": 6}})
-    total_cost = model_data.get("duration_costs", {}).get(
-        str(current_duration), model_data.get("base", 6)
-    )
+    total_cost = get_video_total_cost(current_model, current_duration)
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
     builder.button(text=f"💰 {total_cost}💎", callback_data="back_main")
@@ -350,27 +409,6 @@ def get_create_video_keyboard(
     if current_v_type == "video":
         widths += [4, 2]
     builder.adjust(*widths)
-    return builder.as_markup()
-
-
-def get_reference_videos_upload_keyboard(
-    current_count: int = 0, max_count: int = 5, preset_id: str = None
-):
-    """Клавиатура загрузки референсных видео"""
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
-    )
-    if preset_id == "video_new":
-        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip_new")
-        builder.button(text="✅ Продолжить", callback_data="vid_ref_continue_new")
-    else:
-        builder.button(text="⏭ Пропустить", callback_data="vid_ref_skip")
-        builder.button(
-            text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
-        )
-    builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1, 2, 1)
     return builder.as_markup()
 
 
@@ -388,15 +426,23 @@ def get_create_image_keyboard(
     # Модели - Kei.ai only
     pro_cost = IMAGE_COSTS.get("nano_banana_pro", 5)
     banana2_cost = IMAGE_COSTS.get("banana_2", 7)
+    flux_cost = IMAGE_COSTS.get("flux_pro", 6)
+    gpt_image_2_cost = IMAGE_COSTS.get("gpt_image_2", 8)
     seedream_5_lite_cost = IMAGE_COSTS.get("seedream_5_lite", 6)
     seedream_edit_cost = IMAGE_COSTS.get("seedream_edit", 7)
 
     pro_check = "✅ " if current_service == "banana_pro" else ""
     banana2_check = "✅ " if current_service == "banana_2" else ""
+    flux_check = "✅ " if current_service == "flux_pro" else ""
+    gpt_image_2_check = "✅ " if current_service == "gpt_image_2" else ""
     seedream_5_lite_check = "✅ " if current_service == "seedream_5_lite" else ""
     seedream_edit_check = "✅ " if current_service == "seedream_edit" else ""
 
     # Models - each on new line (vertical list)
+    builder.button(
+        text=f"{flux_check}✨ FLUX.2 Pro • {flux_cost}💎",
+        callback_data="model_flux_pro",
+    )
     builder.button(
         text=f"{pro_check}💎 Banana Pro • {pro_cost}💎",
         callback_data="model_banana_pro",
@@ -409,6 +455,11 @@ def get_create_image_keyboard(
         text=f"{seedream_5_lite_check}🔥 Seedream 5.0 Lite • {seedream_5_lite_cost}💎",
         callback_data="model_seedream_5_lite",
     )
+    if num_refs > 0:
+        builder.button(
+            text=f"{gpt_image_2_check}🧩 GPT Image 2 Edit • {gpt_image_2_cost}💎",
+            callback_data="model_gpt_image_2",
+        )
     builder.button(
         text=f"{seedream_edit_check}🖌 Seedream 4.5 • {seedream_edit_cost}💎",
         callback_data="model_seedream_edit",
@@ -465,6 +516,11 @@ def get_payment_packages_keyboard(packages: list, provider: str = "yookassa"):
 
     builder.adjust(2)
     return builder.as_markup()
+
+
+def get_payment_provider_keyboard():
+    """Backward-compatible payment entry screen."""
+    return get_topup_keyboard()
 
 
 # =============================================================================
@@ -563,14 +619,29 @@ def get_generation_error_keyboard():
     return builder.as_markup()
 
 
-def get_image_result_actions_keyboard():
+def get_image_result_actions_keyboard(
+    task_id: str | None = None, result_url: str | None = None
+):
     """Следующие шаги после готового изображения."""
     builder = InlineKeyboardBuilder()
+    if result_url:
+        builder.button(text="📥 Скачать оригинал", url=result_url)
     builder.button(text="🧊 Создать ещё", callback_data="create_image_refs_new")
     builder.button(text="🎬 Сделать видео", callback_data="create_video_new")
+    if task_id:
+        builder.button(
+            text="✏️ Редактировать",
+            callback_data=f"edit_generated_image:{task_id}",
+        )
+        builder.button(
+            text="👗 AI примерочная",
+            callback_data=f"tryon_generated_image:{task_id}",
+        )
+        builder.button(text="👗 Сохранить как одежду", callback_data=f"save_clothing:{task_id}")
+        builder.button(text="⭐ Сделать главным", callback_data=f"save_main_ref:{task_id}")
     builder.button(text="🛒 Магазин", callback_data="menu_catalog")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 2)
+    builder.adjust(1, 1, 1, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -600,9 +671,15 @@ def get_video_result_keyboard(video_url: str, user_credits: int = 0):
 
 
 def get_ai_assistant_keyboard():
-    """Клавиатура для ИИ-ассистента"""
+    """Клавиатура для полноценного ИИ-ассистента."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 В главное меню", callback_data="back_main")
+    builder.button(text="✨ Улучшить промпт", callback_data="assistant_prompt_help")
+    builder.button(text="📊 Цены моделей", callback_data="menu_tariffs")
+    builder.button(text="🖼 Создать изображение", callback_data="create_image_refs_new")
+    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
+    builder.button(text="🧹 Новый диалог", callback_data="assistant_clear")
+    builder.button(text="🏠 В главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -736,7 +813,7 @@ def get_quality_keyboard(preset_id: str):
     return builder.as_markup()
 
 
-def get_video_options_keyboard(preset_id: str):
+def get_preset_video_options_keyboard(preset_id: str):
     """Клавиатура опций видео"""
     builder = InlineKeyboardBuilder()
     builder.button(text="⏱ Длительность", callback_data=f"opt_duration_{preset_id}")
@@ -980,6 +1057,19 @@ def get_reference_images_upload_keyboard(
     builder.button(
         text=f"Загружено: {current_count}/{max_count}", callback_data="back_main"
     )
+    builder.button(
+        text="⭐ Добавить мой главный", callback_data=f"ref_use_main_{preset_id}"
+    )
+    builder.button(
+        text="👗 Добавить одежду", callback_data=f"ref_use_clothing_{preset_id}"
+    )
+    if current_count > 0:
+        builder.button(
+            text="⭐ Сохранить главный", callback_data=f"ref_save_main_{preset_id}"
+        )
+        builder.button(
+            text="👗 Сохранить одежду", callback_data=f"ref_save_clothing_{preset_id}"
+        )
 
     # Проверяем, video это или image
     is_video = preset_id and (preset_id.startswith("video") or preset_id == "video_new")
@@ -998,7 +1088,7 @@ def get_reference_images_upload_keyboard(
                 text="✅ Продолжить", callback_data=f"vid_ref_confirm_{preset_id}"
             )
         builder.button(text="🔙 Назад", callback_data="back_main")
-        builder.adjust(1, 2, 1)
+        builder.adjust(1, 2, 2, 2, 1)
     else:
         # Для изображений - добавляем кнопку пропуска (используем _new для нового UX)
         if preset_id == "new":
@@ -1018,7 +1108,7 @@ def get_reference_images_upload_keyboard(
                 else "back_main"
             ),
         )
-        builder.adjust(1, 2, 1)
+        builder.adjust(1, 2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -1267,21 +1357,11 @@ def get_video_options_keyboard(
         "v26_motion_pro", {"base": 10, "duration_costs": {"5": 10}}
     )
 
-    v26_cost = v26_data.get("duration_costs", {}).get(
-        str(current_duration), v26_data.get("base", 8)
-    )
-    v3_std_cost = v3_std_data.get("duration_costs", {}).get(
-        str(current_duration), v3_std_data.get("base", 6)
-    )
-    v3_pro_cost = v3_pro_data.get("duration_costs", {}).get(
-        str(current_duration), v3_pro_data.get("base", 8)
-    )
-    omni_cost = omni_data.get("duration_costs", {}).get(
-        str(current_duration), omni_data.get("base", 8)
-    )
-    v26_motion_cost = v26_motion_data.get("duration_costs", {}).get(
-        str(current_duration), v26_motion_data.get("base", 10)
-    )
+    v26_cost = get_video_total_cost("v26_pro", current_duration)
+    v3_std_cost = get_video_total_cost("v3_std", current_duration)
+    v3_pro_cost = get_video_total_cost("v3_pro", current_duration)
+    omni_cost = get_video_total_cost("v3_omni_std", current_duration)
+    v26_motion_cost = get_video_total_cost("v26_motion_pro", current_duration)
 
     v26_check = "✅ " if current_model == "v26_pro" else ""
     v3_std_check = "✅ " if current_model == "v3_std" else ""

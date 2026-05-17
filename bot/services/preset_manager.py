@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import dataclass, field
+from math import ceil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -207,8 +208,14 @@ class PresetManager:
             "z-image-turbo": "z_image_turbo",
             "seedream": "seedream",
             "flux_pro": "flux_pro",
+            "flux-2/pro-text-to-image": "flux_pro",
+            "flux-2/pro-image-to-image": "flux_pro",
+            "gpt_image_2": "gpt_image_2",
+            "gpt-image-2-image-to-image": "gpt_image_2",
             "seedream_lite": "seedream_lite",
             "seedream_5_lite": "seedream_5_lite",
+            "seedream/5-lite-text-to-image": "seedream_5_lite",
+            "seedream/5-lite-image-to-image": "seedream_5_lite",
             "seedream_edit": "seedream_edit",
         }
 
@@ -258,22 +265,24 @@ class PresetManager:
             "kling-v3-pro": "v3_pro",
             "kling_v3_std": "v3_std",
             "kling_v3_pro": "v3_pro",
+            "kling-3.0/video": "v3_pro",
+            "bytedance/seedance-2": "seedance2",
+            "wan/2-7-image-to-video": "wan_27",
+            "wan_27": "wan_27",
         }
 
         mapped_model = model_map.get(model_lower, model_lower)
 
+        duration = max(1, int(duration))
+
         # Check if model exists in video_models
         if mapped_model in video_models:
-            duration = max(1, int(duration))
             model_config = video_models[mapped_model]
-            duration_costs = model_config.get("duration_costs", {})
-            if str(duration) in duration_costs:
-                return duration_costs[str(duration)]
-            # If duration not found, return base cost
-            return model_config.get("base", 8)
+            per_second = self._get_video_per_second_cost(model_config)
+            return ceil(per_second * duration)
 
         # Normalize legacy/fallback duration
-        duration = max(3, min(15, int(duration)))
+        duration = max(3, min(15, duration))
 
         # Fallback to legacy video_duration_costs
         if str(duration) in video_duration_costs:
@@ -294,6 +303,20 @@ class PresetManager:
                 return 8
             else:
                 return 10
+
+    @staticmethod
+    def _get_video_per_second_cost(model_config: dict) -> float:
+        for key in ("per_second_cost", "credits_per_second"):
+            value = model_config.get(key)
+            if value is not None:
+                return float(value)
+
+        duration_costs = model_config.get("duration_costs", {})
+        if duration_costs:
+            first_duration = min(int(duration) for duration in duration_costs.keys())
+            return float(duration_costs[str(first_duration)]) / first_duration
+
+        return float(model_config.get("base", 8)) / 5
 
     def get_image_cost(self, model: str) -> int:
         """

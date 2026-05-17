@@ -45,7 +45,7 @@ class KlingService:
         self,
         kie_key: Optional[str] = None,
     ):
-        """Initialize KlingService with Kie.ai only."""
+        """Initialize KlingService with Kie.ai primary and PiAPI fallback."""
         self.kie_key = kie_key or os.getenv("KIE_AI_API_KEY")
         self.kie_headers = (
             {
@@ -55,6 +55,19 @@ class KlingService:
             if self.kie_key
             else None
         )
+        self.api_key = os.getenv("PIAPI_API_KEY") or os.getenv("KLING_API_KEY")
+        self.base_url = os.getenv("PIAPI_BASE_URL", "https://api.piapi.ai").rstrip("/")
+        self.headers = (
+            {
+                "x-api-key": self.api_key,
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            if self.api_key
+            else None
+        )
+        self.replicate_enabled = bool(os.getenv("REPLICATE_API_TOKEN") and replicate)
+        self.replicate_client = None
 
     async def _kie_post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
         """POST to Kie.ai API"""
@@ -604,6 +617,30 @@ class KlingService:
         multi_shots: Optional[List[Dict[str, Any]]] = None,
         image_input: Optional[List[str]] = None,
     ) -> Optional[Dict]:
+        if model == "wan_27":
+            if not image_url:
+                logger.error("Wan 2.7 image-to-video requires first frame image_url")
+                return None
+            input_data = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt or "",
+                "first_frame_url": image_url,
+                "resolution": "1080p",
+                "duration": duration,
+                "aspect_ratio": aspect_ratio,
+                "prompt_extend": True,
+                "watermark": False,
+            }
+            if end_image_url:
+                input_data["last_frame_url"] = end_image_url
+            payload = {
+                "model": "wan/2-7-image-to-video",
+                "input": input_data,
+            }
+            if webhook_url:
+                payload["callBackUrl"] = webhook_url
+            return await self._kie_post("/api/v1/jobs/createTask", payload)
+
         if model == "seedance2":
             input_data = {
                 "prompt": prompt,
@@ -683,8 +720,8 @@ class KlingService:
 
         elif "motion" in model.lower():
             return await self.generate_motion_control(
-                image_url=image_url,
-                video_url=video_urls[0] if video_urls else None,
+                image_url=image_url or "",
+                video_urls=video_urls or [],
                 prompt=prompt if negative_prompt is None else prompt,
                 aspect_ratio=aspect_ratio,
                 webhook_url=webhook_url,

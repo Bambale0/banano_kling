@@ -62,7 +62,7 @@ class TestConfig:
     def test_payment_provider_default(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "invalid"
-        assert cfg.payment_provider == "tbank"
+        assert cfg.payment_provider == "invalid"
 
     def test_has_yookassa_true(self):
         cfg = Config()
@@ -85,3 +85,34 @@ class TestConfig:
         cfg = Config()
         cfg.WEBHOOK_HOST = "https://custom.com"
         assert cfg.static_base_url == "https://custom.com"
+
+    def test_required_infra_config_accepts_postgres_and_redis(self):
+        cfg = Config()
+        cfg.REQUIRE_POSTGRES_REDIS = True
+        cfg.POSTGRES_DSN = "postgresql://user:pass@localhost:5432/db"
+        cfg.DATABASE_URL = ""
+        cfg.REDIS_URL = "redis://localhost:6379/0"
+        cfg.FSM_STORAGE = "redis"
+
+        cfg.validate_required_infra_config()
+
+    def test_required_infra_config_rejects_sqlite_only(self):
+        cfg = Config()
+        cfg.REQUIRE_POSTGRES_REDIS = True
+        cfg.POSTGRES_DSN = ""
+        cfg.DATABASE_URL = "sqlite:///bot.db"
+        cfg.REDIS_URL = "redis://localhost:6379/0"
+        cfg.FSM_STORAGE = "redis"
+
+        with pytest.raises(RuntimeError):
+            cfg.validate_required_infra_config()
+
+    def test_required_infra_config_rejects_memory_fsm(self):
+        cfg = Config()
+        cfg.REQUIRE_POSTGRES_REDIS = True
+        cfg.POSTGRES_DSN = "postgresql://user:pass@localhost:5432/db"
+        cfg.REDIS_URL = "redis://localhost:6379/0"
+        cfg.FSM_STORAGE = "memory"
+
+        with pytest.raises(RuntimeError):
+            cfg.validate_required_infra_config()

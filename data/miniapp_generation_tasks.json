@@ -1,0 +1,26 @@
+[
+  {
+    "id": "mini_ee2932eced46f54140",
+    "taskId": "mini_ee2932eced46f54140",
+    "telegramId": 339795159,
+    "type": "image",
+    "presetId": "product-photo",
+    "prompt": "сборы перед соревнованием",
+    "model": "local-demo",
+    "aspectRatio": "1:1",
+    "cost": 1,
+    "status": "completed",
+    "provider": "local-demo",
+    "result": {
+      "type": "image",
+      "provider": "local-demo",
+      "url": "/static/miniapp/demo/ca26de265e012600.png",
+      "previewUrl": "/static/miniapp/demo/ca26de265e012600.png",
+      "description": "Demo Product photo result for: сборы перед соревнованием",
+      "signature": "ca26de265e012600"
+    },
+    "resultUrl": "/static/miniapp/demo/ca26de265e012600.png",
+    "createdAt": 1778869508,
+    "completedAt": 1778869508
+  }
+]

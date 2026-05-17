@@ -54,6 +54,8 @@ class AdminStates(StatesGroup):
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
     waiting_credits_amount = State()  # Ввод количества кредитов
+    waiting_user_search = State()  # Поиск пользователя по Telegram ID
+    waiting_price_value = State()  # Ввод нового значения цены/тарифа
     waiting_shop_article = State()  # Ввод артикула WB для управления товаром
     waiting_shop_photo = State()  # Загрузка фото товара
     waiting_shop_stock = State()  # Ввод остатка товара

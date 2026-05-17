@@ -1,4 +1,5 @@
 import asyncio
+from html import escape
 import json
 import logging
 import os
@@ -40,6 +41,7 @@ from bot.handlers.payments import (
     handle_yookassa_webhook,
 )
 from bot.miniapp_api import setup_miniapp_routes
+from bot.openapi import setup_openapi_routes
 from bot.services.preset_manager import preset_manager
 
 # Настройка логирования
@@ -52,6 +54,241 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+PUBLIC_BOT_COMMANDS = (
+    types.BotCommand(command="start", description="Главное меню"),
+    types.BotCommand(command="help", description="Справка и возможности"),
+)
+ADMIN_BOT_COMMANDS = (
+    *PUBLIC_BOT_COMMANDS,
+    types.BotCommand(command="admin", description="Админ-панель"),
+)
+NO_PRESET_IDS = {"no_preset", "no_preset_video", "new"}
+VIDEO_MODEL_LABELS = {
+    "v3_std": "Kling 3 Standard",
+    "v3_pro": "Kling 3 Pro",
+    "v3_omni_std": "Kling Omni Standard",
+    "v3_omni_pro": "Kling Omni Pro",
+    "v26_pro": "Kling 2.6 Pro",
+    "v26_motion_std": "Kling Motion Standard",
+    "v26_motion_pro": "Kling Motion Pro",
+    "seedance2": "Seedance 2",
+    "wan_27": "Wan 2.7",
+    "grok_imagine": "Grok Imagine",
+    "runway": "Runway",
+    "aleph": "Aleph",
+    "glow": "Glow",
+}
+
+
+def _compact_text(value: str, max_length: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
+def _format_model_label(model: str | None) -> str:
+    if not model:
+        return "Kie.ai"
+    return VIDEO_MODEL_LABELS.get(model, model.replace("_", " ").strip().title())
+
+
+def _format_video_cost_line(cost: int | float, duration: int | float | None) -> str:
+    try:
+        total = int(cost)
+        seconds = int(duration or 0)
+    except (TypeError, ValueError):
+        return f"{cost} GOE"
+
+    if seconds <= 0:
+        return f"{total} GOE"
+
+    rate = total / seconds
+    rate_text = f"{rate:.2f}".rstrip("0").rstrip(".")
+    return f"{rate_text} GOE/с × {seconds}с = {total} GOE"
+
+
+def _build_generation_success_caption(task, task_id: str) -> str:
+    is_video = task.type == "video"
+    title = "Видео готово" if is_video else "Изображение готово"
+    caption = f"✅ <b>{title}</b>\n\n"
+
+    caption += f"🤖 Модель: <code>{escape(_format_model_label(task.model))}</code>\n"
+    caption += f"🧾 ID: <code>{escape(str(task_id))}</code>"
+
+    if task.duration:
+        caption += f"\n⏱ Длительность: <code>{int(task.duration)}с</code>"
+    if task.aspect_ratio:
+        caption += f"\n📐 Формат: <code>{escape(str(task.aspect_ratio))}</code>"
+    if task.cost:
+        if is_video:
+            cost_text = _format_video_cost_line(task.cost, task.duration)
+        else:
+            cost_text = f"{int(task.cost)} GOE"
+        caption += f"\n💰 Расчет: <code>{escape(cost_text)}</code>"
+
+    if task.prompt and task.preset_id in NO_PRESET_IDS:
+        prompt = escape(_compact_text(task.prompt))
+        caption += f"\n\n🎯 Промпт:\n<code>{prompt}</code>"
+    elif task.preset_id and task.preset_id not in NO_PRESET_IDS:
+        caption += f"\n\n🎯 Пресет: <code>{escape(str(task.preset_id))}</code>"
+
+    return caption
+
+
+def _verify_kie_ai_webhook_secret(
+    *,
+    secret: str,
+    require_secret: bool,
+    body: bytes,
+    headers: dict,
+    query: dict | None = None,
+) -> bool:
+    """Verify Kie.ai webhook by shared token or HMAC SHA256 signature."""
+    if not secret:
+        return not require_secret
+
+    import hashlib
+    import hmac
+
+    query = query or {}
+    direct_candidates = [
+        headers.get("x-kie-webhook-secret"),
+        headers.get("x-webhook-secret"),
+        headers.get("x-kie-ai-secret"),
+        query.get("secret"),
+        query.get("webhook_secret"),
+    ]
+    authorization = headers.get("authorization") or headers.get("Authorization")
+    if authorization and authorization.lower().startswith("bearer "):
+        direct_candidates.append(authorization.split(" ", 1)[1].strip())
+
+    for candidate in direct_candidates:
+        if candidate and hmac.compare_digest(str(candidate), secret):
+            return True
+
+    secret_bytes = secret.encode("utf-8")
+    computed_hex = hmac.new(secret_bytes, body, hashlib.sha256).hexdigest()
+    signature_candidates = [
+        headers.get("x-kie-signature"),
+        headers.get("x-kie-ai-signature"),
+        headers.get("x-signature"),
+        headers.get("signature"),
+        headers.get("webhook-signature"),
+    ]
+    for signature in signature_candidates:
+        if not signature:
+            continue
+        parts = [part.strip() for part in str(signature).split(",") if part.strip()]
+        for part in reversed(parts):
+            signature_value = part
+            if signature_value.startswith(("sha256=", "v1=")):
+                signature_value = signature_value.split("=", 1)[1]
+            if hmac.compare_digest(computed_hex, signature_value):
+                return True
+
+    return False
+
+
+def build_fsm_storage():
+    """Build aiogram FSM storage.
+
+    Redis is mandatory for FSM storage in production.
+    """
+    config.validate_required_infra_config()
+    storage_name = (config.FSM_STORAGE or "").lower()
+    if storage_name != "redis":
+        raise RuntimeError("FSM_STORAGE must be redis")
+
+    try:
+        from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
+
+        key_builder = DefaultKeyBuilder(prefix=config.FSM_REDIS_PREFIX)
+        if hasattr(RedisStorage, "from_url"):
+            storage = RedisStorage.from_url(config.REDIS_URL, key_builder=key_builder)
+        else:
+            from redis.asyncio import Redis
+
+            storage = RedisStorage(
+                redis=Redis.from_url(config.REDIS_URL),
+                key_builder=key_builder,
+            )
+        logger.info("FSM storage: redis (%s)", config.REDIS_URL.split("@")[-1])
+        return storage
+    except Exception:
+        logger.exception("Failed to initialize Redis FSM storage")
+        raise
+
+
+async def validate_required_infra_connections() -> None:
+    """Check mandatory Redis and Postgres connectivity before serving traffic."""
+    config.validate_required_infra_config()
+
+    import asyncpg
+    from redis.asyncio import Redis
+
+    redis = Redis.from_url(config.REDIS_URL)
+    try:
+        pong = await redis.ping()
+        if not pong:
+            raise RuntimeError("Redis ping failed")
+    finally:
+        await redis.aclose()
+
+    conn = await asyncpg.connect(config.effective_postgres_dsn)
+    try:
+        await conn.fetchval("SELECT 1")
+    finally:
+        await conn.close()
+
+    logger.info("Required infrastructure OK: Redis and PostgreSQL")
+
+
+async def configure_telegram_menu_button(bot: Bot) -> None:
+    """Expose Mini App only to admins while it is in development."""
+    if config.MINIAPP_ADMIN_ONLY:
+        await bot.set_chat_menu_button(menu_button=types.MenuButtonCommands())
+        logger.info("Global Telegram menu button set to commands")
+        from bot.keyboards import MINIAPP_URL
+
+        for admin_id in config.admin_ids:
+            await bot.set_chat_menu_button(
+                chat_id=admin_id,
+                menu_button=types.MenuButtonWebApp(
+                    text="Mini App dev",
+                    web_app=types.WebAppInfo(url=MINIAPP_URL),
+                ),
+            )
+        logger.info("Mini App menu button exposed to %d admins", len(config.admin_ids))
+        return
+
+    from bot.keyboards import MINIAPP_URL
+
+    await bot.set_chat_menu_button(
+        menu_button=types.MenuButtonWebApp(
+            text="Каталог / Mini App",
+            web_app=types.WebAppInfo(url=MINIAPP_URL),
+        )
+    )
+    logger.info("Telegram menu button set to Catalog / Mini App")
+
+
+async def register_bot_commands(bot: Bot) -> None:
+    """Register Telegram quick command menu for users and admins."""
+    await bot.set_my_commands(
+        list(PUBLIC_BOT_COMMANDS),
+        scope=types.BotCommandScopeDefault(),
+    )
+
+    admin_ids = config.admin_ids
+    for admin_id in admin_ids:
+        await bot.set_my_commands(
+            list(ADMIN_BOT_COMMANDS),
+            scope=types.BotCommandScopeChat(chat_id=admin_id),
+        )
+
+    logger.info("Registered Telegram commands for %d admins", len(admin_ids))
 
 
 async def _remove_old_files(
@@ -111,6 +348,17 @@ async def on_startup(bot: Bot):
         await bot.set_webhook(config.webhook_url, **webhook_kwargs)
         logger.info(f"Webhook set to {config.webhook_url}")
 
+    # Telegram Mini App menu button. This is safe to retry on every startup.
+    try:
+        await configure_telegram_menu_button(bot)
+    except Exception:
+        logger.exception("Failed to configure Telegram menu button")
+
+    try:
+        await register_bot_commands(bot)
+    except Exception:
+        logger.exception("Failed to register Telegram commands")
+
     # Загружаем пресеты
     preset_manager.load_all()
     logger.info(f"Loaded {len(preset_manager._presets)} presets")
@@ -162,7 +410,8 @@ async def errors_handler(event: types.ErrorEvent):
 
 def setup_dispatcher() -> Dispatcher:
     """Настройка диспетчера с роутерами"""
-    dp = Dispatcher()
+    storage = build_fsm_storage()
+    dp = Dispatcher(storage=storage) if storage else Dispatcher()
 
     # Middleware для проверки подписки
     from bot.middleware.subscription import SubscriptionCheckMiddleware
@@ -334,17 +583,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            caption = f"✅ <b>Видео (Kling) готово!</b>\\n\\nID: <code>{task_id}</code>"
-                            if task.duration:
-                                caption += f"\\n⏱ <code>{task.duration}с</code>"
-                            if task.aspect_ratio:
-                                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-                            if task.cost:
-                                caption += f"\\n💰 <code>{task.cost}💎</code>"
-                            if task.preset_id == "no_preset" and task.prompt:
-                                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                            else:
-                                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                            caption = _build_generation_success_caption(task, task_id)
 
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
@@ -399,17 +638,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         try:
                             if status in {"success", "completed"} and video_url:
                                 # Success case
-                                caption = f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} ({task.model or 'Kie.ai'}) готово!</b>\\n\\nID: <code>{task_id}</code>"
-                                if task.duration:
-                                    caption += f"\\n⏱ <code>{task.duration}с</code>"
-                                if task.aspect_ratio:
-                                    caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-                                if task.cost:
-                                    caption += f"\\n💰 <code>{task.cost}💎</code>"
-                                if task.preset_id == "no_preset" and task.prompt:
-                                    caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                                else:
-                                    caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                                caption = _build_generation_success_caption(
+                                    task, task_id
+                                )
                                 import os
 
                                 # Отправляем видео - всегда скачиваем для Kie.ai
@@ -604,9 +835,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             # Получаем Telegram ID пользователя по internal user_id
             telegram_id = await get_telegram_id_by_user_id(task.user_id)
 
-            if not task:
-                logger.warning(f"{service_name} task {task_id} not found in database")
-                return web.Response(status=200)
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
@@ -910,11 +1138,14 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             bot_instance = Bot(token=config.BOT_TOKEN)
 
             try:
+                from bot.keyboards import get_image_result_actions_keyboard
+
                 await bot_instance.send_photo(
                     chat_id=telegram_id,
                     photo=image_url,
                     caption=caption,
                     parse_mode="HTML",
+                    reply_markup=get_image_result_actions_keyboard(task_id, image_url),
                 )
 
                 logger.info(f"Image sent to user {telegram_id}")
@@ -1054,11 +1285,14 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             bot_instance = Bot(token=config.BOT_TOKEN)
 
             try:
+                from bot.keyboards import get_image_result_actions_keyboard
+
                 await bot_instance.send_photo(
                     chat_id=telegram_id,
                     photo=image_url,
                     caption=caption,
                     parse_mode="HTML",
+                    reply_markup=get_image_result_actions_keyboard(task_id, image_url),
                 )
 
                 logger.info(f"Image sent to user {telegram_id}")
@@ -1203,9 +1437,19 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
+        raw_body = await request.read()
+        if not _verify_kie_ai_webhook_secret(
+            secret=config.KIE_AI_WEBHOOK_SECRET,
+            require_secret=config.KIE_AI_REQUIRE_WEBHOOK_SECRET,
+            body=raw_body,
+            headers=dict(request.headers),
+            query=dict(request.query),
+        ):
+            logger.warning("Rejected Kie.ai webhook: secret verification failed")
+            return web.Response(status=403)
+
         logger.info(f"Kie.ai webhook headers: {dict(request.headers)}")
 
-        raw_body = await request.read()
         if not raw_body:
             logger.warning("Kie.ai webhook received empty body")
             return web.Response(status=200)
@@ -1401,6 +1645,31 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         types.InlineKeyboardButton(
                             text="Исходник", url=source_urls[0]
                         )
+                    ]
+                )
+            if not is_video:
+                keyboard_rows.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text="Редактировать",
+                            callback_data=f"edit_generated_image:{task_id}",
+                        ),
+                        types.InlineKeyboardButton(
+                            text="AI примерочная",
+                            callback_data=f"tryon_generated_image:{task_id}",
+                        ),
+                    ]
+                )
+                keyboard_rows.append(
+                    [
+                        types.InlineKeyboardButton(
+                            text="Сохранить как одежду",
+                            callback_data=f"save_clothing:{task_id}",
+                        ),
+                        types.InlineKeyboardButton(
+                            text="Сделать главным",
+                            callback_data=f"save_main_ref:{task_id}",
+                        ),
                     ]
                 )
             keyboard_rows.append(
@@ -1608,6 +1877,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
     app = web.Application()
+    setup_openapi_routes(app)
     setup_miniapp_routes(app)
     app.router.add_static("/static/", path="static", name="static")
     app["bot"] = bot
@@ -1661,6 +1931,8 @@ async def main():
         )
         sys.exit(1)
 
+    await validate_required_infra_connections()
+
     # Инициализируем базу данных ДО создания бота
     logger.info("Initializing database before bot startup...")
     await init_db()
@@ -1679,6 +1951,21 @@ async def main():
     if config.WEBHOOK_HOST:
         # Webhook mode (для production)
         logger.info("Starting in webhook mode...")
+        webhook_kwargs = {}
+        if config.WEBHOOK_IP:
+            webhook_kwargs["ip_address"] = config.WEBHOOK_IP
+        await bot.set_webhook(config.webhook_url, **webhook_kwargs)
+        logger.info(f"Webhook set to {config.webhook_url}")
+        try:
+            await configure_telegram_menu_button(bot)
+        except Exception:
+            logger.exception("Failed to configure Telegram menu button")
+        try:
+            await register_bot_commands(bot)
+        except Exception:
+            logger.exception("Failed to register Telegram commands")
+        preset_manager.load_all()
+        logger.info(f"Loaded {len(preset_manager._presets)} presets")
         app = setup_web_server(dp, bot)
         runner = web.AppRunner(app)
         await runner.setup()

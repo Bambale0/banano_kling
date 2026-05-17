@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.database import (
     DATABASE_PATH,
@@ -21,6 +22,8 @@ from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_back_keyboard,
     get_balance_keyboard,
+    get_content_menu_keyboard,
+    get_flow_output_keyboard,
     get_main_menu_keyboard,
 )
 from bot.services.preset_manager import preset_manager
@@ -233,21 +236,26 @@ async def cmd_start(message: types.Message):
 
     # Приветственное сообщение
     welcome_text = f"""
-✨ <b>2Loop × AI</b>
-Образы, аксессуары и сторис для фигурного катания.
+<b>2LOOP — создать контент</b>
 
 💎 Баланс: <code>{user.credits}</code> GOE
 {deeplink_note}
 📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
 
-Выберите, что делаем сегодня:
+<b>UX бота:</b>
+1️⃣ <b>Входной материал</b> — фото / видео / текст-идея
+2️⃣ <b>AI-обработка</b> — улучшение качества, апскейл, промпт
+3️⃣ <b>Стилизация</b> — эстетика льда и движения
+4️⃣ <b>Выбор формата</b> — SMM-пост, Reels или образ
 
-🎀 <b>Подобрать аксессуар</b> — к костюму, прокату или подарку.
-🧊 <b>Собрать AI-образ</b> — визуал для льда, афиши или идеи.
-🎬 <b>Сделать видео/сторис</b> — ролик для соцсетей и соревнований.
-🛒 <b>Магазин 2Loop</b> — WB, артикул, промокод и заказ.
+<b>Финальные ветки:</b>
+📝 SMM-пост / контент — Instagram / Telegram, caption + hashtags
+🎬 Видео / Reels — Kling / Runway, музыка / voiceover, MP4
+👗 Образ / Примерка — Try-On AI, готовый look, PNG / PDF / архив
 
-⚠️ Запрещён контент 18+, оскорбления и нарушение прав третьих лиц. Ответственность за сгенерированный контент несёт пользователь.
+Всё сводится к результату: <b>задача выполнена ✓</b>
+
+Выберите шаг ниже.
 """
 
     try:
@@ -376,18 +384,23 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     _set_user_menu(callback.from_user.id, "main_menu")
 
     welcome_text = f"""
-✨ <b>2Loop × AI</b>
-Образы, аксессуары и сторис для фигурного катания.
+✨ <b>2Loop</b> — автоматический AI-контент для фигурного катания
 
 💎 Баланс: <code>{user.credits}</code> GOE
 📢 Канал: <a href="https://t.me/FS_2Loop">@FS_2Loop</a>
 
-Выберите, что делаем сегодня:
+<b>UX бота:</b>
+1️⃣ <b>Входной материал</b> — фото / видео / текст-идея
+2️⃣ <b>AI-обработка</b> — улучшение качества, апскейл, промпт
+3️⃣ <b>Стилизация</b> — эстетика льда, движения, программы
+4️⃣ <b>Выбор формата</b> — SMM-пост, Reels или образ
 
-🎀 <b>Подобрать аксессуар</b> — к костюму, прокату или подарку.
-🧊 <b>Собрать AI-образ</b> — визуал для льда, афиши или идеи.
-🎬 <b>Сделать видео/сторис</b> — ролик для соцсетей и соревнований.
-🛒 <b>Магазин 2Loop</b> — WB, артикул, промокод и заказ.
+<b>Финальные ветки:</b>
+📝 SMM-пост / контент — captions, hashtags, готово к публикации
+🎬 Видео / Reels — Kling / Runway, музыка / voiceover, MP4
+👗 Образ / Примерка — Try-On AI, образ в PNG / архив
+
+Выберите шаг ниже. Бот ведёт по сценарию без ручного оператора.
 
 ⚠️ Запрещён контент 18+, оскорбления и нарушение прав третьих лиц. Ответственность за сгенерированный контент несёт пользователь.
 """
@@ -407,6 +420,187 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_content")
+async def show_content_menu(callback: types.CallbackQuery):
+    """Единый вход в генерацию контента."""
+    user = await get_or_create_user(callback.from_user.id)
+    text = f"""
+🚀 <b>Создать контент</b>
+
+💎 Баланс: <code>{user.credits}</code> GOE
+
+<b>1. Входной материал</b>
+Загрузите фото, видео или напишите текстовую идею.
+
+<b>2. AI-обработка</b>
+Бот помогает улучшить качество, структуру идеи и промпт.
+
+<b>3. Стилизация</b>
+Фирменная эстетика 2Loop: лёд, движение, градиент, чистый премиум-визуал.
+
+<b>4. Выбор формата вывода</b>
+📝 SMM-пост / контент — текст, caption, hashtags, готово к публикации.
+🎬 Видео / Reels — Kling / Runway, музыка / voiceover, MP4.
+👗 Образ / Примерка — Try-On AI, PNG / PDF / архив.
+
+Выберите следующий шаг:
+"""
+    await callback.message.edit_text(
+        text, reply_markup=get_content_menu_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_output_formats")
+async def show_output_formats(callback: types.CallbackQuery):
+    """Показывает три ветки финального результата из UX-схемы."""
+    text = """
+📤 <b>Выбор формата вывода</b>
+
+После входного материала, AI-обработки и стилизации выберите, что должно получиться:
+
+📝 <b>SMM-пост / контент</b>
+Instagram / Telegram → текст + caption + hashtags → готово к публикации.
+
+🎬 <b>Видео / Reels</b>
+Kling / Runway → музыка / voiceover → видео готово → MP4.
+
+👗 <b>Образ / Примерка</b>
+Try-On AI → применить образ к фото → PNG / PDF / архив.
+
+В конце: <b>Задача выполнена ✓</b>
+"""
+    await callback.message.edit_text(
+        text, reply_markup=get_flow_output_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "flow_post_content")
+async def flow_post_content(callback: types.CallbackQuery, state: FSMContext):
+    """Старт ветки поста/контента через ассистента промптов."""
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="post_content", history=[])
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🖼 Сделать визуал для поста", callback_data="create_image_refs_new")
+    builder.button(text="🎬 Сделать Reels", callback_data="create_video_new")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    text = """
+📝 <b>SMM-пост / контент</b>
+
+Напишите идею простыми словами: тема поста, аудитория, площадка, стиль и что нужно получить.
+
+Бот подготовит структуру:
+• текст / caption;
+• hashtags;
+• визуальную идею;
+• промпт для генерации;
+• формат для Instagram / Telegram.
+
+Можно сразу перейти к визуалу или видео кнопками ниже.
+"""
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "flow_try_on")
+async def flow_try_on(callback: types.CallbackQuery):
+    """Старт ветки образа/примерки через image/reference flow."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👗 Загрузить фото и референсы", callback_data="create_image_refs_new")
+    builder.button(text="✨ Улучшить промпт образа", callback_data="assistant_prompt_help")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
+    text = """
+👗 <b>Образ / Примерка</b>
+
+Загрузите фото фигуристки и референсы: костюм, стиль, цвет, аксессуары или moodboard.
+
+Бот ведёт по схеме:
+Midjourney / Flux / KIE image models → Try-On AI логика → применить образ к фото → PNG / PDF / архив.
+
+Для текущей реализации используем AI-генерацию по фото и референсам — это ближайший автоматический путь для примерки образа.
+"""
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_tariffs")
+async def show_tariffs(callback: types.CallbackQuery):
+    """Показывает актуальные тарифы GOE и модели из price.json."""
+    from bot.keyboards import IMAGE_COSTS, PACKAGES, VIDEO_COSTS
+
+    image_lines = []
+    for model, cost in IMAGE_COSTS.items():
+        if isinstance(cost, (int, float)):
+            image_lines.append(f"• <code>{model}</code>: <b>{int(cost)}</b> GOE")
+
+    video_lines = []
+    for model, cfg in VIDEO_COSTS.items():
+        if isinstance(cfg, dict):
+            duration_costs = cfg.get("duration_costs") or {}
+            if duration_costs:
+                costs = ", ".join(f"{sec}s={price} GOE" for sec, price in sorted(duration_costs.items(), key=lambda item: int(item[0])))
+            else:
+                costs = f"от {cfg.get('base', 0)} GOE"
+            video_lines.append(f"• <code>{model}</code>: {costs}")
+
+    package_lines = [
+        f"• <code>{pkg['credits']}</code> GOE — <b>{pkg['price_rub']}</b> ₽{' 🔥' if pkg.get('popular') else ''}"
+        for pkg in PACKAGES
+    ]
+
+    text = (
+        "📊 <b>Тарифы и модели</b>\n\n"
+        "💳 <b>Пакеты GOE</b>\n"
+        + ("\n".join(package_lines) or "Пакеты временно не настроены")
+        + "\n\n🖼 <b>Изображения</b>\n"
+        + ("\n".join(image_lines[:12]) or "Цены изображений временно не настроены")
+        + "\n\n🎬 <b>Видео</b>\n"
+        + ("\n".join(video_lines[:12]) or "Цены видео временно не настроены")
+        + "\n\nВсе цены берутся из конфигурации, а при старте генерации фиксируются в истории операции."
+    )
+    await callback.message.edit_text(
+        text, reply_markup=get_back_keyboard("back_main"), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "assistant_prompt_help")
+async def assistant_prompt_help(callback: types.CallbackQuery, state: FSMContext):
+    """Открывает ассистента сразу в режиме помощи с промптом."""
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="prompt_help", history=[])
+    text = """
+✨ <b>Ассистент промптов 2Loop</b>
+
+Напишите идею простыми словами, а я помогу превратить её в промпт для изображения или видео.
+
+Пример: <i>девушка в неоновом городе, стиль fashion, вертикальное видео</i>
+
+Также могу подсказать модель, формат, стоимость и как пополнить GOE.
+"""
+    await callback.message.edit_text(
+        text, reply_markup=get_ai_assistant_keyboard(), parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "assistant_clear")
+async def assistant_clear(callback: types.CallbackQuery, state: FSMContext):
+    """Очищает диалог ассистента без выхода из режима."""
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="main_menu", history=[])
+    await callback.message.edit_text(
+        "🧹 <b>Новый диалог</b>\n\nНапишите вопрос ассистенту 2Loop.",
+        reply_markup=get_ai_assistant_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "menu_balance")
@@ -651,24 +845,21 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
     from bot.states import GenerationStates
 
     user_credits = await get_user_credits(callback.from_user.id)
-    cost = preset_manager.get_video_cost("v26_motion_std", 5)
-
-    if user_credits < cost:
-        await callback.answer("❌ Недостаточно GOEов! Пополни баланс.", show_alert=True)
-        return
+    per_second_cost = preset_manager.get_video_cost("v26_motion_std", 1)
 
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
         generation_type="motion_control",
         video_model="v26_motion_std",
-        cost=cost,
+        per_second_cost=per_second_cost,
         mode="std",
     )
 
     await callback.message.edit_text(
         f"🎬 <b>Motion Control Standard</b>\n\n"
-        f"Стоимость: {cost}💎\n\n"
+        f"Стоимость: <code>{per_second_cost}</code>💎 / сек\n"
+        f"Итог посчитаю после загрузки видео.\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
@@ -688,24 +879,21 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
     from bot.states import GenerationStates
 
     user_credits = await get_user_credits(callback.from_user.id)
-    cost = preset_manager.get_video_cost("v26_motion_pro", 5)
-
-    if user_credits < cost:
-        await callback.answer("❌ Недостаточно GOEов! Пополни баланс.", show_alert=True)
-        return
+    per_second_cost = preset_manager.get_video_cost("v26_motion_pro", 1)
 
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
         generation_type="motion_control",
         video_model="v26_motion_pro",
-        cost=cost,
+        per_second_cost=per_second_cost,
         mode="pro",
     )
 
     await callback.message.edit_text(
         f"💎 <b>Motion Control Pro</b>\n\n"
-        f"Стоимость: {cost}💎\n\n"
+        f"Стоимость: <code>{per_second_cost}</code>💎 / сек\n"
+        f"Итог посчитаю после загрузки видео.\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
@@ -1149,9 +1337,11 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         add_credits,
         add_generation_task,
         deduct_credits,
+        get_user_credits,
         get_or_create_user,
     )
     from bot.services.kling_service import kling_service
+    from bot.services.preset_manager import preset_manager
 
     data = await state.get_data()
     v_image_url = data.get("v_image_url")
@@ -1173,9 +1363,20 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     telegram_id = message.from_user.id
     user = await get_or_create_user(telegram_id)
-    cost = data.get("cost")
-    video_model = data.get("video_model")
+    video_model = data.get("video_model", "v26_motion_std")
     mode = data.get("mode", "std")
+    video_duration = max(1, int(getattr(video, "duration", None) or data.get("motion_duration", 5)))
+    cost = preset_manager.get_video_cost(video_model, video_duration)
+
+    if await get_user_credits(telegram_id) < cost:
+        await message.answer(
+            "❌ <b>Недостаточно GOEов</b>\n\n"
+            f"Видео: <code>{video_duration}</code> сек\n"
+            f"Стоимость: <code>{cost}</code>💎\n\n"
+            "Пополните баланс и отправьте видео ещё раз.",
+            parse_mode="HTML",
+        )
+        return
 
     await deduct_credits(telegram_id, cost)
 
@@ -1187,6 +1388,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         type="motion_control",
         preset_id="motion_control",
         model=video_model,
+        duration=video_duration,
         prompt="motion control",
         cost=cost,
     )
@@ -1209,6 +1411,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         await message.answer(
             f"🚀 <b>Motion Control запущен!</b>\n\n"
             f"💰 <code>{cost}</code>💎\n"
+            f"⏱ <code>{video_duration}</code> сек\n"
             f"🤖 <code>{mode.upper()}</code>\n"
             f"🆔 <code>{api_task_id}</code>\n\n"
             f"Ожидайте результат (1-5 мин)...",

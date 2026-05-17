@@ -21,10 +21,14 @@ from bot.database import (
     check_can_afford,
     complete_video_task,
     deduct_credits,
+    get_primary_reference_asset,
     get_or_create_user,
     get_task_by_id,
+    get_telegram_id_by_user_id,
+    get_user_reference_assets,
     get_user_credits,
     get_user_settings,
+    save_user_reference_asset,
     track_event,
 )
 from bot.keyboards import (
@@ -47,6 +51,7 @@ from bot.keyboards import (
     get_motion_control_keyboard,
     get_motion_upload_keyboard,
     get_multiturn_keyboard,
+    get_preset_action_keyboard,
     get_prompt_tips_keyboard,
     get_reference_images_confirmation_keyboard,
     get_reference_images_keyboard,
@@ -64,12 +69,14 @@ from bot.services.gemini_service import gemini_service
 from bot.services.grok_service import grok_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
+from bot.services.piapi_fallback_service import piapi_fallback_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_lite_service as seedream_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
     UserHints,
     format_generation_options,
+    format_preset_info,
     get_aspect_ratio_help,
     get_editing_help,
     get_error_handling,
@@ -97,6 +104,8 @@ async def show_create_video_menu(callback: types.CallbackQuery, state: FSMContex
     from bot.database import get_user_credits
 
     user_credits = await get_user_credits(callback.from_user.id)
+    primary_reference = await get_primary_reference_asset(callback.from_user.id)
+    initial_refs = [primary_reference["image_url"]] if primary_reference else []
     await track_event(
         callback.from_user.id,
         "generation_flow_open",
@@ -126,6 +135,8 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     from bot.database import get_user_credits
 
     user_credits = await get_user_credits(callback.from_user.id)
+    primary_reference = await get_primary_reference_asset(callback.from_user.id)
+    initial_refs = [primary_reference["image_url"]] if primary_reference else []
     await track_event(
         callback.from_user.id,
         "generation_flow_open",
@@ -137,7 +148,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         generation_type="image",
         img_service="flux_pro",  # модель изображения
         img_ratio="1:1",
-        reference_images=[],  # Инициализируем пустой список референсов
+        reference_images=initial_refs,  # Главный референс можно подставить автоматически
         preset_id="new",  # Для нового UX - указываем, что это "new" режим
     )
 
@@ -146,6 +157,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         f"🖼 <b>Создание фото</b>\n\n"
         f"💎 Ваш баланс: <code>{user_credits}</code> GOEов\n\n"
         f"<b>Шаг 1: Загрузка референсов (опционально)</b>\n\n"
+        f"⭐ Главный референс: <code>{'подключён' if primary_reference else 'не сохранён'}</code>\n\n"
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
@@ -156,13 +168,13 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            reply_markup=get_reference_images_upload_keyboard(len(initial_refs), 14, "new"),
             parse_mode="HTML",
         )
     except Exception:
         await callback.message.answer(
             text,
-            reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+            reply_markup=get_reference_images_upload_keyboard(len(initial_refs), 14, "new"),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -697,242 +709,84 @@ async def _apply_video_model_selection(
 
 
 # Обработчики формата видео
-@router.callback_query(F.data == "ratio_1_1")
-async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата 1:1"""
+async def handle_video_ratio_generic(callback: types.CallbackQuery, state: FSMContext):
+    """Apply a no-preset video aspect-ratio callback like ratio_16_9."""
+    ratio_key = callback.data.replace("ratio_", "", 1)
+    parts = ratio_key.split("_")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        await callback.answer("Некорректный формат", show_alert=True)
+        return
+
+    ratio = f"{parts[0]}:{parts[1]}"
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
     current_model = data.get("v_model", "v26_pro")
     current_duration = data.get("v_duration", 5)
 
-    await state.update_data(v_ratio="1:1")
-
+    await state.update_data(v_ratio=ratio)
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
             current_model=current_model,
             current_duration=current_duration,
-            current_ratio="1:1",
+            current_ratio=ratio,
         )
     )
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "ratio_1_1")
+async def handle_video_ratio_1_1(callback: types.CallbackQuery, state: FSMContext):
+    await handle_video_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "ratio_16_9")
 async def handle_video_ratio_16_9(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата 16:9"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-
-    await state.update_data(v_ratio="16:9")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio="16:9",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_video_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "ratio_9_16")
 async def handle_video_ratio_9_16(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата 9:16"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-
-    await state.update_data(v_ratio="9:16")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio="9:16",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_video_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "ratio_4_3")
 async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата 4:3"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-
-    await state.update_data(v_ratio="4:3")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio="4:3",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_video_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "ratio_3_2")
 async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата 3:2"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_duration = data.get("v_duration", 5)
-
-    await state.update_data(v_ratio="3:2")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=current_duration,
-            current_ratio="3:2",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_video_ratio_generic(callback, state)
 
 
 # Обработчики длительности видео
-@router.callback_query(F.data == "video_dur_5")
-async def handle_video_dur_5(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 5 сек"""
+@router.callback_query(F.data.startswith("video_dur_"))
+async def handle_video_duration_generic(callback: types.CallbackQuery, state: FSMContext):
+    """Apply duration buttons coming from the video price config."""
+    try:
+        duration = int(callback.data.replace("video_dur_", "", 1))
+    except ValueError:
+        await callback.answer("Некорректная длительность", show_alert=True)
+        return
+
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
+    current_model = data.get("v_model", "v3_std")
     current_ratio = data.get("v_ratio", "16:9")
 
-    await state.update_data(v_duration=5)
+    update = {"v_duration": duration}
+    if duration in {6, 20, 30}:
+        current_model = "grok_imagine"
+        update["v_model"] = current_model
 
+    await state.update_data(**update)
     await callback.message.edit_reply_markup(
         reply_markup=get_create_video_keyboard(
             current_v_type=current_v_type,
             current_model=current_model,
-            current_duration=5,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
-
-
-@router.callback_query(F.data == "video_dur_10")
-async def handle_video_dur_10(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 10 сек"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=10)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=10,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_15")
-async def handle_video_dur_15(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 15 сек"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=15)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model=current_model,
-            current_duration=15,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_6")
-async def handle_video_dur_6(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 6 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=6, v_model="grok_imagine")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="grok_imagine",
-            current_duration=6,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_20")
-async def handle_video_dur_20(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 20 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=20, v_model="grok_imagine")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="grok_imagine",
-            current_duration=20,
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-
-@router.callback_query(F.data == "video_dur_30")
-async def handle_video_dur_30(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор длительности 30 сек (Grok Imagine)"""
-    data = await state.get_data()
-    current_v_type = data.get("v_type", "text")
-    current_model = data.get("v_model", "v26_pro")
-    current_ratio = data.get("v_ratio", "16:9")
-
-    await state.update_data(v_duration=30, v_model="grok_imagine")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_video_keyboard(
-            current_v_type=current_v_type,
-            current_model="grok_imagine",
-            current_duration=30,
+            current_duration=duration,
             current_ratio=current_ratio,
         )
     )
@@ -945,24 +799,25 @@ async def handle_video_dur_30(callback: types.CallbackQuery, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data == "model_flux_pro")
-async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели FLUX.2 Pro"""
+async def handle_image_model_generic(callback: types.CallbackQuery, state: FSMContext):
+    """Apply a no-preset image model callback like model_banana_pro."""
+    service = callback.data.replace("model_", "", 1)
     data = await state.get_data()
     current_ratio = data.get("img_ratio", "1:1")
     reference_images = data.get("reference_images", [])
+
+    await state.update_data(img_service=service)
+
+    # Keep the richer text update for models shown on the main no-preset image screen.
     ref_text = (
         f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
         if reference_images
         else ""
     )
-
-    await state.update_data(img_service="flux_pro")
-
     text = (
         f"🖼 <b>Создание фото</b>\n\n"
         f"{ref_text}"
-        f"✨ Модель: <code>flux_pro</code>\n"
+        f"✨ Модель: <code>{service}</code>\n"
         f"📐 Формат: <code>{current_ratio}</code>\n\n"
         f"<b>Введите промпт для генерации:</b>\n\n"
         f"Опишите что хотите создать:"
@@ -971,7 +826,7 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
     await callback.message.edit_text(
         text,
         reply_markup=get_create_image_keyboard(
-            current_service="flux_pro",
+            current_service=service,
             current_ratio=current_ratio,
             num_refs=len(reference_images),
         ),
@@ -979,335 +834,107 @@ async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext
     )
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "model_flux_pro")
+async def handle_model_flux_pro(callback: types.CallbackQuery, state: FSMContext):
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_nanobanana")
 async def handle_model_nanobanana(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Nano Banana"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-    reference_images = data.get("reference_images", [])
-    ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
-        if reference_images
-        else ""
-    )
-
-    await state.update_data(img_service="nanobanana")
-
-    text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"{ref_text}"
-        f"✨ Модель: <code>nanobanana</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
-        f"Опишите что хотите создать:"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_image_keyboard(
-            current_service="nanobanana",
-            current_ratio=current_ratio,
-            num_refs=len(reference_images),
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_banana_pro")
 async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Banana Pro"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-    reference_images = data.get("reference_images", [])
-    ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
-        if reference_images
-        else ""
-    )
-
-    await state.update_data(img_service="banana_pro")
-
-    text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"{ref_text}"
-        f"✨ Модель: <code>banana_pro</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
-        f"Опишите что хотите создать:"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_image_keyboard(
-            current_service="banana_pro",
-            current_ratio=current_ratio,
-            num_refs=len(reference_images),
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_seedream")
 async def handle_model_seedream(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Seedream 5.0 (Novita)"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-    reference_images = data.get("reference_images", [])
-    ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
-        if reference_images
-        else ""
-    )
-
-    await state.update_data(img_service="seedream")
-
-    text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"{ref_text}"
-        f"✨ Модель: <code>seedream</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
-        f"Опишите что хотите создать:"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_image_keyboard(
-            current_service="seedream",
-            current_ratio=current_ratio,
-            num_refs=len(reference_images),
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_seedream_45")
 async def handle_model_seedream_45(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Seedream 4.5 (Novita)"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-    reference_images = data.get("reference_images", [])
-    ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
-        if reference_images
-        else ""
-    )
-
-    await state.update_data(img_service="seedream_45")
-
-    text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"{ref_text}"
-        f"✨ Модель: <code>seedream_45</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
-        f"Опишите что хотите создать:"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_image_keyboard(
-            current_service="seedream_45",
-            current_ratio=current_ratio,
-            num_refs=len(reference_images),
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_z_image_turbo_lora")
-async def handle_model_z_image_turbo_lora(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Выбор модели Z-Image Turbo LoRA"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-    reference_images = data.get("reference_images", [])
-    ref_text = (
-        f"📎 Референсов: <code>{len(reference_images)}</code>\n\n"
-        if reference_images
-        else ""
-    )
-
-    await state.update_data(img_service="z_image_turbo_lora")
-
-    text = (
-        f"🖼 <b>Создание фото</b>\n\n"
-        f"{ref_text}"
-        f"✨ Модель: <code>z_image_turbo_lora</code>\n"
-        f"📐 Формат: <code>{current_ratio}</code>\n\n"
-        f"<b>Введите промпт для генерации:</b>\n\n"
-        f"Опишите что хотите создать:"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_create_image_keyboard(
-            current_service="z_image_turbo_lora",
-            current_ratio=current_ratio,
-            num_refs=len(reference_images),
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+async def handle_model_z_image_turbo_lora(callback: types.CallbackQuery, state: FSMContext):
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_banana_2")
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Banana 2 (Gemini 3.1 Flash Image Preview)"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-
-    await state.update_data(img_service="banana_2")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service="banana_2",
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_seedream_5_lite")
-async def handle_model_seedream_5_lite(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Выбор модели Seedream 5.0 Lite Image-to-Image"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
+async def handle_model_seedream_5_lite(callback: types.CallbackQuery, state: FSMContext):
+    await handle_image_model_generic(callback, state)
 
-    await state.update_data(img_service="seedream_5_lite")
 
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service="seedream_5_lite",
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+@router.callback_query(F.data == "model_gpt_image_2")
+async def handle_model_gpt_image_2(callback: types.CallbackQuery, state: FSMContext):
+    await handle_image_model_generic(callback, state)
 
 
 @router.callback_query(F.data == "model_seedream_edit")
 async def handle_model_seedream_edit(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Seedream 4.5"""
-    data = await state.get_data()
-    current_ratio = data.get("img_ratio", "1:1")
-
-    await state.update_data(img_service="seedream_edit")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service="seedream_edit",
-            current_ratio=current_ratio,
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_model_generic(callback, state)
 
 
 # Обработчики формата изображения
-@router.callback_query(F.data == "img_ratio_1_1")
-async def handle_img_ratio_1_1(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата изображения 1:1"""
+async def handle_image_ratio_generic(callback: types.CallbackQuery, state: FSMContext):
+    """Apply a no-preset image aspect-ratio callback like img_ratio_16_9."""
+    ratio_key = callback.data.replace("img_ratio_", "", 1)
+    parts = ratio_key.split("_")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        await callback.answer("Некорректный формат", show_alert=True)
+        return
+
+    ratio = f"{parts[0]}:{parts[1]}"
     data = await state.get_data()
     current_service = data.get("img_service", "flux_pro")
+    reference_images = data.get("reference_images", [])
 
-    await state.update_data(img_ratio="1:1")
-
+    await state.update_data(img_ratio=ratio)
     await callback.message.edit_reply_markup(
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
-            current_ratio="1:1",
+            current_ratio=ratio,
+            num_refs=len(reference_images),
         )
     )
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data == "img_ratio_1_1")
+async def handle_img_ratio_1_1(callback: types.CallbackQuery, state: FSMContext):
+    await handle_image_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "img_ratio_16_9")
 async def handle_img_ratio_16_9(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата изображения 16:9"""
-    data = await state.get_data()
-    current_service = data.get("img_service", "flux_pro")
-
-    await state.update_data(img_ratio="16:9")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service=current_service,
-            current_ratio="16:9",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "img_ratio_9_16")
 async def handle_img_ratio_9_16(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата изображения 9:16"""
-    data = await state.get_data()
-    current_service = data.get("img_service", "flux_pro")
-
-    await state.update_data(img_ratio="9:16")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service=current_service,
-            current_ratio="9:16",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "img_ratio_4_3")
 async def handle_img_ratio_4_3(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата изображения 4:3"""
-    data = await state.get_data()
-    current_service = data.get("img_service", "flux_pro")
-
-    await state.update_data(img_ratio="4:3")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service=current_service,
-            current_ratio="4:3",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_ratio_generic(callback, state)
 
 
 @router.callback_query(F.data == "img_ratio_3_2")
 async def handle_img_ratio_3_2(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор формата изображения 3:2"""
-    data = await state.get_data()
-    current_service = data.get("img_service", "flux_pro")
-
-    await state.update_data(img_ratio="3:2")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_create_image_keyboard(
-            current_service=current_service,
-            current_ratio="3:2",
-        )
-    )
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await handle_image_ratio_generic(callback, state)
 
 
 # =============================================================================
@@ -1938,6 +1565,20 @@ async def show_video_edit_options(
 # =============================================================================
 
 
+async def show_preset_details(message: types.Message, preset, user_id: int):
+    """Показывает карточку пресета с текущими опциями генерации."""
+    user_credits = await get_user_credits(user_id)
+    text = format_preset_info(preset)
+    text += f"\n💰 Баланс: <code>{user_credits}</code>💎"
+    await message.edit_text(
+        text,
+        reply_markup=get_preset_action_keyboard(
+            preset.id, preset.requires_input, preset.category
+        ),
+        parse_mode="HTML",
+    )
+
+
 # =============================================================================
 # ОБРАБОТЧИКИ ОПЦИЙ ГЕНЕРАЦИИ (НОВОЕ СОГЛАСНО banana_api.md)
 # =============================================================================
@@ -2123,11 +1764,72 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
     """
     parts = callback.data.split("_")
     action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
+    asset_kind = None
+    if action in {"use", "save"} and len(parts) > 2:
+        asset_kind = parts[2]
+        preset_id = "_".join(parts[3:]) if len(parts) > 3 else None
+    else:
+        preset_id = parts[2] if len(parts) > 2 else None
 
     data = await state.get_data()
     current_refs = data.get("reference_images", [])
     max_refs = 14
+
+    if action == "use" and asset_kind in {"main", "clothing"}:
+        if asset_kind == "main":
+            asset = await get_primary_reference_asset(callback.from_user.id)
+            assets = [asset] if asset else []
+        else:
+            assets = await get_user_reference_assets(
+                callback.from_user.id, kind="clothing", limit=max_refs
+            )
+        added = 0
+        for asset in assets:
+            if not asset:
+                continue
+            url = asset["image_url"]
+            if url not in current_refs and len(current_refs) < max_refs:
+                current_refs.append(url)
+                added += 1
+        await state.update_data(reference_images=current_refs)
+        await callback.message.edit_text(
+            f"📎 <b>Загрузка референсов</b>\n\n"
+            f"Добавлено из библиотеки: <code>{added}</code>\n"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
+            f"Отправьте фото, добавьте одежду или нажмите ▶️ Продолжить.",
+            reply_markup=get_reference_images_upload_keyboard(
+                len(current_refs), max_refs, preset_id
+            ),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        await state.set_state(GenerationStates.uploading_reference_images)
+        return
+
+    if action == "save" and asset_kind in {"main", "clothing"}:
+        if not current_refs:
+            await callback.answer("Сначала загрузите фото", show_alert=True)
+            return
+        image_url = current_refs[-1]
+        await save_user_reference_asset(
+            callback.from_user.id,
+            "main" if asset_kind == "main" else "clothing",
+            image_url,
+            title="Главный референс" if asset_kind == "main" else "Одежда",
+            is_primary=asset_kind == "main",
+        )
+        await callback.message.edit_text(
+            f"✅ <b>Референс сохранён</b>\n\n"
+            f"{'Главный референс обновлён.' if asset_kind == 'main' else 'Одежда добавлена в библиотеку.'}\n"
+            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>",
+            reply_markup=get_reference_images_upload_keyboard(
+                len(current_refs), max_refs, preset_id
+            ),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        await state.set_state(GenerationStates.uploading_reference_images)
+        return
 
     if action == "upload":
         # Начинаем загрузку референсных изображений
@@ -2239,9 +1941,11 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
                 f"✨ Модель: <code>{current_service}</code>\n"
                 f"📐 Формат: <code>{current_ratio}</code>\n\n"
                 f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
-                parse_mode="HTML",
-            )
+        reply_markup=get_create_image_keyboard(
+            current_service, current_ratio, num_refs=len(current_refs)
+        ),
+        parse_mode="HTML",
+    )
             await state.set_state(GenerationStates.waiting_for_input)
         else:
             # Для пресетов - возвращаемся к экрану пресета
@@ -2653,11 +2357,231 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         await message.answer("❌ Не удалось сохранить фото. Попробуйте ещё раз.")
 
 
+@router.callback_query(F.data.startswith("save_clothing:"))
+async def save_generated_clothing(callback: types.CallbackQuery):
+    task_id = callback.data.split(":", 1)[1]
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url:
+        await callback.answer("Результат ещё не найден", show_alert=True)
+        return
+    if task.telegram_id and task.telegram_id != callback.from_user.id:
+        await callback.answer("Это не ваш результат", show_alert=True)
+        return
+
+    await save_user_reference_asset(
+        callback.from_user.id,
+        "clothing",
+        task.result_url,
+        title="Одежда из генерации",
+        source_task_id=task_id,
+    )
+    await callback.answer("Одежда сохранена в референсы", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("save_main_ref:"))
+async def save_generated_main_reference(callback: types.CallbackQuery):
+    task_id = callback.data.split(":", 1)[1]
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url:
+        await callback.answer("Результат ещё не найден", show_alert=True)
+        return
+    if task.telegram_id and task.telegram_id != callback.from_user.id:
+        await callback.answer("Это не ваш результат", show_alert=True)
+        return
+
+    await save_user_reference_asset(
+        callback.from_user.id,
+        "main",
+        task.result_url,
+        title="Главный референс из генерации",
+        source_task_id=task_id,
+        is_primary=True,
+    )
+    await callback.answer("Главный референс сохранён", show_alert=True)
+
+
+def _unique_reference_urls(urls: list[str]) -> list[str]:
+    unique_urls = []
+    for url in urls:
+        if url and url not in unique_urls:
+            unique_urls.append(url)
+    return unique_urls
+
+
+async def _get_generated_image_task(callback: types.CallbackQuery):
+    task_id = callback.data.split(":", 1)[1]
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url:
+        await callback.answer("Результат ещё не найден", show_alert=True)
+        return None
+    owner_id = task.telegram_id or await get_telegram_id_by_user_id(task.user_id)
+    if owner_id and owner_id != callback.from_user.id:
+        await callback.answer("Это не ваш результат", show_alert=True)
+        return None
+    if task.type != "image":
+        await callback.answer("Редактировать можно только изображение", show_alert=True)
+        return None
+    return task
+
+
+async def _open_image_reference_editor(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    *,
+    title: str,
+    references: list[str],
+    default_model: str = "seedream_edit",
+    default_ratio: str = "1:1",
+    body: str,
+) -> None:
+    references = _unique_reference_urls(references)[:14]
+    user_credits = await get_user_credits(callback.from_user.id)
+    await state.update_data(
+        generation_type="image",
+        img_service=default_model,
+        img_ratio=default_ratio,
+        reference_images=references,
+        preset_id="new",
+    )
+
+    text = (
+        f"{title}\n\n"
+        f"💎 Баланс: <code>{user_credits}</code> GOE\n"
+        f"📎 Референсов: <code>{len(references)}</code>\n"
+        f"✨ Модель: <code>{default_model}</code>\n"
+        f"📐 Формат: <code>{default_ratio}</code>\n\n"
+        f"{body}\n\n"
+        f"Выберите модель/формат ниже и отправьте новый промпт."
+    )
+    markup = get_create_image_keyboard(
+        current_service=default_model,
+        current_ratio=default_ratio,
+        num_refs=len(references),
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(text, reply_markup=markup, parse_mode="HTML")
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
+@router.callback_query(F.data.startswith("edit_generated_image:"))
+async def edit_generated_image(callback: types.CallbackQuery, state: FSMContext):
+    """Uses a generated image as the first reference for a new editable image run."""
+    task = await _get_generated_image_task(callback)
+    if not task:
+        return
+
+    await _open_image_reference_editor(
+        callback,
+        state,
+        title="✏️ <b>Редактирование результата</b>",
+        references=[task.result_url],
+        default_model="seedream_edit",
+        default_ratio=task.aspect_ratio or "1:1",
+        body=(
+            "Сгенерированное изображение уже добавлено как референс. "
+            "Опишите, что изменить: фон, позу, стиль, детали, цвет, текст или композицию."
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("tryon_generated_image:"))
+async def try_on_generated_image(callback: types.CallbackQuery, state: FSMContext):
+    """Starts AI try-on with generated image as clothing/reference."""
+    task = await _get_generated_image_task(callback)
+    if not task:
+        return
+
+    await save_user_reference_asset(
+        callback.from_user.id,
+        "clothing",
+        task.result_url,
+        title="Одежда из генерации",
+        source_task_id=task.task_id,
+    )
+
+    primary_reference = await get_primary_reference_asset(callback.from_user.id)
+    references = _unique_reference_urls(
+        [
+            primary_reference["image_url"] if primary_reference else None,
+            task.result_url,
+        ]
+    )
+
+    if primary_reference:
+        await _open_image_reference_editor(
+            callback,
+            state,
+            title="👗 <b>AI примерочная</b>",
+            references=references,
+            default_model="seedream_edit",
+            default_ratio=task.aspect_ratio or "1:1",
+            body=(
+                "Главный референс человека и сгенерированная одежда уже подключены. "
+                "Попросите аккуратно примерить образ, сохранив лицо, пропорции и посадку."
+            ),
+        )
+        return
+
+    await state.update_data(
+        generation_type="image",
+        img_service="seedream_edit",
+        img_ratio=task.aspect_ratio or "1:1",
+        reference_images=references,
+        preset_id="new",
+    )
+    text = (
+        "👗 <b>AI примерочная</b>\n\n"
+        "Сгенерированная одежда добавлена как референс и сохранена в библиотеку.\n\n"
+        "Теперь загрузите фото человека для примерки. После загрузки нажмите ▶️ Продолжить "
+        "и отправьте промпт: например, «примерь этот образ, сохрани лицо, фигуру и посадку ткани»."
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_reference_images_upload_keyboard(
+                len(references), 14, "new"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception:
+        await callback.message.answer(
+            text,
+            reply_markup=get_reference_images_upload_keyboard(
+                len(references), 14, "new"
+            ),
+            parse_mode="HTML",
+        )
+    await callback.answer("Одежда сохранена для примерочной")
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
 @router.message(GenerationStates.waiting_for_input, F.text)
 async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     """Handles text prompt for image generation in waiting_for_input state"""
     data = await state.get_data()
-    if data.get("generation_type") != "image":
+    generation_type = data.get("generation_type")
+
+    if generation_type in {"video", "motion_control"}:
+        prompt = message.text.strip()
+        if not prompt:
+            await message.answer("⚠️ Введите описание видео перед запуском генерации.")
+            return
+
+        logger.info(
+            "Video prompt received in waiting_for_input; routing to video flow for user %s",
+            message.from_user.id,
+        )
+        await state.update_data(user_prompt=prompt)
+        if generation_type == "motion_control":
+            await run_motion_control(message, state, prompt)
+        else:
+            await run_no_preset_video_from_message(message, state, prompt)
+        return
+
+    if generation_type != "image":
         return  # Not for images, let other handlers catch
 
     prompt = message.text.strip()
@@ -2672,6 +2596,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     import uuid
 
     user = await get_or_create_user(message.from_user.id)
+    is_admin = config.is_admin(message.from_user.id)
     cost = preset_manager.get_generation_cost(img_service)
 
     if user.credits < cost:
@@ -2694,6 +2619,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         img_service,
         model=img_service,
         aspect_ratio=img_ratio,
+        prompt=prompt,
         cost=cost,
     )
 
@@ -2718,19 +2644,40 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             )
         elif img_service in [
             "flux_pro",
+            "gpt_image_2",
             "seedream",
             "seedream_45",
             "seedream_edit",
             "seedream_5_lite",
         ]:
+            has_references = bool(reference_images)
             model_map = {
-                "flux_pro": "seedream/flux-pro",
+                "flux_pro": (
+                    "flux-2/pro-image-to-image"
+                    if has_references
+                    else "flux-2/pro-text-to-image"
+                ),
+                "gpt_image_2": "gpt-image-2-image-to-image",
                 "seedream": "seedream/4.5",
                 "seedream_45": "seedream 4.5",
                 "seedream_edit": "seedream/4.5-edit",
-                "seedream_5_lite": "seedream 4.5",
+                "seedream_5_lite": (
+                    "seedream/5-lite-image-to-image"
+                    if has_references
+                    else "seedream/5-lite-text-to-image"
+                ),
             }
             api_model = model_map.get(img_service, "seedream 4.5")
+            if img_service == "gpt_image_2" and not has_references:
+                await message.answer(
+                    "❌ GPT Image 2 в Kie.ai доступен как image-to-image. "
+                    "Добавьте хотя бы один референс или выберите FLUX.2 Pro / Seedream 5.0 Lite."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
             seedream_reference_images = _prepare_seedream_reference_images(
                 reference_images
             )
@@ -2742,11 +2689,22 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 callback_url=callback_url,
             )
         else:
-            # Fallback
-            result = await nano_banana_pro_service.generate_image(
+            # Unknown image model: use PiAPI as universal fallback provider.
+            result = await piapi_fallback_service.generate_image(
+                provider_model=img_service,
                 prompt=prompt,
                 aspect_ratio=img_ratio,
-                image_input=reference_images,
+                image_urls=reference_images,
+                callback_url=callback_url,
+            )
+
+        if not result:
+            logger.warning("Primary image provider failed for %s; trying PiAPI fallback", img_service)
+            result = await piapi_fallback_service.generate_image(
+                provider_model=img_service,
+                prompt=prompt,
+                aspect_ratio=img_ratio,
+                image_urls=reference_images,
                 callback_url=callback_url,
             )
 
@@ -2781,7 +2739,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                     f"✅ <b>Изображение готово</b>\n\n"
                     f"💎 Списано: <code>{cost}</code> GOE"
                 ),
-                reply_markup=get_image_result_actions_keyboard(),
+                reply_markup=get_image_result_actions_keyboard(local_task_id, saved_url),
                 parse_mode="HTML",
             )
             await _send_original_document(message.answer_document, result, saved_url)
@@ -2881,6 +2839,95 @@ async def handle_motion_orientation(callback: types.CallbackQuery, state: FSMCon
         get_motion_control_keyboard(current_mode, orientation)
     )
     await callback.answer()
+
+
+async def run_motion_control(message: types.Message, state: FSMContext, prompt: str):
+    """Запускает Motion Control из нового UX, когда фото/видео уже сохранены в state."""
+    data = await state.get_data()
+    image_url = data.get("v_image_url")
+    video_urls = data.get("v_reference_videos") or []
+    if data.get("v_video_url"):
+        video_urls.insert(0, data["v_video_url"])
+
+    if not image_url or not video_urls:
+        await message.answer(
+            "❌ Для Motion Control нужны фото персонажа и видео движения.",
+            parse_mode="HTML",
+        )
+        return
+
+    motion_mode = data.get("motion_mode", "720p")
+    service_mode = "pro" if motion_mode in {"1080p", "pro"} else "std"
+    video_model = data.get(
+        "video_model",
+        "v26_motion_pro" if service_mode == "pro" else "v26_motion_std",
+    )
+    duration = int(data.get("motion_duration") or data.get("v_duration") or 5)
+    cost = preset_manager.get_video_cost(video_model, duration)
+    user = await get_or_create_user(message.from_user.id)
+
+    if await get_user_credits(message.from_user.id) < cost:
+        await message.answer(
+            "❌ <b>Недостаточно GOEов</b>\n\n"
+            f"Стоимость: <code>{cost}</code>💎",
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+        return
+
+    await deduct_credits(message.from_user.id, cost)
+    local_task_id = f"motion_{uuid.uuid4().hex[:12]}"
+    await add_generation_task(
+        user_id=user.id,
+        telegram_id=message.from_user.id,
+        task_id=local_task_id,
+        type="motion_control",
+        preset_id="motion_control",
+        model=video_model,
+        duration=duration,
+        prompt=prompt,
+        cost=cost,
+    )
+
+    try:
+        from bot.database import DATABASE_PATH
+        from bot.services.kling_service import kling_service
+        import aiosqlite
+
+        result = await kling_service.generate_motion_control(
+            image_url=image_url,
+            video_urls=video_urls,
+            prompt=prompt,
+            motion_direction=data.get("motion_orientation", "video"),
+            mode=service_mode,
+            webhook_url=config.kie_notification_url,
+        )
+        if result and "task_id" in result:
+            api_task_id = result["task_id"]
+            async with aiosqlite.connect(DATABASE_PATH) as db:
+                await db.execute(
+                    "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
+                    (api_task_id, local_task_id, user.id),
+                )
+                await db.commit()
+            await message.answer(
+                "🚀 <b>Motion Control запущен!</b>\n\n"
+                f"💰 <code>{cost}</code>💎\n"
+                f"⏱ <code>{duration}</code> сек\n"
+                f"🆔 <code>{api_task_id}</code>\n\n"
+                "Ожидайте результат (1-5 мин)...",
+                reply_markup=get_generation_started_keyboard(),
+                parse_mode="HTML",
+            )
+            await state.clear()
+            return
+        logger.error("Motion Control API returned no task_id: %s", result)
+    except Exception as e:
+        logger.exception("Motion Control launch failed: %s", e)
+
+    await add_credits(message.from_user.id, cost)
+    await complete_video_task(local_task_id, None)
+    await message.answer("❌ Ошибка запуска. GOE возвращены.", parse_mode="HTML")
 
 
 @router.message(GenerationStates.waiting_for_video_prompt, F.text)
@@ -3057,6 +3104,22 @@ async def run_no_preset_video_from_message(
                 ),
             )
 
+        if not result:
+            logger.warning("Primary video provider failed for %s; trying PiAPI fallback", v_model)
+            result = await piapi_fallback_service.generate_video(
+                provider_model=v_model,
+                prompt=prompt,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                image_url=image_url,
+                video_url=v_video_url,
+                image_urls=image_refs,
+                video_urls=video_urls,
+                callback_url=(
+                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+
         await processing_msg.delete()
 
         if result and "task_id" in result:
@@ -3108,332 +3171,14 @@ async def run_no_preset_video_from_message(
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("model_"))
-async def handle_model_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора модели генерации"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        model_type = parts[2]  # "flash" или "pro"
-
-        model = (
-            "gemini-2.5-flash-image"
-            if model_type == "flash"
-            else "gemini-3-pro-image-preview"
-        )
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["model"] = model
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
-
-            if model_type == "flash":
-                text += "<i>Быстрая генерация, до 1024px</i>\n"
-            else:
-                text += "<i>Высокое качество, до 4K, с thinking</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("resolution_"))
-async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора разрешения изображения"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        resolution = parts[2]  # "1K", "2K", "4K"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["resolution"] = resolution
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
-
-            resolutions = {
-                "1K": "Стандартное качество, 1024px",
-                "2K": "HD качество, 2048px",
-                "4K": "Максимальное качество, 4096px",
-            }
-            text += f"<i>{resolutions.get(resolution, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(
-    F.data.startswith("img_ratio_") & ~F.data.startswith("img_ratio_no_preset")
-)
-async def handle_image_ratio_selection(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Обработка выбора формата изображения для пресетов"""
-    parts = callback.data.split("_")
-    if len(parts) >= 4:
-        preset_id = parts[1]
-        ratio = f"{parts[2]}:{parts[3]}"  # "16:9"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["aspect_ratio"] = ratio
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
-
-            ratios_desc = {
-                "1:1": "Квадрат (Instagram, Facebook)",
-                "16:9": "Горизонтальный (YouTube)",
-                "9:16": "Вертикальный (TikTok, Reels)",
-                "4:5": "Портретный (Instagram)",
-                "21:9": "Панорамный (Кино)",
-            }
-            text += f"<i>{ratios_desc.get(ratio, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("grounding_"))
-async def handle_search_grounding(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка поискового заземления (Grounding)"""
-    parts = callback.data.split("_")
-    if len(parts) >= 2:
-        preset_id = parts[1]
-
-        # Переключаем опцию
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["enable_search"] = not generation_options.get(
-            "enable_search", False
-        )
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            enabled = generation_options["enable_search"]
-            status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
-
-            if enabled:
-                text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
-                text += "\nПримеры:\n"
-                text += "• Погода на 5 дней\n"
-                text += "• Последние новости\n"
-                text += "• Актуальные события"
-            else:
-                text += "<i>Поиск отключён</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("ref_"))
-async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Обработка работы с референсными изображениями (до 14 шт)
-    Поддерживает загрузку, управление и подтверждение референсов
-    """
-    parts = callback.data.split("_")
-    action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
-
-    data = await state.get_data()
-    current_refs = data.get("reference_images", [])
-    max_refs = 14
-
-    if action == "upload":
-        # Начинаем загрузку референсных изображений
-        await state.set_state(GenerationStates.uploading_reference_images)
-        await state.update_data(preset_id=preset_id, reference_images=current_refs)
-
-        await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
-            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
-            f"• До 10 объектов с высокой точностью\n"
-            f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
-            f"После загрузки нажмите ▶️ Продолжить",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(current_refs), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-
-    elif action == "clear":
-        # Очищаем все референсы
-        await state.update_data(reference_images=[])
-        await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "confirm":
-        # Переходим к подтверждению
-        if not current_refs:
-            await callback.answer("❌ Нет загруженных изображений", show_alert=True)
-            return
-
-        # Для нового UX (preset_id == "new") - сразу переходим к выбору модели
-        # (пропускаем экран подтверждения референсов)
-        if preset_id == "new":
-            data = await state.get_data()
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(
-                    current_service, current_ratio, num_refs=len(current_refs)
-                ),
-                parse_mode="HTML",
-            )
-            await callback.answer()
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - сразу переходим к экрану пресета (пропускаем экран подтверждения)
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Fallback - показать параметры генерации
-                data = await state.get_data()
-                current_service = data.get("img_service", "flux_pro")
-                current_ratio = data.get("img_ratio", "1:1")
-                await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                    f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                    f"Введите промпт для генерации:",
-                    reply_markup=get_create_image_keyboard(
-                        current_service, current_ratio
-                    ),
-                    parse_mode="HTML",
-                )
-                await state.set_state(GenerationStates.waiting_for_input)
-
-    elif action == "reload":
-        # Перезагружаем — очищаем и начинаем заново
-        await state.update_data(reference_images=[])
-        await state.set_state(GenerationStates.uploading_reference_images)
-
-        await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте новые фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "accept":
-        # Сохраняем референсы в generation_options
-        generation_options = data.get("generation_options", {})
-        generation_options["reference_images"] = current_refs
-        await state.update_data(generation_options=generation_options)
-
-        # Для нового UX (preset_id == "new") - переходим к экрану выбора модели/формата
-        # (пропускаем промежуточное меню подтверждения)
-        if preset_id == "new":
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
-                parse_mode="HTML",
-            )
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - возвращаемся к экрану пресета
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
-                await callback.message.edit_text(
-                    "✅ Референсы сохранены!",
-                    reply_markup=get_back_keyboard("back_main"),
-                )
-
-    else:
-        # Показываем справку о референсах (стандартное поведение)
-        help_text = get_reference_images_help()
-
-        await callback.message.edit_text(
-            help_text,
-            reply_markup=get_reference_images_keyboard(preset_id),
-            parse_mode="HTML",
-        )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
 # =============================================================================
@@ -3441,230 +3186,19 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("custom_"))
-async def request_custom_input(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает пользовательский ввод для пресета"""
-    preset_id = callback.data.replace("custom_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    await state.update_data(preset_id=preset_id, input_type="custom")
-
-    # UX: Показываем подсказки по промптам
-    tips_text = get_prompt_tips()
-
-    # Если требуется загрузка файла
-    if preset.requires_upload:
-        await state.set_state(GenerationStates.waiting_for_image)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
-    else:
-        await state.set_state(GenerationStates.waiting_for_input)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
-            f"Примеры для вдохновения:\n"
-            f"• Стиль: минимализм, винтаж, футуризм\n"
-            f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
 
 
-@router.callback_query(F.data.startswith("default_"))
-async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
-    """Использует пример значений для пресета"""
-    preset_id = callback.data.replace("default_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    # Заполняем плейсхолдеры значениями по умолчанию
-    defaults = preset_manager.get_default_values("styles") or ["минимализм"]
-    color_defaults = preset_manager.get_default_values("color_schemes") or ["яркий"]
-    expr_defaults = preset_manager.get_default_values("expressions") or ["радостное"]
-
-    placeholder_values = {}
-    for placeholder in preset.placeholders:
-        if "style" in placeholder.lower():
-            placeholder_values[placeholder] = defaults[0]
-        elif "color" in placeholder.lower():
-            placeholder_values[placeholder] = color_defaults[0]
-        elif "expr" in placeholder.lower():
-            placeholder_values[placeholder] = expr_defaults[0]
-        else:
-            placeholder_values[placeholder] = "пример"
-
-    try:
-        final_prompt = preset.format_prompt(**placeholder_values)
-    except:
-        final_prompt = preset.prompt.replace("{", "").replace("}", "")
-
-    await state.update_data(
-        preset_id=preset_id, final_prompt=final_prompt, input_type="default"
-    )
-
-    # Показываем финальный промпт с подтверждением
-    data = await state.get_data()
-    generation_options = data.get("generation_options", {})
-
-    await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
-        f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>💎\n\n"
-        f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-        f"{format_generation_options(generation_options)}",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Запустить", callback_data=f"run_{preset_id}"
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data=f"preset_{preset_id}"
-                    )
-                ],
-            ]
-        ),
-        parse_mode="HTML",
-    )
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.photo)
-async def process_photo_for_video_prompt_state(
-    message: types.Message, state: FSMContext
-):
-    """
-    Обрабатывает загруженное фото когда пользователь в состоянии waiting_for_video_prompt.
-    Это нужно для режима imgtxt (фото+текст → видео), когда пользователь загружает фото
-    ДО ввода промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(
-                f"Saved start image for video (waiting_for_video_prompt state): {image_url}"
-            )
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
 
 
 @router.message(
     GenerationStates.waiting_for_reference_video,
     F.video | (F.document & F.document.mime_type.startswith("video/")),
 )
-async def process_reference_video_upload(message: types.Message, state: FSMContext):
+async def process_waiting_reference_video_upload(
+    message: types.Message, state: FSMContext
+):
     """
     Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
     Сохраняет видео и переключает в состояние ожидания промпта.
@@ -3754,40 +3288,8 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
     await message.answer("Пожалуйста, отправьте текстовое описание.")
 
 
-@router.message(GenerationStates.waiting_for_reference_video)
-async def invalid_reference_video_input(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
-    """
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
-        "Это видео будет использовано как референс для стиля/движения."
-    )
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.text)
-async def handle_video_prompt_text(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
-    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
-    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
-    prompt = message.text.strip()
-
-    if not prompt:
-        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
-        return
-
-    data = await state.get_data()
-    generation_type = data.get("generation_type", "")
-    logger.info(f"Generation type: {generation_type}")
-
-    await state.update_data(user_prompt=prompt)
-
-    if generation_type == "motion_control":
-        logger.info("Calling run_motion_control")
-        await run_motion_control(message, state, prompt)
-    else:
-        logger.info("Calling run_no_preset_video_from_message")
-        await run_no_preset_video_from_message(message, state, prompt)
 
 
 # =============================================================================
@@ -3795,332 +3297,14 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("model_"))
-async def handle_model_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора модели генерации"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        model_type = parts[2]  # "flash" или "pro"
-
-        model = (
-            "gemini-2.5-flash-image"
-            if model_type == "flash"
-            else "gemini-3-pro-image-preview"
-        )
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["model"] = model
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
-
-            if model_type == "flash":
-                text += "<i>Быстрая генерация, до 1024px</i>\n"
-            else:
-                text += "<i>Высокое качество, до 4K, с thinking</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("resolution_"))
-async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора разрешения изображения"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        resolution = parts[2]  # "1K", "2K", "4K"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["resolution"] = resolution
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
-
-            resolutions = {
-                "1K": "Стандартное качество, 1024px",
-                "2K": "HD качество, 2048px",
-                "4K": "Максимальное качество, 4096px",
-            }
-            text += f"<i>{resolutions.get(resolution, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(
-    F.data.startswith("img_ratio_") & ~F.data.startswith("img_ratio_no_preset")
-)
-async def handle_image_ratio_selection(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Обработка выбора формата изображения для пресетов"""
-    parts = callback.data.split("_")
-    if len(parts) >= 4:
-        preset_id = parts[1]
-        ratio = f"{parts[2]}:{parts[3]}"  # "16:9"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["aspect_ratio"] = ratio
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
-
-            ratios_desc = {
-                "1:1": "Квадрат (Instagram, Facebook)",
-                "16:9": "Горизонтальный (YouTube)",
-                "9:16": "Вертикальный (TikTok, Reels)",
-                "4:5": "Портретный (Instagram)",
-                "21:9": "Панорамный (Кино)",
-            }
-            text += f"<i>{ratios_desc.get(ratio, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("grounding_"))
-async def handle_search_grounding(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка поискового заземления (Grounding)"""
-    parts = callback.data.split("_")
-    if len(parts) >= 2:
-        preset_id = parts[1]
-
-        # Переключаем опцию
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["enable_search"] = not generation_options.get(
-            "enable_search", False
-        )
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            enabled = generation_options["enable_search"]
-            status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
-
-            if enabled:
-                text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
-                text += "\nПримеры:\n"
-                text += "• Погода на 5 дней\n"
-                text += "• Последние новости\n"
-                text += "• Актуальные события"
-            else:
-                text += "<i>Поиск отключён</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("ref_"))
-async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Обработка работы с референсными изображениями (до 14 шт)
-    Поддерживает загрузку, управление и подтверждение референсов
-    """
-    parts = callback.data.split("_")
-    action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
-
-    data = await state.get_data()
-    current_refs = data.get("reference_images", [])
-    max_refs = 14
-
-    if action == "upload":
-        # Начинаем загрузку референсных изображений
-        await state.set_state(GenerationStates.uploading_reference_images)
-        await state.update_data(preset_id=preset_id, reference_images=current_refs)
-
-        await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
-            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
-            f"• До 10 объектов с высокой точностью\n"
-            f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
-            f"После загрузки нажмите ▶️ Продолжить",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(current_refs), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-
-    elif action == "clear":
-        # Очищаем все референсы
-        await state.update_data(reference_images=[])
-        await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "confirm":
-        # Переходим к подтверждению
-        if not current_refs:
-            await callback.answer("❌ Нет загруженных изображений", show_alert=True)
-            return
-
-        # Для нового UX (preset_id == "new") - сразу переходим к выбору модели
-        # (пропускаем экран подтверждения референсов)
-        if preset_id == "new":
-            data = await state.get_data()
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(
-                    current_service, current_ratio, num_refs=len(current_refs)
-                ),
-                parse_mode="HTML",
-            )
-            await callback.answer()
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - сразу переходим к экрану пресета (пропускаем экран подтверждения)
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Fallback - показать параметры генерации
-                data = await state.get_data()
-                current_service = data.get("img_service", "flux_pro")
-                current_ratio = data.get("img_ratio", "1:1")
-                await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                    f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                    f"Введите промпт для генерации:",
-                    reply_markup=get_create_image_keyboard(
-                        current_service, current_ratio
-                    ),
-                    parse_mode="HTML",
-                )
-                await state.set_state(GenerationStates.waiting_for_input)
-
-    elif action == "reload":
-        # Перезагружаем — очищаем и начинаем заново
-        await state.update_data(reference_images=[])
-        await state.set_state(GenerationStates.uploading_reference_images)
-
-        await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте новые фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "accept":
-        # Сохраняем референсы в generation_options
-        generation_options = data.get("generation_options", {})
-        generation_options["reference_images"] = current_refs
-        await state.update_data(generation_options=generation_options)
-
-        # Для нового UX (preset_id == "new") - переходим к экрану выбора модели/формата
-        # (пропускаем промежуточное меню подтверждения)
-        if preset_id == "new":
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
-                parse_mode="HTML",
-            )
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - возвращаемся к экрану пресета
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
-                await callback.message.edit_text(
-                    "✅ Референсы сохранены!",
-                    reply_markup=get_back_keyboard("back_main"),
-                )
-
-    else:
-        # Показываем справку о референсах (стандартное поведение)
-        help_text = get_reference_images_help()
-
-        await callback.message.edit_text(
-            help_text,
-            reply_markup=get_reference_images_keyboard(preset_id),
-            parse_mode="HTML",
-        )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
 # =============================================================================
@@ -4128,113 +3312,8 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("custom_"))
-async def request_custom_input(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает пользовательский ввод для пресета"""
-    preset_id = callback.data.replace("custom_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    await state.update_data(preset_id=preset_id, input_type="custom")
-
-    # UX: Показываем подсказки по промптам
-    tips_text = get_prompt_tips()
-
-    # Если требуется загрузка файла
-    if preset.requires_upload:
-        await state.set_state(GenerationStates.waiting_for_image)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
-    else:
-        await state.set_state(GenerationStates.waiting_for_input)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
-            f"Примеры для вдохновения:\n"
-            f"• Стиль: минимализм, винтаж, футуризм\n"
-            f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
 
 
-@router.callback_query(F.data.startswith("default_"))
-async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
-    """Использует пример значений для пресета"""
-    preset_id = callback.data.replace("default_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    # Заполняем плейсхолдеры значениями по умолчанию
-    defaults = preset_manager.get_default_values("styles") or ["минимализм"]
-    color_defaults = preset_manager.get_default_values("color_schemes") or ["яркий"]
-    expr_defaults = preset_manager.get_default_values("expressions") or ["радостное"]
-
-    placeholder_values = {}
-    for placeholder in preset.placeholders:
-        if "style" in placeholder.lower():
-            placeholder_values[placeholder] = defaults[0]
-        elif "color" in placeholder.lower():
-            placeholder_values[placeholder] = color_defaults[0]
-        elif "expr" in placeholder.lower():
-            placeholder_values[placeholder] = expr_defaults[0]
-        else:
-            placeholder_values[placeholder] = "пример"
-
-    try:
-        final_prompt = preset.format_prompt(**placeholder_values)
-    except:
-        final_prompt = preset.prompt.replace("{", "").replace("}", "")
-
-    await state.update_data(
-        preset_id=preset_id, final_prompt=final_prompt, input_type="default"
-    )
-
-    # Показываем финальный промпт с подтверждением
-    data = await state.get_data()
-    generation_options = data.get("generation_options", {})
-
-    await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
-        f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>💎\n\n"
-        f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-        f"{format_generation_options(generation_options)}",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Запустить", callback_data=f"run_{preset_id}"
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data=f"preset_{preset_id}"
-                    )
-                ],
-            ]
-        ),
-        parse_mode="HTML",
-    )
 
 
 @router.message(GenerationStates.waiting_for_input, F.photo)
@@ -4339,244 +3418,12 @@ async def process_photo_for_video_imgtxt(message: types.Message, state: FSMConte
     return
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.photo)
-async def process_photo_for_video_prompt_state(
-    message: types.Message, state: FSMContext
-):
-    """
-    Обрабатывает загруженное фото когда пользователь в состоянии waiting_for_video_prompt.
-    Это нужно для режима imgtxt (фото+текст → видео), когда пользователь загружает фото
-    ДО ввода промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(
-                f"Saved start image for video (waiting_for_video_prompt state): {image_url}"
-            )
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
 
 
-@router.message(
-    GenerationStates.waiting_for_reference_video,
-    F.video | (F.document & F.document.mime_type.startswith("video/")),
-)
-async def process_reference_video_upload(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
-    Сохраняет видео и переключает в состояние ожидания промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    if generation_type == "video" and v_type == "video":
-        # Определяем источник файла (video или document)
-        if message.video:
-            video_obj = message.video
-        elif message.document and message.document.mime_type.startswith("video/"):
-            video_obj = message.document
-        else:
-            await message.answer("❌ Неверный тип файла. Отправьте видео.")
-            return
-
-        file = await message.bot.get_file(video_obj.file_id)
-
-        # Проверяем размер (макс 20MB для стабильности)
-        file_size = getattr(video_obj, "file_size", 0)
-        if file_size > 20 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 20MB).")
-            return
-
-        video_bytes = await message.bot.download_file(file.file_path)
-        video_data = video_bytes.read()
-
-        # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
-
-        if video_url:
-            await state.update_data(v_video_url=video_url)
-            logger.info(f"Saved reference video for video mode: {video_url}")
-        else:
-            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
-            return
-
-        # Переключаемся в состояние ожидания промпта
-        await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "video")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем экран с промптом
-        video_status = "\n✅ <b>Референсное видео загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{video_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите желаемый эффект/стиль:\n"
-            f"• Стиль видео\n"
-            f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
-            f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
 
 
-@router.message(GenerationStates.waiting_for_reference_video)
-async def invalid_reference_video_input(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
-    """
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
-        "Это видео будет использовано как референс для стиля/движения."
-    )
 
 
-@router.message(GenerationStates.waiting_for_video_prompt, F.text)
-async def handle_video_prompt_text(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
-    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
-    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
-    prompt = message.text.strip()
-
-    if not prompt:
-        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
-        return
-
-    data = await state.get_data()
-    generation_type = data.get("generation_type", "")
-    logger.info(f"Generation type: {generation_type}")
-
-    await state.update_data(user_prompt=prompt)
-
-    if generation_type == "motion_control":
-        logger.info("Calling run_motion_control")
-        await run_motion_control(message, state, prompt)
-    else:
-        logger.info("Calling run_no_preset_video_from_message")
-        await run_no_preset_video_from_message(message, state, prompt)
 
 
 # =============================================================================
@@ -4584,332 +3431,14 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("model_"))
-async def handle_model_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора модели генерации"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        model_type = parts[2]  # "flash" или "pro"
-
-        model = (
-            "gemini-2.5-flash-image"
-            if model_type == "flash"
-            else "gemini-3-pro-image-preview"
-        )
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["model"] = model
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
-
-            if model_type == "flash":
-                text += "<i>Быстрая генерация, до 1024px</i>\n"
-            else:
-                text += "<i>Высокое качество, до 4K, с thinking</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("resolution_"))
-async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора разрешения изображения"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        resolution = parts[2]  # "1K", "2K", "4K"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["resolution"] = resolution
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
-
-            resolutions = {
-                "1K": "Стандартное качество, 1024px",
-                "2K": "HD качество, 2048px",
-                "4K": "Максимальное качество, 4096px",
-            }
-            text += f"<i>{resolutions.get(resolution, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(
-    F.data.startswith("img_ratio_") & ~F.data.startswith("img_ratio_no_preset")
-)
-async def handle_image_ratio_selection(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Обработка выбора формата изображения для пресетов"""
-    parts = callback.data.split("_")
-    if len(parts) >= 4:
-        preset_id = parts[1]
-        ratio = f"{parts[2]}:{parts[3]}"  # "16:9"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["aspect_ratio"] = ratio
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
-
-            ratios_desc = {
-                "1:1": "Квадрат (Instagram, Facebook)",
-                "16:9": "Горизонтальный (YouTube)",
-                "9:16": "Вертикальный (TikTok, Reels)",
-                "4:5": "Портретный (Instagram)",
-                "21:9": "Панорамный (Кино)",
-            }
-            text += f"<i>{ratios_desc.get(ratio, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("grounding_"))
-async def handle_search_grounding(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка поискового заземления (Grounding)"""
-    parts = callback.data.split("_")
-    if len(parts) >= 2:
-        preset_id = parts[1]
-
-        # Переключаем опцию
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["enable_search"] = not generation_options.get(
-            "enable_search", False
-        )
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            enabled = generation_options["enable_search"]
-            status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
-
-            if enabled:
-                text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
-                text += "\nПримеры:\n"
-                text += "• Погода на 5 дней\n"
-                text += "• Последние новости\n"
-                text += "• Актуальные события"
-            else:
-                text += "<i>Поиск отключён</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("ref_"))
-async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Обработка работы с референсными изображениями (до 14 шт)
-    Поддерживает загрузку, управление и подтверждение референсов
-    """
-    parts = callback.data.split("_")
-    action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
-
-    data = await state.get_data()
-    current_refs = data.get("reference_images", [])
-    max_refs = 14
-
-    if action == "upload":
-        # Начинаем загрузку референсных изображений
-        await state.set_state(GenerationStates.uploading_reference_images)
-        await state.update_data(preset_id=preset_id, reference_images=current_refs)
-
-        await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
-            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
-            f"• До 10 объектов с высокой точностью\n"
-            f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
-            f"После загрузки нажмите ▶️ Продолжить",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(current_refs), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-
-    elif action == "clear":
-        # Очищаем все референсы
-        await state.update_data(reference_images=[])
-        await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "confirm":
-        # Переходим к подтверждению
-        if not current_refs:
-            await callback.answer("❌ Нет загруженных изображений", show_alert=True)
-            return
-
-        # Для нового UX (preset_id == "new") - сразу переходим к выбору модели
-        # (пропускаем экран подтверждения референсов)
-        if preset_id == "new":
-            data = await state.get_data()
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(
-                    current_service, current_ratio, num_refs=len(current_refs)
-                ),
-                parse_mode="HTML",
-            )
-            await callback.answer()
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - сразу переходим к экрану пресета (пропускаем экран подтверждения)
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Fallback - показать параметры генерации
-                data = await state.get_data()
-                current_service = data.get("img_service", "flux_pro")
-                current_ratio = data.get("img_ratio", "1:1")
-                await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                    f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                    f"Введите промпт для генерации:",
-                    reply_markup=get_create_image_keyboard(
-                        current_service, current_ratio
-                    ),
-                    parse_mode="HTML",
-                )
-                await state.set_state(GenerationStates.waiting_for_input)
-
-    elif action == "reload":
-        # Перезагружаем — очищаем и начинаем заново
-        await state.update_data(reference_images=[])
-        await state.set_state(GenerationStates.uploading_reference_images)
-
-        await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте новые фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "accept":
-        # Сохраняем референсы в generation_options
-        generation_options = data.get("generation_options", {})
-        generation_options["reference_images"] = current_refs
-        await state.update_data(generation_options=generation_options)
-
-        # Для нового UX (preset_id == "new") - переходим к экрану выбора модели/формата
-        # (пропускаем промежуточное меню подтверждения)
-        if preset_id == "new":
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
-                parse_mode="HTML",
-            )
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - возвращаемся к экрану пресета
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
-                await callback.message.edit_text(
-                    "✅ Референсы сохранены!",
-                    reply_markup=get_back_keyboard("back_main"),
-                )
-
-    else:
-        # Показываем справку о референсах (стандартное поведение)
-        help_text = get_reference_images_help()
-
-        await callback.message.edit_text(
-            help_text,
-            reply_markup=get_reference_images_keyboard(preset_id),
-            parse_mode="HTML",
-        )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
 # =============================================================================
@@ -4917,455 +3446,18 @@ async def handle_reference_images(callback: types.CallbackQuery, state: FSMConte
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("custom_"))
-async def request_custom_input(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает пользовательский ввод для пресета"""
-    preset_id = callback.data.replace("custom_", "")
-    preset = preset_manager.get_preset(preset_id)
 
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
 
-    await state.update_data(preset_id=preset_id, input_type="custom")
 
-    # UX: Показываем подсказки по промптам
-    tips_text = get_prompt_tips()
 
-    # Если требуется загрузка файла
-    if preset.requires_upload:
-        await state.set_state(GenerationStates.waiting_for_image)
 
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
-    else:
-        await state.set_state(GenerationStates.waiting_for_input)
 
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
-            f"Примеры для вдохновения:\n"
-            f"• Стиль: минимализм, винтаж, футуризм\n"
-            f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
 
 
-@router.callback_query(F.data.startswith("default_"))
-async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
-    """Использует пример значений для пресета"""
-    preset_id = callback.data.replace("default_", "")
-    preset = preset_manager.get_preset(preset_id)
 
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
 
-    # Заполняем плейсхолдеры значениями по умолчанию
-    defaults = preset_manager.get_default_values("styles") or ["минимализм"]
-    color_defaults = preset_manager.get_default_values("color_schemes") or ["яркий"]
-    expr_defaults = preset_manager.get_default_values("expressions") or ["радостное"]
 
-    placeholder_values = {}
-    for placeholder in preset.placeholders:
-        if "style" in placeholder.lower():
-            placeholder_values[placeholder] = defaults[0]
-        elif "color" in placeholder.lower():
-            placeholder_values[placeholder] = color_defaults[0]
-        elif "expr" in placeholder.lower():
-            placeholder_values[placeholder] = expr_defaults[0]
-        else:
-            placeholder_values[placeholder] = "пример"
 
-    try:
-        final_prompt = preset.format_prompt(**placeholder_values)
-    except:
-        final_prompt = preset.prompt.replace("{", "").replace("}", "")
-
-    await state.update_data(
-        preset_id=preset_id, final_prompt=final_prompt, input_type="default"
-    )
-
-    # Показываем финальный промпт с подтверждением
-    data = await state.get_data()
-    generation_options = data.get("generation_options", {})
-
-    await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
-        f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>💎\n\n"
-        f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-        f"{format_generation_options(generation_options)}",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Запустить", callback_data=f"run_{preset_id}"
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data=f"preset_{preset_id}"
-                    )
-                ],
-            ]
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(GenerationStates.waiting_for_input, F.photo)
-async def process_photo_for_video_imgtxt(message: types.Message, state: FSMContext):
-    """Обрабатывает загруженное фото для режима imgtxt (фото+текст → видео)"""
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(f"Saved start image for video: {image_url}")
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем (другие обработчики обработают)
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
-
-
-@router.message(GenerationStates.waiting_for_video_prompt, F.photo)
-async def process_photo_for_video_prompt_state(
-    message: types.Message, state: FSMContext
-):
-    """
-    Обрабатывает загруженное фото когда пользователь в состоянии waiting_for_video_prompt.
-    Это нужно для режима imgtxt (фото+текст → видео), когда пользователь загружает фото
-    ДО ввода промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(
-                f"Saved start image for video (waiting_for_video_prompt state): {image_url}"
-            )
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
-
-
-@router.message(
-    GenerationStates.waiting_for_reference_video,
-    F.video | (F.document & F.document.mime_type.startswith("video/")),
-)
-async def process_reference_video_upload(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
-    Сохраняет видео и переключает в состояние ожидания промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    if generation_type == "video" and v_type == "video":
-        # Определяем источник файла (video или document)
-        if message.video:
-            video_obj = message.video
-        elif message.document and message.document.mime_type.startswith("video/"):
-            video_obj = message.document
-        else:
-            await message.answer("❌ Неверный тип файла. Отправьте видео.")
-            return
-
-        file = await message.bot.get_file(video_obj.file_id)
-
-        # Проверяем размер (макс 20MB для стабильности)
-        file_size = getattr(video_obj, "file_size", 0)
-        if file_size > 20 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 20MB).")
-            return
-
-        video_bytes = await message.bot.download_file(file.file_path)
-        video_data = video_bytes.read()
-
-        # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
-
-        if video_url:
-            await state.update_data(v_video_url=video_url)
-            logger.info(f"Saved reference video for video mode: {video_url}")
-        else:
-            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
-            return
-
-        # Переключаемся в состояние ожидания промпта
-        await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "video")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем экран с промптом
-        video_status = "\n✅ <b>Референсное видео загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{video_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите желаемый эффект/стиль:\n"
-            f"• Стиль видео\n"
-            f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
-            f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-
-
-@router.message(GenerationStates.waiting_for_reference_video)
-async def invalid_reference_video_input(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
-    """
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\n\n"
-        "Это видео будет использовано как референс для стиля/движения."
-    )
-
-
-@router.message(GenerationStates.waiting_for_video_prompt, F.text)
-async def handle_video_prompt_text(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод промпта для видео и motion control (новый UX)."""
-    logger.info(f"[DEBUG STATE] Current state: {await state.get_state()}")
-    logger.info(f"Video prompt handler triggered for user {message.from_user.id}")
-    prompt = message.text.strip()
-
-    if not prompt:
-        await message.answer("⚠️ Введите описание видео перед запуском генерации.")
-        return
-
-    data = await state.get_data()
-    generation_type = data.get("generation_type", "")
-    logger.info(f"Generation type: {generation_type}")
-
-    await state.update_data(user_prompt=prompt)
-
-    if generation_type == "motion_control":
-        logger.info("Calling run_motion_control")
-        await run_motion_control(message, state, prompt)
-    else:
-        logger.info("Calling run_no_preset_video_from_message")
-        await run_no_preset_video_from_message(message, state, prompt)
 
 
 # =============================================================================
@@ -5373,760 +3465,16 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 # =============================================================================
 
 
-@router.callback_query(F.data.startswith("model_"))
-async def handle_model_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора модели генерации"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        model_type = parts[2]  # "flash" или "pro"
-
-        model = (
-            "gemini-2.5-flash-image"
-            if model_type == "flash"
-            else "gemini-3-pro-image-preview"
-        )
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["model"] = model
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            model_emoji = "💎" if "pro" in model else "⚡"
-            text = f"✅ <b>Модель изменена</b>\n\n"
-            text += f"{model_emoji} Теперь используется: <code>{model}</code>\n\n"
-
-            if model_type == "flash":
-                text += "<i>Быстрая генерация, до 1024px</i>\n"
-            else:
-                text += "<i>Высокое качество, до 4K, с thinking</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("resolution_"))
-async def handle_resolution_selection(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка выбора разрешения изображения"""
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        preset_id = parts[1]
-        resolution = parts[2]  # "1K", "2K", "4K"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["resolution"] = resolution
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            res_emoji = {"1K": "⚡", "2K": "💎", "4K": "👑"}.get(resolution, "⚡")
-            text = f"✅ <b>Разрешение изменено</b>\n\n"
-            text += f"{res_emoji} Теперь используется: <code>{resolution}</code>\n\n"
-
-            resolutions = {
-                "1K": "Стандартное качество, 1024px",
-                "2K": "HD качество, 2048px",
-                "4K": "Максимальное качество, 4096px",
-            }
-            text += f"<i>{resolutions.get(resolution, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(
-    F.data.startswith("img_ratio_") & ~F.data.startswith("img_ratio_no_preset")
-)
-async def handle_image_ratio_selection(
-    callback: types.CallbackQuery, state: FSMContext
-):
-    """Обработка выбора формата изображения для пресетов"""
-    parts = callback.data.split("_")
-    if len(parts) >= 4:
-        preset_id = parts[1]
-        ratio = f"{parts[2]}:{parts[3]}"  # "16:9"
-
-        # Обновляем опции
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["aspect_ratio"] = ratio
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            text = f"✅ <b>Формат изменён</b>\n\n"
-            text += f"📐 Теперь используется: <code>{ratio}</code>\n\n"
-
-            ratios_desc = {
-                "1:1": "Квадрат (Instagram, Facebook)",
-                "16:9": "Горизонтальный (YouTube)",
-                "9:16": "Вертикальный (TikTok, Reels)",
-                "4:5": "Портретный (Instagram)",
-                "21:9": "Панорамный (Кино)",
-            }
-            text += f"<i>{ratios_desc.get(ratio, '')}</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("grounding_"))
-async def handle_search_grounding(callback: types.CallbackQuery, state: FSMContext):
-    """Обработка поискового заземления (Grounding)"""
-    parts = callback.data.split("_")
-    if len(parts) >= 2:
-        preset_id = parts[1]
-
-        # Переключаем опцию
-        data = await state.get_data()
-        generation_options = data.get("generation_options", {})
-        generation_options["enable_search"] = not generation_options.get(
-            "enable_search", False
-        )
-        await state.update_data(generation_options=generation_options)
-
-        # Показываем подтверждение
-        preset = preset_manager.get_preset(preset_id)
-        if preset:
-            enabled = generation_options["enable_search"]
-            status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
-            text = f"✅ <b>Поиск в интернете: {status}</b>\n\n"
-
-            if enabled:
-                text += "<i>AI будет использовать Google Search для актуальной информации</i>\n"
-                text += "\nПримеры:\n"
-                text += "• Погода на 5 дней\n"
-                text += "• Последние новости\n"
-                text += "• Актуальные события"
-            else:
-                text += "<i>Поиск отключён</i>\n"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_preset_action_keyboard(
-                    preset_id, preset.requires_input, preset.category
-                ),
-                parse_mode="HTML",
-            )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
-@router.callback_query(F.data.startswith("ref_"))
-async def handle_reference_images(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Обработка работы с референсными изображениями (до 14 шт)
-    Поддерживает загрузку, управление и подтверждение референсов
-    """
-    parts = callback.data.split("_")
-    action = parts[1] if len(parts) > 1 else ""
-    preset_id = parts[2] if len(parts) > 2 else None
-
-    data = await state.get_data()
-    current_refs = data.get("reference_images", [])
-    max_refs = 14
-
-    if action == "upload":
-        # Начинаем загрузку референсных изображений
-        await state.set_state(GenerationStates.uploading_reference_images)
-        await state.update_data(preset_id=preset_id, reference_images=current_refs)
-
-        await callback.message.edit_text(
-            f"📎 <b>Загрузка референсных изображений</b>\n\n"
-            f"Загружено: <code>{len(current_refs)}/{max_refs}</code>\n\n"
-            f"Отправьте фотографии (до {max_refs} штук), которые будут использоваться как референсы:\n"
-            f"• До 10 объектов с высокой точностью\n"
-            f"• До 4 персонажей для консистентности\n"
-            f"• До 14 изображений суммарно\n\n"
-            f"После загрузки нажмите ▶️ Продолжить",
-            reply_markup=get_reference_images_upload_keyboard(
-                len(current_refs), max_refs, preset_id
-            ),
-            parse_mode="HTML",
-        )
-
-    elif action == "clear":
-        # Очищаем все референсы
-        await state.update_data(reference_images=[])
-        await callback.message.edit_text(
-            f"📎 <b>Референсы очищены</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "confirm":
-        # Переходим к подтверждению
-        if not current_refs:
-            await callback.answer("❌ Нет загруженных изображений", show_alert=True)
-            return
-
-        # Для нового UX (preset_id == "new") - сразу переходим к выбору модели
-        # (пропускаем экран подтверждения референсов)
-        if preset_id == "new":
-            data = await state.get_data()
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(
-                    current_service, current_ratio, num_refs=len(current_refs)
-                ),
-                parse_mode="HTML",
-            )
-            await callback.answer()
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - сразу переходим к экрану пресета (пропускаем экран подтверждения)
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Fallback - показать параметры генерации
-                data = await state.get_data()
-                current_service = data.get("img_service", "flux_pro")
-                current_ratio = data.get("img_ratio", "1:1")
-                await callback.message.edit_text(
-                    f"✨ <b>Создание фото</b>\n\n"
-                    f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                    f"✨ Модель: <code>{current_service}</code>\n"
-                    f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                    f"Введите промпт для генерации:",
-                    reply_markup=get_create_image_keyboard(
-                        current_service, current_ratio
-                    ),
-                    parse_mode="HTML",
-                )
-                await state.set_state(GenerationStates.waiting_for_input)
-
-    elif action == "reload":
-        # Перезагружаем — очищаем и начинаем заново
-        await state.update_data(reference_images=[])
-        await state.set_state(GenerationStates.uploading_reference_images)
-
-        await callback.message.edit_text(
-            f"📎 <b>Перезагрузка референсов</b>\n\n"
-            f"Загружено: <code>0/{max_refs}</code>\n\n"
-            f"Отправьте новые фотографии для загрузки референсов:",
-            reply_markup=get_reference_images_upload_keyboard(0, max_refs, preset_id),
-            parse_mode="HTML",
-        )
-
-    elif action == "accept":
-        # Сохраняем референсы в generation_options
-        generation_options = data.get("generation_options", {})
-        generation_options["reference_images"] = current_refs
-        await state.update_data(generation_options=generation_options)
-
-        # Для нового UX (preset_id == "new") - переходим к экрану выбора модели/формата
-        # (пропускаем промежуточное меню подтверждения)
-        if preset_id == "new":
-            current_service = data.get("img_service", "flux_pro")
-            current_ratio = data.get("img_ratio", "1:1")
-            await callback.message.edit_text(
-                f"✨ <b>Создание фото</b>\n\n"
-                f"📎 Референсы загружены: <code>{len(current_refs)}</code>\n\n"
-                f"✨ Модель: <code>{current_service}</code>\n"
-                f"📐 Формат: <code>{current_ratio}</code>\n\n"
-                f"Введите промпт для генерации:",
-                reply_markup=get_create_image_keyboard(current_service, current_ratio),
-                parse_mode="HTML",
-            )
-            await state.set_state(GenerationStates.waiting_for_input)
-        else:
-            # Для пресетов - возвращаемся к экрану пресета
-            preset = preset_manager.get_preset(preset_id)
-            if preset:
-                await show_preset_details(
-                    callback.message, preset, callback.from_user.id
-                )
-            else:
-                # Этот код не должен достигаться в нормальном потоке, но оставим для совместимости
-                await callback.message.edit_text(
-                    "✅ Референсы сохранены!",
-                    reply_markup=get_back_keyboard("back_main"),
-                )
-
-    else:
-        # Показываем справку о референсах (стандартное поведение)
-        help_text = get_reference_images_help()
-
-        await callback.message.edit_text(
-            help_text,
-            reply_markup=get_reference_images_keyboard(preset_id),
-            parse_mode="HTML",
-        )
-
-    await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
 
 
 # =============================================================================
 # ОБРАБОТЧИКИ ВВОДА ПОЛЬЗОВАТЕЛЯ
 # =============================================================================
-
-
-@router.callback_query(F.data.startswith("custom_"))
-async def request_custom_input(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает пользовательский ввод для пресета"""
-    preset_id = callback.data.replace("custom_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    await state.update_data(preset_id=preset_id, input_type="custom")
-
-    # UX: Показываем подсказки по промптам
-    tips_text = get_prompt_tips()
-
-    # Если требуется загрузка файла
-    if preset.requires_upload:
-        await state.set_state(GenerationStates.waiting_for_image)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"📎 <b>Загрузите изображение</b>\n\n"
-            f"Для пресета: {preset.name}\n\n"
-            f"После загрузки изображения, {preset.input_prompt or 'введите описание'}\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
-    else:
-        await state.set_state(GenerationStates.waiting_for_input)
-
-        hint = UserHints.get_hint_for_stage("input")
-        await callback.message.edit_text(
-            f"✏️ <b>Введите ваш вариант</b>\n\n"
-            f"{preset.input_prompt or 'Опишите, что хотите создать'}\n\n"
-            f"Примеры для вдохновения:\n"
-            f"• Стиль: минимализм, винтаж, футуризм\n"
-            f"• Цветовая схема: яркий, пастельный, тёмный\n"
-            f"• Эмоция: радостное, удивлённое, задумчивое\n\n"
-            f"<i>{hint}</i>",
-            reply_markup=get_back_keyboard(f"preset_{preset_id}"),
-            parse_mode="HTML",
-        )
-
-
-@router.callback_query(F.data.startswith("default_"))
-async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
-    """Использует пример значений для пресета"""
-    preset_id = callback.data.replace("default_", "")
-    preset = preset_manager.get_preset(preset_id)
-
-    if not preset:
-        await callback.answer("Пресет не найден")
-        return
-
-    # Заполняем плейсхолдеры значениями по умолчанию
-    defaults = preset_manager.get_default_values("styles") or ["минимализм"]
-    color_defaults = preset_manager.get_default_values("color_schemes") or ["яркий"]
-    expr_defaults = preset_manager.get_default_values("expressions") or ["радостное"]
-
-    placeholder_values = {}
-    for placeholder in preset.placeholders:
-        if "style" in placeholder.lower():
-            placeholder_values[placeholder] = defaults[0]
-        elif "color" in placeholder.lower():
-            placeholder_values[placeholder] = color_defaults[0]
-        elif "expr" in placeholder.lower():
-            placeholder_values[placeholder] = expr_defaults[0]
-        else:
-            placeholder_values[placeholder] = "пример"
-
-    try:
-        final_prompt = preset.format_prompt(**placeholder_values)
-    except:
-        final_prompt = preset.prompt.replace("{", "").replace("}", "")
-
-    await state.update_data(
-        preset_id=preset_id, final_prompt=final_prompt, input_type="default"
-    )
-
-    # Показываем финальный промпт с подтверждением
-    data = await state.get_data()
-    generation_options = data.get("generation_options", {})
-
-    await callback.message.edit_text(
-        f"▶️ <b>Подтвердите генерацию</b>\n\n"
-        f"Пресет: <b>{preset.name}</b>\n"
-        f"Стоимость: <code>{preset.cost}</code>💎\n\n"
-        f"<b>Промпт:</b>\n"
-        f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>\n\n"
-        f"{format_generation_options(generation_options)}",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="✅ Запустить", callback_data=f"run_{preset_id}"
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="❌ Отмена", callback_data=f"preset_{preset_id}"
-                    )
-                ],
-            ]
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.message(GenerationStates.waiting_for_input, F.photo)
-async def process_photo_for_video_imgtxt(message: types.Message, state: FSMContext):
-    """Обрабатывает загруженное фото для режима imgtxt (фото+текст → видео)"""
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(f"Saved start image for video: {image_url}")
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем (другие обработчики обработают)
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
-
-
-@router.message(GenerationStates.waiting_for_video_prompt, F.photo)
-async def process_photo_for_video_prompt_state(
-    message: types.Message, state: FSMContext
-):
-    """
-    Обрабатывает загруженное фото когда пользователь в состоянии waiting_for_video_prompt.
-    Это нужно для режима imgtxt (фото+текст → видео), когда пользователь загружает фото
-    ДО ввода промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    # Проверяем, что это режим создания видео и выбран тип imgtxt
-    if generation_type == "video" and v_type == "imgtxt":
-        # Скачиваем изображение
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image dimensions for Kling API (Kie.ai requires min 300x300)
-        try:
-            import io
-
-            from PIL import Image
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    f"❌ <b>Изображение слишком маленькое!</b>\\n\\n"
-                    f"Размер: {width}×{height} px\\n\\n"
-                    "Kie.ai API требует минимум 300×300 px.\\n"
-                    "Загрузите фото большего размера.",
-                    parse_mode="HTML",
-                    reply_markup=get_create_video_keyboard(
-                        current_v_type=data.get("v_type", "imgtxt"),
-                        current_model=data.get("v_model", "v26_pro"),
-                        current_duration=data.get("v_duration", 5),
-                        current_ratio=data.get("v_ratio", "16:9"),
-                    ),
-                )
-                return
-            logger.info(f"Image validated for Kling: {width}×{height}")
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-
-        # Сохраняем изображение и получаем URL
-        image_url = save_uploaded_file(image_data, "png")
-
-        if image_url:
-            await state.update_data(v_image_url=image_url)
-            logger.info(
-                f"Saved start image for video (waiting_for_video_prompt state): {image_url}"
-            )
-        else:
-            await message.answer(
-                "❌ Не удалось сохранить изображение. Попробуйте ещё раз."
-            )
-            return
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "imgtxt")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем подтверждение с обновлённым экраном
-        image_status = "\n✅ <b>Изображение загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{image_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Фото + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите движение, которое хотите создать:\n"
-            f"• Как двигается объект\n"
-            f"• Движение камеры\n"
-            f"• Стиль и атмосфера"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    # Если это не режим imgtxt - игнорируем
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-    return
-
-
-@router.message(
-    GenerationStates.waiting_for_reference_video,
-    F.video | (F.document & F.document.mime_type.startswith("video/")),
-)
-async def process_reference_video_upload(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает загрузку референсного видео для режима video (видео+текст → видео).
-    Сохраняет видео и переключает в состояние ожидания промпта.
-    """
-    data = await state.get_data()
-    generation_type = data.get("generation_type")
-    v_type = data.get("v_type")
-
-    if generation_type == "video" and v_type == "video":
-        # Определяем источник файла (video или document)
-        if message.video:
-            video_obj = message.video
-        elif message.document and message.document.mime_type.startswith("video/"):
-            video_obj = message.document
-        else:
-            await message.answer("❌ Неверный тип файла. Отправьте видео.")
-            return
-
-        file = await message.bot.get_file(video_obj.file_id)
-
-        # Проверяем размер (макс 20MB для стабильности)
-        file_size = getattr(video_obj, "file_size", 0)
-        if file_size > 20 * 1024 * 1024:
-            await message.answer("❌ Видео слишком большое (макс 20MB).")
-            return
-
-        video_bytes = await message.bot.download_file(file.file_path)
-        video_data = video_bytes.read()
-
-        # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
-
-        if video_url:
-            await state.update_data(v_video_url=video_url)
-            logger.info(f"Saved reference video for video mode: {video_url}")
-        else:
-            await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
-            return
-
-        # Переключаемся в состояние ожидания промпта
-        await state.set_state(GenerationStates.waiting_for_video_prompt)
-
-        # Получаем обновлённые данные
-        data = await state.get_data()
-        current_v_type = data.get("v_type", "video")
-        current_model = data.get("v_model", "v26_pro")
-        current_duration = data.get("v_duration", 5)
-        current_ratio = data.get("v_ratio", "16:9")
-        user_prompt = data.get("user_prompt", "")
-
-        # Показываем экран с промптом
-        video_status = "\n✅ <b>Референсное видео загружено!</b>\n"
-
-        prompt_display = ""
-        if user_prompt:
-            prompt_display = f"\n📝 <b>Промпт:</b> <code>{user_prompt[:50]}{'...' if len(user_prompt) > 50 else ''}</code>\n"
-
-        text = (
-            f"🎬 <b>Создание видео</b>\n\n"
-            f"{video_status}"
-            f"⚙️ <b>Текущие настройки:</b>\n"
-            f"   📝 Тип: <code>Видео + Текст → Видео</code>\n"
-            f"   🤖 Модель: <code>{current_model}</code>\n"
-            f"   ⏱ Длительность: <code>{current_duration} сек</code>\n"
-            f"   📐 Формат: <code>{current_ratio}</code>\n"
-            f"{prompt_display}\n"
-            f"<b>Введите промпт для генерации:</b>\n\n"
-            f"Опишите желаемый эффект/стиль:\n"
-            f"• Стиль видео\n"
-            f"• Дополнительные эффекты\n"
-            f"• Атмосфера\n\n"
-            f"<i>Видео будет использовано как референс для движения/стиля (@Video1)</i>"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=get_create_video_keyboard(
-                current_v_type=current_v_type,
-                current_model=current_model,
-                current_duration=current_duration,
-                current_ratio=current_ratio,
-            ),
-            parse_mode="HTML",
-        )
-        return
-
-    await message.answer("Пожалуйста, отправьте текстовое описание.")
-
-
-@router.message(GenerationStates.waiting_for_reference_video)
-async def invalid_reference_video_input(message: types.Message, state: FSMContext):
-    """
-    Обрабатывает невалидный ввод в состоянии waiting_for_reference_video.
-    """
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте видео файл (макс 50MB).\\n\\n"
-        "Это видео будет использовано как референс для стиля/движения."
-    )

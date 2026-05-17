@@ -1,5 +1,6 @@
 """Unit and integration tests for bot/database.py"""
 
+import asyncio
 import os
 import tempfile
 from datetime import datetime
@@ -11,11 +12,17 @@ import pytest_asyncio
 
 from bot.database import (MASTER_PARTNER_TELEGRAM_ID, GenerationTask,
                           Transaction, User, add_credits, add_generation_task,
+                          admin_adjust_user_credits,
                           check_can_afford, complete_video_task,
-                          create_transaction, deduct_credits, get_admin_stats,
+                          create_transaction, deduct_credits,
+                          get_admin_finance_overview, get_admin_stats,
+                          get_admin_user_profile, get_admin_users_page,
                           get_master_partner_user, get_or_create_user,
+                          get_primary_reference_asset,
                           get_task_by_id, get_transaction_by_order,
+                          get_user_reference_assets,
                           get_user_credits, get_user_stats, init_db,
+                          save_user_reference_asset,
                           update_transaction_status)
 
 
@@ -97,6 +104,20 @@ async def test_deduct_credits(temp_db):
 
 
 @pytest.mark.asyncio
+async def test_deduct_credits_concurrent_claims_once(temp_db):
+    """Concurrent deductions should not both pass the same balance check."""
+    await get_or_create_user(123457)
+
+    results = await asyncio.gather(
+        deduct_credits(123457, 8),
+        deduct_credits(123457, 8),
+    )
+
+    assert sorted(results) == [False, True]
+    assert await get_user_credits(123457) == 2
+
+
+@pytest.mark.asyncio
 async def test_check_can_afford(temp_db):
     """Test check_can_afford"""
     await get_or_create_user(123456)
@@ -163,6 +184,65 @@ async def test_get_admin_stats(temp_db):
     stats = await get_admin_stats()
     assert stats["total_users"] >= 0
     assert stats["total_generations"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_admin_user_profile_does_not_duplicate_join_sums(temp_db):
+    user = await get_or_create_user(777001)
+    assert await create_transaction("order-a", user.id, "pay-a", "test", 10, 100.0, "completed")
+    assert await create_transaction("order-b", user.id, "pay-b", "test", 20, 200.0, "completed")
+    assert await add_generation_task(user.id, user.telegram_id, "task-a", "image", "manual", cost=3)
+    assert await add_generation_task(user.id, user.telegram_id, "task-b", "video", "manual", cost=7)
+
+    profile = await get_admin_user_profile(user.telegram_id)
+    page = await get_admin_users_page(limit=10, offset=0)
+    page_user = next(item for item in page["users"] if item["telegram_id"] == user.telegram_id)
+
+    assert profile["payments_rub"] == 300
+    assert profile["generation_spent"] == 10
+    assert profile["generation_tasks"] == 2
+    assert page_user["payments_rub"] == 300
+    assert page_user["generation_tasks"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_adjust_user_credits_and_finance_overview(temp_db):
+    user = await get_or_create_user(777002)
+    assert await admin_adjust_user_credits(user.telegram_id, 15)
+    assert await get_user_credits(user.telegram_id) == 25
+    assert await admin_adjust_user_credits(user.telegram_id, -100)
+    assert await get_user_credits(user.telegram_id) == 0
+
+    assert await create_transaction("order-c", user.id, "pay-c", "test", 15, 150.0, "completed")
+    overview = await get_admin_finance_overview()
+    assert overview["completed_rub"] == 150
+    assert overview["sold_credits"] == 15
+
+
+@pytest.mark.asyncio
+async def test_user_reference_assets_primary_uniqueness(temp_db):
+    user = await get_or_create_user(888001)
+
+    first_id = await save_user_reference_asset(
+        user.telegram_id, "main", "https://example.com/main-1.jpg", is_primary=True
+    )
+    second_id = await save_user_reference_asset(
+        user.telegram_id, "main", "https://example.com/main-2.jpg", is_primary=True
+    )
+    clothing_id = await save_user_reference_asset(
+        user.telegram_id, "clothing", "https://example.com/dress.jpg"
+    )
+
+    assert first_id
+    assert second_id
+    assert clothing_id
+    primary = await get_primary_reference_asset(user.telegram_id)
+    main_assets = await get_user_reference_assets(user.telegram_id, "main")
+    clothing_assets = await get_user_reference_assets(user.telegram_id, "clothing")
+
+    assert primary["image_url"] == "https://example.com/main-2.jpg"
+    assert sum(1 for asset in main_assets if asset["is_primary"]) == 1
+    assert clothing_assets[0]["image_url"] == "https://example.com/dress.jpg"
 
 
 @pytest.mark.asyncio

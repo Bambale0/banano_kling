@@ -55,15 +55,18 @@
       "z_image_turbo": 5,
       "seedream": 5,
       "seedream_45": 5,
-      "flux_pro": 5,
+      "flux_pro": 6,
+      "gpt_image_2": 8,
       "nano_banana_pro": 5,
       "seedream_lite": 6,
       "seedream_5_lite": 6,
-      "seedream_edit": 7
+      "seedream_edit": 7,
+      "banana_pro": 5
     },
     "video_models": {
       "v3_std": {
         "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
           "3": 9,
           "5": 15,
@@ -73,8 +76,9 @@
       },
       "v3_pro": {
         "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
-          "3": 11,
+          "3": 9,
           "5": 15,
           "10": 30,
           "15": 45
@@ -82,6 +86,15 @@
       },
       "v26_motion_pro": {
         "base": 15,
+        "per_second_cost": 3,
+        "duration_costs": {
+          "5": 15,
+          "10": 30
+        }
+      },
+      "v26_motion_std": {
+        "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
           "5": 15,
           "10": 30
@@ -89,40 +102,81 @@
       },
       "seedance2": {
         "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
           "5": 15,
           "10": 30,
           "15": 45
         }
       },
+      "wan_27": {
+        "base": 18,
+        "per_second_cost": 3.6,
+        "duration_costs": {
+          "5": 18,
+          "10": 36
+        }
+      },
       "grok_imagine": {
         "base": 15,
+        "per_second_cost": 2.5,
         "duration_costs": {
           "6": 15,
-          "10": 22,
-          "20": 35,
-          "30": 50
+          "10": 25,
+          "20": 50,
+          "30": 75
         }
       },
       "runway": {
         "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
           "5": 15,
-          "10": 25
+          "10": 30
         }
       },
       "aleph": {
         "base": 15,
+        "per_second_cost": 3,
         "duration_costs": {
           "5": 15,
-          "10": 25
+          "10": 30
         }
       },
       "glow": {
         "base": 25,
+        "per_second_cost": 5,
         "duration_costs": {
           "5": 25,
-          "10": 40
+          "10": 50
+        }
+      },
+      "v3_omni_std": {
+        "base": 15,
+        "per_second_cost": 3,
+        "duration_costs": {
+          "3": 9,
+          "5": 15,
+          "10": 30,
+          "15": 45
+        }
+      },
+      "v3_omni_pro": {
+        "base": 15,
+        "per_second_cost": 3,
+        "duration_costs": {
+          "3": 9,
+          "5": 15,
+          "10": 30,
+          "15": 45
+        }
+      },
+      "v26_pro": {
+        "base": 15,
+        "per_second_cost": 3,
+        "duration_costs": {
+          "5": 15,
+          "10": 30
         }
       }
     },
@@ -148,22 +202,42 @@
       "gemini_3_pro": 5
     },
     "discount_tiers": [
-      {"min_items": 3, "discount": 10},
-      {"min_items": 4, "discount": 15},
-      {"min_items": 6, "discount": 20},
-      {"min_items": 10, "discount": 25}
+      {
+        "min_items": 3,
+        "discount": 10
+      },
+      {
+        "min_items": 4,
+        "discount": 15
+      },
+      {
+        "min_items": 6,
+        "discount": 20
+      },
+      {
+        "min_items": 10,
+        "discount": 25
+      }
     ],
     "pro_features": {
       "batch_generation": true,
       "priority_queue": true,
       "4k_upscale": true,
-      "custom_aspect_ratios": ["21:9", "9:21", "4:5", "5:4"]
+      "custom_aspect_ratios": [
+        "21:9",
+        "9:21",
+        "4:5",
+        "5:4"
+      ]
     },
     "upscale_costs": {
       "2K": 5,
       "4K": 10
     }
   },
-  "admin_ids": [939259764, 339795159],
+  "admin_ids": [
+    939259764,
+    339795159
+  ],
   "support_contact": "@design_2Loop7222"
 }

@@ -30,4 +30,8 @@ export const api = {
   },
   createOrder: (payload) => request('/orders', { method: 'POST', body: payload }),
   orders: () => request('/orders'),
+  generateContent: (payload) => request('/generate', { method: 'POST', body: payload }),
+  smmPlan: (payload) => request('/generate/smm', { method: 'POST', body: payload }),
+  goeBalance: () => request('/goe'),
+  contentHistory: () => request('/history'),
 };

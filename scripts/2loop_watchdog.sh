@@ -4,6 +4,7 @@ set -Eeuo pipefail
 PROJECT_ROOT="/root/2loop"
 ENV_FILE="$PROJECT_ROOT/.env"
 LOG_FILE="/var/log/2loop-watchdog.log"
+LOCK_FILE="/tmp/2loop-watchdog.lock"
 
 log() {
   printf '%s %s\n' "$(date -Is)" "$*" >> "$LOG_FILE"
@@ -18,6 +19,119 @@ restart_nginx() {
   log "Restarting nginx: $*"
   nginx -t >> "$LOG_FILE" 2>&1 && systemctl restart nginx || log "Failed to restart nginx"
 }
+
+restart_redis() {
+  log "Restarting Redis: $*"
+  if systemctl list-unit-files --no-pager 2>/dev/null | grep -q '^redis-server\.service'; then
+    systemctl restart redis-server.service || log "Failed to restart redis-server.service"
+  elif systemctl list-unit-files --no-pager 2>/dev/null | grep -q '^redis\.service'; then
+    systemctl restart redis.service || log "Failed to restart redis.service"
+  else
+    log "Redis systemd unit not found"
+  fi
+}
+
+restart_postgres() {
+  log "Restarting PostgreSQL: $*"
+  if systemctl list-unit-files --no-pager 2>/dev/null | grep -q '^postgresql\.service'; then
+    systemctl restart postgresql.service || log "Failed to restart postgresql.service"
+  else
+    log "PostgreSQL systemd unit not found"
+  fi
+}
+
+check_http() {
+  local label="$1"
+  local url="$2"
+  local timeout="${3:-5}"
+
+  if curl -fsS --max-time "$timeout" "$url" >/dev/null; then
+    log "$label ok"
+    return 0
+  fi
+
+  log "$label failed: $url"
+  return 1
+}
+
+check_redis() {
+  if [[ -z "${REDIS_URL:-}" ]]; then
+    log "Redis check skipped: REDIS_URL is empty"
+    return 1
+  fi
+
+  if command -v redis-cli >/dev/null 2>&1; then
+    if redis-cli -u "$REDIS_URL" ping 2>> "$LOG_FILE" | grep -q '^PONG$'; then
+      log "redis ok"
+      return 0
+    fi
+  else
+    log "redis-cli not found"
+  fi
+
+  restart_redis "redis ping failed"
+  sleep 2
+
+  if command -v redis-cli >/dev/null 2>&1 && redis-cli -u "$REDIS_URL" ping 2>> "$LOG_FILE" | grep -q '^PONG$'; then
+    log "redis ok after restart"
+    return 0
+  fi
+
+  log "redis still failing after restart"
+  restart_bot "redis unavailable"
+  return 1
+}
+
+check_postgres() {
+  if [[ -z "${POSTGRES_DSN:-}" ]]; then
+    log "PostgreSQL check skipped: POSTGRES_DSN is empty"
+    return 1
+  fi
+
+  if command -v pg_isready >/dev/null 2>&1 && pg_isready -d "$POSTGRES_DSN" >/dev/null 2>> "$LOG_FILE"; then
+    log "postgres ok"
+    return 0
+  fi
+
+  if "$PROJECT_ROOT/venv/bin/python" - >> "$LOG_FILE" 2>&1 <<'PY'
+import asyncio
+import os
+import asyncpg
+
+
+async def main() -> None:
+    conn = await asyncpg.connect(os.environ["POSTGRES_DSN"])
+    try:
+        await conn.fetchval("select 1")
+    finally:
+        await conn.close()
+
+
+asyncio.run(main())
+PY
+  then
+    log "postgres ok"
+    return 0
+  fi
+
+  restart_postgres "postgres connectivity failed"
+  sleep 3
+
+  if command -v pg_isready >/dev/null 2>&1 && pg_isready -d "$POSTGRES_DSN" >/dev/null 2>> "$LOG_FILE"; then
+    log "postgres ok after restart"
+    return 0
+  fi
+
+  log "postgres still failing after restart"
+  restart_bot "postgres unavailable"
+  return 1
+}
+
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  log "watchdog already running, skip"
+  exit 0
+fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   log "Missing env file: $ENV_FILE"
@@ -34,6 +148,9 @@ WEBHOOK_IP="${WEBHOOK_IP:-}"
 
 log "watchdog start"
 
+check_redis || true
+check_postgres || true
+
 if systemctl is-active --quiet nginx; then
   log "nginx active"
 else
@@ -46,16 +163,17 @@ else
   restart_bot "service inactive"
 fi
 
-if curl -fsS --max-time 5 "http://127.0.0.1:${WEBHOOK_PORT:-8443}/api/miniapp/health" >/dev/null; then
-  log "local health ok"
-else
+if ! check_http "local app health" "http://127.0.0.1:${WEBHOOK_PORT:-8443}/health" 5; then
+  restart_bot "local app health failed"
+  sleep 3
+fi
+
+if ! check_http "local miniapp health" "http://127.0.0.1:${WEBHOOK_PORT:-8443}/api/miniapp/health" 5; then
   restart_bot "local miniapp health failed"
   sleep 3
 fi
 
-if curl -fsS --max-time 8 "${WEBHOOK_HOST%/}/api/miniapp/health" >/dev/null; then
-  log "external health ok"
-else
+if ! check_http "external miniapp health" "${WEBHOOK_HOST%/}/api/miniapp/health" 8; then
   restart_nginx "external miniapp health failed"
 fi
 
