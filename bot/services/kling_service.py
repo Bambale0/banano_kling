@@ -657,9 +657,9 @@ class KlingService:
             kling_elements = []
             if elements:
                 for i, el in enumerate(elements[:3]):  # max 3 elements
-                    urls = el.get("reference_image_urls", [])
+                    urls = list(el.get("reference_image_urls", []))
                     frontal = el.get("frontal_image_url")
-                    if frontal:
+                    if frontal and frontal not in urls:
                         urls.append(frontal)
                     if len(urls) >= 1:
                         kling_elements.append(

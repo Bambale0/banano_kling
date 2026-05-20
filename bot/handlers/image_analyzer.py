@@ -2,8 +2,9 @@ import logging
 import re
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.database import get_or_create_user
 from bot.keyboards import get_back_keyboard, get_main_menu_keyboard
@@ -12,6 +13,19 @@ from bot.states import ImageAnalyzerStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _build_prompt_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🆕 Новый промпт", callback_data="photo_to_prompt"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")],
+        ]
+    )
 
 
 @router.callback_query(F.data == "photo_to_prompt")
@@ -80,11 +94,24 @@ async def analyze_photo(message: Message, state: FSMContext):
         if len(prompt) > max_len:
             prompt = prompt[:max_len] + "... (промпт укорочен для Telegram лимита)"
 
-        await message.answer(
-            f"📋 <code>{prompt}</code><i>Скопируйте промпт и используйте в 'Создать фото'!</i>",
-            reply_markup=get_main_menu_keyboard(user.credits),
-            parse_mode="HTML",
+        prompt_text = (
+            "📋 <b>Промпт</b>\n"
+            f"<code>{prompt}</code>\n\n"
+            "<i>Нажмите на текст выше, чтобы скопировать его в Telegram, или удерживайте сообщение.</i>"
         )
+
+        try:
+            await message.answer(
+                prompt_text,
+                reply_markup=_build_prompt_result_keyboard(),
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest as e:
+            logger.warning(f"Prompt message send failed with HTML formatting: {e}")
+            await message.answer(
+                f"Промпт:\n\n{prompt}",
+                reply_markup=_build_prompt_result_keyboard(),
+            )
 
     except Exception as e:
         logger.error(f"Photo analysis error: {e}")

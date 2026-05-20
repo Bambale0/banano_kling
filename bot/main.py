@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -199,8 +200,10 @@ async def handle_telegram_webhook(
         # Создаём объект Update
         update = Update(**update_data)
 
-        # Обрабатываем обновление через диспетчер
-        await dp.feed_webhook_update(bot, update)
+        # Обрабатываем обновление через диспетчер. Ставим timeout ниже 60с,
+        # чтобы aiogram корректно переводил слишком долгую обработку в background
+        # без лишних повторов от Telegram.
+        await dp.feed_webhook_update(bot, update, _timeout=25)
 
         return web.Response(text="OK", status=200)
     except TelegramBadRequest as e:
@@ -220,6 +223,92 @@ async def handle_telegram_webhook(
         logger.exception(f"Webhook error: {e}")
         # Возвращаем 200 даже при ошибках, чтобы Telegram не спамил
         return web.Response(text="OK", status=200)
+
+
+async def _download_remote_file(url: str, suffix: str = "") -> tuple[str | None, str | None]:
+    import tempfile
+
+    import aiohttp
+
+    tmp_file = None
+    try:
+        async with aiohttp.ClientSession() as sess:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (compatible; Telegram Bot SDK/1.0)",
+                "Accept": "*/*",
+            }
+            async with sess.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=180),
+            ) as resp:
+                if resp.status != 200:
+                    return None, f"download failed: status {resp.status}"
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                tmp_file = tmp.name
+                with open(tmp_file, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(1024 * 64):
+                        if chunk:
+                            f.write(chunk)
+        return tmp_file, None
+    except Exception as e:
+        if tmp_file and os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+        return None, str(e)
+
+
+async def _send_video_with_fallback(
+    bot_instance: Bot,
+    chat_id: int,
+    video_url: str,
+    caption: str,
+    reply_markup=None,
+) -> bool:
+    from aiogram.types import FSInputFile
+
+    try:
+        await bot_instance.send_video(
+            chat_id=chat_id,
+            video=video_url,
+            caption=caption,
+            parse_mode="HTML",
+            supports_streaming=True,
+            reply_markup=reply_markup,
+        )
+        return True
+    except Exception as e:
+        logger.warning(
+            "Video URL send failed (%s), trying file upload",
+            e,
+        )
+
+    tmp_file, download_error = await _download_remote_file(video_url, suffix=".mp4")
+    if not tmp_file:
+        logger.error("Video download fallback failed: %s", download_error)
+        return False
+
+    try:
+        await bot_instance.send_video(
+            chat_id=chat_id,
+            video=FSInputFile(tmp_file),
+            caption=caption,
+            parse_mode="HTML",
+            supports_streaming=True,
+            reply_markup=reply_markup,
+        )
+        return True
+    except Exception as e:
+        logger.error("Video upload fallback failed: %s", e)
+        return False
+    finally:
+        if os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                logger.exception("Failed to remove temporary video file")
 
 
 async def handle_kling_webhook(request: web.Request) -> web.Response:
@@ -343,16 +432,22 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             else:
                                 caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
 
-                            await bot_instance.send_video(
+                            sent = await _send_video_with_fallback(
+                                bot_instance=bot_instance,
                                 chat_id=telegram_id,
-                                video=video_url,
+                                video_url=video_url,
                                 caption=caption,
-                                parse_mode="HTML",
-                                supports_streaming=True,
                                 reply_markup=get_video_result_keyboard(video_url),
                             )
-                            await complete_video_task(task_id, video_url)
-                            logger.info(f"{model_display} video sent to {telegram_id}")
+                            if sent:
+                                await complete_video_task(task_id, video_url)
+                                logger.info(f"{model_display} video sent to {telegram_id}")
+                            else:
+                                logger.error(
+                                    "%s video delivery failed for %s after all fallbacks",
+                                    model_display,
+                                    telegram_id,
+                                )
                         except Exception as e:
                             logger.error(
                                 f"Failed to notify {model_display} user {telegram_id}: {e}"
@@ -417,99 +512,39 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
                                 else:
                                     caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
-                                import os
-
-                                # Отправляем видео - всегда скачиваем для Kie.ai
-                                import tempfile
-
-                                import aiohttp
-                                from aiogram.types import FSInputFile
-
                                 from bot.keyboards import get_video_result_keyboard
 
-                                tmp_file = None
-                                try:
-                                    async with aiohttp.ClientSession() as sess:
-                                        headers = {
-                                            "User-Agent": "Mozilla/5.0 (compatible; Telegram Bot SDK/1.0)",
-                                            "Accept": "*/*",
-                                        }
-                                        async with sess.get(
-                                            video_url,
-                                            headers=headers,
-                                            timeout=aiohttp.ClientTimeout(total=120),
-                                        ) as resp:
-                                            if resp.status != 200:
-                                                raise RuntimeError(
-                                                    f"Download failed: status {resp.status}"
-                                                )
-                                            tmp = tempfile.NamedTemporaryFile(
-                                                delete=False, suffix=".mp4"
-                                            )
-                                            tmp_file = tmp.name
-                                            with open(tmp_file, "wb") as f:
-                                                async for (
-                                                    chunk
-                                                ) in resp.content.iter_chunked(
-                                                    1024 * 64
-                                                ):
-                                                    if chunk:
-                                                        f.write(chunk)
-                                    video_file = FSInputFile(tmp_file)
-                                    await bot_instance.send_video(
-                                        chat_id=telegram_id,
-                                        video=video_file,
-                                        caption=caption,
-                                        parse_mode="HTML",
-                                        supports_streaming=True,
-                                        reply_markup=get_video_result_keyboard(
-                                            video_url
-                                        ),
+                                sent = await _send_video_with_fallback(
+                                    bot_instance=bot_instance,
+                                    chat_id=telegram_id,
+                                    video_url=video_url,
+                                    caption=caption,
+                                    reply_markup=get_video_result_keyboard(video_url),
+                                )
+                                if sent:
+                                    await complete_video_task(task_id, video_url)
+                                    logger.info(f"Kie.ai result sent to {telegram_id}")
+                                else:
+                                    raise RuntimeError(
+                                        "Kie.ai delivery failed after URL/upload fallbacks"
                                     )
-                                    logger.info(
-                                        f"Kie.ai video downloaded and sent to {telegram_id}"
-                                    )
-                                except Exception as dl_e:
-                                    logger.error(
-                                        f"Kie.ai video download failed: {dl_e}"
-                                    )
-                                    # Fallback to URL
-                                    await bot_instance.send_video(
-                                        chat_id=telegram_id,
-                                        video=video_url,
-                                        caption=caption,
-                                        parse_mode="HTML",
-                                        supports_streaming=True,
-                                        reply_markup=get_video_result_keyboard(
-                                            video_url
-                                        ),
-                                    )
-                                    logger.info(
-                                        f"Kie.ai video sent via URL to {telegram_id}"
-                                    )
-                                finally:
-                                    if tmp_file and os.path.exists(tmp_file):
-                                        try:
-                                            os.remove(tmp_file)
-                                        except Exception as e:
-                                            pass
-                                await complete_video_task(task_id, video_url)
-                                logger.info(f"Kie.ai result sent to {telegram_id}")
                             else:
                                 # Fail case
-                                policy_violation = "Prohibited Use policy" in fail_msg
+                                policy_violation = "prohibited use policy" in fail_msg.lower()
                                 error_msg = (
-                                    "Ваш запрос был отклонён из-за нарушения политики Google (чувствительный контент)."
+                                    "Ваш запрос был отклонён из-за нарушения политики Google (чувствительный контент). Попробуйте смягчить описание сцены, убрать интимные или пограничные формулировки."
                                     if policy_violation
-                                    else f"Ошибка API: {fail_msg[:100]}"
+                                    else f"Ошибка API: {html.escape(fail_msg[:160] or 'Неизвестная ошибка провайдера')}"
                                 )
                                 await add_credits(telegram_id, task.cost or 0)
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
-                                    text=f"❌ <b>Генерация не удалась</b>"
-                                    + f"ID: <code>{task_id}</code>"
-                                    + f"{error_msg}"
-                                    + f"🍌 Кредиты возвращены.",
+                                    text=(
+                                        "❌ <b>Генерация не удалась</b>\n\n"
+                                        + f"ID: <code>{task_id}</code>\n\n"
+                                        + f"{error_msg}\n\n"
+                                        + "🍌 Кредиты возвращены."
+                                    ),
                                     parse_mode="HTML",
                                 )
                                 await complete_video_task(task_id, None)
@@ -631,93 +666,27 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             try:
                 from bot.keyboards import get_video_result_keyboard
 
-                await bot_instance.send_video(
+                sent = await _send_video_with_fallback(
+                    bot_instance=bot_instance,
                     chat_id=telegram_id,
-                    video=video_url,
+                    video_url=video_url,
                     caption=caption,
-                    parse_mode="HTML",
-                    supports_streaming=True,
                     reply_markup=get_video_result_keyboard(video_url),
                 )
 
-                await complete_video_task(task_id, video_url)
-                logger.info(f"Video sent to user {telegram_id}")
-            except Exception as e:
-                logger.error(f"Failed to send video via URL: {e}")
-                # If sending by URL failed (Telegram can't fetch remote file),
-                # try to download the file locally and upload it to Telegram.
-                try:
-                    # Only attempt download for http(s) URLs
-                    if isinstance(video_url, str) and video_url.lower().startswith(
-                        "http"
-                    ):
-                        import os
-                        import tempfile
-
-                        import aiohttp as _aiohttp
-
-                        logger.info(
-                            "Attempting to download video and upload to Telegram as file"
-                        )
-                        tmp_file = None
-                        try:
-                            async with _aiohttp.ClientSession() as sess:
-                                async with sess.get(video_url, timeout=60) as resp:
-                                    if resp.status != 200:
-                                        raise RuntimeError(
-                                            f"Failed to download video, status={resp.status}"
-                                        )
-                                    # Create temporary file
-                                    tmp = tempfile.NamedTemporaryFile(delete=False)
-                                    tmp_file = tmp.name
-                                    # Stream write
-                                    with open(tmp_file, "wb") as f:
-                                        async for chunk in resp.content.iter_chunked(
-                                            1024 * 64
-                                        ):
-                                            if chunk:
-                                                f.write(chunk)
-
-                            # Send downloaded file
-                            from aiogram.types import FSInputFile
-
-                            from bot.keyboards import get_video_result_keyboard
-
-                            video_file = FSInputFile(tmp_file)
-                            await bot_instance.send_video(
-                                chat_id=telegram_id,
-                                video=video_file,
-                                caption=caption,
-                                parse_mode="HTML",
-                                supports_streaming=True,
-                                reply_markup=get_video_result_keyboard(video_url),
-                            )
-
-                            await complete_video_task(task_id, video_url)
-                            logger.info(
-                                f"Video downloaded and sent to user {telegram_id}"
-                            )
-                        finally:
-                            if tmp_file and os.path.exists(tmp_file):
-                                try:
-                                    os.remove(tmp_file)
-                                except Exception as e:
-                                    logger.exception(
-                                        "Failed to remove temporary video file"
-                                    )
-                    else:
-                        # Fallback — отправляем как ссылка
-                        from bot.keyboards import get_video_result_keyboard
-
-                        await bot_instance.send_message(
-                            chat_id=telegram_id,
-                            text=f"🎬 Ваше видео готово!{video_url}",
-                            reply_markup=get_video_result_keyboard(video_url),
-                            parse_mode="HTML",
-                        )
-                except Exception as fallback_error:
+                if sent:
+                    await complete_video_task(task_id, video_url)
+                    logger.info(f"Video sent to user {telegram_id}")
+                else:
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=f"🎬 Видео готово, но Telegram не смог принять файл автоматически.\n\nСсылка: {html.escape(video_url)}",
+                        reply_markup=get_video_result_keyboard(video_url),
+                        parse_mode="HTML",
+                    )
                     logger.error(
-                        f"Failed to send fallback message or upload video: {fallback_error}"
+                        "Failed to deliver video for %s even after upload fallback",
+                        telegram_id,
                     )
             finally:
                 await bot_instance.session.close()
@@ -1279,7 +1248,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if sources:
                     source_links = f"\n🖼 <b>Исходники:</b>\n" + "\n".join(
                         [
-                            f"• <a href='{u}'>{u.split('/')[-1] if '/' in u else u}</a>"
+                            f"• <a href='{html.escape(u, quote=True)}'>{html.escape(u.split('/')[-1] if '/' in u else u)}</a>"
                             for u in sources[:3]
                         ]
                     )
@@ -1306,19 +1275,21 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             info_str = " | ".join(info_lines) if info_lines else ""
 
             prompt_or_preset = (
-                f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                f"<code>{html.escape(task.prompt[:100])}{'...' if len(task.prompt) > 100 else ''}</code>"
                 if task.preset_id in {"no_preset", "no_preset_video"} and task.prompt
-                else task.preset_id
+                else html.escape(task.preset_id or "—")
             )
             label = (
                 "Промпт"
                 if task.preset_id in {"no_preset", "no_preset_video"}
                 else "Пресет"
             )
+            service_name_safe = html.escape(service_name)
+            result_url_safe = html.escape(result_url or "", quote=True)
 
-            full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
+            full_caption = f"""✅ <b>{'Видео' if is_video else 'Изображение'} ({service_name_safe})</b> | ID: <code>{task_id}</code>{' | ' + info_str if info_str else ''}
 \n🎯 {label}: {prompt_or_preset}{source_links}
-\n🔗 <a href='{result_url}'>📥 Ссылка</a>"""
+\n🔗 <a href='{result_url_safe}'>📥 Ссылка</a>"""
 
             if not is_video:
                 from bot.keyboards import get_image_result_keyboard
