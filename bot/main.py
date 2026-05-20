@@ -24,7 +24,12 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Update
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    Update,
+)
 from aiohttp import web
 
 from bot.config import config
@@ -55,6 +60,18 @@ ACTIVE_LOG_FILENAMES = {"bot.log"}
 
 YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
+
+USER_BOT_COMMANDS = [
+    BotCommand(command="start", description="Главное меню"),
+    BotCommand(command="help", description="Помощь и возможности"),
+    BotCommand(command="ref", description="Партнёрская программа"),
+    BotCommand(command="earn", description="Заработок на рефералах"),
+]
+USER_BOT_COMMAND_SCOPES = (
+    BotCommandScopeDefault(),
+    BotCommandScopeAllPrivateChats(),
+)
+USER_BOT_COMMAND_LANGUAGES = (None, "ru")
 
 
 async def _yookassa_reconcile_loop() -> None:
@@ -825,6 +842,21 @@ async def on_startup(bot: Bot):
 
     # База данных уже инициализирована в main() функции
     logger.info("Database already initialized")
+
+    try:
+        for scope in USER_BOT_COMMAND_SCOPES:
+            for language_code in USER_BOT_COMMAND_LANGUAGES:
+                await bot.set_my_commands(
+                    USER_BOT_COMMANDS,
+                    scope=scope,
+                    language_code=language_code,
+                )
+        logger.info(
+            "Registered user bot commands: %s",
+            ", ".join(f"/{command.command}" for command in USER_BOT_COMMANDS),
+        )
+    except Exception:
+        logger.exception("Failed to register user bot commands")
 
     try:
         await redis_service.get_client()

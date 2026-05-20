@@ -1211,6 +1211,477 @@ async def get_admin_partner_details(
         }
 
 
+def _sqlite_rows_to_dicts(rows: list[aiosqlite.Row]) -> list[dict]:
+    return [{key: row[key] for key in row.keys()} for row in rows]
+
+
+def _safe_report_limit(limit: int) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        value = 100
+    return max(1, min(value, 5000))
+
+
+async def get_admin_finance_report(limit: int = 100) -> dict:
+    """Детальный финансово-реферальный отчёт для админки."""
+    safe_limit = _safe_report_limit(limit)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_topups,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN amount_rub ELSE 0 END), 0) AS completed_revenue_rub,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN credits ELSE 0 END), 0) AS completed_credits,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,
+                COALESCE(SUM(CASE WHEN status NOT IN ('completed', 'pending') THEN 1 ELSE 0 END), 0) AS failed_count
+            FROM transactions
+            """
+        )
+        topups_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                t.id,
+                t.order_id,
+                t.payment_id,
+                t.provider,
+                t.credits,
+                t.amount_rub,
+                t.status,
+                t.created_at,
+                u.id AS user_db_id,
+                u.telegram_id,
+                u.credits AS user_balance,
+                u.referral_code,
+                ref.telegram_id AS referrer_telegram_id,
+                ref.referral_code AS referrer_code
+            FROM transactions t
+            JOIN users u ON u.id = t.user_id
+            LEFT JOIN users ref ON ref.id = u.referred_by
+            ORDER BY datetime(t.created_at) DESC, t.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        topups = _sqlite_rows_to_dicts(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                COALESCE(SUM(cost), 0) AS total_cost
+            FROM generation_tasks
+            WHERE COALESCE(cost, 0) > 0
+            """
+        )
+        task_deductions_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                COALESCE(SUM(cost), 0) AS total_cost
+            FROM generation_history
+            WHERE COALESCE(cost, 0) > 0
+            """
+        )
+        history_deductions_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                COALESCE(SUM(total_cost), 0) AS total_cost
+            FROM batch_jobs
+            WHERE COALESCE(total_cost, 0) > 0
+            """
+        )
+        batch_deductions_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                'generation_task' AS source,
+                gt.id,
+                gt.task_id,
+                gt.type,
+                gt.preset_id,
+                gt.model,
+                gt.duration,
+                gt.aspect_ratio,
+                gt.prompt,
+                gt.cost,
+                gt.status,
+                gt.result_url,
+                gt.request_data,
+                gt.created_at,
+                gt.completed_at,
+                gt.updated_at,
+                u.id AS user_db_id,
+                u.telegram_id,
+                u.credits AS user_balance,
+                ref.telegram_id AS referrer_telegram_id,
+                ref.referral_code AS referrer_code
+            FROM generation_tasks gt
+            JOIN users u ON u.id = gt.user_id
+            LEFT JOIN users ref ON ref.id = u.referred_by
+            WHERE COALESCE(gt.cost, 0) > 0
+            ORDER BY datetime(gt.created_at) DESC, gt.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        deductions = _sqlite_rows_to_dicts(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """
+            SELECT
+                'generation_history' AS source,
+                gh.id,
+                NULL AS task_id,
+                NULL AS type,
+                gh.preset_id,
+                NULL AS model,
+                NULL AS duration,
+                NULL AS aspect_ratio,
+                gh.prompt,
+                gh.cost,
+                'completed' AS status,
+                NULL AS result_url,
+                NULL AS request_data,
+                gh.created_at,
+                NULL AS completed_at,
+                NULL AS updated_at,
+                u.id AS user_db_id,
+                u.telegram_id,
+                u.credits AS user_balance,
+                ref.telegram_id AS referrer_telegram_id,
+                ref.referral_code AS referrer_code
+            FROM generation_history gh
+            JOIN users u ON u.id = gh.user_id
+            LEFT JOIN users ref ON ref.id = u.referred_by
+            WHERE COALESCE(gh.cost, 0) > 0
+            ORDER BY datetime(gh.created_at) DESC, gh.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        deductions.extend(_sqlite_rows_to_dicts(await cursor.fetchall()))
+
+        cursor = await db.execute(
+            """
+            SELECT
+                'batch_job' AS source,
+                bj.id,
+                bj.job_id AS task_id,
+                bj.mode AS type,
+                NULL AS preset_id,
+                NULL AS model,
+                bj.duration AS duration,
+                NULL AS aspect_ratio,
+                NULL AS prompt,
+                bj.total_cost AS cost,
+                'completed' AS status,
+                NULL AS result_url,
+                NULL AS request_data,
+                bj.created_at,
+                NULL AS completed_at,
+                NULL AS updated_at,
+                u.id AS user_db_id,
+                u.telegram_id,
+                u.credits AS user_balance,
+                ref.telegram_id AS referrer_telegram_id,
+                ref.referral_code AS referrer_code,
+                bj.results_count
+            FROM batch_jobs bj
+            JOIN users u ON u.id = bj.user_id
+            LEFT JOIN users ref ON ref.id = u.referred_by
+            WHERE COALESCE(bj.total_cost, 0) > 0
+            ORDER BY datetime(bj.created_at) DESC, bj.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        deductions.extend(_sqlite_rows_to_dicts(await cursor.fetchall()))
+        deductions.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        deductions = deductions[:safe_limit]
+
+        cursor = await db.execute(
+            """
+            SELECT
+                r.id,
+                r.created_at AS referral_created_at,
+                r.bonus_credits,
+                ref.id AS referrer_user_id,
+                ref.telegram_id AS referrer_telegram_id,
+                ref.referral_code AS referrer_code,
+                ref.partner_tier AS referrer_tier,
+                ref.partner_balance_rub AS referrer_balance_rub,
+                ref.partner_total_revenue_rub AS referrer_total_revenue_rub,
+                u.id AS referred_user_id,
+                u.telegram_id AS referred_telegram_id,
+                u.referral_code AS referred_code,
+                u.created_at AS referred_created_at,
+                u.credits AS referred_balance,
+                u.has_paid AS referred_has_paid,
+                COALESCE(pay.payments_count, 0) AS payments_count,
+                COALESCE(pay.paid_rub, 0) AS paid_rub,
+                COALESCE(pay.paid_credits, 0) AS paid_credits,
+                pay.last_payment_at,
+                (
+                    SELECT COUNT(*)
+                    FROM users sub
+                    WHERE sub.referred_by = u.id
+                ) AS subrefs_count
+            FROM referrals r
+            JOIN users ref ON ref.id = r.referrer_id
+            JOIN users u ON u.id = r.referred_id
+            LEFT JOIN (
+                SELECT
+                    user_id,
+                    COUNT(*) AS payments_count,
+                    SUM(amount_rub) AS paid_rub,
+                    SUM(credits) AS paid_credits,
+                    MAX(created_at) AS last_payment_at
+                FROM transactions
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) pay ON pay.user_id = u.id
+            ORDER BY datetime(r.created_at) DESC, r.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        referrals_l1 = _sqlite_rows_to_dicts(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """
+            SELECT
+                root.id AS root_partner_user_id,
+                root.telegram_id AS root_partner_telegram_id,
+                root.referral_code AS root_partner_code,
+                root.partner_tier AS root_partner_tier,
+                l1.id AS line1_user_id,
+                l1.telegram_id AS line1_telegram_id,
+                l1.referral_code AS line1_code,
+                l1.created_at AS line1_created_at,
+                l2.id AS line2_user_id,
+                l2.telegram_id AS line2_telegram_id,
+                l2.referral_code AS line2_code,
+                l2.created_at AS line2_created_at,
+                l2.credits AS line2_balance,
+                l2.has_paid AS line2_has_paid,
+                r.created_at AS referral_created_at,
+                r.bonus_credits,
+                COALESCE(pay.payments_count, 0) AS payments_count,
+                COALESCE(pay.paid_rub, 0) AS paid_rub,
+                COALESCE(pay.paid_credits, 0) AS paid_credits,
+                pay.last_payment_at
+            FROM users l2
+            JOIN users l1 ON l1.id = l2.referred_by
+            JOIN users root ON root.id = l1.referred_by
+            LEFT JOIN referrals r ON r.referrer_id = l1.id AND r.referred_id = l2.id
+            LEFT JOIN (
+                SELECT
+                    user_id,
+                    COUNT(*) AS payments_count,
+                    SUM(amount_rub) AS paid_rub,
+                    SUM(credits) AS paid_credits,
+                    MAX(created_at) AS last_payment_at
+                FROM transactions
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) pay ON pay.user_id = l2.id
+            ORDER BY datetime(l2.created_at) DESC, l2.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        referrals_l2 = _sqlite_rows_to_dicts(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*) AS commission_rows_count
+            FROM transactions t
+            JOIN users payer ON payer.id = t.user_id
+            JOIN users l1 ON l1.id = payer.referred_by
+            WHERE t.status = 'completed'
+            """
+        )
+        commission_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                t.id AS transaction_id,
+                t.order_id,
+                t.provider,
+                t.credits,
+                t.amount_rub,
+                t.created_at,
+                payer.id AS payer_user_id,
+                payer.telegram_id AS payer_telegram_id,
+                payer.referral_code AS payer_code,
+                l1.id AS level1_partner_user_id,
+                l1.telegram_id AS level1_partner_telegram_id,
+                l1.referral_code AS level1_partner_code,
+                l1.partner_tier AS level1_partner_tier,
+                l2.id AS level2_partner_user_id,
+                l2.telegram_id AS level2_partner_telegram_id,
+                l2.referral_code AS level2_partner_code,
+                l2.partner_tier AS level2_partner_tier
+            FROM transactions t
+            JOIN users payer ON payer.id = t.user_id
+            JOIN users l1 ON l1.id = payer.referred_by
+            LEFT JOIN users l2 ON l2.id = l1.referred_by
+            WHERE t.status = 'completed'
+            ORDER BY datetime(t.created_at) DESC, t.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        commission_rows = _sqlite_rows_to_dicts(await cursor.fetchall())
+        partner_commissions = []
+        total_level1_commission_rub = 0.0
+        total_level2_commission_rub = 0.0
+        for row in commission_rows:
+            amount_rub = float(row.get("amount_rub") or 0)
+            level1_commission = round(amount_rub * PARTNER_LEVEL1_PERCENT / 100, 2)
+            level2_commission = (
+                round(amount_rub * PARTNER_LEVEL2_PERCENT / 100, 2)
+                if row.get("level2_partner_telegram_id")
+                else 0.0
+            )
+            row["level1_percent"] = PARTNER_LEVEL1_PERCENT
+            row["level1_commission_rub"] = level1_commission
+            row["level2_percent"] = (
+                PARTNER_LEVEL2_PERCENT if row.get("level2_partner_telegram_id") else 0
+            )
+            row["level2_commission_rub"] = level2_commission
+            partner_commissions.append(row)
+            total_level1_commission_rub += level1_commission
+            total_level2_commission_rub += level2_commission
+
+        cursor = await db.execute(
+            """
+            SELECT
+                pw.id,
+                pw.amount_rub,
+                pw.method,
+                pw.requisites,
+                pw.status,
+                pw.created_at,
+                pw.updated_at,
+                u.id AS user_db_id,
+                u.telegram_id,
+                u.partner_balance_rub AS current_balance_rub,
+                u.partner_withdrawn_rub AS withdrawn_rub,
+                u.partner_total_revenue_rub AS total_revenue_rub
+            FROM partner_withdrawals pw
+            JOIN users u ON u.id = pw.user_id
+            ORDER BY datetime(pw.created_at) DESC, pw.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        withdrawals = _sqlite_rows_to_dicts(await cursor.fetchall())
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS referrals_l1_count,
+                COALESCE(SUM(CASE WHEN referred.has_paid = 1 THEN 1 ELSE 0 END), 0) AS paid_l1_count
+            FROM referrals r
+            JOIN users referred ON referred.id = r.referred_id
+            """
+        )
+        referrals_l1_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*) AS referrals_l2_count
+            FROM users l2
+            JOIN users l1 ON l1.id = l2.referred_by
+            JOIN users root ON root.id = l1.referred_by
+            """
+        )
+        referrals_l2_summary = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_withdrawals,
+                COALESCE(SUM(CASE WHEN status = 'requested' THEN amount_rub ELSE 0 END), 0) AS requested_rub,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN amount_rub ELSE 0 END), 0) AS completed_rub,
+                COALESCE(SUM(CASE WHEN status = 'cancelled' THEN amount_rub ELSE 0 END), 0) AS cancelled_rub
+            FROM partner_withdrawals
+            """
+        )
+        withdrawals_summary = await cursor.fetchone()
+
+        deductions_total_count = (
+            (task_deductions_summary["total_rows"] or 0)
+            + (history_deductions_summary["total_rows"] or 0)
+            + (batch_deductions_summary["total_rows"] or 0)
+        )
+        deductions_total_cost = (
+            float(task_deductions_summary["total_cost"] or 0)
+            + float(history_deductions_summary["total_cost"] or 0)
+            + float(batch_deductions_summary["total_cost"] or 0)
+        )
+
+        return {
+            "limit": safe_limit,
+            "summary": {
+                "topups_count": topups_summary["total_topups"] or 0,
+                "completed_topups_count": topups_summary["completed_count"] or 0,
+                "pending_topups_count": topups_summary["pending_count"] or 0,
+                "failed_topups_count": topups_summary["failed_count"] or 0,
+                "completed_revenue_rub": round(
+                    float(topups_summary["completed_revenue_rub"] or 0), 2
+                ),
+                "completed_credits": topups_summary["completed_credits"] or 0,
+                "deductions_count": deductions_total_count,
+                "deductions_cost": round(deductions_total_cost, 2),
+                "referrals_l1_count": referrals_l1_summary["referrals_l1_count"] or 0,
+                "paid_referrals_l1_count": referrals_l1_summary["paid_l1_count"] or 0,
+                "referrals_l2_count": referrals_l2_summary["referrals_l2_count"] or 0,
+                "commission_rows_count": commission_summary["commission_rows_count"] or 0,
+                "level1_commission_sample_rub": round(
+                    total_level1_commission_rub, 2
+                ),
+                "level2_commission_sample_rub": round(
+                    total_level2_commission_rub, 2
+                ),
+                "withdrawals_count": withdrawals_summary["total_withdrawals"] or 0,
+                "withdrawals_requested_rub": round(
+                    float(withdrawals_summary["requested_rub"] or 0), 2
+                ),
+                "withdrawals_completed_rub": round(
+                    float(withdrawals_summary["completed_rub"] or 0), 2
+                ),
+                "withdrawals_cancelled_rub": round(
+                    float(withdrawals_summary["cancelled_rub"] or 0), 2
+                ),
+            },
+            "topups": topups,
+            "deductions": deductions,
+            "referrals_l1": referrals_l1,
+            "referrals_l2": referrals_l2,
+            "partner_commissions": partner_commissions,
+            "withdrawals": withdrawals,
+            "notes": [
+                "Партнёрские начисления восстановлены расчётно по завершённым платежам и текущим процентам программы.",
+                "Списания собраны из generation_tasks, generation_history и batch_jobs.",
+            ],
+        }
+
+
 async def get_partner_pending_withdrawals_sum(telegram_id: int) -> float:
     """Сумма ожидающих заявок на вывод по пользователю."""
     async with aiosqlite.connect(DATABASE_PATH) as db:

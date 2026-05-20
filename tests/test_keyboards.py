@@ -71,6 +71,9 @@ def test_get_admin_keyboard():
     assert any(
         "admin_reload" in btn.callback_data for row in kb.inline_keyboard for btn in row
     )
+    assert any(
+        "admin_finance" in btn.callback_data for row in kb.inline_keyboard for btn in row
+    )
 
 
 def test_get_create_video_keyboard():

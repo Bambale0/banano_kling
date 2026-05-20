@@ -145,10 +145,11 @@ def get_admin_keyboard():
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
     builder.button(text="🤝 Партнёры", callback_data="admin_partners")
+    builder.button(text="📒 Финансы/рефы", callback_data="admin_finance")
     builder.button(text="💸 Цены", callback_data="admin_prices")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 1, 1)
     return builder.as_markup()
 
 

@@ -1,15 +1,20 @@
 import json
 import logging
+import html as html_utils
+from datetime import datetime
 from pathlib import Path
 
 from aiogram import Bot, F, Router, types
+from aiogram.exceptions import TelegramAPIError, TelegramEntityTooLarge
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import BufferedInputFile
 
 from bot.config import config
 from bot.database import (
     add_credits,
     deduct_credits,
+    get_admin_finance_report,
     get_admin_partner_details,
     get_admin_partner_stats,
     get_admin_stats,
@@ -30,6 +35,156 @@ router = Router()
 PRICE_PATH = Path(config.PRICE_PATH)
 BROADCAST_MESSAGE_LIMIT = 4096
 BROADCAST_PHOTO_CAPTION_LIMIT = 1024
+ADMIN_FINANCE_PREVIEW_LIMIT = 25
+ADMIN_FINANCE_XLS_LIMIT = 5000
+ADMIN_FINANCE_XLS_FALLBACK_LIMIT = 1000
+ADMIN_FINANCE_TELEGRAM_MAX_BYTES = 45 * 1024 * 1024
+ADMIN_FINANCE_LONG_CELL_LIMITS = {
+    "prompt": 1200,
+    "request_data": 1500,
+    "requisites": 1200,
+    "result_url": 800,
+}
+
+ADMIN_FINANCE_SECTION_ORDER = [
+    "topups",
+    "deductions",
+    "referrals_l1",
+    "referrals_l2",
+    "partner_commissions",
+    "withdrawals",
+]
+ADMIN_FINANCE_SECTION_TITLES = {
+    "topups": "Пополнения",
+    "deductions": "Списания",
+    "referrals_l1": "Рефералы 1 линии",
+    "referrals_l2": "Рефералы 2 линии",
+    "partner_commissions": "Партнёрские начисления",
+    "withdrawals": "Выводы партнёров",
+}
+ADMIN_FINANCE_COLUMNS = {
+    "topups": [
+        ("id", "ID"),
+        ("created_at", "Дата"),
+        ("telegram_id", "Telegram ID"),
+        ("user_db_id", "User DB ID"),
+        ("credits", "Бананы"),
+        ("amount_rub", "Сумма, ₽"),
+        ("status", "Статус"),
+        ("provider", "Провайдер"),
+        ("order_id", "Order ID"),
+        ("payment_id", "Payment ID"),
+        ("user_balance", "Баланс после/текущий"),
+        ("referrer_telegram_id", "Реферер Telegram ID"),
+        ("referrer_code", "Код реферера"),
+        ("referral_code", "Код пользователя"),
+    ],
+    "deductions": [
+        ("source", "Источник"),
+        ("id", "ID"),
+        ("created_at", "Дата"),
+        ("telegram_id", "Telegram ID"),
+        ("user_db_id", "User DB ID"),
+        ("cost", "Списано, 🍌"),
+        ("status", "Статус"),
+        ("task_id", "Task/Job ID"),
+        ("type", "Тип"),
+        ("preset_id", "Preset"),
+        ("model", "Модель"),
+        ("duration", "Длительность"),
+        ("aspect_ratio", "Формат"),
+        ("results_count", "Результатов"),
+        ("prompt", "Промпт"),
+        ("result_url", "Результат"),
+        ("request_data", "Request data"),
+        ("completed_at", "Завершено"),
+        ("updated_at", "Обновлено"),
+        ("user_balance", "Текущий баланс"),
+        ("referrer_telegram_id", "Реферер Telegram ID"),
+        ("referrer_code", "Код реферера"),
+    ],
+    "referrals_l1": [
+        ("id", "Referral ID"),
+        ("referral_created_at", "Дата привязки"),
+        ("referrer_telegram_id", "Партнёр L1 Telegram ID"),
+        ("referrer_user_id", "Партнёр L1 DB ID"),
+        ("referrer_code", "Код партнёра"),
+        ("referrer_tier", "Тир партнёра"),
+        ("referrer_balance_rub", "Баланс партнёра, ₽"),
+        ("referrer_total_revenue_rub", "Оборот партнёра, ₽"),
+        ("referred_telegram_id", "Реферал Telegram ID"),
+        ("referred_user_id", "Реферал DB ID"),
+        ("referred_code", "Код реферала"),
+        ("referred_created_at", "Дата регистрации"),
+        ("referred_balance", "Баланс реферала"),
+        ("referred_has_paid", "Оплачивал"),
+        ("payments_count", "Оплат"),
+        ("paid_rub", "Оплачено, ₽"),
+        ("paid_credits", "Куплено 🍌"),
+        ("last_payment_at", "Последняя оплата"),
+        ("subrefs_count", "Рефералов 2 линии"),
+        ("bonus_credits", "Бонус пригласившему, 🍌"),
+    ],
+    "referrals_l2": [
+        ("root_partner_telegram_id", "Корневой партнёр Telegram ID"),
+        ("root_partner_user_id", "Корневой партнёр DB ID"),
+        ("root_partner_code", "Код корневого партнёра"),
+        ("root_partner_tier", "Тир корневого партнёра"),
+        ("line1_telegram_id", "Партнёр 1 линии Telegram ID"),
+        ("line1_user_id", "Партнёр 1 линии DB ID"),
+        ("line1_code", "Код партнёра 1 линии"),
+        ("line1_created_at", "Дата регистрации 1 линии"),
+        ("line2_telegram_id", "Реферал 2 линии Telegram ID"),
+        ("line2_user_id", "Реферал 2 линии DB ID"),
+        ("line2_code", "Код реферала 2 линии"),
+        ("line2_created_at", "Дата регистрации 2 линии"),
+        ("line2_balance", "Баланс 2 линии"),
+        ("line2_has_paid", "Оплачивал"),
+        ("referral_created_at", "Дата привязки"),
+        ("payments_count", "Оплат"),
+        ("paid_rub", "Оплачено, ₽"),
+        ("paid_credits", "Куплено 🍌"),
+        ("last_payment_at", "Последняя оплата"),
+        ("bonus_credits", "Бонус, 🍌"),
+    ],
+    "partner_commissions": [
+        ("transaction_id", "Transaction ID"),
+        ("created_at", "Дата оплаты"),
+        ("order_id", "Order ID"),
+        ("provider", "Провайдер"),
+        ("payer_telegram_id", "Плательщик Telegram ID"),
+        ("payer_user_id", "Плательщик DB ID"),
+        ("payer_code", "Код плательщика"),
+        ("credits", "Куплено 🍌"),
+        ("amount_rub", "Сумма оплаты, ₽"),
+        ("level1_partner_telegram_id", "Партнёр L1 Telegram ID"),
+        ("level1_partner_user_id", "Партнёр L1 DB ID"),
+        ("level1_partner_code", "Код партнёра L1"),
+        ("level1_partner_tier", "Тир партнёра L1"),
+        ("level1_percent", "Процент L1"),
+        ("level1_commission_rub", "Начисление L1, ₽"),
+        ("level2_partner_telegram_id", "Партнёр L2 Telegram ID"),
+        ("level2_partner_user_id", "Партнёр L2 DB ID"),
+        ("level2_partner_code", "Код партнёра L2"),
+        ("level2_partner_tier", "Тир партнёра L2"),
+        ("level2_percent", "Процент L2"),
+        ("level2_commission_rub", "Начисление L2, ₽"),
+    ],
+    "withdrawals": [
+        ("id", "ID заявки"),
+        ("created_at", "Создана"),
+        ("updated_at", "Обновлена"),
+        ("telegram_id", "Telegram ID"),
+        ("user_db_id", "User DB ID"),
+        ("amount_rub", "Сумма, ₽"),
+        ("status", "Статус"),
+        ("method", "Метод"),
+        ("requisites", "Реквизиты"),
+        ("current_balance_rub", "Текущий баланс, ₽"),
+        ("withdrawn_rub", "Выведено всего, ₽"),
+        ("total_revenue_rub", "Партнёрский оборот, ₽"),
+    ],
+}
 
 
 def _broadcast_confirm_keyboard() -> types.InlineKeyboardMarkup:
@@ -62,6 +217,65 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
                 ),
             ],
             [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+        ]
+    )
+
+
+def _admin_finance_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="📥 Пополнения", callback_data="admin_finance_topups"
+                ),
+                types.InlineKeyboardButton(
+                    text="🍌 Списания", callback_data="admin_finance_deductions"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🤝 1 линия", callback_data="admin_finance_referrals_l1"
+                ),
+                types.InlineKeyboardButton(
+                    text="🧬 2 линия", callback_data="admin_finance_referrals_l2"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="💰 Начисления",
+                    callback_data="admin_finance_partner_commissions",
+                ),
+                types.InlineKeyboardButton(
+                    text="🏦 Выводы", callback_data="admin_finance_withdrawals"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📤 XLS весь отчёт", callback_data="admin_finance_xls_all"
+                )
+            ],
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+        ]
+    )
+
+
+def _admin_finance_section_keyboard(section: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="📤 XLS раздела",
+                    callback_data=f"admin_finance_xls_{section}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К отчёту", callback_data="admin_finance"
+                ),
+                types.InlineKeyboardButton(
+                    text="🏠 Админка", callback_data="admin_back"
+                ),
+            ],
         ]
     )
 
@@ -548,6 +762,249 @@ def _format_admin_withdrawal_detail_text(withdrawal: dict) -> str:
     )
 
 
+def _html(value) -> str:
+    return html_utils.escape("" if value is None else str(value))
+
+
+def _code(value) -> str:
+    text = "—" if value is None or value == "" else value
+    return f"<code>{_html(text)}</code>"
+
+
+def _short(value, limit: int = 72) -> str:
+    if value is None or value == "":
+        return "—"
+    text = str(value).replace("\n", " ").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
+
+def _as_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _money(value) -> str:
+    return f"{_as_float(value):.2f}"
+
+
+def _admin_finance_total_for_section(section: str, summary: dict) -> int:
+    mapping = {
+        "topups": "topups_count",
+        "deductions": "deductions_count",
+        "referrals_l1": "referrals_l1_count",
+        "referrals_l2": "referrals_l2_count",
+        "partner_commissions": "commission_rows_count",
+        "withdrawals": "withdrawals_count",
+    }
+    return int(summary.get(mapping.get(section, ""), 0) or 0)
+
+
+def _format_admin_finance_overview(report: dict) -> str:
+    summary = report.get("summary") or {}
+    lines = [
+        "📒 <b>Финансы и рефералы</b>",
+        "",
+        "<b>Пополнения:</b>",
+        f"• Всего: {_code(summary.get('topups_count', 0))}",
+        f"• Завершено: {_code(summary.get('completed_topups_count', 0))} "
+        f"на {_code(_money(summary.get('completed_revenue_rub')))} ₽",
+        f"• Ожидают: {_code(summary.get('pending_topups_count', 0))} "
+        f"• ошибок/отмен: {_code(summary.get('failed_topups_count', 0))}",
+        f"• Куплено бананов: {_code(summary.get('completed_credits', 0))}",
+        "",
+        "<b>Списания:</b>",
+        f"• Операций: {_code(summary.get('deductions_count', 0))}",
+        f"• Списано: {_code(_money(summary.get('deductions_cost')))} 🍌",
+        "",
+        "<b>Реферальные линии:</b>",
+        f"• 1 линия: {_code(summary.get('referrals_l1_count', 0))} "
+        f"(платящих: {_code(summary.get('paid_referrals_l1_count', 0))})",
+        f"• 2 линия: {_code(summary.get('referrals_l2_count', 0))}",
+        "",
+        "<b>Партнёрские выводы:</b>",
+        f"• Заявок всего: {_code(summary.get('withdrawals_count', 0))}",
+        f"• В ожидании: {_code(_money(summary.get('withdrawals_requested_rub')))} ₽",
+        f"• Выплачено: {_code(_money(summary.get('withdrawals_completed_rub')))} ₽",
+        "",
+        "Откройте нужный раздел для последних строк или скачайте XLS целиком.",
+    ]
+    return "\n".join(lines)
+
+
+def _format_admin_finance_preview_row(section: str, row: dict) -> str:
+    if section == "topups":
+        return (
+            f"• #{_html(row.get('id'))} "
+            f"ID {_code(row.get('telegram_id'))} "
+            f"• {_code(_money(row.get('amount_rub')))} ₽ "
+            f"• {_code(row.get('credits'))}🍌 "
+            f"• {_code(row.get('status'))} "
+            f"• {_code(_short(row.get('created_at'), 19))}"
+        )
+    if section == "deductions":
+        model = row.get("model") or row.get("preset_id") or row.get("type") or row.get("source")
+        return (
+            f"• {_html(row.get('source'))} #{_html(row.get('id'))} "
+            f"ID {_code(row.get('telegram_id'))} "
+            f"• {_code(_money(row.get('cost')))}🍌 "
+            f"• {_code(row.get('status'))} "
+            f"• {_code(_short(model, 28))} "
+            f"• {_code(_short(row.get('created_at'), 19))}"
+        )
+    if section == "referrals_l1":
+        return (
+            f"• {_code(row.get('referrer_telegram_id'))} → "
+            f"{_code(row.get('referred_telegram_id'))} "
+            f"• оплат {_code(row.get('payments_count'))} "
+            f"• {_code(_money(row.get('paid_rub')))} ₽ "
+            f"• 2 линия {_code(row.get('subrefs_count'))}"
+        )
+    if section == "referrals_l2":
+        return (
+            f"• {_code(row.get('root_partner_telegram_id'))} → "
+            f"{_code(row.get('line1_telegram_id'))} → "
+            f"{_code(row.get('line2_telegram_id'))} "
+            f"• оплат {_code(row.get('payments_count'))} "
+            f"• {_code(_money(row.get('paid_rub')))} ₽"
+        )
+    if section == "partner_commissions":
+        return (
+            f"• tx#{_html(row.get('transaction_id'))} "
+            f"payer {_code(row.get('payer_telegram_id'))} "
+            f"• {_code(_money(row.get('amount_rub')))} ₽ "
+            f"• L1 {_code(row.get('level1_partner_telegram_id'))}: "
+            f"{_code(_money(row.get('level1_commission_rub')))} ₽ "
+            f"• L2 {_code(row.get('level2_partner_telegram_id') or '—')}: "
+            f"{_code(_money(row.get('level2_commission_rub')))} ₽"
+        )
+    if section == "withdrawals":
+        return (
+            f"• #{_html(row.get('id'))} "
+            f"ID {_code(row.get('telegram_id'))} "
+            f"• {_code(_money(row.get('amount_rub')))} ₽ "
+            f"• {_code(row.get('status'))} "
+            f"• {_code(_short(row.get('method'), 24))} "
+            f"• {_code(_short(row.get('created_at'), 19))}"
+        )
+    return f"• {_code(row)}"
+
+
+def _format_admin_finance_section_text(section: str, report: dict) -> str:
+    title = ADMIN_FINANCE_SECTION_TITLES.get(section, section)
+    rows = report.get(section) or []
+    summary = report.get("summary") or {}
+    total = _admin_finance_total_for_section(section, summary)
+    lines = [
+        f"📒 <b>{_html(title)}</b>",
+        "",
+        f"• Всего строк: {_code(total)}",
+        f"• Показано: {_code(min(len(rows), 10))} из {_code(len(rows))}",
+        "",
+    ]
+    if section == "partner_commissions":
+        lines.extend(
+            [
+                "Начисления восстановлены расчётно по завершённым платежам "
+                "и текущим процентам программы.",
+                "",
+            ]
+        )
+
+    if not rows:
+        lines.append("Нет данных в этом разделе.")
+    else:
+        for row in rows[:10]:
+            lines.append(_format_admin_finance_preview_row(section, row))
+
+    lines.extend(["", "Для полной детализации скачайте XLS раздела."])
+    return "\n".join(lines)
+
+
+def _xls_cell_limit(key: str) -> int:
+    return ADMIN_FINANCE_LONG_CELL_LIMITS.get(key, 8000)
+
+
+def _xls_safe(value, max_chars: int = 8000) -> str:
+    if value is None:
+        text = ""
+    elif isinstance(value, float):
+        text = f"{value:.2f}"
+    else:
+        text = str(value)
+    text = text.replace("\x00", "")
+    if len(text) > max_chars:
+        text = f"{text[: max_chars - 3]}..."
+    if text[:1] in {"=", "+", "-", "@"}:
+        text = f"'{text}"
+    return html_utils.escape(text)
+
+
+def _build_admin_finance_xls(report: dict, section: str) -> tuple[bytes, str]:
+    if section == "all":
+        section_keys = ADMIN_FINANCE_SECTION_ORDER
+        title = "Финансово-реферальный отчёт"
+        file_suffix = "all"
+    else:
+        section_keys = [section]
+        title = ADMIN_FINANCE_SECTION_TITLES.get(section, section)
+        file_suffix = section
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    parts = [
+        "\ufeff<html><head><meta charset=\"utf-8\">",
+        "<style>",
+        "body{font-family:Arial,sans-serif;font-size:12px}",
+        "table{border-collapse:collapse;margin-bottom:24px}",
+        "th,td{border:1px solid #999;padding:4px;vertical-align:top}",
+        "th{background:#e8eef7;font-weight:bold}",
+        "td{mso-number-format:'\\@'}",
+        "</style></head><body>",
+        f"<h1>{_xls_safe(title)}</h1>",
+        f"<p>Сформировано: {_xls_safe(generated_at)}. "
+        f"Лимит строк на раздел: {_xls_safe(report.get('limit'))}.</p>",
+    ]
+
+    for section_key in section_keys:
+        rows = report.get(section_key) or []
+        columns = ADMIN_FINANCE_COLUMNS[section_key]
+        parts.append(
+            f"<h2>{_xls_safe(ADMIN_FINANCE_SECTION_TITLES[section_key])}</h2>"
+        )
+        parts.append("<table><thead><tr>")
+        for _, label in columns:
+            parts.append(f"<th>{_xls_safe(label)}</th>")
+        parts.append("</tr></thead><tbody>")
+        if not rows:
+            parts.append(
+                f"<tr><td colspan=\"{len(columns)}\">Нет данных</td></tr>"
+            )
+        else:
+            for row in rows:
+                parts.append("<tr>")
+                for key, _ in columns:
+                    parts.append(
+                        f"<td>{_xls_safe(row.get(key), _xls_cell_limit(key))}</td>"
+                    )
+                parts.append("</tr>")
+        parts.append("</tbody></table>")
+
+    notes = report.get("notes") or []
+    if notes:
+        parts.append("<h2>Примечания</h2><ul>")
+        for note in notes:
+            parts.append(f"<li>{_xls_safe(note)}</li>")
+        parts.append("</ul>")
+
+    parts.append("</body></html>")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"admin_finance_{file_suffix}_{stamp}.xls"
+    return "".join(parts).encode("utf-8"), filename
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""
@@ -949,6 +1406,105 @@ async def admin_show_stats(callback: types.CallbackQuery):
     await callback.message.edit_text(
         text, reply_markup=get_back_keyboard("admin_back"), parse_mode="HTML"
     )
+
+
+@router.callback_query(F.data == "admin_finance")
+async def admin_finance_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Сводка по пополнениям, списаниям и реферальным линиям."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    report = await get_admin_finance_report(ADMIN_FINANCE_PREVIEW_LIMIT)
+    await callback.message.edit_text(
+        _format_admin_finance_overview(report),
+        reply_markup=_admin_finance_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_finance_xls_"))
+async def admin_finance_xls(callback: types.CallbackQuery):
+    """Отправляет Excel-совместимый XLS по финансовому разделу."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    section = callback.data.replace("admin_finance_xls_", "", 1)
+    if section != "all" and section not in ADMIN_FINANCE_SECTION_TITLES:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+
+    await callback.answer("Готовлю XLS...")
+    report = await get_admin_finance_report(ADMIN_FINANCE_XLS_LIMIT)
+    file_bytes, filename = _build_admin_finance_xls(report, section)
+    limited_by_size = False
+    if len(file_bytes) > ADMIN_FINANCE_TELEGRAM_MAX_BYTES:
+        logger.warning(
+            "Admin finance XLS too large before send: section=%s size=%s, retrying with limit=%s",
+            section,
+            len(file_bytes),
+            ADMIN_FINANCE_XLS_FALLBACK_LIMIT,
+        )
+        report = await get_admin_finance_report(ADMIN_FINANCE_XLS_FALLBACK_LIMIT)
+        file_bytes, filename = _build_admin_finance_xls(report, section)
+        limited_by_size = True
+
+    title = (
+        "весь финансово-реферальный отчёт"
+        if section == "all"
+        else ADMIN_FINANCE_SECTION_TITLES[section]
+    )
+    caption = f"📤 XLS: {title}"
+    if limited_by_size:
+        caption += "\nФайл был уменьшен до 1000 строк на раздел, чтобы пройти лимит Telegram."
+
+    try:
+        await callback.message.answer_document(
+            BufferedInputFile(file_bytes, filename=filename),
+            caption=caption,
+        )
+    except TelegramEntityTooLarge:
+        logger.exception(
+            "Admin finance XLS is still too large: section=%s size=%s",
+            section,
+            len(file_bytes),
+        )
+        await callback.message.answer(
+            "❌ XLS всё ещё слишком большой для Telegram. "
+            "Скачайте отдельные разделы или напишите мне — уменьшу выгрузку ещё сильнее.",
+            reply_markup=_admin_finance_keyboard(),
+        )
+    except TelegramAPIError:
+        logger.exception("Failed to send admin finance XLS: section=%s", section)
+        await callback.message.answer(
+            "❌ Не удалось отправить XLS. Ошибка Telegram уже записана в лог.",
+            reply_markup=_admin_finance_keyboard(),
+        )
+
+
+@router.callback_query(F.data.startswith("admin_finance_"))
+async def admin_finance_section(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает предпросмотр выбранного финансового раздела."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    section = callback.data.replace("admin_finance_", "", 1)
+    if section not in ADMIN_FINANCE_SECTION_TITLES:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+
+    await state.clear()
+    report = await get_admin_finance_report(ADMIN_FINANCE_PREVIEW_LIMIT)
+    await callback.message.edit_text(
+        _format_admin_finance_section_text(section, report),
+        reply_markup=_admin_finance_section_keyboard(section),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_partners")
