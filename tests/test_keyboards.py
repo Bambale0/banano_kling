@@ -108,6 +108,17 @@ def test_get_video_media_step_keyboard_for_avatar():
     assert "video_media_continue" in callback_ids
 
 
+def test_get_video_media_step_keyboard_uses_model_video_ref_limit():
+    kb = get_video_media_step_keyboard(
+        current_v_type="video",
+        current_model="seedance_2",
+        reference_video_count=2,
+        max_reference_video_count=3,
+    )
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert "📹 Видео-референсы: 2/3" in button_texts
+
+
 def test_get_video_model_label_for_new_models():
     assert get_video_model_label("v26_pro") == "Kling 2.5 Turbo Pro"
     assert get_video_model_label("avatar_std") == "Kling AI Avatar Standard"

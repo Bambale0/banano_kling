@@ -1,4 +1,5 @@
 import logging
+import html
 import uuid
 
 import aiosqlite
@@ -10,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.database import (
     DATABASE_PATH,
+    PARTNER_INVITER_BONUS,
     accept_partner_agreement,
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
@@ -19,6 +21,7 @@ from bot.database import (
     get_partner_overview,
     get_referral_stats,
     get_partner_withdrawal_request,
+    get_user_by_referral_code,
     get_user_settings,
     get_user_stats,
     process_referral,
@@ -112,6 +115,49 @@ async def _notify_admins_about_partner_withdrawal(
                 admin_id,
                 withdrawal_data["id"],
             )
+
+
+async def _notify_partner_about_new_referral(
+    bot: Bot,
+    *,
+    referrer_telegram_id: int,
+    referred: types.User | None,
+) -> None:
+    referred_name = html.escape(
+        getattr(referred, "full_name", None) or "Новый пользователь"
+    )
+    referred_id = getattr(referred, "id", None)
+    referred_username = getattr(referred, "username", None)
+    referred_line = (
+        f"@{html.escape(referred_username)}"
+        if referred_username
+        else f"ID <code>{referred_id}</code>"
+        if referred_id
+        else "Telegram ID не получен"
+    )
+    text = (
+        "🎉 <b>Новый реферал</b>\n\n"
+        f"К вам присоединился: <b>{referred_name}</b>\n"
+        f"{referred_line}\n\n"
+        f"Начислено: <code>{PARTNER_INVITER_BONUS}</code>🍌 за регистрацию. "
+        "Партнёрские начисления с оплат появятся в вашей статистике."
+    )
+
+    try:
+        await bot.send_message(referrer_telegram_id, text, parse_mode="HTML")
+    except TelegramBadRequest as e:
+        logger.info(
+            "Failed to notify partner %s about new referral %s: %s",
+            referrer_telegram_id,
+            referred_id,
+            e,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to notify partner %s about new referral %s",
+            referrer_telegram_id,
+            referred_id,
+        )
 
 
 # Состояния для ИИ-ассистента
@@ -366,12 +412,19 @@ async def cmd_start(message: types.Message, state: FSMContext):
     referral_bonus_text = ""
     if args and args[0].startswith("ref_"):
         referral_code = args[0].replace("ref_", "", 1)
+        referrer = await get_user_by_referral_code(referral_code)
         processed = await process_referral(message.from_user.id, referral_code)
         if processed:
             referral_bonus_text = (
                 "\n🎁 <b>Реферальный бонус активирован!</b>\n"
                 "Вы получили бонус за регистрацию по приглашению."
             )
+            if referrer:
+                await _notify_partner_about_new_referral(
+                    message.bot,
+                    referrer_telegram_id=referrer.telegram_id,
+                    referred=message.from_user,
+                )
 
     welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
 

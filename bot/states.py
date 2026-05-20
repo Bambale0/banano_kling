@@ -23,9 +23,7 @@ class GenerationStates(StatesGroup):
 
     # Состояния для загрузки референсных изображений (до 14 шт)
     uploading_reference_images = State()  # Загрузка референсных изображений
-    uploading_reference_videos = (
-        State()
-    )  # Загрузка референсных видео для video+text (до 5 шт)
+    uploading_reference_videos = State()  # Загрузка референсных видео для video+text
     confirming_reference_images = State()  # Подтверждение референсов перед генерацией
 
     # Состояния для пакетного редактирования

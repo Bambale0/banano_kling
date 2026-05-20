@@ -9,11 +9,13 @@ import sys
 # Добавляем текущую директорию в Python путь
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from bot.handlers.generation import process_generation
+from bot.handlers import generation as generation_handlers
 
 
 def test_handler_model():
     """Тестируем, какая модель передается в обработчике"""
+    assert generation_handlers is not None
+
     print("=== ТЕСТ ОБРАБОТЧИКА ГЕНЕРАЦИИ ===\n")
 
     # Имитируем вызов обработчика с разными моделями

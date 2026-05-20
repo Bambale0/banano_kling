@@ -286,6 +286,7 @@ def get_video_media_step_keyboard(
     reference_image_count: int = 0,
     reference_video_count: int = 0,
     has_avatar_audio: bool = False,
+    max_reference_video_count: int = 5,
 ):
     """Второй шаг: тип генерации и загрузка нужного медиа."""
     builder = InlineKeyboardBuilder()
@@ -347,7 +348,7 @@ def get_video_media_step_keyboard(
         builder.button(text="▶️ К настройкам", callback_data="video_media_continue")
     elif current_v_type == "video":
         builder.button(
-            text=f"📹 Видео-референсы: {reference_video_count}/5",
+            text=f"📹 Видео-референсы: {reference_video_count}/{max_reference_video_count}",
             callback_data="ignore",
         )
         builder.button(text="⏭ Без видео-рефов", callback_data="video_media_skip")

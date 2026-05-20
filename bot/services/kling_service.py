@@ -249,12 +249,17 @@ class KlingService:
         if not task_id:
             return None
 
-        data = await self._kie_get(f"/api/v1/jobs/{task_id}")
+        data = await self._kie_get(
+            "/api/v1/jobs/recordInfo",
+            params={"taskId": task_id},
+        )
         if not data:
             return None
 
         task_data = data.get("data") or {}
-        status = str(task_data.get("status", "unknown")).lower()
+        status = str(
+            task_data.get("status") or task_data.get("state") or "unknown"
+        ).lower()
         output = self._extract_output(task_data)
 
         return {

@@ -15,6 +15,9 @@ class SeedanceService(KlingService):
     MODEL_NAME = "bytedance/seedance-2"
     SUPPORTED_RATIOS = {"16:9", "9:16", "1:1"}
     SUPPORTED_RESOLUTIONS = {"480p", "720p", "1080p"}
+    MAX_REFERENCE_IMAGES = 9
+    MAX_REFERENCE_VIDEOS = 3
+    MAX_REFERENCE_AUDIO = 1
 
     async def generate_video(
         self,
@@ -81,11 +84,17 @@ class SeedanceService(KlingService):
         if last_frame_url:
             input_data["last_frame_url"] = last_frame_url
         if reference_image_urls:
-            input_data["reference_image_urls"] = reference_image_urls[:8]
+            input_data["reference_image_urls"] = reference_image_urls[
+                : self.MAX_REFERENCE_IMAGES
+            ]
         if reference_video_urls:
-            input_data["reference_video_urls"] = reference_video_urls[:3]
+            input_data["reference_video_urls"] = reference_video_urls[
+                : self.MAX_REFERENCE_VIDEOS
+            ]
         if reference_audio_urls:
-            input_data["reference_audio_urls"] = reference_audio_urls[:1]
+            input_data["reference_audio_urls"] = reference_audio_urls[
+                : self.MAX_REFERENCE_AUDIO
+            ]
 
         payload: Dict[str, Any] = {
             "model": self.MODEL_NAME,

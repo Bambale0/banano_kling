@@ -68,6 +68,13 @@ from bot.utils.help_texts import (
     get_reference_images_help,
 )
 from bot.utils.validators import detect_explicit_prompt_policy_violation
+from bot.video_reference_policy import (
+    choose_video_reference_model,
+    get_max_video_image_references,
+    get_max_video_references,
+    normalize_reference_urls,
+    video_model_supports_reference_videos,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -90,18 +97,37 @@ async def _persist_reusable_image_reference(
     original_filename: str | None = None,
     content_type: str | None = None,
 ) -> Optional[str]:
-    public_url, _saved_reference = await save_reference_file(
+    return await _persist_reusable_media_reference(
         telegram_id,
         image_data,
-        file_ext=file_ext,
+        file_ext,
         kind="image",
+        original_filename=original_filename,
+        content_type=content_type,
+    )
+
+
+async def _persist_reusable_media_reference(
+    telegram_id: int,
+    file_data: bytes,
+    file_ext: str,
+    *,
+    kind: str,
+    original_filename: str | None = None,
+    content_type: str | None = None,
+) -> Optional[str]:
+    public_url, _saved_reference = await save_reference_file(
+        telegram_id,
+        file_data,
+        file_ext=file_ext,
+        kind=kind,
         original_filename=original_filename,
         content_type=content_type,
         source="telegram_bot",
     )
     if public_url:
         return public_url
-    return save_uploaded_file(image_data, file_ext)
+    return save_uploaded_file(file_data, file_ext)
 
 
 @router.message(CommandStart(), StateFilter("*"))
@@ -1040,22 +1066,26 @@ async def show_quick_image_to_video(callback: types.CallbackQuery, state: FSMCon
 async def show_quick_video_reference(callback: types.CallbackQuery, state: FSMContext):
     """Быстрый вход в видео-референсы."""
     user_credits = await get_user_credits(callback.from_user.id)
+    default_model = "seedance_2"
+    max_video_refs = get_max_video_references(default_model)
     await _init_default_video_state(
         state,
         v_type="video",
-        v_model="glow",
+        v_model=default_model,
         v_duration=5,
         v_ratio="16:9",
     )
     text = (
         "🎞 <b>Видео-референс</b>\n"
         f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        "Загрузите до 5 коротких видео, если хотите передать движение, стиль камеры "
-        "или атмосферу.\nМожно пропустить шаг и продолжить без них."
+        f"Загрузите до {max_video_refs} коротких видео, если хотите передать движение, стиль камеры "
+        "или атмосферу.\nЭтот режим работает через Seedance 2.0."
     )
     await callback.message.edit_text(
         text,
-        reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
+        reply_markup=get_reference_videos_upload_keyboard(
+            0, max_video_refs, "video_new"
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -1194,6 +1224,9 @@ async def _open_video_model_from_main(
     ratio: str = "16:9",
 ):
     """Прямой вход из главного меню в нужную модель видео."""
+    if v_type == "video":
+        model = choose_video_reference_model(model)
+
     await _init_default_video_state(
         state,
         v_type=v_type,
@@ -1204,15 +1237,18 @@ async def _open_video_model_from_main(
 
     if v_type == "video":
         user_credits = await get_user_credits(callback.from_user.id)
+        max_video_refs = get_max_video_references(model)
         text = (
             "🎞 <b>Видео-референс</b>\n"
             f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-            "Загрузите до 5 коротких видео, чтобы передать движение, стиль камеры "
+            f"Загрузите до {max_video_refs} коротких видео, чтобы передать движение, стиль камеры "
             "или атмосферу. Можно пропустить и продолжить без референсов."
         )
         await callback.message.edit_text(
             text,
-            reply_markup=get_reference_videos_upload_keyboard(0, 9, "video_new"),
+            reply_markup=get_reference_videos_upload_keyboard(
+                0, max_video_refs, "video_new"
+            ),
             parse_mode="HTML",
         )
         await state.set_state(GenerationStates.uploading_reference_videos)
@@ -1235,6 +1271,7 @@ async def _show_video_creation_screen(
     current_model = data.get("v_model", "v3_std")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
+    max_video_refs = get_max_video_references(current_model)
     reference_images = data.get("reference_images", [])
     v_reference_videos = data.get("v_reference_videos", [])
     v_image_url = data.get("v_image_url")
@@ -1293,7 +1330,9 @@ async def _show_video_creation_screen(
                 f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
             )
         else:
-            media_status = "📹 <b>Загрузите референсные видео (до 5)</b>\n"
+            media_status = (
+                f"📹 <b>Загрузите референсные видео (до {max_video_refs})</b>\n"
+            )
 
     # Формируем текст о промпте
     prompt_text = ""
@@ -1354,7 +1393,10 @@ async def _show_video_creation_screen(
     elif current_v_type == "imgtxt" and not v_image_url:
         text += f"<i>📷 Сначала загрузите фото для первого кадра.</i>"
     elif current_v_type == "video" and not v_reference_videos:
-        text += f"<i>📹 При желании загрузите до 5 коротких видео-референсов.</i>"
+        text += (
+            f"<i>📹 При желании загрузите до {max_video_refs} коротких "
+            "видео-референсов.</i>"
+        )
 
     keyboard = _build_video_creation_keyboard(data)
 
@@ -1864,6 +1906,7 @@ async def _show_video_media_screen(
     data = await state.get_data()
     current_model = data.get("v_model", "v3_pro")
     current_v_type = data.get("v_type", "text")
+    max_video_refs = get_max_video_references(current_model)
     v_image_url = data.get("v_image_url")
     avatar_audio_url = data.get("avatar_audio_url")
     reference_images = data.get("reference_images", [])
@@ -1902,7 +1945,7 @@ async def _show_video_media_screen(
             "<b>Шаг 2. Тип и медиа</b>\n"
             f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
             "Выбран режим <b>Видео + Текст → Видео</b>.\n"
-            "Загрузите до 5 коротких видео или пропустите шаг."
+            f"Загрузите до {max_video_refs} коротких видео или пропустите шаг."
         )
         next_state = GenerationStates.uploading_reference_videos
     else:
@@ -1927,6 +1970,7 @@ async def _show_video_media_screen(
         reference_image_count=len(reference_images),
         reference_video_count=len(v_reference_videos),
         has_avatar_audio=bool(avatar_audio_url),
+        max_reference_video_count=max_video_refs,
     )
 
     try:
@@ -2385,12 +2429,15 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
 async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: видео+текст."""
     data = await state.get_data()
-    updates = {"v_type": "video", "v_duration": 5}
-    if data.get("v_model") != "glow":
-        updates["v_model"] = "glow"
+    current_model = data.get("v_model")
+    selected_model = choose_video_reference_model(current_model)
+    updates = {"v_type": "video", "v_duration": 5, "v_model": selected_model}
     await state.update_data(**updates)
     await _show_video_media_screen(callback, state)
-    await callback.answer("Для режима Видео + Текст выбрана модель Kling Glow")
+    if selected_model != current_model:
+        await callback.answer("Для видео-референсов выбрана Seedance 2.0")
+    else:
+        await callback.answer("Загрузите видео-референсы")
 
 
 @router.callback_query(F.data == "vid_ref_continue_new")
@@ -2487,6 +2534,8 @@ async def _apply_video_model_selection(
         current_v_type = "video"
     if model in {"avatar_std", "avatar_pro"}:
         current_v_type = "avatar"
+    if current_v_type == "video" and not video_model_supports_reference_videos(model):
+        current_v_type = "text"
     if model == "v26_pro" and current_v_type == "video":
         current_v_type = "text"
     if model.startswith("veo3") and current_v_type == "video":
@@ -4091,10 +4140,17 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
         and v_type in ("imgtxt", "avatar", "video")
         and data.get("video_flow_step") != "configure"
     ):
-        await message.answer(
-            "Сначала завершите шаг с типом и медиа, затем нажмите кнопку перехода к настройкам."
-        )
-        return
+        if v_type == "imgtxt" and not data.get("v_image_url"):
+            await message.answer("Сначала отправьте стартовое фото.")
+            return
+        if v_type == "avatar":
+            if not data.get("v_image_url"):
+                await message.answer("Сначала отправьте фото аватара.")
+                return
+            if not data.get("avatar_audio_url"):
+                await message.answer("Сначала отправьте аудио для аватара.")
+                return
+        await state.update_data(video_flow_step="configure")
     logger.info(f"Generation type: {generation_type}")
 
     await state.update_data(user_prompt=prompt)
@@ -4174,7 +4230,11 @@ async def run_no_preset_video_from_message(
     data = await state.get_data()
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
-    video_urls = data.get("v_reference_videos", [])
+    max_video_refs = get_max_video_references(v_model)
+    video_urls = normalize_reference_urls(
+        data.get("v_reference_videos", []),
+        max_count=max_video_refs,
+    )
 
     v_duration = _normalize_video_duration_value(
         v_model, int(data.get("v_duration", 5))
@@ -4191,10 +4251,14 @@ async def run_no_preset_video_from_message(
     motion_direction = data.get("v_orientation", "video")
 
     image_url = data.get("v_image_url")
+    avatar_audio_url = data.get("avatar_audio_url")
     video_urls = (
-        data.get("v_reference_videos", []) if v_type in {"video", "motion"} else None
+        video_urls if v_type in {"video", "motion"} else None
     )
-    image_refs = data.get("reference_images", [])
+    image_refs = normalize_reference_urls(
+        data.get("reference_images", []),
+        max_count=get_max_video_image_references(v_model),
+    )
 
     elements_list = None
     if v_type == "imgtxt" and image_refs:
@@ -4206,6 +4270,14 @@ async def run_no_preset_video_from_message(
                 ],  # Kling elements support up to 3x4=12 refs
             }
         ]
+
+    if v_type == "video" and not video_model_supports_reference_videos(v_model):
+        await message.answer(
+            "❌ Эта модель не принимает видео-референсы. Выберите Seedance 2.0 "
+            "или быстрый режим «Видео-референс»."
+        )
+        await state.clear()
+        return
 
     cost = preset_manager.get_video_cost_with_quality(v_model, v_duration, motion_mode)
 
@@ -4331,7 +4403,10 @@ async def run_no_preset_video_from_message(
             )
         elif v_model == "seedance_2":
             seedance_reference_images = []
-            seedance_reference_videos = [url for url in (video_urls or []) if url][:3]
+            seedance_reference_videos = normalize_reference_urls(
+                video_urls or [],
+                max_count=get_max_video_references(v_model),
+            )
 
             if v_type == "imgtxt":
                 if not image_url:
@@ -4449,6 +4524,25 @@ async def run_no_preset_video_from_message(
                 aspect_ratio=v_ratio,
                 prompt=prompt,
                 cost=cost,
+                request_data={
+                    "source": "telegram",
+                    "v_type": v_type,
+                    "v_model": v_model,
+                    "v_image_url": image_url,
+                    "reference_images": image_refs,
+                    "v_reference_videos": video_urls or [],
+                    "avatar_audio_url": avatar_audio_url,
+                    "grok_mode": data.get("grok_mode", "normal"),
+                    "veo_generation_type": veo_generation_type,
+                    "veo_translation": veo_translation,
+                    "veo_resolution": veo_resolution,
+                    "veo_seed": veo_seed,
+                    "veo_watermark": veo_watermark,
+                    "kling_negative_prompt": data.get("kling_negative_prompt", ""),
+                    "kling_cfg_scale": data.get("kling_cfg_scale", 0.5),
+                    "motion_mode": motion_mode,
+                    "motion_direction": motion_direction,
+                },
             )
             await message.answer(
                 f"✅ <b>Видео задача запущена!</b>"
@@ -4773,7 +4867,14 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         return  # Propagate to motion_control_reference_video_upload
     generation_type = data.get("generation_type")
     v_type = data.get("v_type")
-    v_reference_videos = data.get("v_reference_videos", [])
+    current_model = data.get("v_model", "seedance_2")
+    max_refs = get_max_video_references(current_model)
+    v_reference_videos = normalize_reference_urls(
+        data.get("v_reference_videos", []),
+        max_count=max_refs,
+    )
+    if v_reference_videos != (data.get("v_reference_videos", []) or []):
+        await state.update_data(v_reference_videos=v_reference_videos)
 
     if generation_type == "video" and v_type == "video":
         # Определяем источник файла
@@ -4797,9 +4898,9 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             )
             return
 
-        if len(v_reference_videos) >= 5:
+        if len(v_reference_videos) >= max_refs:
             await message.answer(
-                "❌ Можно загрузить максимум 5 видео. Дальше нажмите «Продолжить».",
+                f"❌ Можно загрузить максимум {max_refs} видео. Дальше нажмите «Продолжить».",
                 parse_mode="HTML",
                 reply_markup=get_main_menu_button_keyboard(),
             )
@@ -4810,21 +4911,31 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_data = video_bytes.read()
 
         # Сохраняем видео и получаем URL
-        video_url = save_uploaded_file(video_data, "mp4")
+        video_url = await _persist_reusable_media_reference(
+            message.from_user.id,
+            video_data,
+            "mp4",
+            kind="video",
+            original_filename=f"video_ref_{video_obj.file_id}.mp4",
+            content_type=getattr(video_obj, "mime_type", None) or "video/mp4",
+        )
         if video_url:
             v_reference_videos.append(video_url)
+            v_reference_videos = normalize_reference_urls(
+                v_reference_videos,
+                max_count=max_refs,
+            )
             await state.update_data(v_reference_videos=v_reference_videos)
             logger.info(f"Added reference video {len(v_reference_videos)}: {video_url}")
 
             if data.get("video_flow_step") == "media":
                 await message.answer(
-                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/9</code>",
+                    f"✅ Видео загружено. Сейчас файлов: <code>{len(v_reference_videos)}/{max_refs}</code>",
                     parse_mode="HTML",
                 )
                 await _show_video_media_screen(message, state, edit=False)
             else:
                 current_count = len(v_reference_videos)
-                max_refs = 9
                 text = (
                     f"📹 <b>Загрузка видео-референсов</b>\n"
                     f"Загружено: <code>{current_count}/{max_refs}</code>\n"

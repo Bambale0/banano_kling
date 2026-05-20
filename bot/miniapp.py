@@ -64,6 +64,12 @@ from bot.services.reference_storage_service import save_reference_file
 from bot.services.preset_manager import preset_manager
 from bot.services.yookassa_service import yookassa_service
 from bot.utils.validators import detect_explicit_prompt_policy_violation
+from bot.video_reference_policy import (
+    get_max_video_image_references,
+    get_max_video_references,
+    normalize_reference_urls,
+    video_model_supports_reference_videos,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +156,8 @@ VIDEO_MODELS = (
         "description": "Флагманский видео-режим",
         "durations": [5, 10, 15],
         "ratios": ["16:9", "9:16", "1:1"],
-        "supports": ["text", "imgtxt", "video"],
+        "supports": ["text", "imgtxt"],
         "max_image_references": 9,
-        "max_video_references": 9,
     },
     {
         "id": "v3_std",
@@ -160,9 +165,8 @@ VIDEO_MODELS = (
         "description": "Быстрее и дешевле для everyday-видео",
         "durations": [5, 10, 15],
         "ratios": ["16:9", "9:16", "1:1"],
-        "supports": ["text", "imgtxt", "video"],
+        "supports": ["text", "imgtxt"],
         "max_image_references": 9,
-        "max_video_references": 9,
     },
     {
         "id": "v26_pro",
@@ -193,7 +197,7 @@ VIDEO_MODELS = (
         "ratios": ["16:9", "9:16", "1:1"],
         "supports": ["text", "imgtxt", "video"],
         "max_image_references": 9,
-        "max_video_references": 9,
+        "max_video_references": 3,
     },
     {
         "id": "veo3_fast",
@@ -223,7 +227,7 @@ VIDEO_MODELS = (
         "motion_versions": ["2.6"],
         "motion_modes": ["720p", "1080p"],
         "max_image_references": 9,
-        "max_video_references": 9,
+        "max_video_references": 1,
     },
     {
         "id": "motion_control_v30",
@@ -235,7 +239,7 @@ VIDEO_MODELS = (
         "motion_versions": ["3.0"],
         "motion_modes": ["720p", "1080p"],
         "max_image_references": 9,
-        "max_video_references": 9,
+        "max_video_references": 1,
     },
     {
         "id": "avatar_std",
@@ -507,6 +511,14 @@ async def _launch_video_generation_task(
 
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
     callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
+    image_references = normalize_reference_urls(
+        image_references,
+        max_count=get_max_video_image_references(model),
+    )
+    video_references = normalize_reference_urls(
+        video_references,
+        max_count=get_max_video_references(model),
+    )
 
     if model in {"avatar_std", "avatar_pro"}:
         result = await kling_service.generate_video(
@@ -539,7 +551,7 @@ async def _launch_video_generation_task(
         )
     elif model == "seedance_2":
         seedance_reference_images: list[str] = []
-        seedance_reference_videos = [url for url in video_references if url][:3]
+        seedance_reference_videos = video_references
         if generation_type == "imgtxt" and image_url:
             if image_references or seedance_reference_videos:
                 seedance_reference_images.append(image_url)
@@ -1510,6 +1522,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        if generation_type == "video" and not video_model_supports_reference_videos(model):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для нескольких видео-референсов выберите Seedance 2.0",
+                },
+                status=400,
+            )
         if duration not in model_meta["durations"]:
             return web.json_response(
                 {
@@ -1547,6 +1567,26 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": "Для Kling Avatar загрузите фото персонажа и аудиофайл",
+                },
+                status=400,
+            )
+
+        max_image_references = int(model_meta.get("max_image_references", 0) or 0)
+        if max_image_references and len(image_references) > max_image_references:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": f"Слишком много фото-референсов. Максимум: {max_image_references}",
+                },
+                status=400,
+            )
+
+        max_video_references = int(model_meta.get("max_video_references", 0) or 0)
+        if max_video_references and len(video_references) > max_video_references:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": f"Слишком много видео-референсов. Максимум: {max_video_references}",
                 },
                 status=400,
             )

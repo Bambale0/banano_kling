@@ -710,7 +710,7 @@ async def process_referral(
     referred_telegram_id: int,
     referral_code: str,
     signup_bonus: int = 0,
-    inviter_bonus: int = 3,
+    inviter_bonus: int = PARTNER_INVITER_BONUS,
 ) -> bool:
     """Закрепляет пользователя за партнёром: пригласившему +3🍌 (новичок уже получил 15 при регистрации)."""
     referral_code = (referral_code or "").strip().upper()
