@@ -98,11 +98,47 @@ def test_partner_acceptance_and_partner_bonus(tmp_path, monkeypatch):
         overview = await db.get_partner_overview(master.telegram_id)
 
         assert result["mode"] == "partner"
-        assert result["value"] == 300.0
+        assert result["value"] == 450.0
+        assert result["percent"] == 45
         updated_master = await db.get_master_partner_user()
-        assert updated_master.partner_balance_rub == 300.0
+        assert updated_master.partner_balance_rub == 450.0
         assert overview["is_partner"] is True
-        assert overview["balance_rub"] == 300.0
+        assert overview["balance_rub"] == 450.0
+
+    asyncio.run(run())
+
+
+def test_partner_bonus_uses_50_percent_after_300k_turnover(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "partner_tier.db")
+
+        await db.init_db()
+
+        master = await db.get_master_partner_user()
+        await db.accept_partner_agreement(master.telegram_id)
+
+        import aiosqlite
+
+        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+            await conn.execute(
+                "UPDATE users SET partner_total_revenue_rub = ?, partner_tier = ? WHERE id = ?",
+                (300_000, "gold", master.id),
+            )
+            await conn.commit()
+
+        referred = await db.get_or_create_user(8108)
+        await db.process_referral(referred.telegram_id, master.referral_code)
+
+        result = await db.credit_first_payment_referral_bonus(
+            referred.telegram_id, 100, transaction_amount_rub=1000
+        )
+        overview = await db.get_partner_overview(master.telegram_id)
+
+        assert result["mode"] == "partner"
+        assert result["value"] == 500.0
+        assert result["percent"] == 50
+        assert overview["tier"] == "gold"
+        assert overview["percent"] == 50
 
     asyncio.run(run())
 
@@ -129,7 +165,7 @@ def test_partner_withdrawal_creates_request(tmp_path, monkeypatch):
 
         assert isinstance(ok, int)
         assert ok > 0
-        assert overview["balance_rub"] == 100.0
+        assert overview["balance_rub"] == 250.0
 
     asyncio.run(run())
 

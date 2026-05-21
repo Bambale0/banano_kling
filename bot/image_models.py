@@ -10,6 +10,7 @@ IMAGE_MODEL_ORDER = [
     "grok_i2i",
     "seedream_5_lite",
     "seedream_edit",
+    "ideogram_character",
 ]
 
 
@@ -132,6 +133,29 @@ IMAGE_MODEL_CONFIGS = {
         },
         "service": "grok_i2i",
     },
+    "ideogram_character": {
+        "label": "🧑 Ideogram Character",
+        "settings_label": "🧑 Ideogram Character",
+        "cost_key": "ideogram_character",
+        "requires_refs": True,
+        "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+        "defaults": {
+            "aspect_ratio": "1:1",
+            "rendering_speed": "BALANCED",
+            "style": "AUTO",
+            "expand_prompt": True,
+            "num_images": "1",
+            "nsfw_checker": False,
+        },
+        "options": {
+            "aspect_ratio": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+            "rendering_speed": ["TURBO", "BALANCED", "QUALITY"],
+            "style": ["AUTO", "REALISTIC", "FICTION"],
+            "expand_prompt": [True, False],
+            "nsfw_checker": [False, True],
+        },
+        "service": "ideogram_character",
+    },
     "seedream_5_lite": {
         "label": "🔥 Seedream 5.0 Lite",
         "settings_label": "🔥 Seedream 5.0 Lite",
@@ -180,6 +204,9 @@ IMAGE_OPTION_LABELS = {
     "enable_pro": "Pro режим",
     "quality": "Качество",
     "nsfw_checker": "NSFW check",
+    "rendering_speed": "Скорость",
+    "style": "Стиль",
+    "expand_prompt": "Улучшение",
 }
 
 
@@ -222,4 +249,10 @@ def get_image_option_label(option_name: str, value):
         return "Basic" if value == "basic" else str(value).upper()
     if option_name == "nsfw_checker":
         return "NSFW ON" if value else "NSFW OFF"
+    if option_name == "rendering_speed":
+        return str(value).title()
+    if option_name == "style":
+        return str(value).title()
+    if option_name == "expand_prompt":
+        return "ON" if value else "OFF"
     return str(value)

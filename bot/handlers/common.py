@@ -37,6 +37,7 @@ from bot.keyboards import (
     get_main_menu_keyboard,
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
+    get_prompt_improver_keyboard,
     get_referral_keyboard,
 )
 from bot.services.jump_finance_service import JumpFinanceError, jump_finance_service
@@ -50,6 +51,8 @@ from bot.states import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+TELEGRAM_HTML_MESSAGE_LIMIT = 3900
 
 
 # Состояния для ИИ-ассистента
@@ -65,6 +68,7 @@ class GPT55States(StatesGroup):
     """Состояния GPT 5.5 чата."""
 
     waiting_for_message = State()
+    waiting_for_prompt_improvement = State()
 
 
 # ⭐ ВАЖНО: Все обработчики сообщений в common.py должны иметь StateFilter(None)
@@ -85,6 +89,184 @@ def _set_user_menu(user_id: int, menu: str):
 def _get_user_menu(user_id: int) -> str:
     """Получает последнее посещённое меню пользователя"""
     return _user_last_menu.get(user_id)
+
+
+def _split_text_for_telegram(
+    text: str,
+    *,
+    prefix: str = "",
+    limit: int = TELEGRAM_HTML_MESSAGE_LIMIT,
+) -> list[str]:
+    """Split raw text so every escaped HTML message fits Telegram limits."""
+    text = text or ""
+    prefix_len = len(prefix)
+    chunk_limit = max(500, limit - prefix_len)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    def flush() -> None:
+        nonlocal current, current_len
+        if current:
+            chunks.append("".join(current).strip())
+            current = []
+            current_len = 0
+
+    for paragraph in re.split(r"(\n+)", text):
+        if not paragraph:
+            continue
+        paragraph_len = len(escape(paragraph))
+        if current_len + paragraph_len <= chunk_limit:
+            current.append(paragraph)
+            current_len += paragraph_len
+            continue
+
+        flush()
+        if paragraph_len <= chunk_limit:
+            current.append(paragraph)
+            current_len = paragraph_len
+            continue
+
+        words = re.split(r"(\s+)", paragraph)
+        for word in words:
+            if not word:
+                continue
+            word_len = len(escape(word))
+            if current_len and current_len + word_len > chunk_limit:
+                flush()
+            if word_len <= chunk_limit:
+                current.append(word)
+                current_len += word_len
+                continue
+
+            raw_piece = ""
+            raw_piece_len = 0
+            for char in word:
+                char_len = len(escape(char))
+                if raw_piece and raw_piece_len + char_len > chunk_limit:
+                    chunks.append(raw_piece)
+                    raw_piece = ""
+                    raw_piece_len = 0
+                raw_piece += char
+                raw_piece_len += char_len
+            if raw_piece:
+                current.append(raw_piece)
+                current_len += raw_piece_len
+
+    flush()
+    return chunks or [""]
+
+
+async def _answer_long_html(
+    message: types.Message,
+    *,
+    title: str,
+    text: str,
+    reply_markup=None,
+) -> None:
+    chunks = _split_text_for_telegram(text, prefix=title)
+    for index, chunk in enumerate(chunks):
+        is_last = index == len(chunks) - 1
+        header = title if index == 0 else f"{title}<i>Продолжение {index + 1}/{len(chunks)}</i>\n\n"
+        await message.answer(
+            f"{header}{escape(chunk)}",
+            reply_markup=reply_markup if is_last else None,
+            parse_mode="HTML",
+        )
+
+
+def _build_prompt_improvement_task(
+    *,
+    base_idea: str,
+    refinements: list[str] | None = None,
+    previous_response: str | None = None,
+    regenerate: bool = False,
+) -> str:
+    refinements = [item.strip() for item in (refinements or []) if item and item.strip()]
+    context_block = (
+        "\n\nДополнительный контекст пользователя:\n"
+        + "\n".join(f"- {item}" for item in refinements)
+        if refinements
+        else ""
+    )
+    previous_block = (
+        "\n\nПредыдущая версия ответа была:\n"
+        f"{previous_response}\n\nСгенерируй новую альтернативную версию, не копируй предыдущую дословно."
+        if regenerate and previous_response
+        else ""
+    )
+    return (
+        "Улучши пользовательскую идею в профессиональный промпт для AI-генерации. "
+        "Ответь на русском, без лишнего вступления. Дай два блока: "
+        "1) Промпт для фото/видео с деталями сцены, света, камеры, стиля и качества. "
+        "2) Негативный промпт. "
+        "Если идея явно про видео, добавь движение камеры и объекта. "
+        "Если пользователь добавил уточнения, не начинай новый промпт с нуля: "
+        "улучши именно исходную идею с учётом всех уточнений."
+        f"\n\nИсходная идея пользователя: {base_idea}"
+        f"{context_block}"
+        f"{previous_block}"
+    )
+
+
+async def _run_prompt_improvement(
+    message: types.Message,
+    state: FSMContext,
+    *,
+    regenerate: bool = False,
+) -> None:
+    from bot.services.gpt55_service import gpt55_service
+
+    data = await state.get_data()
+    base_idea = (data.get("prompt_improvement_idea") or "").strip()
+    if len(base_idea) < 3:
+        await message.answer(
+            "Напишите идею чуть подробнее: объект, место или действие.",
+            reply_markup=get_prompt_improver_keyboard(),
+        )
+        return
+
+    refinements = data.get("prompt_improvement_refinements", [])
+    previous_response = data.get("prompt_improvement_last_response")
+    task = _build_prompt_improvement_task(
+        base_idea=base_idea,
+        refinements=refinements,
+        previous_response=previous_response,
+        regenerate=regenerate,
+    )
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+    try:
+        response = await gpt55_service.ask(
+            user_content=[{"type": "input_text", "text": task}],
+            history=[],
+            reasoning_effort="medium",
+            web_search=False,
+        )
+        if not response:
+            await message.answer(
+                "Не удалось улучшить промпт. Попробуйте ещё раз позже.",
+                reply_markup=get_prompt_improver_keyboard(),
+            )
+            return
+
+        await state.update_data(
+            prompt_improvement_last_response=response,
+            prompt_improvement_last_task=task,
+        )
+        await state.set_state(GPT55States.waiting_for_prompt_improvement)
+        await _answer_long_html(
+            message,
+            title="🪄 <b>Улучшенный промпт:</b>\n\n",
+            text=response,
+            reply_markup=get_prompt_improver_keyboard(),
+        )
+    except Exception as e:
+        logger.exception("Prompt improvement error: %s", e)
+        await message.answer(
+            "Что-то пошло не так при улучшении промпта. Попробуйте ещё раз.",
+            reply_markup=get_prompt_improver_keyboard(),
+        )
 
 
 def _build_welcome_text(credits: int, referral_bonus_text: str = "") -> str:
@@ -228,11 +410,8 @@ async def cmd_start(message: types.Message):
         order_id = args[0].replace("success_", "")
 
         # Проверяем транзакцию в базе данных
-        from bot.database import (
-            add_credits,
-            get_transaction_by_order,
-            update_transaction_status,
-        )
+        from bot.database import get_transaction_by_order
+        from bot.handlers.payments import _complete_transaction
         from bot.services.tbank_service import tbank_service
 
         transaction = await get_transaction_by_order(order_id)
@@ -274,9 +453,7 @@ async def cmd_start(message: types.Message):
                         pass
 
                 if paid:
-                    # Начисляем кредиты
-                    await add_credits(message.from_user.id, transaction.credits)
-                    await update_transaction_status(order_id, "completed")
+                    await _complete_transaction(order_id, message.bot)
 
                     # Получаем обновлённый баланс
                     user = await get_or_create_user(message.from_user.id)
@@ -608,7 +785,7 @@ async def render_partner_program(target, user_id: int):
     )
 
     tier = stats.get("tier", "basic")
-    percent = stats.get("percent", 30)
+    percent = stats.get("percent", 45)
     recent_lines = []
     for item in withdrawals:
         status_title = item.get("status_title") or item.get("status") or "unknown"
@@ -632,9 +809,8 @@ async def render_partner_program(target, user_id: int):
         f"💸 Уже выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
         f"🏷 Уровень: <code>{tier}</code> · <code>{percent}%</code>\n\n"
         "<b>Ставки партнёрской программы:</b>\n"
-        "• 30% — базовый уровень\n"
-        "• 35% — от 100 000 ₽ оборота рефералов\n"
-        "• 50% — от 1 000 000 ₽ оборота рефералов\n\n"
+        "• 45% — базовая начальная ставка с каждого пополнения\n"
+        "• 50% — от 300 000 ₽ оборота рефералов с каждого пополнения\n\n"
         "<b>Как это работает:</b>\n"
         "• пользователь переходит по вашей ссылке\n"
         "• регистрируется и закрепляется за вами\n"
@@ -1476,7 +1652,25 @@ async def open_gpt55(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "gpt55_clear")
 async def clear_gpt55(callback: types.CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
     await clear_gpt55_history(callback.from_user.id)
+    if current_state == GPT55States.waiting_for_prompt_improvement.state:
+        await state.set_state(GPT55States.waiting_for_prompt_improvement)
+        await state.update_data(
+            prompt_improvement_idea=None,
+            prompt_improvement_refinements=[],
+            prompt_improvement_last_response=None,
+            prompt_improvement_last_task=None,
+        )
+        await callback.message.edit_text(
+            "🪄 <b>Улучшить промпт</b>\n\n"
+            "Контекст очищен. Отправьте новую короткую идею для промпта.",
+            reply_markup=get_prompt_improver_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer("Контекст очищен")
+        return
+
     await state.set_state(GPT55States.waiting_for_message)
     await callback.message.edit_text(
         "🧠 <b>GPT 5.5</b>\n\nКонтекст очищен. Напиши новое сообщение.",
@@ -1484,6 +1678,60 @@ async def clear_gpt55(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.answer("Контекст очищен")
+
+
+@router.callback_query(F.data == "gpt55_improve_prompt")
+async def open_prompt_improver(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(GPT55States.waiting_for_prompt_improvement)
+    await state.update_data(
+        prompt_improvement_idea=None,
+        prompt_improvement_refinements=[],
+        prompt_improvement_last_response=None,
+        prompt_improvement_last_task=None,
+    )
+    await callback.message.edit_text(
+        "🪄 <b>Улучшить промпт</b>\n\n"
+        "Отправьте короткую идею, а я превращу её в подробный промпт для фото или видео.\n\n"
+        "<i>Пример: девушка на пляже</i>",
+        reply_markup=get_prompt_improver_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "gpt55_improve_again")
+async def regenerate_prompt_improvement(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("prompt_improvement_last_response"):
+        await callback.answer("Сначала отправьте идею для промпта", show_alert=True)
+        return
+    await callback.answer("Генерирую заново...")
+    await _run_prompt_improvement(callback.message, state, regenerate=True)
+
+
+@router.message(StateFilter(GPT55States.waiting_for_prompt_improvement))
+async def handle_prompt_improvement(message: types.Message, state: FSMContext):
+    idea = (message.text or "").strip()
+    if len(idea) < 3:
+        await message.answer(
+            "Напишите идею чуть подробнее: объект, место или действие.",
+            reply_markup=get_prompt_improver_keyboard(),
+        )
+        return
+
+    data = await state.get_data()
+    base_idea = (data.get("prompt_improvement_idea") or "").strip()
+    if not base_idea:
+        await state.update_data(
+            prompt_improvement_idea=idea,
+            prompt_improvement_refinements=[],
+        )
+    else:
+        refinements = data.get("prompt_improvement_refinements", [])
+        refinements.append(idea)
+        await state.update_data(prompt_improvement_refinements=refinements)
+
+    await _run_prompt_improvement(message, state)
 
 
 @router.message(StateFilter(GPT55States.waiting_for_message), Command("clear"))
@@ -1525,11 +1773,11 @@ async def handle_gpt55_message(message: types.Message, state: FSMContext):
             return
 
         await append_gpt55_history(message.from_user.id, user_content, response)
-        safe_response = escape(response)
-        await message.answer(
-            f"🧠 <b>GPT 5.5:</b>\n\n{safe_response}",
+        await _answer_long_html(
+            message,
+            title="🧠 <b>GPT 5.5:</b>\n\n",
+            text=response,
             reply_markup=get_gpt55_keyboard(),
-            parse_mode="HTML",
         )
     except Exception as e:
         logger.exception("GPT 5.5 chat error: %s", e)
@@ -1673,7 +1921,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     from bot.config import config
     from bot.database import (
-        add_credits,
+        add_credits_once,
         add_generation_task,
         deduct_credits,
         get_or_create_user,
@@ -1705,7 +1953,18 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     video_model = data.get("video_model")
     mode = data.get("mode", "std")
 
-    await deduct_credits(telegram_id, cost)
+    charge_external_id = f"motion_submit:{telegram_id}:{message.message_id}"
+    charged = await deduct_credits(
+        telegram_id,
+        cost,
+        reason="motion_control_charge",
+        external_id=charge_external_id,
+        metadata={"model": video_model, "mode": mode},
+    )
+    if not charged:
+        await state.clear()
+        await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+        return
 
     local_task_id = f"motion_{uuid.uuid4().hex[:12]}"
     await add_generation_task(
@@ -1744,7 +2003,14 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         )
         await state.clear()
     else:
-        await add_credits(telegram_id, cost)
+        if not config.is_admin(telegram_id):
+            await add_credits_once(
+                telegram_id,
+                cost,
+                reason="generation_refund",
+                external_id=f"motion:{telegram_id}:{message.message_id}",
+                metadata={"handler": "motion_control"},
+            )
         await message.answer("❌ Ошибка запуска. Бананы возвращены.", parse_mode="HTML")
 
 

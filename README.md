@@ -117,7 +117,7 @@ Batch: Меню → Batch → Фото → Промпт → Aspect → Запу�
 ```
 Telegram → /webhook → Dispatcher (aiogram)
 
-Kling/Kie/Replicate → /webhook/kling → complete_video_task() → Send to user
+Kling/Kie → /webhook/kling → complete_video_task() → Send to user
 
 TBank → /tbank/webhook → add_credits() → Notify user
 
@@ -133,6 +133,14 @@ pip install -r requirements.txt
 cp .env.example .env  # Настройте ключи!
 ./start.sh  # Запуск (docker-compose или systemd)
 ```
+
+**Systemd + auto-reload при изменениях (production):**
+```bash
+sudo ./scripts/install_systemd_watchdog.sh
+systemctl status bot.service
+systemctl status bot-reloader.service
+```
+Подробнее: [docs/watchdog.md](docs/watchdog.md)
 
 **Запуск разработки:**
 ```bash
@@ -153,7 +161,7 @@ WEBHOOK_PORT=8443
 # AI API Keys
 NANOBANANA_API_KEY=...
 KIE_AI_API_KEY=...      # Kling 3.0 / Motion Control
-REPLICATE_API_TOKEN=... # Kling fallback
+AI_WEBHOOK_SECRET=...   # секрет для AI callbacks
 NOVITA_API_KEY=...      # legacy, если ещё используется внешняя интеграция
 GEMINI_API_KEY=...      # Legacy
 
@@ -170,7 +178,7 @@ ADMIN_IDS=123,456
 ## 🗄️ База данных (SQLite: bot.db)
 
 ### Таблицы
-- **users**: telegram_id, credits, referral_code, referred_by, referral_earned, has_paid, partner_agreed_at, partner_total_revenue_rub, partner_balance_rub, partner_withdrawn_rub, partner_tier (basic/gold/pro)
+- **users**: telegram_id, credits, referral_code, referred_by, referral_earned, has_paid, partner_agreed_at, partner_total_revenue_rub, partner_balance_rub, partner_withdrawn_rub, partner_tier (basic/gold)
 - **transactions**: order_id, user_id, credits, amount_rub, status (pending/completed), provider (tbank/cryptobot)
 - **generation_tasks**: task_id, user_id, type (image/video), preset_id, model, duration, aspect_ratio, prompt, cost, result_url
 - **batch_jobs**: job_id, user_id, mode, total_cost, results_count
@@ -201,7 +209,7 @@ get_recent_partner_withdrawals(id, limit=5) → list[dict]
 3. **Бонус за регистрацию:** 5🍌 новому (signup_bonus).
 4. **Первая оплата реферала:** `credit_first_payment_referral_bonus()` начисляет владельцу кода:
    - **Banana бонус:** 10% от credits, если пригласивший не активировал партнёрский статус.
-   - **Partner %:** basic=30%, gold=35% (≥100k ₽), pro=50% (≥1M ₽) от суммы в ₽, если партнёр активирован.
+   - **Partner %:** basic=45%, gold=50% (≥300k ₽) от суммы в ₽, если партнёр активирован.
 5. **Уровни:** `get_partner_tier_by_total(total_revenue_rub)`.
 6. **Вывод:** `create_partner_withdrawal()` резервирует сумму на балансе и создаёт заявку на выплату через Jump Finance.
 7. **Синхронизация статуса:** `update_partner_withdrawal_status()` обновляет статус выплаты и возвращает деньги на баланс при `failed/cancelled`.
@@ -271,7 +279,7 @@ get_recent_partner_withdrawals(id, limit=5) → list[dict]
 | Service | Функции | Webhook |
 |---------|---------|---------|
 | **Gemini/NanoBanana** | t2i/i2i/edit/refs(14)/search/4K | `/webhook/kie_ai` |
-| **Kling (Kie.ai/PiAPI/Replicate)** | t2v/i2v/v2v/motion(2.6)/omni | `/webhook/kling` |
+| **Kling (Kie.ai/PiAPI)** | t2v/i2v/v2v/motion(2.6)/omni | `/webhook/kling` |
 | **Seedream/Novita** | t2i (4.5/5/Lite/Edit) | `/webhook/seedream` |
 | **Grok** | i2v (Imagine) | - |
 | **T-Bank/Crypto Bot** | Платежи (webhooks) | `/tbank/webhook`, `/cryptobot/webhook` |
@@ -279,7 +287,7 @@ get_recent_partner_withdrawals(id, limit=5) → list[dict]
 
 ### Webhooks (main.py)
 - Telegram: `/webhook`
-- Kling/Kie/Replicate: `/webhook/kling` (signature verify)
+- Kling/Kie: `/webhook/kling` (`AI_WEBHOOK_SECRET`)
 - Health: `/health`
 
 ## 💰 Цены (data/price.json)

@@ -16,7 +16,7 @@ load_dotenv(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 )
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
@@ -24,7 +24,7 @@ from aiogram.types import Update
 from aiohttp import web
 
 from bot.config import config
-from bot.database import init_db
+from bot.database import init_db, is_maintenance_mode, is_user_banned
 from bot.handlers import (
     admin_router,
     batch_generation_router,
@@ -46,6 +46,182 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+
+TERMINAL_SUCCESS_STATUSES = {"success", "completed", "succeeded", "finished"}
+TERMINAL_FAILURE_STATUSES = {
+    "failed",
+    "failure",
+    "error",
+    "cancelled",
+    "canceled",
+    "rejected",
+    "timeout",
+    "timed_out",
+    "task_status_failed",
+}
+NON_TERMINAL_STATUSES = {
+    "",
+    "pending",
+    "processing",
+    "running",
+    "queued",
+    "created",
+    "submitted",
+    "in_progress",
+    "task_status_processing",
+}
+
+
+def _status_kind(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in TERMINAL_SUCCESS_STATUSES:
+        return "success"
+    if normalized in TERMINAL_FAILURE_STATUSES:
+        return "failure"
+    return "pending"
+
+
+def _verify_ai_webhook_request(request: web.Request, provider: str) -> bool:
+    """Verify callbacks from providers that cannot sign payloads themselves."""
+    secret = config.AI_WEBHOOK_SECRET
+    if not secret:
+        logger.warning(
+            "AI_WEBHOOK_SECRET is not set; accepting unsigned %s webhook", provider
+        )
+        return True
+
+    query = getattr(request, "query", {})
+    candidates = [
+        query.get("secret") if hasattr(query, "get") else None,
+        request.headers.get("x-webhook-secret"),
+        request.headers.get("x-ai-webhook-secret"),
+    ]
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        candidates.append(auth.split(" ", 1)[1].strip())
+
+    import hmac
+
+    return any(
+        candidate and hmac.compare_digest(str(candidate), secret)
+        for candidate in candidates
+    )
+
+
+class AccessControlMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        if not user or config.is_admin(user.id):
+            return await handler(event, data)
+
+        if await is_user_banned(user.id):
+            if isinstance(event, types.Message):
+                await event.answer("🚫 Доступ к боту ограничен.")
+            elif isinstance(event, types.CallbackQuery):
+                await event.answer("Доступ ограничен", show_alert=True)
+            return None
+
+        if await is_maintenance_mode():
+            text = "⚙️ Бот временно на обслуживании. Скоро вернёмся."
+            if isinstance(event, types.Message):
+                await event.answer(text)
+            elif isinstance(event, types.CallbackQuery):
+                await event.answer(text, show_alert=True)
+            return None
+
+        return await handler(event, data)
+
+
+def _build_friendly_generation_error(
+    fail_code: str | int | None,
+    fail_msg: str | None,
+    *,
+    service_name: str | None = None,
+    credits_returned: bool = False,
+) -> str:
+    code = html.escape(str(fail_code or "unknown"))
+    details = (fail_msg or "").lower()
+    service = f" ({html.escape(service_name)})" if service_name else ""
+
+    if any(
+        marker in details
+        for marker in (
+            "content safety",
+            "safety restrictions",
+            "prohibited use policy",
+            "sensitive content",
+            "policy",
+        )
+    ):
+        friendly_text = (
+            "Запрос отклонён фильтром безопасности. Иногда он ошибается даже на обычных фото. "
+            "Попробуйте другое фото или более нейтральный промпт."
+        )
+    elif any(marker in details for marker in ("timeout", "timed out")):
+        friendly_text = (
+            "Сервис не успел подготовить результат. Попробуйте повторить запрос чуть позже."
+        )
+    elif any(marker in details for marker in ("rate limit", "too many requests")):
+        friendly_text = (
+            "Сервис временно перегружен. Попробуйте повторить запрос через пару минут."
+        )
+    else:
+        friendly_text = (
+            "Не получилось создать результат. Попробуйте упростить промпт или повторить позже."
+        )
+
+    refund_text = (
+        "\n\n🍌 Бананы возвращены на счёт."
+        if credits_returned
+        else "\n\nПопробуйте ещё раз чуть позже."
+    )
+    return (
+        f"❌ <b>Генерация не удалась{service}</b>\n\n"
+        f"Код: <code>{code}</code>\n"
+        f"{friendly_text}"
+        f"{refund_text}"
+    )
+
+
+def _short_result_text(value: str | None, limit: int = 220) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return html.escape(text)
+    return html.escape(text[:limit].rstrip()) + "..."
+
+
+def _build_generation_result_caption(
+    *,
+    media_label: str,
+    model_display: str,
+    task_id: str,
+    task,
+    result_url: str | None = None,
+) -> str:
+    lines = [
+        f"✅ <b>{media_label} ({html.escape(str(model_display))}) готово!</b>",
+        f"ID: <code>{html.escape(str(task_id))}</code>",
+    ]
+    details = []
+    if getattr(task, "duration", None):
+        details.append(f"⏱ <code>{task.duration}с</code>")
+    if getattr(task, "aspect_ratio", None):
+        details.append(f"📐 <code>{html.escape(str(task.aspect_ratio))}</code>")
+    if getattr(task, "cost", None):
+        details.append(f"💰 <code>{task.cost}🍌</code>")
+    if details:
+        lines.append(" · ".join(details))
+
+    if getattr(task, "prompt", None):
+        lines.append(f"🎯 <b>Промпт:</b> <code>{_short_result_text(task.prompt)}</code>")
+    elif getattr(task, "preset_id", None) and task.preset_id not in {"no_preset", "no_preset_video"}:
+        lines.append(f"🎯 <b>Пресет:</b> {html.escape(str(task.preset_id))}")
+
+    if result_url:
+        lines.append(f"🔗 <a href='{html.escape(result_url, quote=True)}'>Скачать</a>")
+
+    return "\n\n".join(lines)
 
 
 async def _remove_old_files(
@@ -154,6 +330,8 @@ async def errors_handler(event: types.ErrorEvent):
 def setup_dispatcher() -> Dispatcher:
     """Настройка диспетчера с роутерами"""
     dp = Dispatcher()
+    dp.message.middleware(AccessControlMiddleware())
+    dp.callback_query.middleware(AccessControlMiddleware())
 
     # Регистрируем глобальный обработчик ошибок
     dp.errors.register(errors_handler)
@@ -312,72 +490,12 @@ async def _send_video_with_fallback(
 
 
 async def handle_kling_webhook(request: web.Request) -> web.Response:
-    """Обработчик уведомлений от Kling/PiAPI/Replicate/Kie.ai"""
+    """Обработчик уведомлений от Kling/PiAPI/Kie.ai"""
     try:
-        # Verify Replicate webhook signature if configured
-        from bot.config import config as _config
-
-        def _verify_replicate_signature(
-            secret: str, body: bytes, headers: dict
-        ) -> bool:
-            """Verify HMAC SHA256 signature using common header names."""
-            if not secret:
-                return True
-            import hashlib
-            import hmac
-
-            body_bytes = (
-                body if isinstance(body, (bytes, bytearray)) else body.encode("utf-8")
-            )
-
-            candidates = [
-                headers.get("x-replicate-signature"),
-                headers.get("x-signature"),
-                headers.get("replicate-signature"),
-                headers.get("signature"),
-                headers.get("webhook-signature"),
-            ]
-
-            secret_bytes = secret.encode("utf-8")
-
-            for sig in candidates:
-                if not sig:
-                    continue
-
-                sig_str = sig if isinstance(sig, str) else str(sig)
-                parts = [p.strip() for p in sig_str.split(",") if p.strip()]
-                sig_candidate = parts[-1]
-
-                if sig_candidate.startswith("sha256="):
-                    sig_val = sig_candidate.split("=", 1)[1]
-                elif sig_candidate.startswith("v1="):
-                    sig_val = sig_candidate.split("=", 1)[1]
-                else:
-                    sig_val = sig_candidate
-
-                try:
-                    computed_hex = hmac.new(
-                        secret_bytes, body_bytes, hashlib.sha256
-                    ).hexdigest()
-                    if hmac.compare_digest(computed_hex, sig_val):
-                        return True
-                except Exception as e:
-                    pass
-
-            return False
-
-        # Read raw body for verification
         raw_body = await request.read()
-        if not _verify_replicate_signature(
-            _config.REPLICATE_WEBHOOK_SECRET, raw_body, dict(request.headers)
-        ):
-            logger.warning(
-                "Rejected Kling webhook: replicate signature verification failed"
-            )
-            return web.Response(status=200)
-
-        # Логируем все заголовки для отладки
-        logger.info(f"Kling webhook headers: {dict(request.headers)}")
+        if not _verify_ai_webhook_request(request, "kling"):
+            logger.warning("Rejected Kling webhook: invalid AI webhook secret")
+            return web.Response(status=403)
 
         # Проверяем, есть ли данные в теле запроса
         if not raw_body:
@@ -386,13 +504,17 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         try:
             body_text = raw_body.decode("utf-8")
-            logger.info(f"Kling webhook raw body: {repr(body_text)}")
             data = json.loads(body_text)
         except Exception as e:
             logger.warning(f"Kling webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"Kling webhook parsed data: {data}")
+        logger.info(
+            "Kling webhook received: keys=%s task_id=%s status=%s",
+            list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            data.get("taskId") or data.get("task_id") or data.get("id") if isinstance(data, dict) else None,
+            data.get("status") or data.get("state") if isinstance(data, dict) else None,
+        )
 
         # Kling specific format: {'code': 200, 'data': {'result_video_url': '...'}, 'msg': '...', 'taskId': '...'}
         if "code" in data and data.get("code") == 200 and "taskId" in data:
@@ -420,17 +542,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            caption = f"✅ <b>Видео ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
-                            if task.duration:
-                                caption += f"\\n⏱ <code>{task.duration}с</code>"
-                            if task.aspect_ratio:
-                                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-                            if task.cost:
-                                caption += f"\\n💰 <code>{task.cost}🍌</code>"
-                            if task.preset_id == "no_preset" and task.prompt:
-                                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                            else:
-                                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                            caption = _build_generation_result_caption(
+                                media_label="Видео",
+                                model_display=model_display,
+                                task_id=task_id,
+                                task=task,
+                            )
 
                             sent = await _send_video_with_fallback(
                                 bot_instance=bot_instance,
@@ -494,24 +611,19 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            if status in {"success", "completed"} and video_url:
+                            if _status_kind(status) == "success" and video_url:
                                 # Success case
                                 model_display = task.model if task.model else "AI"
                                 if model_display == "aleph":
                                     model_display = "Aleph Video"
                                 elif model_display == "glow":
                                     model_display = "Kling Glow"
-                                caption = f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
-                                if task.duration:
-                                    caption += f"\\n⏱ <code>{task.duration}с</code>"
-                                if task.aspect_ratio:
-                                    caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-                                if task.cost:
-                                    caption += f"\\n💰 <code>{task.cost}🍌</code>"
-                                if task.preset_id == "no_preset" and task.prompt:
-                                    caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-                                else:
-                                    caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                                caption = _build_generation_result_caption(
+                                    media_label="Видео" if task.type == "video" else "Изображение",
+                                    model_display=model_display,
+                                    task_id=task_id,
+                                    task=task,
+                                )
                                 from bot.keyboards import get_video_result_keyboard
 
                                 sent = await _send_video_with_fallback(
@@ -528,22 +640,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     raise RuntimeError(
                                         "Kie.ai delivery failed after URL/upload fallbacks"
                                     )
-                            else:
+                            elif _status_kind(status) == "failure":
                                 # Fail case
-                                policy_violation = "prohibited use policy" in fail_msg.lower()
-                                error_msg = (
-                                    "Ваш запрос был отклонён из-за нарушения политики Google (чувствительный контент). Попробуйте смягчить описание сцены, убрать интимные или пограничные формулировки."
-                                    if policy_violation
-                                    else f"Ошибка API: {html.escape(fail_msg[:160] or 'Неизвестная ошибка провайдера')}"
-                                )
                                 await add_credits(telegram_id, task.cost or 0)
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
-                                    text=(
-                                        "❌ <b>Генерация не удалась</b>\n\n"
-                                        + f"ID: <code>{task_id}</code>\n\n"
-                                        + f"{error_msg}\n\n"
-                                        + "🍌 Кредиты возвращены."
+                                    text=_build_friendly_generation_error(
+                                        fail_code,
+                                        fail_msg,
+                                        service_name=model_display,
+                                        credits_returned=bool(task.cost),
                                     ),
                                     parse_mode="HTML",
                                 )
@@ -551,13 +657,19 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 logger.info(
                                     f"Kie.ai fail notified to {telegram_id}, credits returned"
                                 )
+                            else:
+                                logger.info(
+                                    "Ignoring non-terminal Kie.ai status for task %s: %s",
+                                    task_id,
+                                    status,
+                                )
                         except Exception as e:
                             logger.error(f"Failed to notify user {telegram_id}: {e}")
                         finally:
                             await bot_instance.session.close()
                 return web.Response(status=200)
 
-        # Fallback to PiAPI/Replicate parsing
+        # Fallback to PiAPI/Kie-compatible parsing
         def _extract_first(obj, keys):
             if isinstance(obj, dict):
                 for key in keys:
@@ -594,8 +706,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         normalized_status = str(status).lower() if status else ""
 
-        if normalized_status in {"completed", "succeeded", "success", "finished"}:
-            # Replicate can return either a direct URL/string or a nested object.
+        status_kind = _status_kind(normalized_status)
+        if status_kind == "success":
+            # Providers can return either a direct URL/string or a nested object.
             output = (
                 webhook_data.get("output", {}) if isinstance(webhook_data, dict) else {}
             )
@@ -648,17 +761,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             model_display = task.model or task.preset_id or "Kling"
-            caption = f"✅ <b>Видео ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
-            if task.duration:
-                caption += f"\\n⏱ <code>{task.duration}с</code>"
-            if task.aspect_ratio:
-                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-            if task.cost:
-                caption += f"\\n💰 <code>{task.cost}🍌</code>"
-            if task.preset_id == "no_preset" and task.prompt:
-                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-            else:
-                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+            caption = _build_generation_result_caption(
+                media_label="Видео",
+                model_display=model_display,
+                task_id=task_id,
+                task=task,
+            )
 
             # Отправляем видео пользователю
             bot_instance = Bot(token=config.BOT_TOKEN)
@@ -690,7 +798,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     )
             finally:
                 await bot_instance.session.close()
-        else:
+        elif status_kind == "failure":
             logger.error(f"Kling task {task_id} failed with status: {status}")
 
             from bot.database import (
@@ -781,6 +889,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             )
                         finally:
                             await bot_instance.session.close()
+        else:
+            logger.info(
+                "Ignoring non-terminal Kling task %s status: %s",
+                task_id,
+                status,
+            )
 
         return web.Response(status=200)
 
@@ -810,10 +924,11 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
     }
     """
     try:
-        logger.info(f"Seedream webhook headers: {dict(request.headers)}")
+        if not _verify_ai_webhook_request(request, "seedream"):
+            logger.warning("Rejected Seedream webhook: invalid AI webhook secret")
+            return web.Response(status=403)
 
         body = await request.text()
-        logger.info(f"Seedream webhook raw body: {repr(body)[:500]}")
 
         if not body:
             logger.warning("Seedream webhook received empty body")
@@ -825,10 +940,13 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Seedream webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"Seedream webhook parsed data: {data}")
-
         # Check event type - Novita AI sends ASYNC_TASK_RESULT
         event_type = data.get("event_type")
+        logger.info(
+            "Seedream webhook received: event_type=%s keys=%s",
+            event_type,
+            list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+        )
         if event_type != "ASYNC_TASK_RESULT":
             logger.warning(f"Unexpected event_type: {event_type}, ignoring")
             return web.Response(status=200)
@@ -892,15 +1010,12 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             )
 
             model_display = task.model or task.preset_id or "Seedream"
-            caption = f"✅ <b>Изображение ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
-            if task.aspect_ratio:
-                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
-            if task.cost:
-                caption += f"\\n💰 <code>{task.cost}🍌</code>"
-            if task.preset_id == "no_preset" and task.prompt:
-                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
-            else:
-                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+            caption = _build_generation_result_caption(
+                media_label="Изображение",
+                model_display=model_display,
+                task_id=task_id,
+                task=task,
+            )
 
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
@@ -950,10 +1065,11 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
 async def handle_wanx_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от PiAPI WanX API"""
     try:
-        logger.info(f"WanX webhook headers: {dict(request.headers)}")
+        if not _verify_ai_webhook_request(request, "wanx"):
+            logger.warning("Rejected WanX webhook: invalid AI webhook secret")
+            return web.Response(status=403)
 
         body = await request.text()
-        logger.info(f"WanX webhook raw body: {repr(body)[:500]}")
 
         if not body:
             logger.warning("WanX webhook received empty body")
@@ -965,14 +1081,15 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             logger.warning(f"WanX webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"WanX webhook parsed data: {data}")
-
         webhook_data = data.get("data") or data.get("payload") or data
         task_id = webhook_data.get("task_id")
         status = webhook_data.get("status")
 
         if not task_id:
-            logger.warning(f"No task_id in WanX webhook: {data}")
+            logger.warning(
+                "No task_id in WanX webhook. keys=%s",
+                list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            )
             return web.Response(status=200)
 
         normalized_status = str(status).lower() if status else ""
@@ -1016,10 +1133,11 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
-            caption = (
-                f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
-                if task.preset_id == "no_preset" and task.prompt
-                else f"✅ <b>Ваше видео WanX готово!</b>🎯 Пресет: {task.preset_id}"
+            caption = _build_generation_result_caption(
+                media_label="Видео",
+                model_display="WanX",
+                task_id=task_id,
+                task=task,
             )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
@@ -1064,7 +1182,9 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
-        logger.info(f"Kie.ai webhook headers: {dict(request.headers)}")
+        if not _verify_ai_webhook_request(request, "kie_ai"):
+            logger.warning("Rejected Kie.ai webhook: invalid AI webhook secret")
+            return web.Response(status=403)
 
         raw_body = await request.read()
         if not raw_body:
@@ -1073,13 +1193,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         try:
             body_text = raw_body.decode("utf-8")
-            logger.info(f"Kie.ai webhook raw body: {repr(body_text)}")
             data = json.loads(body_text)
         except Exception as e:
             logger.warning(f"Kie.ai webhook received invalid JSON: {e}")
             return web.Response(status=200)
-
-        logger.info(f"Kie.ai webhook parsed data: {data}")
 
         from bot.database import (
             add_credits,
@@ -1115,6 +1232,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         )
         status = webhook_data.get("state") or webhook_data.get("status")
         normalized_status = str(status).lower() if status else ""
+        logger.info(
+            "Kie.ai webhook received: task_id=%s status=%s code=%s",
+            task_id,
+            normalized_status,
+            data.get("code") if isinstance(data, dict) else None,
+        )
 
         model = webhook_data.get("model", "")
         model_lower = model.lower()
@@ -1144,6 +1267,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 service_name += " T2I"
             elif "image-to-image" in model_lower:
                 service_name += " I2I"
+        elif "ideogram/character" in model_lower:
+            service_name = "Ideogram Character"
+        elif "wan/2-7" in model_lower:
+            service_name = "Wan 2.7"
+            if "image-to-video" in model_lower:
+                service_name += " I2V"
+            elif "t2v" in model_lower:
+                service_name += " T2V"
+            elif "r2v" in model_lower:
+                service_name += " R2V"
         elif "happyhorse" in model_lower:
             service_name = "HappyHorse"
             if "text-to-video" in model_lower:
@@ -1177,7 +1310,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         if task:
             telegram_id = await get_telegram_id_by_user_id(task.user_id)
 
-        if normalized_status in {"success", "completed", "succeeded", "finished"}:
+        status_kind = _status_kind(normalized_status)
+        if status_kind == "success":
             # Parse resultJson for Kie.ai specific format
             result_json_str = webhook_data.get("resultJson", "{}")
             result_url = None
@@ -1410,7 +1544,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             )
                             sent_media = True
                         else:
-                            doc_caption = f"{full_caption}\\n\\n📎 Файл (более 10MB)"
+                            doc_caption = f"{full_caption}\n\n📎 Файл (более 10MB)"
                             document = types.BufferedInputFile(
                                 image_bytes, filename="generated.png"
                             )
@@ -1449,7 +1583,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 )
             finally:
                 await bot_instance.session.close()
-        else:
+        elif status_kind == "failure":
             # Enhanced failure logging and user notification
             fail_code = webhook_data.get("failCode", "unknown")
             fail_msg = webhook_data.get("failMsg", "No details")
@@ -1471,10 +1605,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)
                 try:
-                    error_msg = f"❌ <b>Ошибка генерации ({service_name})</b>ID: <code>{task_id}</code>Код: <code>{fail_code}</code>\nСообщение: {fail_msg}{'🍌 Кредиты возвращены!' if task and task.cost and task.cost > 0 else 'Попробуйте упростить промпт или повторить позже.'}"
                     await bot_instance.send_message(
                         chat_id=telegram_id,
-                        text=error_msg,
+                        text=_build_friendly_generation_error(
+                            fail_code,
+                            fail_msg,
+                            service_name=service_name,
+                            credits_returned=bool(task and task.cost and task.cost > 0),
+                        ),
                         parse_mode="HTML",
                     )
                     logger.info(f"Failure notification sent to {telegram_id}")
@@ -1488,6 +1626,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 )
 
             await complete_video_task(task_id, None)
+        else:
+            logger.info(
+                "Ignoring non-terminal %s webhook task_id=%s status=%s",
+                service_name,
+                task_id,
+                normalized_status,
+            )
 
         return web.Response(status=200)
 
@@ -1514,8 +1659,11 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
     }
     """
     try:
+        if not _verify_ai_webhook_request(request, "veo"):
+            logger.warning("Rejected Veo webhook: invalid AI webhook secret")
+            return web.Response(status=403)
+
         raw_body = await request.read()
-        logger.info(f"Veo webhook raw body: {repr(raw_body[:200])}")
 
         if not raw_body:
             return web.Response(status=200)
@@ -1527,7 +1675,10 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
         task_id = veo_data.get("taskId")
 
         if not task_id:
-            logger.error(f"Veo webhook: missing taskId. Payload: {data}")
+            logger.error(
+                "Veo webhook: missing taskId. keys=%s",
+                list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+            )
             return web.Response(status=200)
 
         from bot.database import (
@@ -1694,6 +1845,15 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     app = web.Application()
     app["bot"] = bot
 
+    async def app_startup(app: web.Application) -> None:
+        await on_startup(bot)
+
+    async def app_cleanup(app: web.Application) -> None:
+        await on_shutdown(bot)
+
+    app.on_startup.append(app_startup)
+    app.on_cleanup.append(app_cleanup)
+
     # Serve static uploads directory to fix 404 errors for Novita image downloads
     app.router.add_static(
         "/uploads/", path="static/uploads", show_index=False, name="uploads"
@@ -1771,7 +1931,10 @@ async def main():
         )
 
         # Держим бота запущенным
-        await asyncio.Event().wait()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await runner.cleanup()
     else:
         # Polling mode (для разработки)
         logger.info("Starting in polling mode...")

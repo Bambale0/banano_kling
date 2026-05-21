@@ -45,6 +45,7 @@ class PaymentStates(StatesGroup):
     selecting_package = State()  # Выбор пакета
     confirming_payment = State()  # Подтверждение оплаты
     waiting_payment = State()  # Ожидание оплаты
+    waiting_promo_code = State()  # Ввод промокода
 
 
 class PartnerWithdrawalStates(StatesGroup):
@@ -65,6 +66,7 @@ class AdminStates(StatesGroup):
     waiting_user_id = State()  # Ввод ID пользователя
     waiting_credits_amount = State()  # Ввод количества кредитов
     waiting_price_value = State()  # Ввод новой цены
+    waiting_promo_data = State()  # Ввод параметров промокода
 
 
 class BatchGenerationStates(StatesGroup):

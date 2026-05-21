@@ -1,0 +1,13 @@
+[Unit]
+Description=Banano Kling Bot watchdog check
+Wants=bot.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/bot/banano_kling
+Environment=BOT_PROJECT_DIR=/root/bot/banano_kling
+Environment=BOT_SERVICE_NAME=bot.service
+Environment=BOT_HEALTH_HOST=127.0.0.1
+Environment=BOT_HEALTH_PORT=8443
+ExecStart=/root/bot/banano_kling/venv/bin/python /root/bot/banano_kling/scripts/bot_watchdog.py

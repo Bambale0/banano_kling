@@ -6,10 +6,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/bot/banano_kling
-ExecStart=/root/bot/banano_kling/start.sh
-ExecStop=/root/bot/banano_kling/stop.sh
+ExecStart=/root/bot/banano_kling/scripts/run_bot_foreground.sh
 Restart=always
 RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

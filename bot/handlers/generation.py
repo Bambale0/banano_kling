@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import html
 import io
 import json
 import logging
@@ -40,6 +41,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_create_image_keyboard,
     get_create_video_keyboard,
+    get_animate_photo_keyboard,
     get_image_result_keyboard,
     get_main_menu_keyboard,
     get_reference_images_upload_keyboard,
@@ -53,6 +55,7 @@ from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.hailuo_service import hailuo_service
 from bot.services.happyhorse_service import happyhorse_service
+from bot.services.ideogram_service import ideogram_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -82,6 +85,24 @@ from bot.video_models import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+MIX_PHOTO_MODELS = ("banana_2", "seedream_edit", "grok_i2i")
+
+ANIMATE_PHOTO_PROMPTS = {
+    "smile": "The person gently smiles, subtle natural facial motion, soft cinematic camera movement, realistic motion, keep identity and photo style.",
+    "blink": "The person naturally blinks once or twice, tiny head movement, realistic facial animation, keep identity and original photo style.",
+    "zoom": "Slow smooth camera push-in toward the subject, cinematic depth, natural parallax, keep the subject still and recognizable.",
+    "wind": "A light breeze moves the hair and clothes naturally, subtle cinematic camera movement, realistic motion, keep identity and original photo style.",
+    "walk": "The subject starts walking forward naturally toward the camera, smooth body movement, realistic animation, keep identity and outfit.",
+    "talk": "The person starts speaking naturally with subtle lips and facial movement, gentle head motion, realistic portrait animation.",
+    "dance": "The subject makes a short stylish dance move, smooth body motion, upbeat cinematic energy, keep identity and original styling.",
+}
+
+
+def _get_default_animate_model(preferred_model: str | None) -> str:
+    if preferred_model in _MODELS_IMGTXT:
+        return preferred_model
+    return "v3_std"
 
 
 def _get_image_state(data: dict) -> tuple[str, dict, list]:
@@ -136,6 +157,7 @@ def _build_image_creation_text(
     model_id: str,
     options: dict,
     reference_images: list,
+    img_count: int = 1,
 ) -> str:
     ref_text = (
         f"📎 Референсов: <code>{len(reference_images)}</code>\n"
@@ -143,15 +165,189 @@ def _build_image_creation_text(
         else ""
     )
     model_config = get_image_model_config(model_id)
+    unit_cost = preset_manager.get_generation_cost(model_config["cost_key"])
+    total_cost = unit_cost * max(1, int(img_count or 1))
+    cost_text = (
+        f"💰 Стоимость: <code>{total_cost}</code>🍌 "
+        f"(<code>{img_count}</code>×<code>{unit_cost}</code>🍌)\n"
+        if img_count and img_count > 1
+        else f"💰 Стоимость: <code>{unit_cost}</code>🍌\n"
+    )
     return (
         "🖼 <b>Создание фото</b>\n"
         f"{ref_text}"
         f"🤖 Модель: <code>{model_config['label']}</code>\n"
+        f"{cost_text}"
         "⚙️ <b>Параметры:</b>\n"
         f"{_format_image_settings(model_id, options)}\n"
         "\n<b>Введите промпт для генерации:</b>\n"
         "Опишите сцену, стиль и детали результата."
     )
+
+
+def _build_mix_photo_prompt_text(ref_count: int) -> str:
+    ref_line = (
+        f"Загружено фото: <code>{ref_count}</code>\n\n" if ref_count else ""
+    )
+    return (
+        "🧬 <b>Микс фото</b>\n\n"
+        f"{ref_line}"
+        "Один промпт уйдёт сразу в 3 нейросети: Banana 2, Seedream 4.5 и Grok.\n\n"
+        "Напишите, какой результат нужен.\n"
+        "Например: «сделай кинематографичный постер, реализм, мягкий свет»."
+    )
+
+
+def _build_image_waiting_text(*, mix_mode: bool, count: int) -> str:
+    if mix_mode:
+        return (
+            "🧬 <b>Микс запущен</b>\n\n"
+            "Отправляю запрос сразу в 3 нейросети.\n"
+            "Сейчас каждая готовит свой вариант, результаты придут сюда по мере готовности.\n\n"
+            "<i>Обычно это занимает 1-3 минуты.</i>"
+        )
+    if count > 1:
+        return (
+            "🖼 <b>Генерация запущена</b>\n\n"
+            f"Запускаю <code>{count}</code> вариантов параллельно.\n"
+            "Я на месте: как только модель отдаст результат, сразу пришлю его сюда.\n\n"
+            "<i>Обычно это занимает 1-3 минуты.</i>"
+        )
+    return (
+        "🖼 <b>Генерация запущена</b>\n\n"
+        "Модель уже получила задачу и собирает картинку.\n"
+        "Как только будет готово, пришлю результат сюда.\n\n"
+        "<i>Обычно это занимает 1-3 минуты.</i>"
+    )
+
+
+def _build_image_task_started_text(
+    *,
+    prefix: str,
+    model_label: str,
+    task_id: str,
+) -> str:
+    return (
+        f"🚀 {prefix}<b>{model_label}</b> приняла задачу\n\n"
+        f"Код: <code>{html.escape(str(task_id))}</code>\n"
+        "Работа идёт, результат придёт сюда автоматически.\n\n"
+        "<i>Можно закрыть чат и вернуться позже.</i>"
+    )
+
+
+def _build_video_waiting_text(
+    *,
+    model: str,
+    duration: int,
+    ratio: str,
+    cost: int,
+) -> str:
+    return (
+        "🎬 <b>Видео запущено в работу</b>\n\n"
+        f"🤖 Модель: <code>{html.escape(str(model))}</code>\n"
+        f"⏱ Длительность: <code>{duration}s</code>\n"
+        f"📐 Формат: <code>{html.escape(str(ratio))}</code>\n"
+        f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+        "Сейчас модель собирает кадры и движение. "
+        "Результат придёт сюда автоматически.\n\n"
+        "<i>Обычно это занимает 1-5 минут.</i>"
+    )
+
+
+def _build_video_task_started_text(
+    *,
+    task_id: str,
+    model: str,
+    duration: int,
+    ratio: str,
+    cost: int,
+    is_admin: bool,
+) -> str:
+    price_text = "(админ бесплатно)" if is_admin else "списано"
+    ratio_text = (
+        "формат по стартовому фото" if model == "wan_27_i2v" else str(ratio)
+    )
+    return (
+        "✅ <b>Видео задача принята</b>\n\n"
+        f"Код: <code>{html.escape(str(task_id))}</code>\n"
+        f"🎯 <code>{html.escape(str(model))}</code> | {duration}s | {html.escape(ratio_text)}\n"
+        f"💰 <code>{cost}</code>🍌 {price_text}\n\n"
+        "Работа идёт, результат появится в этом чате автоматически."
+    )
+
+
+def _progress_bar(percent: int) -> str:
+    percent = max(0, min(100, percent))
+    filled = max(1, round(percent / 10)) if percent else 0
+    return "🟩" * filled + "⬜" * (10 - filled)
+
+
+def _build_progress_text(
+    *,
+    title: str,
+    percent: int,
+    status: str,
+    task_id: str | None = None,
+    eta: str | None = None,
+) -> str:
+    code_line = f"\nКод: <code>{html.escape(str(task_id))}</code>" if task_id else ""
+    eta_line = f"\n\n<i>{html.escape(eta)}</i>" if eta else ""
+    return (
+        f"{title}\n\n"
+        f"{_progress_bar(percent)} <code>{percent}%</code>\n"
+        f"{html.escape(status)}"
+        f"{code_line}"
+        f"{eta_line}"
+    )
+
+
+async def _simulate_generation_progress(
+    message: types.Message,
+    task_id: str,
+    *,
+    title: str,
+    eta: str,
+    steps: tuple[tuple[int, str], ...],
+    interval: int = 12,
+) -> None:
+    for percent, status in steps:
+        await asyncio.sleep(interval)
+        try:
+            task = await get_task_by_id(task_id)
+            if task and task.status == "completed":
+                final_status = (
+                    "Готово. Отправляю результат в чат."
+                    if task.result_url
+                    else "Задача завершилась. Отправляю статус в чат."
+                )
+                await message.edit_text(
+                    _build_progress_text(
+                        title=title,
+                        percent=100,
+                        status=final_status,
+                        task_id=task_id,
+                    ),
+                    parse_mode="HTML",
+                )
+                return
+
+            await message.edit_text(
+                _build_progress_text(
+                    title=title,
+                    percent=percent,
+                    status=status,
+                    task_id=task_id,
+                    eta=eta,
+                ),
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                continue
+            return
+        except Exception:
+            logger.debug("Progress update failed for task %s", task_id, exc_info=True)
+            return
 
 
 _MODELS_TEXT = {
@@ -164,6 +360,7 @@ _MODELS_TEXT = {
     "hailuo_pro",
     "hailuo_std",
     "happyhorse_t2v",
+    "wan_27_t2v",
 }
 _MODELS_IMGTXT = {
     "v3_std",
@@ -178,6 +375,7 @@ _MODELS_IMGTXT = {
     "hailuo_i2v_std",
     "happyhorse_i2v",
     "happyhorse_ref2v",
+    "wan_27_i2v",
 }
 _MODELS_VIDEO = {
     "aleph",
@@ -226,10 +424,14 @@ def _format_video_settings(data: dict) -> str:
         f"• Тип: <code>{type_text}</code>",
         f"• Модель: <code>{ui['current_model']}</code>",
         f"• Длительность: <code>{ui['current_duration']} сек</code>",
-        f"• Формат: <code>{ui['current_ratio']}</code>",
     ]
 
     model_config = get_video_model_config(ui["current_model"])
+    if model_config.get("aspect_ratios"):
+        lines.append(f"• Формат: <code>{ui['current_ratio']}</code>")
+    elif ui["current_model"] == "wan_27_i2v":
+        lines.append("• Формат: <code>по стартовому фото</code>")
+
     for option_name in model_config.get("options", {}):
         value = ui["current_video_options"].get(option_name)
         label = VIDEO_OPTION_LABELS.get(option_name, option_name)
@@ -313,6 +515,161 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
+@router.callback_query(F.data == "quick_animate_photo")
+async def quick_animate_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Shortcut: photo to video via Grok Imagine."""
+    default_options = normalize_video_options("grok_imagine")
+    await state.update_data(
+        generation_type="video",
+        v_type="imgtxt",
+        v_model="grok_imagine",
+        v_duration=6,
+        v_ratio="16:9",
+        video_options=default_options,
+        grok_mode="normal",
+        reference_images=[],
+        v_reference_videos=[],
+        user_prompt="",
+        v_image_url=None,
+    )
+    await callback.message.edit_text(
+        "📸 <b>Оживить фото</b>\n\n"
+        "Отправьте фото, которое нужно превратить в короткое видео.\n"
+        "После фото напишите движение: например, «улыбается и медленно смотрит в камеру».",
+        reply_markup=get_create_video_keyboard(
+            current_v_type="imgtxt",
+            current_model="grok_imagine",
+            current_duration=6,
+            current_ratio="16:9",
+            current_video_options=default_options,
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data.startswith("animate_img_"))
+async def open_animate_generated_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Open a separate animate-photo menu for a generated image result."""
+    task_id = callback.data.replace("animate_img_", "", 1)
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url:
+        await callback.answer("Не нашёл готовое фото для оживления", show_alert=True)
+        return
+    if task.telegram_id != callback.from_user.id:
+        await callback.answer("Это фото из другой сессии", show_alert=True)
+        return
+
+    settings = await get_user_settings(callback.from_user.id)
+    v_model = _get_default_animate_model(settings.get("preferred_i2v_model"))
+    video_options = normalize_video_options(v_model)
+    model_config = get_video_model_config(v_model)
+    durations = model_config.get("durations") or [5]
+    ratios = model_config.get("aspect_ratios") or ["16:9"]
+
+    await state.update_data(
+        generation_type="video",
+        v_type="imgtxt",
+        v_model=v_model,
+        v_duration=5 if 5 in durations else durations[0],
+        v_ratio="16:9" if "16:9" in ratios else ratios[0],
+        video_options=video_options,
+        reference_images=[],
+        v_reference_videos=[],
+        user_prompt="",
+        v_image_url=task.result_url,
+        animate_source_task_id=task_id,
+    )
+
+    await callback.message.answer(
+        "📸 <b>Оживить фото</b>\n\n"
+        "Выберите движение из меню или нажмите «Свой вариант» и напишите, как оживить фото.\n"
+        "Фото уже сохранено как стартовый кадр для видео.",
+        reply_markup=get_animate_photo_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data.startswith("animate_preset_"))
+async def handle_animate_photo_preset(callback: types.CallbackQuery, state: FSMContext):
+    """Run image-to-video from the saved generated photo and selected motion preset."""
+    preset = callback.data.replace("animate_preset_", "", 1)
+    data = await state.get_data()
+    if not data.get("v_image_url"):
+        await callback.answer("Сначала выберите готовое фото", show_alert=True)
+        return
+
+    if preset == "custom":
+        await callback.message.answer(
+            "🎬 Напишите одним сообщением, как именно оживить фото.\n"
+            "Например: <code>улыбается, камера медленно приближается, ветер в волосах</code>",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        return
+
+    prompt = ANIMATE_PHOTO_PROMPTS.get(preset)
+    if not prompt:
+        await callback.answer("Неизвестный вариант", show_alert=True)
+        return
+
+    await callback.answer("Запускаю оживление...")
+    await run_no_preset_video_from_message(callback, state, prompt)
+
+
+@router.callback_query(F.data == "animate_settings")
+async def open_animate_photo_settings(callback: types.CallbackQuery, state: FSMContext):
+    """Open the full video settings screen while keeping the generated photo reference."""
+    data = await state.get_data()
+    if not data.get("v_image_url"):
+        await callback.answer("Сначала выберите готовое фото", show_alert=True)
+        return
+    await _show_video_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "quick_mix_photo")
+async def quick_mix_photo(callback: types.CallbackQuery, state: FSMContext):
+    """Shortcut: upload references and mix them into a new image."""
+    data = await state.get_data()
+    existing_refs = data.get("reference_images", [])
+    options = normalize_image_options("banana_2")
+    await state.update_data(
+        generation_type="image",
+        img_service="banana_2",
+        img_ratio=options["aspect_ratio"],
+        img_options=options,
+        img_count=1,
+        reference_images=existing_refs,
+        mix_mode=True,
+        preset_id="new",
+    )
+
+    if existing_refs:
+        await callback.message.edit_text(
+            _build_mix_photo_prompt_text(len(existing_refs)),
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        await state.set_state(GenerationStates.waiting_for_input)
+        return
+
+    await callback.message.edit_text(
+        "🧬 <b>Микс фото</b>\n\n"
+        "Загрузите хотя бы 1 фото-референс и нажмите «Продолжить».\n"
+        "После промпта бот отправит один запрос в 3 нейросети: Banana 2, Seedream 4.5 и Grok.",
+        reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
 @router.callback_query(F.data == "motion_control")
 async def start_motion_control(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -363,7 +720,7 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
     )
 
     await callback.message.edit_text(
-        _build_image_creation_text("banana_pro", default_options, []),
+        _build_image_creation_text("banana_pro", default_options, [], 1),
         reply_markup=get_create_image_keyboard(
             current_service="banana_pro",
             current_ratio=default_options["aspect_ratio"],
@@ -516,6 +873,13 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
     data = await state.get_data()
     generation_type = data.get("generation_type")
 
+    if data.get("mix_mode"):
+        await callback.answer(
+            "Для микса загрузите хотя бы 1 фото-референс.",
+            show_alert=True,
+        )
+        return
+
     # Очищаем референсы
     await state.update_data(reference_images=[])
 
@@ -528,7 +892,12 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
         current_service, current_options, _ = await _sync_image_state(state)
 
         await callback.message.edit_text(
-            _build_image_creation_text(current_service, current_options, []),
+            _build_image_creation_text(
+                current_service,
+                current_options,
+                [],
+                data.get("img_count", 1),
+            ),
             reply_markup=get_create_image_keyboard(
                 current_service=current_service,
                 current_ratio=current_options["aspect_ratio"],
@@ -549,6 +918,35 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
     data = await state.get_data()
     generation_type = data.get("generation_type")
 
+    if data.get("mix_mode"):
+        current_refs = data.get("reference_images", [])
+        if not current_refs:
+            await callback.answer(
+                "Для микса загрузите хотя бы 1 фото-референс.",
+                show_alert=True,
+            )
+            return
+
+        options = normalize_image_options(
+            "banana_2",
+            {"aspect_ratio": data.get("img_ratio"), **data.get("img_options", {})},
+        )
+        await state.update_data(
+            generation_type="image",
+            img_service="banana_2",
+            img_ratio=options["aspect_ratio"],
+            img_options=options,
+            img_count=1,
+        )
+        await callback.message.edit_text(
+            _build_mix_photo_prompt_text(len(current_refs)),
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        await state.set_state(GenerationStates.waiting_for_input)
+        return
+
     if generation_type == "video":
         # Сразу показываем единый экран с параметрами и промптом (без подтверждения)
         await _show_video_creation_screen(callback.message, state)
@@ -559,7 +957,12 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
         current_service, current_options, current_refs = await _sync_image_state(state)
 
         await callback.message.edit_text(
-            _build_image_creation_text(current_service, current_options, current_refs),
+            _build_image_creation_text(
+                current_service,
+                current_options,
+                current_refs,
+                data.get("img_count", 1),
+            ),
             reply_markup=get_create_image_keyboard(
                 current_service=current_service,
                 current_ratio=current_options["aspect_ratio"],
@@ -609,7 +1012,12 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
     current_service, current_options, current_refs = await _sync_image_state(state)
 
     await callback.message.edit_text(
-        _build_image_creation_text(current_service, current_options, current_refs),
+        _build_image_creation_text(
+            current_service,
+            current_options,
+            current_refs,
+            data.get("img_count", 1),
+        ),
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
             current_ratio=current_options["aspect_ratio"],
@@ -869,10 +1277,10 @@ async def _apply_video_model_selection(
     video_options = normalize_video_options(model, data.get("video_options", {}))
     model_config = get_video_model_config(model)
     durations = model_config.get("durations") or []
-    ratios = model_config.get("aspect_ratios") or ["16:9"]
+    ratios = model_config.get("aspect_ratios")
     if durations and current_duration not in durations:
         current_duration = durations[0]
-    if current_ratio not in ratios:
+    if ratios and current_ratio not in ratios:
         current_ratio = ratios[0]
 
     await state.update_data(
@@ -944,7 +1352,12 @@ async def _refresh_image_creation_screen(
     img_count = data.get("img_count", 1)
     current_service, current_options, reference_images = await _sync_image_state(state)
     await callback.message.edit_text(
-        _build_image_creation_text(current_service, current_options, reference_images),
+        _build_image_creation_text(
+            current_service,
+            current_options,
+            reference_images,
+            img_count,
+        ),
         reply_markup=get_create_image_keyboard(
             current_service=current_service,
             current_ratio=current_options["aspect_ratio"],
@@ -998,6 +1411,10 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         "resolution": "resolution_",
         "quality": "quality_",
         "nsfw_checker": "nsfw_checker_",
+        "enable_pro": "enable_pro_",
+        "rendering_speed": "rendering_speed_",
+        "style": "style_",
+        "expand_prompt": "expand_prompt_",
     }
 
     option_name = None
@@ -1012,7 +1429,7 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         await callback.answer("Неизвестная опция", show_alert=True)
         return
 
-    if option_name == "nsfw_checker":
+    if option_name in {"nsfw_checker", "expand_prompt", "enable_pro"}:
         value = raw_value == "on"
     elif option_name == "aspect_ratio":
         value = raw_value.replace("_", ":").upper().replace("AUTO", "auto")
@@ -1020,6 +1437,8 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         value = raw_value.lower()
     elif option_name == "quality":
         value = raw_value.lower()
+    elif option_name in {"rendering_speed", "style"}:
+        value = raw_value.upper()
     else:
         value = raw_value.upper()
 
@@ -2606,7 +3025,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
     data = await state.get_data()
     reference_images = data.get("reference_images", [])
     v_type = data.get("v_type")
-    max_refs = 9 if v_type == "imgtxt" else 14
+    max_refs = 14 if data.get("mix_mode") else 9 if v_type == "imgtxt" else 14
 
     if len(reference_images) >= max_refs:
         await message.answer(
@@ -2667,11 +3086,16 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         preset_id = data.get("preset_id", "new")
         current_count = len(reference_images)
 
+        title = (
+            "🧬 <b>Фото для микса</b>"
+            if data.get("mix_mode")
+            else "📎 <b>Загрузка референсов</b>"
+        )
         text = (
-            f"📎 <b>Загрузка референсов</b>"
-            f"Загружено: <code>{current_count}/{max_refs}</code>"
-            f"✅ Фото добавлено!"
-            f"Отправьте следующее или нажмите кнопку ниже:"
+            f"{title}\n\n"
+            f"Загружено: <code>{current_count}/{max_refs}</code>\n"
+            "✅ Фото добавлено!\n\n"
+            "Отправьте следующее или нажмите кнопку ниже:"
         )
 
         try:
@@ -2707,16 +3131,79 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Введите промпт для генерации изображения.")
         return
 
+    if data.get("mix_mode"):
+        reference_images = data.get("reference_images", [])
+        if not reference_images:
+            await message.answer(
+                "🧬 Для микса загрузите хотя бы 1 фото-референс и нажмите «Продолжить».",
+                reply_markup=get_reference_images_upload_keyboard(
+                    0, 14, data.get("preset_id", "new")
+                ),
+                parse_mode="HTML",
+            )
+            await state.set_state(GenerationStates.uploading_reference_images)
+            return
+
+        mix_options = normalize_image_options(
+            "banana_2",
+            {"aspect_ratio": data.get("img_ratio"), **data.get("img_options", {})},
+        )
+        await state.update_data(
+            img_service="banana_2",
+            img_ratio=mix_options["aspect_ratio"],
+            img_options=mix_options,
+            img_count=1,
+        )
+        data = {
+            **data,
+            "img_service": "banana_2",
+            "img_options": mix_options,
+            "img_count": 1,
+        }
+
     img_service, img_options, reference_images = _get_image_state(data)
+    mix_mode = bool(data.get("mix_mode"))
+
+    if mix_mode:
+        generation_jobs = []
+        for model_id in MIX_PHOTO_MODELS:
+            model_options = normalize_image_options(
+                model_id,
+                {
+                    "aspect_ratio": img_options.get("aspect_ratio"),
+                    **data.get("img_options", {}),
+                },
+            )
+            generation_jobs.append(
+                {
+                    "model": model_id,
+                    "options": model_options,
+                    "cost": preset_manager.get_generation_cost(model_id),
+                }
+            )
+    else:
+        img_count = data.get("img_count", 1)
+        cost = preset_manager.get_generation_cost(img_service)
+        generation_jobs = [
+            {"model": img_service, "options": img_options, "cost": cost}
+            for _ in range(img_count)
+        ]
 
     user = await get_or_create_user(message.from_user.id)
-    cost = preset_manager.get_generation_cost(img_service)
-    img_count = data.get("img_count", 1)
-    total_cost = cost * img_count
+    total_cost = sum(job["cost"] for job in generation_jobs)
+    img_count = len(generation_jobs)
 
     if user.credits < total_cost:
+        if mix_mode:
+            models_text = ", ".join(
+                get_image_model_config(job["model"])["label"] for job in generation_jobs
+            )
+            cost_text = f"Нужно: <code>{total_cost}</code>🍌 за 3 нейросети ({models_text})"
+        else:
+            cost = generation_jobs[0]["cost"]
+            cost_text = f"Нужно: <code>{total_cost}</code>🍌 ({img_count}×{cost}🍌)"
         await message.answer(
-            f"❌ Недостаточно бананов! Нужно: <code>{total_cost}</code>🍌 ({img_count}×{cost}🍌)",
+            f"❌ Недостаточно бананов! {cost_text}",
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
@@ -2734,7 +3221,11 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             total_cost,
             reason="image_generation_charge",
             external_id=f"image_submit:{message.from_user.id}:{message.message_id}",
-            metadata={"model": img_service, "count": img_count},
+            metadata={
+                "model": "mix_photo" if mix_mode else img_service,
+                "models": [job["model"] for job in generation_jobs],
+                "count": img_count,
+            },
         )
         if not charged:
             await generation_lock_guard.release(generation_lock)
@@ -2742,11 +3233,35 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
             return
 
-        if img_count == 1:
-            processing_msg = await message.answer("🖼 Генерирую изображение...")
+        if mix_mode:
+            processing_msg = await message.answer(
+                _build_progress_text(
+                    title="🧬 <b>Микс фото запускается</b>",
+                    percent=8,
+                    status="Готовлю референсы и отправляю запросы в 3 нейросети.",
+                    eta="Сейчас появятся отдельные прогресс-бары по каждой модели.",
+                ),
+                parse_mode="HTML",
+            )
+        elif img_count == 1:
+            processing_msg = await message.answer(
+                _build_progress_text(
+                    title="🖼 <b>Фото запускается</b>",
+                    percent=10,
+                    status="Проверяю параметры и передаю задачу модели.",
+                    eta="Обычно это занимает 1-3 минуты.",
+                ),
+                parse_mode="HTML",
+            )
         else:
             processing_msg = await message.answer(
-                f"🖼 Запускаю {img_count} генераций параллельно..."
+                _build_progress_text(
+                    title="🖼 <b>Параллельная генерация запускается</b>",
+                    percent=8,
+                    status=f"Готовлю {img_count} вариантов и отправляю их моделям.",
+                    eta="Сейчас появятся отдельные прогресс-бары по задачам.",
+                ),
+                parse_mode="HTML",
             )
     except Exception:
         logger.exception("Image generation setup failed")
@@ -2763,90 +3278,111 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
         return
 
-    async def _run_single(idx: int) -> None:
+    async def _run_single(idx: int, job: dict) -> None:
+        job_model = job["model"]
+        job_options = job["options"]
+        job_cost = job["cost"]
         local_tid = f"img_{uuid.uuid4().hex[:12]}"
         await add_generation_task(
             user.id,
             message.from_user.id,
             local_tid,
             "image",
-            img_service,
-            model=img_service,
-            aspect_ratio=img_options["aspect_ratio"],
+            job_model,
+            model=job_model,
+            aspect_ratio=job_options["aspect_ratio"],
             prompt=prompt,
-            cost=cost,
+            cost=job_cost,
             reference_images=_serialize_reference_images(reference_images),
         )
         try:
             callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-            if img_service == "banana_2":
+            if job_model == "banana_2":
                 result = await nano_banana_2_service.generate_image(
                     prompt=prompt,
-                    aspect_ratio=img_options["aspect_ratio"],
-                    resolution=img_options["resolution"],
-                    output_format=img_options["output_format"],
+                    aspect_ratio=job_options["aspect_ratio"],
+                    resolution=job_options["resolution"],
+                    output_format=job_options["output_format"],
                     image_input=reference_images,
                     callback_url=callback_url,
                 )
-            elif img_service == "banana_pro":
+            elif job_model == "banana_pro":
                 result = await nano_banana_pro_service.generate_image(
                     prompt=prompt,
-                    aspect_ratio=img_options["aspect_ratio"],
-                    resolution=img_options["resolution"],
-                    output_format=img_options["output_format"],
+                    aspect_ratio=job_options["aspect_ratio"],
+                    resolution=job_options["resolution"],
+                    output_format=job_options["output_format"],
                     image_input=reference_images,
                     callback_url=callback_url,
                 )
-            elif img_service in ["seedream_edit", "seedream_5_lite"]:
-                model_config = get_image_model_config(img_service)
+            elif job_model in ["seedream_edit", "seedream_5_lite"]:
+                model_config = get_image_model_config(job_model)
                 result = await seedream_service.generate_image(
                     prompt=prompt,
                     model=model_config["api_model"],
-                    aspect_ratio=img_options["aspect_ratio"],
-                    quality=img_options.get("quality", "basic"),
-                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    aspect_ratio=job_options["aspect_ratio"],
+                    quality=job_options.get("quality", "basic"),
+                    nsfw_checker=job_options.get("nsfw_checker", False),
                     image_urls=reference_images,
                     callback_url=callback_url,
                 )
-            elif img_service == "gpt_image_2":
+            elif job_model == "gpt_image_2":
                 result = await gpt_image_service.generate_image(
                     prompt=prompt,
                     image_urls=reference_images,
-                    aspect_ratio=img_options["aspect_ratio"],
-                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    aspect_ratio=job_options["aspect_ratio"],
+                    nsfw_checker=job_options.get("nsfw_checker", False),
                     callback_url=callback_url,
                 )
-            elif img_service == "grok_t2i":
+            elif job_model == "grok_t2i":
                 result = await grok_service.generate_text_to_image(
                     prompt=prompt,
-                    aspect_ratio=img_options["aspect_ratio"],
-                    enable_pro=img_options.get("enable_pro", False),
-                    nsfw_checker=img_options.get("nsfw_checker", False),
+                    aspect_ratio=job_options["aspect_ratio"],
+                    enable_pro=job_options.get("enable_pro", False),
+                    nsfw_checker=job_options.get("nsfw_checker", False),
                     callback_url=callback_url,
                 )
-            elif img_service == "grok_i2i":
+            elif job_model == "grok_i2i":
                 if reference_images:
                     result = await grok_service.generate_image_to_image(
                         image_url=reference_images[0],
                         prompt=prompt,
-                        nsfw_checker=img_options.get("nsfw_checker", False),
+                        nsfw_checker=job_options.get("nsfw_checker", False),
                         callback_url=callback_url,
                     )
                 else:
                     result = await grok_service.generate_text_to_image(
                         prompt=prompt,
-                        aspect_ratio=img_options["aspect_ratio"],
-                        nsfw_checker=img_options.get("nsfw_checker", False),
+                        aspect_ratio=job_options["aspect_ratio"],
+                        nsfw_checker=job_options.get("nsfw_checker", False),
+                        callback_url=callback_url,
+                    )
+            elif job_model == "ideogram_character":
+                if not reference_images:
+                    result = None
+                else:
+                    result = await ideogram_service.generate_character(
+                        prompt=prompt,
+                        reference_image_urls=reference_images,
+                        aspect_ratio=job_options["aspect_ratio"],
+                        rendering_speed=job_options.get(
+                            "rendering_speed", "BALANCED"
+                        ),
+                        style=job_options.get("style", "AUTO"),
+                        expand_prompt=job_options.get("expand_prompt", True),
+                        num_images=job_options.get("num_images", "1"),
+                        nsfw_checker=job_options.get("nsfw_checker", False),
                         callback_url=callback_url,
                     )
             else:
                 result = await nano_banana_pro_service.generate_image(
                     prompt=prompt,
-                    aspect_ratio=img_options["aspect_ratio"],
+                    aspect_ratio=job_options["aspect_ratio"],
                     image_input=reference_images,
                     callback_url=callback_url,
                 )
 
+            model_label = get_image_model_config(job_model)["label"]
             prefix = f"[{idx}/{img_count}] " if img_count > 1 else ""
 
             if isinstance(result, dict) and "task_id" in result:
@@ -2861,16 +3397,37 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                         (api_task_id, local_tid, user.id),
                     )
                     await db.commit()
-                await message.answer(
-                    f"🚀 {prefix}Генерация запущена!\n🆔 <code>{api_task_id}</code>\nОжидайте результат (1-3 мин).",
+                progress_msg = await message.answer(
+                    _build_progress_text(
+                        title=f"🚀 <b>{html.escape(prefix + model_label)}</b>",
+                        percent=20,
+                        status="Модель приняла задачу. Работа идёт.",
+                        task_id=api_task_id,
+                        eta="Результат придёт сюда автоматически.",
+                    ),
                     parse_mode="HTML",
+                )
+                asyncio.create_task(
+                    _simulate_generation_progress(
+                        progress_msg,
+                        api_task_id,
+                        title=f"🚀 <b>{html.escape(prefix + model_label)}</b>",
+                        eta="Результат придёт сюда автоматически.",
+                        steps=(
+                            (35, "Модель разбирает промпт и референсы."),
+                            (55, "Собирает композицию и детали."),
+                            (75, "Доводит изображение до финального вида."),
+                            (90, "Почти готово, ждём файл от сервиса."),
+                        ),
+                        interval=12,
+                    )
                 )
             elif result:
                 saved_url = save_uploaded_file(result, "png")
                 retry_kb = get_image_result_keyboard(local_tid, saved_url)
                 await message.answer_photo(
                     photo=types.BufferedInputFile(result, filename="generated.png"),
-                    caption=f"✅ {prefix}Готово!\n💰 <code>{cost}</code>🍌",
+                    caption=f"✅ {prefix}{model_label}: готово!\n💰 <code>{job_cost}</code>🍌",
                     parse_mode="HTML",
                     reply_markup=retry_kb,
                 )
@@ -2880,19 +3437,21 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 await complete_video_task(local_tid, saved_url)
             else:
                 if not config.is_admin(message.from_user.id):
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=local_tid)
+                    await add_credits_once(message.from_user.id, job_cost, reason="generation_refund", external_id=local_tid)
                 await complete_video_task(local_tid, None)
-                await message.answer(f"❌ {prefix}Ошибка генерации. Бананы возвращены.")
+                await message.answer(f"❌ {prefix}{model_label}: ошибка генерации. Бананы возвращены.")
 
         except Exception as e:
             logger.exception(f"Image generation error (idx={idx}): {e}")
             if not config.is_admin(message.from_user.id):
-                await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=local_tid)
+                await add_credits_once(message.from_user.id, job_cost, reason="generation_refund", external_id=local_tid)
             await complete_video_task(local_tid, None)
             await message.answer(f"❌ Ошибка генерации #{idx}.")
 
     try:
-        await asyncio.gather(*[_run_single(i + 1) for i in range(img_count)])
+        await asyncio.gather(
+            *[_run_single(i + 1, job) for i, job in enumerate(generation_jobs)]
+        )
     finally:
         try:
             await processing_msg.delete()
@@ -3178,9 +3737,12 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
 
 
 async def run_no_preset_video_from_message(
-    message: types.Message, state: FSMContext, prompt: str
+    message: types.Message | types.CallbackQuery, state: FSMContext, prompt: str
 ):
     """Запускает видео генерацию без пресета (новый UX с v_type, v_model и т.д.)"""
+    target_message = message.message if isinstance(message, types.CallbackQuery) else message
+    telegram_id = message.from_user.id
+    submit_message_id = getattr(target_message, "message_id", 0)
     data = await state.get_data()
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
@@ -3208,6 +3770,8 @@ async def run_no_preset_video_from_message(
         "happyhorse_i2v",
         "happyhorse_ref2v",
         "happyhorse_edit",
+        "wan_27_t2v",
+        "wan_27_i2v",
     )
     if v_type == "imgtxt" and v_model not in _no_cap_models:
         v_duration = min(v_duration, 10)
@@ -3232,62 +3796,67 @@ async def run_no_preset_video_from_message(
 
     cost = preset_manager.get_video_cost(v_model, v_duration)
 
-    user = await get_or_create_user(message.from_user.id)
-    is_admin = config.is_admin(message.from_user.id)
+    user = await get_or_create_user(telegram_id)
+    is_admin = config.is_admin(telegram_id)
 
     generation_lock = None
 
     # Admin free access
     if is_admin:
         logger.info(
-            f"Admin {message.from_user.id} - free access (skipped {cost} credits)"
+            f"Admin {telegram_id} - free access (skipped {cost} credits)"
         )
     else:
-        if not await check_can_afford(message.from_user.id, cost):
-            await message.answer(
+        if not await check_can_afford(telegram_id, cost):
+            await target_message.answer(
                 f"❌ Недостаточно бананов!\nНужно: <code>{cost}</code>🍌\nПополните баланс.",
                 reply_markup=get_main_menu_keyboard(
-                    await get_user_credits(message.from_user.id)
+                    await get_user_credits(telegram_id)
                 ),
                 parse_mode="HTML",
             )
             await state.clear()
             return
-        generation_lock = await generation_lock_guard.acquire(message.from_user.id)
+        generation_lock = await generation_lock_guard.acquire(telegram_id)
         if not generation_lock:
-            await message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
+            await target_message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
             await state.clear()
             return
         charged = await deduct_credits(
-            message.from_user.id,
+            telegram_id,
             cost,
             reason="video_generation_charge",
-            external_id=f"video_submit:{message.from_user.id}:{message.message_id}",
+            external_id=f"video_submit:{telegram_id}:{submit_message_id}",
             metadata={"model": v_model, "duration": v_duration, "ratio": v_ratio},
         )
         if not charged:
             await generation_lock_guard.release(generation_lock)
             await state.clear()
-            await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+            await target_message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
             return
 
-    refund_external_id = f"video:{message.from_user.id}:{message.message_id}"
+    refund_external_id = f"video:{telegram_id}:{submit_message_id}"
     processing_msg = None
     try:
-        processing_msg = await message.answer(
-            f"🎬 <b>Видео генерируется...</b>"
-            f"🤖 Модель: <code>{v_model}</code>\n"
-            f"⏱ Длительность: <code>{v_duration}s</code>\n"
-            f"📐 Формат: <code>{v_ratio}</code>\n"
-            f"💰 Стоимость: <code>{cost}</code>🍌"
-            f"<i>Ожидайте 1-5 минут</i>",
+        processing_msg = await target_message.answer(
+            _build_progress_text(
+                title="🎬 <b>Видео запускается</b>",
+                percent=10,
+                status=(
+                    f"Передаю задачу модели {v_model}: "
+                    f"{v_duration}s, "
+                    f"{'формат по фото' if v_model == 'wan_27_i2v' else v_ratio}, "
+                    f"{cost}🍌."
+                ),
+                eta="Обычно видео занимает 1-5 минут.",
+            ),
             parse_mode="HTML",
         )
     except Exception:
         logger.exception("Video generation setup failed")
         if not is_admin:
             await add_credits_once(
-                message.from_user.id,
+                telegram_id,
                 cost,
                 reason="generation_refund",
                 external_id=refund_external_id,
@@ -3295,7 +3864,7 @@ async def run_no_preset_video_from_message(
             )
         await generation_lock_guard.release(generation_lock)
         await state.clear()
-        await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
+        await target_message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
         return
 
     try:
@@ -3303,11 +3872,11 @@ async def run_no_preset_video_from_message(
 
         if v_model == "grok_imagine":
             if not image_url:
-                await message.answer(
+                await target_message.answer(
                     "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -3331,11 +3900,11 @@ async def run_no_preset_video_from_message(
             )
         elif v_model == "aleph":
             if not video_urls:
-                await message.answer(
+                await target_message.answer(
                     "❌ Aleph Video требует референсное видео (видео+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -3353,11 +3922,11 @@ async def run_no_preset_video_from_message(
             from bot.services.runway_service import runway_service
 
             if v_type == "video":
-                await message.answer(
+                await target_message.answer(
                     "❌ Runway не поддерживает видео референсы. Используйте текст или фото+текст."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -3399,11 +3968,11 @@ async def run_no_preset_video_from_message(
             from bot.services.hailuo_service import HAILUO_IMAGE_REQUIRED
 
             if v_model in HAILUO_IMAGE_REQUIRED and not image_url:
-                await message.answer(
+                await target_message.answer(
                     f"❌ {v_model} требует стартовое изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -3439,21 +4008,21 @@ async def run_no_preset_video_from_message(
             happyhorse_images.extend(image_refs)
 
             if v_model in HAPPYHORSE_IMAGE_REQUIRED and not happyhorse_images:
-                await message.answer(
+                await target_message.answer(
                     f"❌ {v_model} требует минимум одно изображение (фото+текст режим)."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
             if v_model in HAPPYHORSE_VIDEO_REQUIRED and not video_urls:
-                await message.answer(
+                await target_message.answer(
                     "❌ HappyHorse Edit требует видео-референс (режим видео+текст)."
                 )
                 if not is_admin:
-                    await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -3470,6 +4039,31 @@ async def run_no_preset_video_from_message(
                 audio_setting=video_options.get("audio_setting", "auto"),
                 seed=video_options.get("seed"),
                 callback_url=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+        elif v_model in {"wan_27_t2v", "wan_27_i2v"}:
+            if v_model == "wan_27_i2v" and not image_url:
+                await target_message.answer(
+                    "❌ Wan 2.7 I2V требует стартовое изображение (фото+текст режим)."
+                )
+                if not is_admin:
+                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                image_url=image_url,
+                seedance_resolution=video_options.get("resolution", "1080p"),
+                wan_resolution=video_options.get("resolution", "1080p"),
+                wan_prompt_extend=video_options.get("prompt_extend", True),
+                wan_watermark=video_options.get("watermark", False),
+                webhook_url=(
                     config.kie_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
@@ -3504,7 +4098,7 @@ async def run_no_preset_video_from_message(
         if result and "task_id" in result:
             await add_generation_task(
                 user.id,
-                message.from_user.id,
+                telegram_id,
                 result["task_id"],
                 "video",
                 "no_preset_video",
@@ -3514,23 +4108,52 @@ async def run_no_preset_video_from_message(
                 prompt=prompt,
                 cost=cost,
             )
-            await message.answer(
-                f"✅ <b>Видео задача запущена!</b>"
-                f"🆔 <code>{result['task_id']}</code>\n"
-                f"🎯 <code>{v_model}</code> | {v_duration}s | {v_ratio}\n"
-                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}"
-                f"⏳ Результат через 1-5 мин в этом чате.",
+            await target_message.answer(
+                _build_video_task_started_text(
+                    task_id=result["task_id"],
+                    model=v_model,
+                    duration=v_duration,
+                    ratio=v_ratio,
+                    cost=cost,
+                    is_admin=is_admin,
+                ),
                 parse_mode="HTML",
+            )
+            progress_msg = await target_message.answer(
+                _build_progress_text(
+                    title="🎬 <b>Прогресс видео</b>",
+                    percent=20,
+                    status="Модель приняла задачу. Работа идёт.",
+                    task_id=result["task_id"],
+                    eta="Результат придёт сюда автоматически.",
+                ),
+                parse_mode="HTML",
+            )
+            asyncio.create_task(
+                _simulate_generation_progress(
+                    progress_msg,
+                    result["task_id"],
+                    title="🎬 <b>Прогресс видео</b>",
+                    eta="Результат придёт сюда автоматически.",
+                    steps=(
+                        (30, "Модель строит сцену и движение."),
+                        (45, "Генерируются ключевые кадры."),
+                        (65, "Склеивается плавное видео."),
+                        (82, "Финальная обработка и качество."),
+                        (94, "Почти готово, ждём файл от сервиса."),
+                    ),
+                    interval=18,
+                )
             )
         else:
             if not is_admin:
-                await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
-            await message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
+                await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+            await target_message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
         if not is_admin:
-            await add_credits_once(message.from_user.id, cost, reason="generation_refund", external_id=refund_external_id)
-        await message.answer("❌ Ошибка генерации. Бананы возвращены.")
+            await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+        await target_message.answer("❌ Ошибка генерации. Бананы возвращены.")
 
     await generation_lock_guard.release(generation_lock)
     await state.clear()

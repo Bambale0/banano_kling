@@ -3,6 +3,7 @@ import time
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
 from aiohttp import web
 
 from bot.config import config
@@ -14,6 +15,8 @@ from bot.database import (
     get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
+    mark_promo_code_used,
+    validate_promo_code,
     update_transaction_status,
 )
 from bot.keyboards import (
@@ -25,6 +28,7 @@ from bot.keyboards import (
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.preset_manager import preset_manager
 from bot.services.tbank_service import tbank_service
+from bot.states import PaymentStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -75,15 +79,30 @@ def _topup_menu_text() -> str:
     )
 
 
-def _payment_created_text(package: dict, total_credits: int) -> str:
+def _payment_created_text(
+    package: dict,
+    total_credits: int,
+    *,
+    amount_rub: int | float,
+    original_amount_rub: int | float | None = None,
+    promo_code: str | None = None,
+    promo_discount_percent: int = 0,
+) -> str:
     bonus_text = ""
     if package.get("bonus_credits", 0) > 0:
         bonus_text = f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> бананов"
+    if promo_code and promo_discount_percent and original_amount_rub:
+        price_text = (
+            f"💰 Сумма: <s>{original_amount_rub}</s> ₽ → <code>{amount_rub}</code> ₽\n"
+            f"🎟 Промокод: <code>{promo_code}</code> −{promo_discount_percent}%"
+        )
+    else:
+        price_text = f"💰 Сумма: <code>{amount_rub}</code> ₽"
 
     return (
         f"💳 <b>Оплата пакета «{package['name']}»</b>\n\n"
         f"🍌 Бананов: <code>{total_credits}</code>{bonus_text}\n"
-        f"💰 Сумма: <code>{package['price_rub']}</code> ₽\n\n"
+        f"{price_text}\n\n"
         "Нажмите кнопку ниже, чтобы перейти к оплате.\n"
         "После успешной оплаты бананы начислятся автоматически."
     )
@@ -91,10 +110,17 @@ def _payment_created_text(package: dict, total_credits: int) -> str:
 
 def _payment_success_text(transaction, referral_bonus: dict | None = None) -> str:
     bonus_text = _format_bonus_text(referral_bonus or {})
+    promo_text = ""
+    if transaction.promo_code and transaction.promo_discount_percent:
+        promo_text = (
+            f"🎟 Скидка: <code>{transaction.promo_code}</code> "
+            f"−{transaction.promo_discount_percent}%\n"
+        )
     return (
         "🎉 <b>Оплата успешна!</b>\n\n"
         f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
+        f"{promo_text}"
         f"{bonus_text}\n"
         "Теперь можно продолжать генерацию."
     )
@@ -129,11 +155,24 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
     await update_transaction_status(order_id, "completed")
     if not credited:
         logger.info("Payment credits already applied for order_id=%s", order_id)
-    referral_bonus = await credit_first_payment_referral_bonus(
-        telegram_id,
-        transaction.credits,
-        transaction.amount_rub,
-    )
+        referral_bonus = {"mode": "none", "value": 0, "percent": 0}
+    else:
+        referral_bonus = await credit_first_payment_referral_bonus(
+            telegram_id,
+            transaction.credits,
+            transaction.amount_rub,
+        )
+    if transaction.promo_code:
+        promo_marked, promo_reason = await mark_promo_code_used(
+            telegram_id, transaction.promo_code
+        )
+        if not promo_marked:
+            logger.warning(
+                "Promo %s was not marked as used for order %s: %s",
+                transaction.promo_code,
+                order_id,
+                promo_reason,
+            )
 
     if bot:
         try:
@@ -159,6 +198,55 @@ async def show_packages(callback: types.CallbackQuery):
     await _render_topup_menu(callback.message, config.payment_provider)
 
 
+@router.callback_query(F.data == "promo_enter")
+async def promo_enter(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🎟 <b>Промокод</b>\n\n"
+        "Введите код одним сообщением.\n"
+        "Он применит скидку к следующей покупке пакета.\n\n"
+        "Например: <code>START20</code>",
+        reply_markup=get_back_keyboard("menu_topup"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(PaymentStates.waiting_promo_code)
+
+
+@router.message(PaymentStates.waiting_promo_code, F.text)
+async def process_promo_code(message: types.Message, state: FSMContext):
+    code = message.text.strip()
+    success, reason, promo = await validate_promo_code(message.from_user.id, code)
+
+    if success:
+        await state.update_data(active_promo=promo)
+        await state.set_state(None)
+        await message.answer(
+            "✅ <b>Промокод применён</b>\n\n"
+            f"Код: <code>{promo['code']}</code>\n"
+            f"Скидка: <code>{promo['discount_percent']}%</code>\n\n"
+            "Теперь выберите пакет для оплаты.",
+            reply_markup=get_payment_packages_keyboard(
+                preset_manager.get_packages(),
+                provider=config.payment_provider,
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    reason_text = {
+        "not_found": "Такой промокод не найден или уже отключён.",
+        "expired": "Срок действия промокода истёк.",
+        "used_up": "Лимит активаций промокода уже закончился.",
+        "already_used": "Вы уже активировали этот промокод.",
+        "empty": "Введите код текстом.",
+    }.get(reason, "Не удалось активировать промокод.")
+    await message.answer(
+        f"❌ <b>Промокод не сработал</b>\n\n{reason_text}",
+        reply_markup=get_back_keyboard("menu_topup"),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data.startswith("topup_provider_"))
 async def select_topup_provider(callback: types.CallbackQuery):
     provider = callback.data.replace("topup_provider_", "")
@@ -171,7 +259,7 @@ async def select_topup_provider(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("buy_"))
-async def initiate_payment(callback: types.CallbackQuery):
+async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
     payload = callback.data.replace("buy_", "")
     provider = config.payment_provider
 
@@ -189,8 +277,38 @@ async def initiate_payment(callback: types.CallbackQuery):
         await callback.answer("Пакет не найден", show_alert=True)
         return
 
+    data = await state.get_data()
+    active_promo = data.get("active_promo") or {}
+    promo_code = active_promo.get("code")
+    promo_discount_percent = int(active_promo.get("discount_percent") or 0)
+    original_price_rub = package["price_rub"]
+    amount_rub = original_price_rub
+
+    if promo_code and promo_discount_percent:
+        is_valid, reason, promo = await validate_promo_code(
+            callback.from_user.id, promo_code
+        )
+        if not is_valid:
+            await state.update_data(active_promo=None)
+            await callback.answer(
+                {
+                    "expired": "Промокод истёк",
+                    "used_up": "Лимит промокода закончился",
+                    "already_used": "Вы уже использовали этот промокод",
+                }.get(reason, "Промокод больше недоступен"),
+                show_alert=True,
+            )
+            promo_code = None
+            promo_discount_percent = 0
+        else:
+            promo_discount_percent = int(promo["discount_percent"])
+            amount_rub = max(
+                1,
+                original_price_rub * (100 - promo_discount_percent) // 100,
+            )
+
     order_id = f"{callback.from_user.id}_{int(time.time())}_{package_id}"
-    amount_kop = package["price_rub"] * 100
+    amount_kop = int(amount_rub * 100)
 
     bot_info = await callback.bot.get_me()
     success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
@@ -207,7 +325,7 @@ async def initiate_payment(callback: types.CallbackQuery):
             return
 
         result = await cryptobot_service.create_invoice(
-            amount_rub=package["price_rub"],
+            amount_rub=amount_rub,
             order_id=order_id,
             description=f"Покупка {package['credits']} бананов ({package['name']})",
             paid_btn_url=success_url,
@@ -283,15 +401,26 @@ async def initiate_payment(callback: types.CallbackQuery):
         payment_id=str(payment_id),
         provider=provider,
         credits=total_credits,
-        amount_rub=package["price_rub"],
+        amount_rub=amount_rub,
+        original_amount_rub=original_price_rub,
+        promo_code=promo_code,
+        promo_discount_percent=promo_discount_percent,
         status="pending",
     )
 
     await callback.message.edit_text(
-        _payment_created_text(package, total_credits),
+        _payment_created_text(
+            package,
+            total_credits,
+            amount_rub=amount_rub,
+            original_amount_rub=original_price_rub,
+            promo_code=promo_code,
+            promo_discount_percent=promo_discount_percent,
+        ),
         reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
         parse_mode="HTML",
     )
+    await state.clear()
 
 
 @router.message(F.text.startswith("/cryptobot"))

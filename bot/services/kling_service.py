@@ -18,14 +18,6 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-# Optional Replicate SDK. We import lazily and tolerate its absence so the
-# service can continue using the legacy PiAPI flow when REPLICATE_API_TOKEN is
-# not provided or the package isn't installed in the environment.
-try:
-    import replicate
-except Exception:  # pragma: no cover - optional dependency
-    replicate = None
-
 logger = logging.getLogger(__name__)
 
 
@@ -190,102 +182,6 @@ class KlingService:
                 "raw": data,
             }
         return None
-
-    # ----------------------------- Replicate helpers -----------------------------
-    async def _replicate_create_prediction(
-        self, model: str, input_data: Dict, webhook: Optional[str] = None
-    ) -> Optional[Dict]:
-        """Create a Replicate prediction in a thread-safe manner.
-
-        Returns a dict with at least 'task_id' and 'status'.
-        """
-        if not self.replicate_enabled:
-            logger.error("Replicate not configured")
-            return None
-
-        def _create():
-            client = self.replicate_client or replicate
-            kwargs = {"model": model, "input": input_data}
-            if webhook:
-                kwargs.update(
-                    {"webhook": webhook, "webhook_events_filter": ["completed"]}
-                )
-            pred = client.predictions.create(**kwargs)
-            return pred
-
-        try:
-            pred = await asyncio.to_thread(_create)
-        except Exception:
-            logger.exception("Replicate prediction creation failed")
-            return None
-
-        # prediction object can be dict-like or custom object; normalize
-        pred_id = getattr(pred, "id", None) or (
-            pred.get("id") if isinstance(pred, dict) else None
-        )
-        status = getattr(pred, "status", None) or (
-            pred.get("status") if isinstance(pred, dict) else None
-        )
-        return {"task_id": pred_id, "status": status, "raw": pred}
-
-    async def _replicate_get_prediction(self, prediction_id: str) -> Optional[Dict]:
-        if not self.replicate_enabled:
-            logger.error("Replicate not configured")
-            return None
-
-        def _get():
-            client = self.replicate_client or replicate
-            return client.predictions.get(prediction_id)
-
-        try:
-            pred = await asyncio.to_thread(_get)
-        except Exception:
-            logger.exception("Failed to fetch replicate prediction")
-            return None
-
-        # Normalize to structure similar to PiAPI get_task_status
-        pred_id = getattr(pred, "id", None) or (
-            pred.get("id") if isinstance(pred, dict) else None
-        )
-        status = getattr(pred, "status", None) or (
-            pred.get("status") if isinstance(pred, dict) else None
-        )
-        output = getattr(pred, "output", None) or (
-            pred.get("output") if isinstance(pred, dict) else None
-        )
-        return {
-            "data": {"task_id": pred_id, "status": status, "output": output},
-            "raw": pred,
-        }
-
-    async def _replicate_cancel(self, prediction_id: str) -> Optional[Dict]:
-        if not self.replicate_enabled:
-            logger.error("Replicate not configured")
-            return None
-
-        def _cancel():
-            client = self.replicate_client or replicate
-            # Try nice API first
-            try:
-                if hasattr(client.predictions, "cancel"):
-                    return client.predictions.cancel(prediction_id)
-            except Exception:
-                pass
-            # Fallback: fetch object and call cancel() if available
-            try:
-                pred = client.predictions.get(prediction_id)
-                if hasattr(pred, "cancel"):
-                    return pred.cancel()
-            except Exception:
-                pass
-            raise RuntimeError("Cancel not supported by replicate client")
-
-        try:
-            res = await asyncio.to_thread(_cancel)
-            return {"ok": True, "raw": res}
-        except Exception:
-            logger.exception("Failed to cancel replicate prediction")
-            return None
 
     async def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
         if not self.headers:
@@ -458,39 +354,6 @@ class KlingService:
             if pred:
                 return pred
 
-        # Fallback: Replicate (existing)
-        input_data = {
-            # Replicate accepts 'image' and 'video' keys
-            "image": _maybe_data_uri(image_url) if image_url else None,
-            "video": _maybe_data_uri(video_urls[0]) if video_urls else None,
-            "mode": mode,
-            "prompt": prompt,
-            "keep_original_sound": keep_original_sound,
-            # character_orientation / motion_direction mapping
-            "character_orientation": motion_direction,
-        }
-
-        # Remove None entries
-        input_data = {k: v for k, v in input_data.items() if v is not None}
-
-        if self.replicate_enabled:
-            webhook = webhook_url or os.environ.get("REPLICATE_WEBHOOK_URL")
-            # Prefer service's configured webhook if none provided
-            if not webhook and hasattr(__import__("bot.config"), "config"):
-                try:
-                    from bot.config import config as _config
-
-                    webhook = webhook_url or _config.replicate_notification_url
-                except Exception:
-                    webhook = webhook_url
-
-            pred = await self._replicate_create_prediction(
-                model="kwaivgi/kling-v2.6-motion-control",
-                input_data=input_data,
-                webhook=webhook,
-            )
-            return pred
-
         # Legacy PiAPI fallback (deprecated)
         logger.warning("Using legacy PiAPI motion control - migrate to Kie.ai")
         input_piapi = {
@@ -614,7 +477,43 @@ class KlingService:
         motion_mode: Optional[str] = None,
         motion_orientation: Optional[str] = None,
         keep_original_sound: bool = True,
+        wan_resolution: Optional[str] = None,
+        wan_prompt_extend: bool = True,
+        wan_watermark: bool = False,
+        wan_nsfw_checker: bool = False,
     ) -> Optional[Dict]:
+        if model in {"wan_27_t2v", "wan_27_i2v"}:
+            input_data = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt
+                or "blurry, flicker, low quality, distorted, malformed",
+                "resolution": wan_resolution or seedance_resolution or "1080p",
+                "duration": duration,
+                "prompt_extend": wan_prompt_extend,
+                "watermark": wan_watermark,
+            }
+            if model == "wan_27_i2v":
+                if not image_url:
+                    return {
+                        "error": "image_url_required",
+                        "message": "first_frame_url is required for Wan 2.7 image-to-video",
+                    }
+                if image_url:
+                    input_data["first_frame_url"] = image_url
+                if end_image_url:
+                    input_data["last_frame_url"] = end_image_url
+            else:
+                input_data["ratio"] = aspect_ratio
+            payload = {
+                "model": "wan/2-7-image-to-video"
+                if model == "wan_27_i2v"
+                else "wan/2-7-text-to-video",
+                "input": input_data,
+            }
+            if webhook_url:
+                payload["callBackUrl"] = webhook_url
+            return await self._kie_post("/api/v1/jobs/createTask", payload)
+
         if model == "seedance2":
             input_data = {
                 "prompt": prompt,

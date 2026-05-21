@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
@@ -48,6 +49,7 @@ class User:
     partner_balance_rub: float = 0.0
     partner_withdrawn_rub: float = 0.0
     partner_tier: str = "basic"
+    is_banned: bool = False
 
 
 @dataclass
@@ -61,6 +63,9 @@ class Transaction:
     amount_rub: float
     status: str
     created_at: datetime
+    promo_code: Optional[str] = None
+    promo_discount_percent: int = 0
+    original_amount_rub: Optional[float] = None
 
 
 @dataclass
@@ -145,6 +150,10 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
 
         # Таблица транзакций (платежи)
         await db.execute(
@@ -157,6 +166,9 @@ async def init_db():
                 provider TEXT DEFAULT 'tbank',
                 credits INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
+                original_amount_rub REAL,
+                promo_code TEXT,
+                promo_discount_percent INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
@@ -232,6 +244,20 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN original_amount_rub REAL")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE transactions ADD COLUMN promo_code TEXT")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE transactions ADD COLUMN promo_discount_percent INTEGER DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
 
         # Таблица истории генераций
         await db.execute(
@@ -272,6 +298,53 @@ async def init_db():
                 messages_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS promo_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                credits INTEGER NOT NULL,
+                discount_percent INTEGER NOT NULL DEFAULT 0,
+                max_uses INTEGER NOT NULL DEFAULT 1,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                expires_at TIMESTAMP,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        try:
+            await db.execute(
+                "ALTER TABLE promo_codes ADD COLUMN discount_percent INTEGER DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS promo_redemptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                promo_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                telegram_id INTEGER NOT NULL,
+                redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (promo_id) REFERENCES promo_codes(id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(promo_id, user_id)
+            )
+        """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """
         )
@@ -473,6 +546,9 @@ async def get_or_create_user(telegram_id: int) -> User:
                     if "partner_tier" in row.keys() and row["partner_tier"]
                     else "basic"
                 ),
+                is_banned=(
+                    bool(row["is_banned"]) if "is_banned" in row.keys() else False
+                ),
             )
 
         # Создаём нового пользователя с бонусными кредитами
@@ -539,6 +615,9 @@ async def get_or_create_user(telegram_id: int) -> User:
                 row["partner_tier"]
                 if "partner_tier" in row.keys() and row["partner_tier"]
                 else "basic"
+            ),
+            is_banned=(
+                bool(row["is_banned"]) if "is_banned" in row.keys() else False
             ),
         )
 
@@ -773,8 +852,7 @@ async def credit_first_payment_referral_bonus(
         result = {"mode": "none", "value": 0, "percent": 0}
         if referrer["partner_agreed_at"]:
             current_total = float(referrer["partner_total_revenue_rub"] or 0)
-            current_tier = referrer["partner_tier"] or "basic"
-            percent = get_partner_percent_by_tier(current_tier)
+            percent = get_partner_percent_by_total(current_total)
             base_value = (
                 float(transaction_amount_rub)
                 if transaction_amount_rub is not None
@@ -786,16 +864,30 @@ async def credit_first_payment_referral_bonus(
                 if transaction_amount_rub is not None
                 else 0.0
             )
-            await db.execute(
-                "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (
-                    float(transaction_amount_rub or 0),
-                    bonus_rub,
-                    get_partner_tier_by_total(next_total),
-                    referrer["id"],
-                ),
+            inserted_bonus = await _record_credit_transaction(
+                db,
+                referrer["id"],
+                int(round(bonus_rub * 100)),
+                "referral_first_payment_partner_bonus",
+                f"first_payment_partner:{telegram_id}",
+                {
+                    "referred_user_id": user["id"],
+                    "transaction_amount_rub": transaction_amount_rub,
+                    "bonus_rub": bonus_rub,
+                    "percent": percent,
+                },
             )
-            result = {"mode": "partner", "value": bonus_rub, "percent": percent}
+            if inserted_bonus:
+                await db.execute(
+                    "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (
+                        float(transaction_amount_rub or 0),
+                        bonus_rub,
+                        get_partner_tier_by_total(next_total),
+                        referrer["id"],
+                    ),
+                )
+                result = {"mode": "partner", "value": bonus_rub, "percent": percent}
         else:
             banana_bonus = max(
                 1, round(float(transaction_credits) * bonus_percent / 100)
@@ -830,18 +922,19 @@ async def credit_first_payment_referral_bonus(
 def get_partner_percent_by_tier(tier: str) -> int:
     """Процент партнёрского вознаграждения по текущему уровню."""
     tier = (tier or "basic").lower()
-    if tier == "pro":
-        return 50
     if tier == "gold":
-        return 35
-    return 30
+        return 50
+    return 45
+
+
+def get_partner_percent_by_total(total_revenue_rub: float) -> int:
+    """Процент партнёрского вознаграждения по обороту рефералов."""
+    return 50 if float(total_revenue_rub or 0) >= 300_000 else 45
 
 
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
     """Возвращает уровень партнёра по обороту рефералов."""
-    if total_revenue_rub >= 1_000_000:
-        return "pro"
-    if total_revenue_rub >= 100_000:
+    if total_revenue_rub >= 300_000:
         return "gold"
     return "basic"
 
@@ -927,7 +1020,7 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
         # Используем значения целевого пользователя для вычисления уровня/процента
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
-        percent = get_partner_percent_by_tier(tier)
+        percent = get_partner_percent_by_total(target_user.partner_total_revenue_rub or 0)
 
         return {
             "is_partner": bool(target_user.partner_agreed_at),
@@ -972,41 +1065,54 @@ async def create_partner_withdrawal(
         user = await get_or_create_user(telegram_id)
         if not user.partner_agreed_at:
             return None
-        if amount_rub > (user.partner_balance_rub or 0):
+        if amount_rub <= 0:
             return None
 
-        cursor = await db.execute(
-            """
-            INSERT INTO partner_withdrawals (
-                user_id, amount_rub, method, requisites, recipient_name, phone,
-                card_mask, external_payment_id, external_contractor_id,
-                external_requisite_id, external_status_id, status_title,
-                error_message, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user.id,
-                amount_rub,
-                method,
-                requisites,
-                recipient_name,
-                phone,
-                card_mask,
-                external_payment_id,
-                external_contractor_id,
-                external_requisite_id,
-                external_status_id,
-                status_title,
-                error_message,
-                status,
-            ),
-        )
-        await db.execute(
-            "UPDATE users SET partner_balance_rub = partner_balance_rub - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (amount_rub, user.id),
-        )
-        await db.commit()
-        return cursor.lastrowid
+        try:
+            balance_update = await db.execute(
+                """
+                UPDATE users
+                SET partner_balance_rub = partner_balance_rub - ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND partner_balance_rub >= ?
+                """,
+                (amount_rub, user.id, amount_rub),
+            )
+            if balance_update.rowcount != 1:
+                await db.rollback()
+                return None
+
+            cursor = await db.execute(
+                """
+                INSERT INTO partner_withdrawals (
+                    user_id, amount_rub, method, requisites, recipient_name, phone,
+                    card_mask, external_payment_id, external_contractor_id,
+                    external_requisite_id, external_status_id, status_title,
+                    error_message, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.id,
+                    amount_rub,
+                    method,
+                    requisites,
+                    recipient_name,
+                    phone,
+                    card_mask,
+                    external_payment_id,
+                    external_contractor_id,
+                    external_requisite_id,
+                    external_status_id,
+                    status_title,
+                    error_message,
+                    status,
+                ),
+            )
+            await db.commit()
+            return cursor.lastrowid
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def update_partner_withdrawal_status(
@@ -1195,6 +1301,277 @@ async def add_credits_once(
         return True
 
 
+def normalize_promo_code(code: str) -> str:
+    return re.sub(r"[^A-Z0-9_-]", "", (code or "").upper())
+
+
+async def create_promo_code(
+    code: str,
+    discount_percent: int,
+    max_uses: int,
+    expires_at: str | None,
+    created_by: int,
+) -> tuple[bool, str]:
+    normalized = normalize_promo_code(code)
+    if not normalized:
+        return False, "empty_code"
+    if discount_percent <= 0 or discount_percent >= 100:
+        return False, "bad_discount"
+    if max_uses <= 0:
+        return False, "bad_max_uses"
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        try:
+            await db.execute(
+                """
+                INSERT INTO promo_codes (
+                    code, credits, discount_percent, max_uses, expires_at, created_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized,
+                    discount_percent,
+                    discount_percent,
+                    max_uses,
+                    expires_at,
+                    created_by,
+                ),
+            )
+            await db.commit()
+            return True, normalized
+        except aiosqlite.IntegrityError:
+            return False, "exists"
+
+
+async def get_promo_codes(limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                code,
+                COALESCE(NULLIF(discount_percent, 0), credits) AS discount_percent,
+                max_uses,
+                used_count,
+                expires_at,
+                is_active,
+                created_at
+            FROM promo_codes
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def validate_promo_code(telegram_id: int, code: str) -> tuple[bool, str, dict]:
+    normalized = normalize_promo_code(code)
+    if not normalized:
+        return False, "empty", {}
+
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                *,
+                COALESCE(NULLIF(discount_percent, 0), credits) AS effective_discount
+            FROM promo_codes
+            WHERE code = ? AND is_active = 1
+            """,
+            (normalized,),
+        )
+        promo = await cursor.fetchone()
+        if not promo:
+            return False, "not_found", {}
+
+        if promo["expires_at"]:
+            cursor = await db.execute(
+                "SELECT CURRENT_TIMESTAMP > ? AS expired", (promo["expires_at"],)
+            )
+            expired = await cursor.fetchone()
+            if expired and expired["expired"]:
+                return False, "expired", {}
+
+        if int(promo["used_count"]) >= int(promo["max_uses"]):
+            return False, "used_up", {}
+
+        cursor = await db.execute(
+            """
+            SELECT 1
+            FROM promo_redemptions
+            WHERE promo_id = ? AND user_id = ?
+            """,
+            (promo["id"], user.id),
+        )
+        if await cursor.fetchone():
+            return False, "already_used", {}
+
+        discount = int(promo["effective_discount"])
+        if discount <= 0 or discount >= 100:
+            return False, "bad_discount", {}
+        return (
+            True,
+            "ok",
+            {
+                "code": normalized,
+                "discount_percent": discount,
+                "max_uses": int(promo["max_uses"]),
+                "used_count": int(promo["used_count"]),
+                "expires_at": promo["expires_at"],
+            },
+        )
+
+
+async def mark_promo_code_used(telegram_id: int, code: str) -> tuple[bool, str]:
+    normalized = normalize_promo_code(code)
+    if not normalized:
+        return False, "empty"
+
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM promo_codes
+            WHERE code = ? AND is_active = 1
+            """,
+            (normalized,),
+        )
+        promo = await cursor.fetchone()
+        if not promo:
+            await db.rollback()
+            return False, "not_found"
+        if promo["expires_at"]:
+            cursor = await db.execute(
+                "SELECT CURRENT_TIMESTAMP > ? AS expired", (promo["expires_at"],)
+            )
+            expired = await cursor.fetchone()
+            if expired and expired["expired"]:
+                await db.rollback()
+                return False, "expired"
+        if int(promo["used_count"]) >= int(promo["max_uses"]):
+            await db.rollback()
+            return False, "used_up"
+        try:
+            await db.execute(
+                """
+                INSERT INTO promo_redemptions (promo_id, user_id, telegram_id)
+                VALUES (?, ?, ?)
+                """,
+                (promo["id"], user.id, telegram_id),
+            )
+            await db.execute(
+                """
+                UPDATE promo_codes
+                SET used_count = used_count + 1
+                WHERE id = ?
+                """,
+                (promo["id"],),
+            )
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            await db.rollback()
+            return False, "already_used"
+        logger.info("Promo %s marked used by user %s", normalized, telegram_id)
+        return True, "ok"
+
+
+async def deactivate_promo_code(code: str) -> bool:
+    normalized = normalize_promo_code(code)
+    if not normalized:
+        return False
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE promo_codes SET is_active = 0 WHERE code = ? AND is_active = 1",
+            (normalized,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_user_promo_redemptions(telegram_id: int) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT pc.code, COALESCE(NULLIF(pc.discount_percent, 0), pc.credits) AS discount_percent,
+                   pr.redeemed_at
+            FROM promo_redemptions pr
+            JOIN promo_codes pc ON pc.id = pr.promo_id
+            WHERE pr.telegram_id = ?
+            ORDER BY pr.id DESC
+            LIMIT 10
+            """,
+            (telegram_id,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def set_user_banned(telegram_id: int, is_banned: bool) -> bool:
+    await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE users SET is_banned = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            (1 if is_banned else 0, telegram_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def is_user_banned(telegram_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT is_banned FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0])
+
+
+async def set_bot_setting(key: str, value: str) -> None:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO bot_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+        )
+        await db.commit()
+
+
+async def get_bot_setting(key: str, default: str = "") -> str:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute("SELECT value FROM bot_settings WHERE key = ?", (key,))
+        row = await cursor.fetchone()
+        return str(row[0]) if row else default
+
+
+async def is_maintenance_mode() -> bool:
+    return (await get_bot_setting("maintenance_mode", "0")) == "1"
+
+
+async def export_users() -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT telegram_id, credits, is_banned, has_paid, referral_code,
+                   referral_earned, created_at, updated_at
+            FROM users
+            ORDER BY id ASC
+            """
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
 async def get_credit_transactions(telegram_id: int) -> list[dict]:
     """Return credit ledger entries for a Telegram user."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -1231,17 +1608,16 @@ async def deduct_credits(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
-        # Проверяем баланс
-        cursor = await db.execute(
-            "SELECT credits FROM users WHERE telegram_id = ?", (telegram_id,)
-        )
-        row = await cursor.fetchone()
-
-        if not row or row["credits"] < amount:
+        if amount < 0:
             return False
 
-        user_cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+        user_cursor = await db.execute(
+            "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
         user_row = await user_cursor.fetchone()
+        if not user_row:
+            return False
+
         if external_id and user_row:
             inserted = await _record_credit_transaction(db, user_row["id"], -amount, reason, external_id, metadata)
             if not inserted:
@@ -1249,11 +1625,18 @@ async def deduct_credits(
                 logger.info("Skipped duplicate credit deduction reason=%s external_id=%s", reason, external_id)
                 return False
 
-        # Списываем
-        await db.execute(
-            "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (amount, telegram_id),
+        update = await db.execute(
+            """
+            UPDATE users
+            SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ? AND (? = 0 OR credits >= ?)
+            """,
+            (amount, telegram_id, 1 if check_balance else 0, amount),
         )
+        if update.rowcount != 1:
+            await db.rollback()
+            return False
+
         if user_row and not external_id:
             await _record_credit_transaction(db, user_row["id"], -amount, reason, external_id, metadata)
         await db.commit()
@@ -1281,15 +1664,32 @@ async def create_transaction(
     credits: int,
     amount_rub: float,
     status: str = "pending",
+    original_amount_rub: float | None = None,
+    promo_code: str | None = None,
+    promo_discount_percent: int = 0,
 ) -> bool:
     """Создаёт транзакцию платежа"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO transactions 
-                   (order_id, user_id, payment_id, provider, credits, amount_rub, status) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (order_id, user_id, payment_id, provider, credits, amount_rub, status),
+                   (
+                       order_id, user_id, payment_id, provider, credits, amount_rub,
+                       original_amount_rub, promo_code, promo_discount_percent, status
+                   )
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    order_id,
+                    user_id,
+                    payment_id,
+                    provider,
+                    credits,
+                    amount_rub,
+                    original_amount_rub,
+                    promo_code,
+                    promo_discount_percent,
+                    status,
+                ),
             )
             await db.commit()
             return True
@@ -1325,6 +1725,17 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
             amount_rub=row["amount_rub"],
             status=row["status"],
             created_at=datetime.fromisoformat(row["created_at"]),
+            promo_code=row["promo_code"] if "promo_code" in row.keys() else None,
+            promo_discount_percent=(
+                int(row["promo_discount_percent"] or 0)
+                if "promo_discount_percent" in row.keys()
+                else 0
+            ),
+            original_amount_rub=(
+                row["original_amount_rub"]
+                if "original_amount_rub" in row.keys()
+                else None
+            ),
         )
 
 
@@ -1479,6 +1890,8 @@ async def get_user_stats(telegram_id: int) -> dict:
         cost_row = await cursor.fetchone()
 
         referral_stats = await get_referral_stats(telegram_id)
+        promo_rows = await get_user_promo_redemptions(telegram_id)
+        banned = bool(getattr(user, "is_banned", False))
 
         return {
             "credits": user.credits,
@@ -1488,6 +1901,8 @@ async def get_user_stats(telegram_id: int) -> dict:
             "referral_code": referral_stats["referral_code"],
             "referrals_count": referral_stats["referrals_count"],
             "referral_earned": referral_stats["referral_earned"],
+            "is_banned": banned,
+            "promos": promo_rows,
         }
 
 
@@ -1499,6 +1914,14 @@ async def get_admin_stats() -> dict:
         # Всего пользователей
         cursor = await db.execute("SELECT COUNT(*) as count FROM users")
         users_row = await cursor.fetchone()
+        cursor = await db.execute("SELECT COUNT(*) as count FROM users WHERE is_banned = 1")
+        banned_row = await cursor.fetchone()
+        cursor = await db.execute("SELECT COALESCE(SUM(credits), 0) as total FROM users")
+        balance_row = await cursor.fetchone()
+        cursor = await db.execute(
+            "SELECT COUNT(*) as count FROM users WHERE datetime(created_at) >= datetime('now', '-7 days')"
+        )
+        active_row = await cursor.fetchone()
 
         # Всего генераций
         cursor = await db.execute(
@@ -1521,6 +1944,9 @@ async def get_admin_stats() -> dict:
 
         return {
             "total_users": users_row["count"] or 0,
+            "active_users": active_row["count"] or 0,
+            "banned_users": banned_row["count"] or 0,
+            "total_user_balance": balance_row["total"] or 0,
             "total_generations": gen_row["count"] or 0,
             "total_revenue": trans_row["total"] or 0,
             "total_transactions": trans_row["count"] or 0,

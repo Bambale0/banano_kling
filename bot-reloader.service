@@ -1,0 +1,19 @@
+[Unit]
+Description=Banano Kling Bot code/.env auto reloader
+After=network.target bot.service
+Wants=bot.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bot/banano_kling
+Environment=BOT_PROJECT_DIR=/root/bot/banano_kling
+Environment=BOT_SERVICE_NAME=bot.service
+Environment=BOT_RELOAD_POLL_SECONDS=1.0
+Environment=BOT_RELOAD_DEBOUNCE_SECONDS=2.0
+ExecStart=/root/bot/banano_kling/venv/bin/python /root/bot/banano_kling/scripts/code_reload_watchdog.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

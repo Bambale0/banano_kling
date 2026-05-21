@@ -8,12 +8,17 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
-from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
+from bot.database import (
+    add_credits_once,
+    check_can_afford,
+    deduct_credits,
+    get_user_credits,
+)
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.gemini_service import gemini_service
-from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.services.preset_manager import preset_manager
+from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.states import GenerationStates
 
 logger = logging.getLogger(__name__)
@@ -379,7 +384,14 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         return
 
     # Списываем кредиты
-    success = await deduct_credits(user_id, cost)
+    charge_external_id = f"batch_ref_edit:{user_id}:{callback.message.message_id}"
+    success = await deduct_credits(
+        user_id,
+        cost,
+        reason="batch_ref_edit_charge",
+        external_id=charge_external_id,
+        metadata={"aspect_ratio": aspect_ratio, "refs": len(ref_images)},
+    )
     if not success:
         await callback.answer("Ошибка списания кредитов", show_alert=True)
         return
@@ -436,7 +448,13 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
             )
         else:
             # Возвращаем кредиты при неудаче
-            await add_credits(user_id, cost)
+            await add_credits_once(
+                user_id,
+                cost,
+                reason="generation_refund",
+                external_id=charge_external_id,
+                metadata={"handler": "batch_ref_edit"},
+            )
             await callback.message.answer(
                 "❌ <b>Не удалось отредактировать изображение</b>\n"
                 "Попробуйте другой промпт или референсы.\n"
@@ -448,7 +466,13 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
     except Exception as e:
         logger.exception(f"Reference editing failed: {e}")
         # Возвращаем кредиты при ошибке
-        await add_credits(user_id, cost)
+        await add_credits_once(
+            user_id,
+            cost,
+            reason="generation_refund",
+            external_id=charge_external_id,
+            metadata={"handler": "batch_ref_edit"},
+        )
         await callback.message.answer(
             "❌ <b>Ошибка редактирования</b>\n"
             f"<code>{str(e)[:100]}</code>\n"
@@ -468,7 +492,13 @@ async def show_batch_results(
 
     if not successful:
         # Полный возврат
-        await add_credits(callback.from_user.id, job.total_cost)
+        await add_credits_once(
+            callback.from_user.id,
+            job.total_cost,
+            reason="generation_refund",
+            external_id=f"batch_job:{job.job_id}",
+            metadata={"handler": "batch_job", "failed": len(failed)},
+        )
         await callback.message.answer(
             "❌ <b>Все редактирования не удались</b>\n" "Кредиты полностью возвращены.",
             reply_markup=get_main_menu_keyboard(),
@@ -586,7 +616,14 @@ async def execute_upscale(callback: types.CallbackQuery):
         return
 
     # Списываем (админам - бесплатно)
-    success = await deduct_credits(callback.from_user.id, cost)
+    charge_external_id = f"upscale:{callback.from_user.id}:{job_id}:{item_index}:{resolution}"
+    success = await deduct_credits(
+        callback.from_user.id,
+        cost,
+        reason="upscale_charge",
+        external_id=charge_external_id,
+        metadata={"job_id": job_id, "item_index": item_index, "resolution": resolution},
+    )
     if not success:
         await callback.answer("Ошибка списания")
         return
@@ -606,12 +643,24 @@ async def execute_upscale(callback: types.CallbackQuery):
                 parse_mode="HTML",
             )
         else:
-            await add_credits(callback.from_user.id, cost)
+            await add_credits_once(
+                callback.from_user.id,
+                cost,
+                reason="generation_refund",
+                external_id=charge_external_id,
+                metadata={"handler": "upscale"},
+            )
             await callback.message.answer("❌ Ошибка апскейла. Бананы возвращены.")
 
     except Exception as e:
         logger.exception(f"Upscale failed: {e}")
-        await add_credits(callback.from_user.id, cost)
+        await add_credits_once(
+            callback.from_user.id,
+            cost,
+            reason="generation_refund",
+            external_id=charge_external_id,
+            metadata={"handler": "upscale"},
+        )
         await callback.message.answer("❌ Ошибка. Кредиты возвращены.")
 
 

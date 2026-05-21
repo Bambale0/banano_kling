@@ -8,6 +8,7 @@ VIDEO_MODEL_ORDER_BY_TYPE = {
         "veo3_fast",
         "veo3",
         "veo3_lite",
+        "wan_27_t2v",
         "hailuo_pro",
         "hailuo_std",
         "happyhorse_t2v",
@@ -18,6 +19,7 @@ VIDEO_MODEL_ORDER_BY_TYPE = {
         "seedance2",
         "runway",
         "grok_imagine",
+        "wan_27_i2v",
         "veo3_fast",
         "hailuo_23_pro",
         "hailuo_23_std",
@@ -237,6 +239,40 @@ VIDEO_MODEL_CONFIGS = {
             "audio_setting": ["auto", "keep", "remove"],
         },
     },
+    "wan_27_t2v": {
+        "label": "🌊 Wan 2.7 Video",
+        "v_types": ["text"],
+        "aspect_ratios": ["16:9", "9:16", "1:1"],
+        "durations": [5, 10],
+        "defaults": {
+            "resolution": "1080p",
+            "prompt_extend": True,
+            "watermark": False,
+            "nsfw_checker": False,
+        },
+        "options": {
+            "resolution": ["720p", "1080p"],
+            "prompt_extend": [True, False],
+            "watermark": [False, True],
+            "nsfw_checker": [False, True],
+        },
+    },
+    "wan_27_i2v": {
+        "label": "🌊 Wan 2.7 I2V",
+        "v_types": ["imgtxt"],
+        "aspect_ratios": [],
+        "durations": [5, 10],
+        "defaults": {
+            "resolution": "1080p",
+            "prompt_extend": True,
+            "watermark": False,
+        },
+        "options": {
+            "resolution": ["720p", "1080p"],
+            "prompt_extend": [True, False],
+            "watermark": [False, True],
+        },
+    },
 }
 
 
@@ -253,6 +289,8 @@ VIDEO_OPTION_LABELS = {
     "web_search": "Web search",
     "prompt_optimizer": "Оптимизация",
     "enable_translation": "Перевод",
+    "prompt_extend": "Улучшение",
+    "watermark": "Watermark",
 }
 
 

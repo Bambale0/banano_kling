@@ -53,18 +53,19 @@ def get_main_menu_keyboard(user_credits: int = 0):
     """Главное меню бота - согласно ux.md"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="🌈 Микс фото", callback_data="quick_mix_photo")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
-
-    builder.button(text="📸 Фото=Промпт", callback_data="photo_to_prompt")
+    builder.button(text="📷 Фото → Промпт", callback_data="photo_to_prompt")
+    builder.button(text="✍️ Улучшить промпт", callback_data="gpt55_improve_prompt")
+    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
+    builder.button(text="💰 Купить бананы", callback_data="menu_topup")
+    builder.button(text="🍌 Мой баланс", callback_data="menu_balance")
     builder.button(text="💼 Партнёрам", callback_data="menu_partner")
-    builder.button(text="💰 Пополнить", callback_data="menu_topup")
-    builder.button(text="🆘 Тех. поддержка", callback_data="menu_support")
-    builder.button(text="❓ Помощь бота", callback_data="menu_help")
+    builder.button(text="🆘 Поддержка", callback_data="menu_support")
 
-    builder.adjust(1, 2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 1, 2, 2)
 
     return builder.as_markup()
 
@@ -72,12 +73,18 @@ def get_main_menu_keyboard(user_credits: int = 0):
 def get_admin_keyboard():
     """Админ-панель"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
-    builder.button(text="👥 Пользователи", callback_data="admin_users")
-    builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
+    builder.button(text="📣 Рассылка", callback_data="admin_broadcast")
+    builder.button(text="🍌 Баланс", callback_data="admin_users")
+    builder.button(text="🎟 Промокоды", callback_data="admin_promos")
+    builder.button(text="👤 Пользователь", callback_data="admin_users")
+    builder.button(text="🚫 Бан / разбан", callback_data="admin_ban_menu")
+    builder.button(text="📦 Экспорт пользователей", callback_data="admin_export_users")
+    builder.button(text="⚙️ Техрежим", callback_data="admin_maintenance")
     builder.button(text="💰 Цены", callback_data="admin_prices")
-    builder.adjust(2)
+    builder.button(text="🔄 Обновить", callback_data="admin_reload")
+    builder.button(text="🏠 Домой", callback_data="back_main")
+    builder.adjust(2, 2, 2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -107,6 +114,7 @@ def get_admin_price_image_keyboard(price_config: dict):
         "seedream_edit": "Seedream Edit",
         "grok_t2i": "Grok T2I",
         "grok_i2i": "Grok I2I",
+        "ideogram_character": "Ideogram Character",
     }
     builder = InlineKeyboardBuilder()
     image_models = price_config.get("costs_reference", {}).get("image_models", {})
@@ -145,6 +153,8 @@ def get_admin_price_video_keyboard(price_config: dict):
         "happyhorse_i2v": "HappyHorse I2V",
         "happyhorse_ref2v": "HappyHorse Ref2V",
         "happyhorse_edit": "HappyHorse Edit",
+        "wan_27_t2v": "Wan 2.7 T2V",
+        "wan_27_i2v": "Wan 2.7 I2V",
     }
     builder = InlineKeyboardBuilder()
     video_models = price_config.get("costs_reference", {}).get("video_models", {})
@@ -194,6 +204,8 @@ SUPPORTED_RATIOS = {
     "happyhorse_i2v": ["16:9"],
     "happyhorse_ref2v": ["16:9", "9:16", "1:1"],
     "happyhorse_edit": ["16:9"],
+    "wan_27_t2v": ["16:9", "9:16", "1:1"],
+    "wan_27_i2v": [],
 }
 
 
@@ -226,7 +238,6 @@ def get_create_video_keyboard(
     current_video_options = normalize_video_options(current_model, legacy_options)
 
     builder = InlineKeyboardBuilder()
-
     # Тип генерации - текст, фото+текст или видео+текст
     text_check = "✅ " if current_v_type == "text" else ""
     imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
@@ -272,7 +283,9 @@ def get_create_video_keyboard(
 
     # Размер - только поддерживаемые моделью
     model_config = get_video_model_config(current_model)
-    supported_ratios = model_config.get("aspect_ratios", ["16:9", "9:16", "1:1"])
+    supported_ratios = model_config.get("aspect_ratios")
+    if supported_ratios is None:
+        supported_ratios = ["16:9", "9:16", "1:1"]
     ratio_buttons = []
     for ratio in supported_ratios:
         check = "✅ " if current_ratio == ratio else ""
@@ -389,6 +402,7 @@ def get_create_image_keyboard(
 ):
     """Меню создания фото - всё на одном экране"""
     builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🧬 Микс фото", callback_data="quick_mix_photo"))
     current_service = resolve_image_model(current_service)
     model_config = get_image_model_config(current_service)
     current_options = normalize_image_options(
@@ -559,12 +573,18 @@ def get_payment_packages_keyboard(packages: list, provider: str = None):
         builder.row(*provider_kb.inline_keyboard[0])
 
     for pkg in packages:
-        popular = " 🔥" if pkg.get("popular") else ""
+        bonus = (
+            f" +{pkg['bonus_credits']} бонусов (🍌)"
+            if pkg.get("bonus_credits", 0) > 0
+            else ""
+        )
         builder.button(
-            text=f"{pkg['name']}: {pkg['credits']}🍌 за {pkg['price_rub']}₽{popular}",
+            text=f"{pkg['credits']}🍌 - {pkg['price_rub']}₽{bonus}",
             callback_data=f"buy_{provider}_{pkg['id']}",
         )
 
+    builder.button(text="🎟 Промокод", callback_data="promo_enter")
+    builder.button(text="🔙 Назад", callback_data="menu_balance")
     builder.adjust(2, 1)
     return builder.as_markup()
 
@@ -658,12 +678,34 @@ def get_image_result_keyboard(task_id: str, original_url: str = None):
     builder = InlineKeyboardBuilder()
     if original_url:
         builder.button(text="📥 Скачать оригинал", url=original_url)
+        builder.button(text="📸 Оживить фото", callback_data=f"animate_img_{task_id}")
     builder.button(text="🔄 Повторить", callback_data=f"retry_img_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     if original_url:
-        builder.adjust(1, 2)
+        builder.adjust(1, 1, 2)
     else:
         builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_animate_photo_keyboard():
+    """Клавиатура быстрых вариантов оживления готового фото."""
+    builder = InlineKeyboardBuilder()
+    presets = [
+        ("😊 Улыбка", "smile"),
+        ("👀 Моргнуть", "blink"),
+        ("🎥 Приблизить камеру", "zoom"),
+        ("🌪 Ветер в волосах", "wind"),
+        ("🚶 Идти вперёд", "walk"),
+        ("🗣 Говорить", "talk"),
+        ("💃 Танцевать", "dance"),
+        ("🎬 Свой вариант", "custom"),
+    ]
+    for text, preset in presets:
+        builder.button(text=text, callback_data=f"animate_preset_{preset}")
+    builder.button(text="⚙️ Модель и качество", callback_data="animate_settings")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -677,9 +719,20 @@ def get_ai_assistant_keyboard():
 def get_gpt55_keyboard():
     """Клавиатура GPT 5.5 чата"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="🪄 Улучшить промпт", callback_data="gpt55_improve_prompt")
     builder.button(text="🧹 Очистить контекст", callback_data="gpt55_clear")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1)
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def get_prompt_improver_keyboard():
+    """Клавиатура режима улучшения промпта."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔁 Еще раз", callback_data="gpt55_improve_again")
+    builder.button(text="🧹 Очистить контекст", callback_data="gpt55_clear")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 

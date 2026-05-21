@@ -39,3 +39,31 @@ async def test_first_payment_banana_referral_bonus_is_in_credit_ledger(tmp_path,
     assert [(r["amount"], r["reason"], r["external_id"]) for r in rows] == [
         (5, "referral_first_payment_bonus", "first_payment:4004")
     ]
+
+
+@pytest.mark.asyncio
+async def test_first_payment_partner_bonus_is_idempotent(tmp_path, monkeypatch):
+    db = _reload_database(monkeypatch, tmp_path / "partner_first_payment.db")
+    await db.init_db()
+    referrer = await db.get_or_create_user(5005)
+    await db.accept_partner_agreement(5005)
+    await db.get_or_create_user(6006)
+    assert await db.process_referral(6006, referrer.referral_code, signup_bonus=0)
+
+    first = await db.credit_first_payment_referral_bonus(
+        6006, transaction_credits=50, transaction_amount_rub=100
+    )
+    second = await db.credit_first_payment_referral_bonus(
+        6006, transaction_credits=50, transaction_amount_rub=100
+    )
+
+    assert first == {"mode": "partner", "value": 45.0, "percent": 45}
+    assert second == {"mode": "none", "value": 0, "percent": 0}
+
+    overview = await db.get_partner_overview(5005)
+    assert overview["balance_rub"] == 45.0
+    assert overview["total_revenue_rub"] == 100.0
+    rows = await db.get_credit_transactions(5005)
+    assert [(r["amount"], r["reason"], r["external_id"]) for r in rows] == [
+        (4500, "referral_first_payment_partner_bonus", "first_payment_partner:6006")
+    ]

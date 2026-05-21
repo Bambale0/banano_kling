@@ -26,10 +26,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-PROJECT_DIR = Path('/root/bot/banano_kling')
-SERVICE = 'bot.service'
-HOST = '127.0.0.1'
-PORT = 8443
+PROJECT_DIR = Path(os.getenv('BOT_PROJECT_DIR', '/root/bot/banano_kling'))
+SERVICE = os.getenv('BOT_SERVICE_NAME', 'bot.service')
+HOST = os.getenv('BOT_HEALTH_HOST', '127.0.0.1')
+PORT = int(os.getenv('BOT_HEALTH_PORT', '8443'))
 HEALTH_URL = f'http://{HOST}:{PORT}/health'
 LOG_FILE = PROJECT_DIR / 'logs' / 'watchdog.log'
 APP_LOG = PROJECT_DIR / 'logs' / 'bot.log'
@@ -61,7 +61,7 @@ def service_active() -> tuple[bool, str]:
 
 
 def process_count() -> tuple[int, str]:
-    cp = run(['pgrep', '-af', r'^python -m bot\.main$'])
+    cp = run(['pgrep', '-af', r'python[0-9.]* .* -m bot\.main|python[0-9.]* -m bot\.main'])
     lines = [l for l in cp.stdout.splitlines() if l.strip()]
     return len(lines), '; '.join(lines[:5])
 

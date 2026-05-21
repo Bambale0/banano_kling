@@ -104,8 +104,48 @@ class TBankService:
         return self.webhook_handler.validate_notification(data)
 
 
-# Создаём сервис (совместимость с текущим кодом)
-tbank_service = TBankService(
-    terminal_key=config.TBANK_TERMINAL_KEY,
-    secret_key=config.TBANK_SECRET_KEY,
-)
+class LazyTBankService:
+    """Lazy proxy so optional T-Bank config does not crash imports."""
+
+    def __init__(self):
+        self._service: TBankService | None = None
+
+    @property
+    def configured(self) -> bool:
+        return bool(config.TBANK_TERMINAL_KEY and config.TBANK_SECRET_KEY)
+
+    def _get_service(self) -> TBankService:
+        if self._service is None:
+            self._service = TBankService(
+                terminal_key=config.TBANK_TERMINAL_KEY,
+                secret_key=config.TBANK_SECRET_KEY,
+            )
+        return self._service
+
+    async def init_payment(self, *args, **kwargs) -> Optional[Dict]:
+        if not self.configured:
+            logger.error("T-Bank is not configured")
+            return {"Success": False, "Message": "T-Bank is not configured"}
+        return await self._get_service().init_payment(*args, **kwargs)
+
+    async def get_state(self, payment_id: str) -> Optional[Dict]:
+        if not self.configured:
+            logger.error("T-Bank is not configured")
+            return {"Success": False, "Message": "T-Bank is not configured"}
+        return await self._get_service().get_state(payment_id)
+
+    async def cancel(self, payment_id: str) -> Optional[Dict]:
+        if not self.configured:
+            logger.error("T-Bank is not configured")
+            return {"Success": False, "Message": "T-Bank is not configured"}
+        return await self._get_service().cancel(payment_id)
+
+    def verify_notification(self, data: Dict[str, Any]) -> bool:
+        if not self.configured:
+            logger.warning("Rejected T-Bank webhook: service is not configured")
+            return False
+        return self._get_service().verify_notification(data)
+
+
+# Совместимость с текущим кодом: объект с тем же публичным интерфейсом.
+tbank_service = LazyTBankService()

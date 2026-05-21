@@ -1,5 +1,8 @@
 import json
 import logging
+import re
+import csv
+import io
 from pathlib import Path
 
 from aiogram import Bot, F, Router, types
@@ -7,7 +10,19 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
-from bot.database import add_credits, deduct_credits, get_admin_stats, get_user_stats
+from bot.database import (
+    add_credits,
+    create_promo_code,
+    deactivate_promo_code,
+    deduct_credits,
+    export_users,
+    get_admin_stats,
+    get_bot_setting,
+    get_promo_codes,
+    get_user_stats,
+    set_bot_setting,
+    set_user_banned,
+)
 from bot.keyboards import (
     get_admin_keyboard,
     get_admin_price_image_keyboard,
@@ -29,6 +44,44 @@ def is_admin(user_id: int) -> bool:
     return config.is_admin(user_id)
 
 
+def _admin_nav_keyboard(back_data: str = "admin_back"):
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data=back_data)],
+            [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
+        ]
+    )
+
+
+def _user_actions_keyboard(user_id: int, is_banned: bool):
+    ban_text = "✅ Разбанить" if is_banned else "🚫 Забанить"
+    ban_action = "unban" if is_banned else "ban"
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="➕ Добавить бананы",
+                    callback_data=f"admin_add_credits_{user_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="➖ Списать бананы",
+                    callback_data=f"admin_deduct_credits_{user_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text=ban_text,
+                    callback_data=f"admin_user_{ban_action}_{user_id}",
+                )
+            ],
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+            [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
+        ]
+    )
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""
@@ -43,11 +96,23 @@ async def cmd_admin(message: types.Message):
 
 📊 <b>Статистика:</b>
 • Пользователей: <code>{stats['total_users']}</code>
+• Активных за 7 дней: <code>{stats['active_users']}</code>
+• Забанено: <code>{stats['banned_users']}</code>
+• Баланс пользователей: <code>{stats['total_user_balance']}</code> 🍌
 • Генераций: <code>{stats['total_generations']}</code>
 • Транзакций: <code>{stats['total_transactions']}</code>
 • Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
 
-Выберите действие:
+<b>Разделы:</b>
+📊 Статистика — пользователи, платежи, баланс.
+📣 Рассылка — текст или фото + текст.
+🍌 Баланс — начислить или списать бананы.
+🎟 Промокоды — создать, удалить, посмотреть список.
+👤 Пользователь — ID, баланс, бан, активированные промокоды.
+🚫 Бан / разбан — ограничить доступ к боту.
+📦 Экспорт — список пользователей CSV-файлом.
+⚙️ Техрежим — временно закрыть бот для пользователей.
+💰 Цены — тарифы моделей.
 """
 
     await message.answer(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
@@ -81,6 +146,9 @@ async def admin_show_stats(callback: types.CallbackQuery):
 
 👥 <b>Пользователи:</b>
 • Всего: <code>{stats['total_users']}</code>
+• Активных за 7 дней: <code>{stats['active_users']}</code>
+• Забанено: <code>{stats['banned_users']}</code>
+• Общий баланс: <code>{stats['total_user_balance']}</code> 🍌
 
 🎨 <b>Генерации:</b>
 • Всего: <code>{stats['total_generations']}</code>
@@ -91,7 +159,7 @@ async def admin_show_stats(callback: types.CallbackQuery):
 """
 
     await callback.message.edit_text(
-        text, reply_markup=get_back_keyboard("admin_back"), parse_mode="HTML"
+        text, reply_markup=_admin_nav_keyboard("admin_back"), parse_mode="HTML"
     )
 
 
@@ -103,11 +171,12 @@ async def admin_users_menu(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        "👥 <b>Управление пользователями</b>" "Введите Telegram ID пользователя:",
-        reply_markup=get_back_keyboard("admin_back"),
+        "👤 <b>Пользователь / баланс</b>\n\nВведите Telegram ID пользователя:",
+        reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
 
+    await state.update_data(admin_user_flow="user")
     await state.set_state(AdminStates.waiting_user_id)
 
 
@@ -129,42 +198,49 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(target_user_id=user_id)
+    promos = stats.get("promos") or []
+    promo_text = (
+        "\n".join(
+            f"• <code>{p['code']}</code> −{p['discount_percent']}% ({p['redeemed_at']})"
+            for p in promos
+        )
+        if promos
+        else "нет"
+    )
+    ban_text = "забанен" if stats.get("is_banned") else "активен"
+    data = await state.get_data()
+    if data.get("admin_user_flow") == "ban":
+        await set_user_banned(user_id, not bool(stats.get("is_banned")))
+        await state.clear()
+        await message.answer(
+            (
+                f"✅ Пользователь <code>{user_id}</code> разбанен."
+                if stats.get("is_banned")
+                else f"🚫 Пользователь <code>{user_id}</code> забанен."
+            ),
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML",
+        )
+        return
 
     text = f"""
 👤 <b>Пользователь</b>
 
 🆔 ID: <code>{user_id}</code>
 💰 Кредитов: <code>{stats['credits']}</code>
+🚦 Статус: <code>{ban_text}</code>
 📊 Генераций: <code>{stats['generations']}</code>
 💸 Потрачено: <code>{stats['total_spent']}</code>
 📅 Регистрация: <code>{stats['member_since']}</code>
+🎟 Промокоды:
+{promo_text}
 
 Выберите действие:
 """
 
     await message.answer(
         text,
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    types.InlineKeyboardButton(
-                        text="➕ Добавить кредиты",
-                        callback_data=f"admin_add_credits_{user_id}",
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="➖ Списать кредиты",
-                        callback_data=f"admin_deduct_credits_{user_id}",
-                    )
-                ],
-                [
-                    types.InlineKeyboardButton(
-                        text="🔙 Назад", callback_data="admin_back"
-                    )
-                ],
-            ]
-        ),
+        reply_markup=_user_actions_keyboard(user_id, bool(stats.get("is_banned"))),
         parse_mode="HTML",
     )
 
@@ -185,7 +261,7 @@ async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMCont
         f"➕ <b>Добавление кредитов</b>"
         f"Пользователь ID: <code>{user_id}</code>"
         f"Введите количество кредитов для добавления:",
-        reply_markup=get_back_keyboard("admin_back"),
+        reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
 
@@ -206,11 +282,46 @@ async def admin_deduct_credits_prompt(callback: types.CallbackQuery, state: FSMC
         f"➖ <b>Списание кредитов</b>"
         f"Пользователь ID: <code>{user_id}</code>"
         f"Введите количество кредитов для списания:",
-        reply_markup=get_back_keyboard("admin_back"),
+        reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
 
     await state.set_state(AdminStates.waiting_credits_amount)
+
+
+@router.callback_query(F.data.startswith("admin_user_ban_"))
+async def admin_ban_user(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    user_id = int(callback.data.replace("admin_user_ban_", ""))
+    await set_user_banned(user_id, True)
+    await callback.answer("Пользователь забанен", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("admin_user_unban_"))
+async def admin_unban_user(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    user_id = int(callback.data.replace("admin_user_unban_", ""))
+    await set_user_banned(user_id, False)
+    await callback.answer("Пользователь разбанен", show_alert=True)
+
+
+@router.callback_query(F.data == "admin_ban_menu")
+async def admin_ban_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.update_data(admin_user_flow="ban")
+    await callback.message.edit_text(
+        "🚫 <b>Бан / разбан</b>\n\nВведите Telegram ID пользователя:",
+        reply_markup=_admin_nav_keyboard("admin_back"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_user_id)
 
 
 @router.message(AdminStates.waiting_credits_amount)
@@ -268,7 +379,7 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
         "📢 <b>Рассылка всем пользователям</b>"
         "Введите текст сообщения для рассылки:\n"
         "<i>Поддерживается HTML-форматирование</i>",
-        reply_markup=get_back_keyboard("admin_back"),
+        reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
 
@@ -295,6 +406,7 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
                         text="❌ Отмена", callback_data="admin_back"
                     ),
                 ],
+                [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
             ]
         ),
         parse_mode="HTML",
@@ -336,7 +448,8 @@ async def _show_broadcast_preview(
                     text="✅ Отправить", callback_data="admin_broadcast_confirm"
                 ),
                 types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back"),
-            ]
+            ],
+            [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
         ]
     )
 
@@ -453,9 +566,232 @@ async def admin_execute_broadcast(
     await state.clear()
 
 
+@router.callback_query(F.data == "admin_export_users")
+async def admin_export_users(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    rows = await export_users()
+    buffer = io.StringIO()
+    fieldnames = [
+        "telegram_id",
+        "credits",
+        "is_banned",
+        "has_paid",
+        "referral_code",
+        "referral_earned",
+        "created_at",
+        "updated_at",
+    ]
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    csv_bytes = buffer.getvalue().encode("utf-8-sig")
+    await callback.message.answer_document(
+        types.BufferedInputFile(csv_bytes, filename="users_export.csv"),
+        caption=f"📦 Экспорт пользователей: {len(rows)} строк",
+        reply_markup=get_admin_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_maintenance")
+async def admin_maintenance(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    enabled = (await get_bot_setting("maintenance_mode", "0")) == "1"
+    await callback.message.edit_text(
+        "⚙️ <b>Техрежим</b>\n\n"
+        f"Сейчас: <code>{'включён' if enabled else 'выключен'}</code>\n\n"
+        "Когда техрежим включён, обычные пользователи получают сообщение о работах. "
+        "Админы продолжают пользоваться ботом.",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="Выключить" if enabled else "Включить",
+                        callback_data="admin_maintenance_toggle",
+                    )
+                ],
+                [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+                [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
+            ]
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_maintenance_toggle")
+async def admin_maintenance_toggle(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    enabled = (await get_bot_setting("maintenance_mode", "0")) == "1"
+    await set_bot_setting("maintenance_mode", "0" if enabled else "1")
+    await callback.answer(
+        "Техрежим выключен" if enabled else "Техрежим включён",
+        show_alert=True,
+    )
+    await admin_maintenance(callback)
+
+
+@router.callback_query(F.data == "admin_promos")
+async def admin_promos_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    promos = await get_promo_codes(limit=8)
+    lines = [
+        "🎟 <b>Промокоды</b>",
+        "",
+        "Создание: <code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>",
+        "Пример: <code>START20 20 50 2026-06-01</code>",
+        "",
+        "<b>Последние коды:</b>",
+    ]
+    if promos:
+        for promo in promos:
+            status = "✅" if promo["is_active"] else "⛔"
+            expires = promo["expires_at"] or "без срока"
+            lines.append(
+                f"{status} <code>{promo['code']}</code> — "
+                f"−{promo['discount_percent']}%, {promo['used_count']}/{promo['max_uses']}, до {expires}"
+            )
+    else:
+        lines.append("Пока промокодов нет.")
+
+    keyboard_rows = [[
+        types.InlineKeyboardButton(
+            text="➕ Создать промокод",
+            callback_data="admin_promo_create",
+        )
+    ]]
+    for promo in promos[:5]:
+        if promo["is_active"]:
+            keyboard_rows.append([
+                types.InlineKeyboardButton(
+                    text=f"🗑 {promo['code']}",
+                    callback_data=f"admin_promo_delete_{promo['code']}",
+                )
+            ])
+    keyboard_rows.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")])
+    keyboard_rows.append([types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")])
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_promo_data)
+
+
+@router.callback_query(F.data == "admin_promo_create")
+async def admin_promo_create_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await callback.message.edit_text(
+        "➕ <b>Создание промокода</b>\n\n"
+        "Отправьте одной строкой:\n"
+        "<code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>\n\n"
+        "Пример:\n"
+        "<code>START20 20 50 2026-06-01</code>\n\n"
+        "Если срок не нужен:\n"
+        "<code>VIP15 15 10</code>",
+        reply_markup=_admin_nav_keyboard("admin_promos"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_promo_data)
+
+
+@router.callback_query(F.data.startswith("admin_promo_delete_"))
+async def admin_promo_delete(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    code = callback.data.replace("admin_promo_delete_", "", 1)
+    deleted = await deactivate_promo_code(code)
+    await callback.answer(
+        "Промокод отключён" if deleted else "Промокод не найден",
+        show_alert=True,
+    )
+
+
+@router.message(AdminStates.waiting_promo_data)
+async def admin_process_promo_data(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) not in {3, 4}:
+        await message.answer(
+            "❌ Неверный формат.\n\n"
+            "Нужно: <code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    code = re.sub(r"[^A-Za-z0-9_-]", "", parts[0]).upper()
+    try:
+        discount_percent = int(parts[1])
+        max_uses = int(parts[2])
+        if discount_percent <= 0 or discount_percent >= 100 or max_uses <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Скидка должна быть от 1 до 99%, лимит — положительным числом.")
+        return
+
+    expires_at = None
+    if len(parts) == 4:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[3]):
+            await message.answer(
+                "❌ Дата должна быть в формате <code>YYYY-MM-DD</code>.",
+                parse_mode="HTML",
+            )
+            return
+        expires_at = f"{parts[3]} 23:59:59"
+
+    ok, result = await create_promo_code(
+        code=code,
+        discount_percent=discount_percent,
+        max_uses=max_uses,
+        expires_at=expires_at,
+        created_by=message.from_user.id,
+    )
+    if not ok:
+        reason = {
+            "exists": "Промокод с таким кодом уже существует.",
+            "empty_code": "Код не должен быть пустым.",
+            "bad_discount": "Скидка должна быть от 1 до 99%.",
+            "bad_max_uses": "Лимит должен быть больше нуля.",
+        }.get(result, "Не удалось создать промокод.")
+        await message.answer(f"❌ {reason}")
+        return
+
+    await state.clear()
+    await message.answer(
+        "✅ <b>Промокод создан</b>\n\n"
+        f"Код: <code>{result}</code>\n"
+        f"Скидка: <code>{discount_percent}%</code>\n"
+        f"Лимит: <code>{max_uses}</code> активаций\n"
+        f"Срок: <code>{expires_at or 'без срока'}</code>",
+        reply_markup=get_admin_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data == "admin_back")
-async def admin_back_to_menu(callback: types.CallbackQuery):
+async def admin_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-меню"""
+    await state.clear()
     stats = await get_admin_stats()
 
     text = f"""
@@ -545,7 +881,7 @@ async def admin_price_img_prompt(callback: types.CallbackQuery, state: FSMContex
         f"🖼 <b>Изменение цены: <code>{key}</code></b>\n\n"
         f"Текущая цена: <code>{current}</code> 🍌\n\n"
         f"Введите новую цену (целое число):",
-        reply_markup=get_back_keyboard("admin_price_cat_image"),
+        reply_markup=_admin_nav_keyboard("admin_price_cat_image"),
         parse_mode="HTML",
     )
 
@@ -581,7 +917,7 @@ async def admin_price_vid_prompt(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(AdminStates.waiting_price_value)
     await callback.message.edit_text(
         f"🎬 <b>Изменение цены: <code>{key}</code></b>\n\n{hint}",
-        reply_markup=get_back_keyboard("admin_price_cat_video"),
+        reply_markup=_admin_nav_keyboard("admin_price_cat_video"),
         parse_mode="HTML",
     )
 

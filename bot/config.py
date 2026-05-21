@@ -2,6 +2,7 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import List
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,9 @@ class Config:
 
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
-    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
-    # Optional secret used to verify incoming Replicate webhooks (HMAC SHA256).
-    # If set, the webhook handler will validate signatures to prevent spoofing.
-    REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
+    AI_WEBHOOK_SECRET: str = os.getenv("AI_WEBHOOK_SECRET", "") or os.getenv(
+        "WEBHOOK_SECRET", ""
+    )
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
 
@@ -154,6 +154,15 @@ class Config:
             path = "/" + path
         return f"{host}{path}"
 
+    def _append_webhook_secret(self, url: str) -> str:
+        if not self.AI_WEBHOOK_SECRET:
+            return url
+        parts = urlsplit(url)
+        query = parts.query
+        secret_query = urlencode({"secret": self.AI_WEBHOOK_SECRET})
+        query = f"{query}&{secret_query}" if query else secret_query
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
     @property
     def tbank_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/tbank/webhook"
@@ -189,30 +198,26 @@ class Config:
 
     @property
     def kling_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/kling"
-
-    @property
-    def replicate_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/replicate"
+        return self._append_webhook_secret(f"{self.WEBHOOK_HOST}/webhook/kling")
 
     @property
     def z_image_turbo_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/z-image-turbo"
+        return self._append_webhook_secret(f"{self.WEBHOOK_HOST}/webhook/z-image-turbo")
 
     @property
     def kie_notification_url(self) -> str:
         path = self.KIE_AI_WEBHOOK_PATH
         if not path.startswith("/"):
             path = "/" + path
-        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+        return self._append_webhook_secret(f"{self.WEBHOOK_HOST.rstrip('/')}{path}")
 
     @property
     def veo_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/veo"
+        return self._append_webhook_secret(f"{self.WEBHOOK_HOST}/webhook/veo")
 
     @property
     def wanx_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/webhook/wanx"
+        return self._append_webhook_secret(f"{self.WEBHOOK_HOST}/webhook/wanx")
 
     def _old_kling_notification_url(self) -> str:
         return f"{self.WEBHOOK_HOST}/webhook/kling"

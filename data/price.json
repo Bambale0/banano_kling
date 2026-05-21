@@ -7,7 +7,7 @@
   "packages": [
     {
       "id": "mini",
-      "name": "🍌 Мини",
+      "name": "Мини",
       "credits": 15,
       "price_rub": 150,
       "bonus_credits": 0,
@@ -15,36 +15,44 @@
     },
     {
       "id": "standard",
-      "name": "🍌🍌 Стандарт",
+      "name": "Стандарт",
       "credits": 30,
-      "price_rub": 250,
+      "price_rub": 300,
       "bonus_credits": 0,
       "description": "Популярный выбор"
     },
     {
       "id": "optimal",
-      "name": "🍌🍌🍌 Оптимальный",
+      "name": "Оптимальный",
       "credits": 50,
-      "price_rub": 400,
-      "bonus_credits": 0,
+      "price_rub": 500,
+      "bonus_credits": 5,
       "popular": true,
       "description": "Лучшее соотношение цена/количество"
     },
     {
       "id": "pro",
-      "name": "🍌🍌🍌🍌 Про",
+      "name": "Про",
       "credits": 100,
-      "price_rub": 700,
-      "bonus_credits": 0,
+      "price_rub": 900,
+      "bonus_credits": 15,
       "description": "Для активных пользователей"
     },
     {
       "id": "studio",
-      "name": "🍌🍌🍌🍌🍌 Студия",
+      "name": "Студия",
       "credits": 200,
-      "price_rub": 1400,
-      "bonus_credits": 0,
+      "price_rub": 1750,
+      "bonus_credits": 30,
       "description": "Максимальная выгода"
+    },
+    {
+      "id": "max",
+      "name": "Максимум",
+      "credits": 500,
+      "price_rub": 4400,
+      "bonus_credits": 100,
+      "description": "Для студийной работы"
     }
   ],
   "costs_reference": {
@@ -61,7 +69,8 @@
       "seedream_5_lite": 2,
       "seedream_edit": 3,
       "grok_t2i": 3,
-      "grok_i2i": 3
+      "grok_i2i": 3,
+      "ideogram_character": 4
     },
     "video_models": {
       "v3_std": {
@@ -209,6 +218,20 @@
         "base": 25,
         "fixed_cost": 25,
         "duration_costs": {}
+      },
+      "wan_27_t2v": {
+        "base": 20,
+        "duration_costs": {
+          "5": 20,
+          "10": 35
+        }
+      },
+      "wan_27_i2v": {
+        "base": 20,
+        "duration_costs": {
+          "5": 20,
+          "10": 35
+        }
       }
     },
     "video_duration_costs": {

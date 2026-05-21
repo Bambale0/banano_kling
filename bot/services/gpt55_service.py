@@ -49,8 +49,13 @@ class GPT55Service:
         return result
 
     def _extract_text(self, data: dict) -> str:
+        if isinstance(data.get("output_text"), str):
+            return data["output_text"].strip()
+
         texts = []
         for output_item in data.get("output", []) or []:
+            if output_item.get("type") not in {None, "message"}:
+                continue
             for content_item in output_item.get("content", []) or []:
                 if content_item.get("type") == "output_text":
                     text = content_item.get("text")
@@ -129,10 +134,10 @@ class GPT55Service:
         ) as response:
             response_text = await response.text()
             logger.info(
-                "Kie.ai GPT 5.5 status=%s content-type=%s preview=%s",
+                "Kie.ai GPT 5.5 status=%s content-type=%s bytes=%s",
                 response.status,
                 response.headers.get("content-type", "none"),
-                response_text[:500],
+                len(response_text),
             )
             if response.status != 200:
                 return None

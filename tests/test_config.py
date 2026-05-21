@@ -99,3 +99,16 @@ class TestConfig:
         cfg = Config()
         cfg.WEBHOOK_HOST = "https://custom.com"
         assert cfg.static_base_url == "https://custom.com"
+
+    def test_ai_notification_urls_include_secret_when_configured(self):
+        cfg = Config()
+        cfg.WEBHOOK_HOST = "https://test.com"
+        cfg.KIE_AI_WEBHOOK_PATH = "/webhook/kie_ai"
+        cfg.AI_WEBHOOK_SECRET = "secret-token"
+
+        assert cfg.kie_notification_url == (
+            "https://test.com/webhook/kie_ai?secret=secret-token"
+        )
+        assert cfg.kling_notification_url == (
+            "https://test.com/webhook/kling?secret=secret-token"
+        )
