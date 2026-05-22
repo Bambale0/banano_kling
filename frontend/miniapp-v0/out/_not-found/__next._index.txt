@@ -3,23 +3,46 @@
 4:I[4581,[],""]
 5:I[4317,["177","static/chunks/app/layout-a233c6d97239a274.js"],"Analytics"]
 :HL["/mini-app/_next/static/css/0403cb5e3c4cc902.css","style"]
-2:T4e8,
+2:T6df,
 (function () {
   var attempts = 0;
 
   function postTelegramEvent(eventType, eventData) {
-    var payload = JSON.stringify({ eventType: eventType, eventData: eventData || {} });
-    try {
-      if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-        window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData || {}));
-      }
-      if (window.external && typeof window.external.notify === 'function') {
+    if (eventData === undefined) {
+      eventData = '';
+    }
+
+    var eventDataJson = JSON.stringify(eventData);
+    var payload = JSON.stringify({ eventType: eventType, eventData: eventData });
+
+    if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+      try {
+        window.TelegramWebviewProxy.postEvent(eventType, eventDataJson);
+      } catch (e) {}
+    }
+
+    if (
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.TelegramWebviewProxy &&
+      typeof window.webkit.messageHandlers.TelegramWebviewProxy.postMessage === 'function'
+    ) {
+      try {
+        window.webkit.messageHandlers.TelegramWebviewProxy.postMessage(payload);
+      } catch (e) {}
+    }
+
+    if (window.external && typeof window.external.notify === 'function') {
+      try {
         window.external.notify(payload);
-      }
-      if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+      } catch (e) {}
+    }
+
+    if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+      try {
         window.parent.postMessage(payload, '*');
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
   }
 
   function markReady() {
@@ -43,4 +66,4 @@
   window.addEventListener('DOMContentLoaded', markReady, false);
   window.addEventListener('load', markReady, false);
 })();
-0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/0403cb5e3c4cc902.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","script",null,{"src":"https://telegram.org/js/telegram-web-app.js","async":true}],["$","script",null,{"id":"telegram-early-ready","dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"cVkkEAEJ6aVy3-YjoT5wj"}
+0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/0403cb5e3c4cc902.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","script",null,{"src":"https://telegram.org/js/telegram-web-app.js","async":true}],["$","script",null,{"id":"telegram-early-ready","dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"NVTw1WRD1PqA9gGibpQdg"}

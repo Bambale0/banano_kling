@@ -557,15 +557,19 @@ def _parse_request_data(raw_value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _task_prompt_hidden(row_or_payload: Any) -> bool:
+def _task_has_source_feed(row_or_payload: Any) -> bool:
     try:
         return bool(row_or_payload["source_feed_gen_id"])
     except Exception:
         return bool(getattr(row_or_payload, "source_feed_gen_id", None))
 
 
+def _task_prompt_hidden(row_or_payload: Any) -> bool:
+    return False
+
+
 def _task_prompt_actions_allowed(row_or_payload: Any) -> bool:
-    return not _task_prompt_hidden(row_or_payload)
+    return not _task_has_source_feed(row_or_payload)
 
 
 def _public_result_urls(payload: dict[str, Any]) -> list[str]:
@@ -2066,9 +2070,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         ):
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
 
-        prompt = str(source.get("prompt") or "").strip()
-        if not prompt:
+        source_prompt = str(source.get("prompt") or "").strip()
+        if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
+        prompt = str(body.get("prompt", "") or "").strip() or source_prompt
 
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
@@ -2151,7 +2156,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 "credits": fresh_user.credits,
                 "cost": unit_cost,
                 "model_label": get_image_model_label(img_service),
-                "prompt_hidden": True,
+                "prompt_hidden": False,
                 "prompt_actions_allowed": False,
                 "source_feed_gen_id": int(source["id"]),
             }
@@ -2195,12 +2200,14 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
                 )
-            prompt = str(source_feed_task.get("prompt") or "").strip()
-            if not prompt:
+            source_prompt = str(source_feed_task.get("prompt") or "").strip()
+            if not source_prompt:
                 return web.json_response(
                     {"ok": False, "error": "У исходной генерации нет prompt"},
                     status=400,
                 )
+            if not prompt:
+                prompt = source_prompt
             if not references:
                 return web.json_response(
                     {"ok": False, "error": "Добавьте своё фото или референс для remix"},
@@ -2323,7 +2330,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             await use_prompt(prompt_id, user.id, credits_spent=unit_cost)
 
         fresh_user = await get_or_create_user(telegram_id)
-        prompt_hidden = bool(source_feed_gen_id)
+        prompt_hidden = False
         return web.json_response(
             {
                 "ok": True,
@@ -2335,7 +2342,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 "cost": unit_cost,
                 "model_label": get_image_model_label(img_service),
                 "prompt_hidden": prompt_hidden,
-                "prompt_actions_allowed": not prompt_hidden,
+                "prompt_actions_allowed": not bool(source_feed_gen_id),
                 "prompt_id": (None if source_feed_gen_id else prompt_id),
                 "source_feed_gen_id": source_feed_gen_id,
             }

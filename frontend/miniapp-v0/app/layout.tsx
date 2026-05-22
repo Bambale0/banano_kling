@@ -7,18 +7,41 @@ const telegramBootstrapScript = `
   var attempts = 0;
 
   function postTelegramEvent(eventType, eventData) {
-    var payload = JSON.stringify({ eventType: eventType, eventData: eventData || {} });
-    try {
-      if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
-        window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData || {}));
-      }
-      if (window.external && typeof window.external.notify === 'function') {
+    if (eventData === undefined) {
+      eventData = '';
+    }
+
+    var eventDataJson = JSON.stringify(eventData);
+    var payload = JSON.stringify({ eventType: eventType, eventData: eventData });
+
+    if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+      try {
+        window.TelegramWebviewProxy.postEvent(eventType, eventDataJson);
+      } catch (e) {}
+    }
+
+    if (
+      window.webkit &&
+      window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.TelegramWebviewProxy &&
+      typeof window.webkit.messageHandlers.TelegramWebviewProxy.postMessage === 'function'
+    ) {
+      try {
+        window.webkit.messageHandlers.TelegramWebviewProxy.postMessage(payload);
+      } catch (e) {}
+    }
+
+    if (window.external && typeof window.external.notify === 'function') {
+      try {
         window.external.notify(payload);
-      }
-      if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+      } catch (e) {}
+    }
+
+    if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+      try {
         window.parent.postMessage(payload, '*');
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
   }
 
   function markReady() {

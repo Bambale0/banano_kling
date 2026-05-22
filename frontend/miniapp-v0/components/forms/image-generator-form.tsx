@@ -52,7 +52,7 @@ export function ImageGeneratorForm({
   const [prompt, setPrompt] = useState('')
   const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
-  const [hiddenPromptTitle, setHiddenPromptTitle] = useState('')
+  const [remixTitle, setRemixTitle] = useState('')
   const [references, setReferences] = useState<UploadedFile[]>([])
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
@@ -63,7 +63,7 @@ export function ImageGeneratorForm({
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
   const needsReference = (model?.requires_reference || isFeedRemix) && references.length === 0
-  const hasPrompt = prompt.trim().length > 0 || isFeedRemix
+  const hasPrompt = prompt.trim().length > 0
   const isValid = hasPrompt && canAfford && !needsReference
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export function ImageGeneratorForm({
     setPrompt(promptPreset.prompt)
     setSelectedPromptId(promptPreset.promptId || null)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
-    setHiddenPromptTitle(promptPreset.promptHidden ? promptPreset.title : '')
+    setRemixTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -121,7 +121,7 @@ export function ImageGeneratorForm({
     setPrompt('')
     setSelectedPromptId(null)
     setSourceFeedGenId(null)
-    setHiddenPromptTitle('')
+    setRemixTitle('')
     setReferences([])
   }
 
@@ -280,53 +280,56 @@ export function ImageGeneratorForm({
           />
           <p className="text-xs text-muted-foreground">
             {isFeedRemix
-              ? 'Добавьте своё фото или референс. Описание из ленты уже подставлено.'
+              ? 'Добавьте своё фото или референс. Промпт из ленты подставлен ниже.'
               : model?.requires_reference
                 ? 'Для этой модели нужен хотя бы один исходник или референс.'
                 : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
           </p>
         </div>
 
-        {isFeedRemix ? (
-          <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4">
-            <p className="text-sm font-medium text-foreground">
-              {hiddenPromptTitle || 'Повторить образ из ленты'}
-            </p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Описание автора уже учтено. Добавьте своё фото или референс выше и запускайте генерацию.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Промпт</label>
-            <Textarea
-              value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value)
-                if (selectedPromptId) {
-                  setSelectedPromptId(null)
-                }
-              }}
-              placeholder="Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат..."
-              className={cn(
-                "min-h-[140px] resize-none",
-                "bg-secondary/50 border-border/50",
-                "focus:border-gold/50 focus:ring-gold/20",
-                "placeholder:text-muted-foreground/50"
-              )}
-            />
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                {selectedPromptId
+        <div className="space-y-2">
+          {isFeedRemix && (
+            <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4">
+              <p className="text-sm font-medium text-foreground">
+                {remixTitle || 'Повторить образ из ленты'}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Можно заменить цвет волос, одежду, фон и другие детали перед запуском.
+              </p>
+            </div>
+          )}
+          <label className="text-sm font-medium text-foreground">Промпт</label>
+          <Textarea
+            value={prompt}
+            onChange={(e) => {
+              setPrompt(e.target.value)
+              if (selectedPromptId) {
+                setSelectedPromptId(null)
+              }
+            }}
+            placeholder="Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат..."
+            className={cn(
+              "min-h-[140px] resize-none",
+              "bg-secondary/50 border-border/50",
+              "focus:border-gold/50 focus:ring-gold/20",
+              "placeholder:text-muted-foreground/50"
+            )}
+          />
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {isFeedRemix
+                ? prompt.trim().length > 0
+                  ? 'Промпт из ленты готов к запуску'
+                  : 'Добавьте текст промпта'
+                : selectedPromptId
                   ? 'Используется промпт из библиотеки'
                   : prompt.trim().length > 0
                     ? 'Промпт готов к запуску'
                     : 'Пустой prompt не отправится'}
-              </span>
-              <span>{prompt.length} симв.</span>
-            </div>
+            </span>
+            <span>{prompt.length} симв.</span>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="glass rounded-2xl p-4 space-y-4">

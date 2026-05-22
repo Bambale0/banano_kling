@@ -3651,6 +3651,7 @@ def _generation_row_to_card(
         "gen_type": row["type"],
         "result_url": row["result_url"],
         "result_urls": _generation_result_urls(row),
+        "prompt": "" if generation_prompt_hidden(row) else str(row["prompt"] or ""),
         "likes_count": int(row["likes_count"] or 0),
         "shares_count": int(row["shares_count"] or 0),
         "aspect_ratio": row["aspect_ratio"] or "",

@@ -61,11 +61,9 @@ export function PhotoTab() {
             aspect_ratio: data.ratio,
             status: 'pending',
             created_at: new Date().toISOString(),
-            prompt_preview: data.sourceFeedGenId
-              ? ''
-              : data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
+            prompt_preview: data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
             cost: unitCost,
-            prompt_hidden: Boolean(data.sourceFeedGenId),
+            prompt_hidden: false,
             prompt_actions_allowed: !data.sourceFeedGenId,
           }
           addTask(newTask)
