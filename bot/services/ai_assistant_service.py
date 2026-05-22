@@ -33,6 +33,9 @@ FALLBACK_VIDEO_COSTS = {
     "veo3": 22,
     "veo3_fast": 15,
     "veo3_lite": 10,
+    "gemini_omni_video": 18,
+    "gemini_omni_audio": 3,
+    "gemini_omni_character": 5,
 }
 
 IMAGE_SERVICE_LABELS = {
@@ -281,6 +284,9 @@ class AIAssistantService:
         veo_quality = _resolve_video_cost("veo3", 5)
         veo_fast = _resolve_video_cost("veo3_fast", 5)
         veo_lite = _resolve_video_cost("veo3_lite", 5)
+        omni_video_6 = _resolve_video_cost("gemini_omni_video", 6)
+        omni_audio = _resolve_video_cost("gemini_omni_audio", 6)
+        omni_character = _resolve_video_cost("gemini_omni_character", 6)
         motion_pro_5 = _resolve_video_cost("v26_motion_pro", 5)
         motion_pro_10 = _resolve_video_cost("v26_motion_pro", 10)
         motion_std_5 = _resolve_video_cost("v26_motion_std", 5)
@@ -303,6 +309,7 @@ class AIAssistantService:
 - Veo 3.1 Quality: {veo_quality}🍌
 - Veo 3.1 Fast: {veo_fast}🍌
 - Veo 3.1 Lite: {veo_lite}🍌
+- Gemini Omni: Video {omni_video_6}🍌 за 6 сек, Audio ID {omni_audio}🍌, Character ID {omni_character}🍌
 
 🎯 Motion Control:
 - Pro: {motion_pro_5}🍌 / {motion_pro_10}🍌 за 5/10 сек

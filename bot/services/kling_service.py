@@ -655,28 +655,57 @@ class KlingService:
         kling_elements: List[Dict[str, Any]] = []
         enhanced_prompt = prompt
 
-        for index, element in enumerate(elements[:3]):
+        for element in elements:
+            if len(kling_elements) >= 3:
+                break
             urls = list(element.get("reference_image_urls") or [])
             frontal = element.get("frontal_image_url")
             if frontal:
                 urls.append(frontal)
 
-            urls = [url for url in urls if url]
-            if not urls:
+            deduped_urls: List[str] = []
+            for url in urls:
+                if url and url not in deduped_urls:
+                    deduped_urls.append(url)
+                if len(deduped_urls) >= 12:
+                    break
+
+            if len(deduped_urls) < 2:
+                logger.info(
+                    "Skipping Kling element with %s image(s): KIE requires 2-4 images per element",
+                    len(deduped_urls),
+                )
                 continue
 
-            name = f"element_{index}"
-            kling_elements.append(
-                {
-                    "name": name,
-                    "description": element.get(
-                        "description",
-                        f"reference element {index + 1}",
-                    ),
-                    "element_input_urls": urls[:4],
-                }
-            )
-            enhanced_prompt += f" use @{name} as reference"
+            remaining = deduped_urls
+            chunks: List[List[str]] = []
+            while remaining and len(chunks) < 3:
+                if len(remaining) <= 4:
+                    chunks.append(remaining)
+                    break
+                take = 4
+                if len(remaining) - take == 1:
+                    take = 3
+                chunks.append(remaining[:take])
+                remaining = remaining[take:]
+
+            for chunk in chunks:
+                if len(kling_elements) >= 3:
+                    break
+                if len(chunk) < 2:
+                    continue
+                name = f"element_{len(kling_elements)}"
+                kling_elements.append(
+                    {
+                        "name": name,
+                        "description": element.get(
+                            "description",
+                            f"reference element {len(kling_elements) + 1}",
+                        ),
+                        "element_input_urls": chunk,
+                    }
+                )
+                enhanced_prompt += f" use @{name} as reference"
 
         return kling_elements, enhanced_prompt
 

@@ -141,6 +141,27 @@
           "15": 60
         }
       },
+      "gemini_omni_video": {
+        "base": 18,
+        "duration_costs": {
+          "4": 12,
+          "6": 18,
+          "8": 24,
+          "10": 30
+        }
+      },
+      "gemini_omni_audio": {
+        "base": 3,
+        "duration_costs": {
+          "6": 3
+        }
+      },
+      "gemini_omni_character": {
+        "base": 5,
+        "duration_costs": {
+          "6": 5
+        }
+      },
       "veo3": {
         "base": 22
       },

@@ -4,7 +4,7 @@ import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
 import { 
   X, Image, Video, Clock, CheckCircle2, XCircle, 
-  Banana, ExternalLink, Copy, RefreshCw 
+  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -104,6 +104,17 @@ export function TaskDetailPanel() {
                 </div>
               )}
 
+              {taskDetail.result_url && taskDetail.status === 'completed' && (taskDetail.type === 'audio' || taskDetail.type === 'character') && (
+                <div className="rounded-2xl border border-border/50 bg-secondary/50 p-4">
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    {taskDetail.type === 'audio' ? 'Audio ID' : 'Character ID'}
+                  </p>
+                  <code className="block break-all font-mono text-sm text-foreground">
+                    {taskDetail.result_url}
+                  </code>
+                </div>
+              )}
+
               {/* Pending state */}
               {taskDetail.status === 'pending' && (
                 <div className="relative aspect-video rounded-2xl overflow-hidden bg-secondary/50 flex flex-col items-center justify-center">
@@ -127,8 +138,16 @@ export function TaskDetailPanel() {
                 />
                 <InfoItem 
                   label="Тип" 
-                  value={taskDetail.type === 'image' ? 'Фото' : 'Видео'}
-                  icon={taskDetail.type === 'image' ? Image : Video}
+                  value={
+                    taskDetail.type === 'image'
+                      ? 'Фото'
+                      : taskDetail.type === 'audio'
+                        ? 'Audio ID'
+                        : taskDetail.type === 'character'
+                          ? 'Character ID'
+                          : 'Видео'
+                  }
+                  icon={taskDetail.type === 'image' ? Image : taskDetail.type === 'audio' ? Headphones : taskDetail.type === 'character' ? UserRound : Video}
                 />
                 <InfoItem 
                   label="Формат" 
@@ -228,7 +247,7 @@ export function TaskDetailPanel() {
               )}
 
               {/* Actions */}
-              {taskDetail.status === 'completed' && taskDetail.result_url && (
+              {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
                 <Button
                   asChild
                   className="w-full bg-gold hover:bg-gold/90 text-primary-foreground"

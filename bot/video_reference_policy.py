@@ -5,12 +5,17 @@ from collections.abc import Iterable
 
 VIDEO_REFERENCE_LIMITS = {
     "seedance_2": 3,
+    "gemini_omni": 1,
+    "gemini_omni_video": 1,
     "motion_control_v26": 1,
     "motion_control_v30": 1,
 }
 
 VIDEO_IMAGE_REFERENCE_LIMITS = {
     "seedance_2": 9,
+    "gemini_omni": 7,
+    "gemini_omni_video": 7,
+    "gemini_omni_character": 1,
     "v3_std": 9,
     "v3_pro": 9,
 }

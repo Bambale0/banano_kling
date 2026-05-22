@@ -171,6 +171,8 @@ SUPPORTED_RATIOS = {
     "veo3": ["16:9", "9:16", "Auto"],
     "veo3_fast": ["16:9", "9:16", "Auto"],
     "veo3_lite": ["16:9", "9:16", "Auto"],
+    "gemini_omni": ["16:9", "9:16"],
+    "gemini_omni_video": ["16:9", "9:16"],
 }
 
 VIDEO_MODEL_LABELS = {
@@ -186,6 +188,10 @@ VIDEO_MODEL_LABELS = {
     "veo3": "Veo 3.1 Quality",
     "veo3_fast": "Veo 3.1 Fast",
     "veo3_lite": "Veo 3.1 Lite",
+    "gemini_omni": "Gemini Omni",
+    "gemini_omni_video": "Gemini Omni Video",
+    "gemini_omni_audio": "Gemini Omni Audio",
+    "gemini_omni_character": "Gemini Omni Character",
 }
 
 IMAGE_MODEL_LABELS = {
@@ -211,6 +217,8 @@ def get_video_type_label(v_type: str) -> str:
         "imgtxt": "Фото + Текст -> Видео",
         "video": "Видео + Текст -> Видео",
         "avatar": "Аватар + Аудио -> Видео",
+        "audio": "Gemini Omni Audio ID",
+        "character": "Gemini Omni Character ID",
         "motion": "Motion Control",
     }
     return mapping.get(v_type, v_type)
@@ -240,6 +248,11 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
             preset_manager.get_video_cost("seedance_2", 5),
         ),
         (
+            "gemini_omni",
+            "🔷 Gemini Omni",
+            preset_manager.get_video_cost("gemini_omni_video", 6),
+        ),
+        (
             "avatar_std",
             "🗣 Avatar Standard",
             preset_manager.get_video_cost("avatar_std", 5),
@@ -265,13 +278,23 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
 
     for model_key, label, cost in model_rows:
         check = "✅ " if current_model == model_key else ""
-        default_duration = 6 if model_key.startswith("veo3") else 5
+        if model_key == "gemini_omni" and current_model.startswith("gemini_omni"):
+            check = "✅ "
+        default_duration = (
+            6 if model_key.startswith("veo3") or model_key.startswith("gemini_omni") else 5
+        )
         per_second = preset_manager.get_video_cost_per_second(
             model_key, default_duration
         )
+        if model_key == "gemini_omni":
+            price_label = f"от {preset_manager.get_video_cost('gemini_omni_audio', 6)}🍌"
+        elif model_key in {"gemini_omni_audio", "gemini_omni_character"}:
+            price_label = f"{cost}🍌"
+        else:
+            price_label = f"{per_second}🍌/с"
         builder.row(
             InlineKeyboardButton(
-                text=f"{check}{label} • {per_second}🍌/с",
+                text=f"{check}{label} • {price_label}",
                 callback_data=f"v_model_{model_key}",
             )
         )
@@ -322,6 +345,25 @@ def get_video_media_step_keyboard(
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")
         builder.adjust(2, 1, 2)
+        return builder.as_markup()
+
+    if current_v_type == "character":
+        image_status = "загружено" if has_start_image else "не загружено"
+        builder.button(
+            text=f"🖼 Персонаж: {image_status}",
+            callback_data="ignore",
+        )
+        builder.button(text="▶️ К промпту", callback_data="video_media_continue")
+        builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
+        builder.button(text="🏠 Главное меню", callback_data="back_main")
+        builder.adjust(1, 1, 2)
+        return builder.as_markup()
+
+    if current_v_type == "audio":
+        builder.button(text="▶️ К настройкам", callback_data="video_media_continue")
+        builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
+        builder.button(text="🏠 Главное меню", callback_data="back_main")
+        builder.adjust(1, 2)
         return builder.as_markup()
 
     text_check = "✅ " if current_v_type == "text" else ""
@@ -386,6 +428,14 @@ def get_create_video_keyboard(
     current_veo_watermark: str = "",
     current_kling_negative_prompt: str = "",
     current_kling_cfg_scale: float = 0.5,
+    current_omni_resolution: str = "720p",
+    current_omni_seed: int = None,
+    current_omni_audio_ids: list | None = None,
+    current_omni_character_ids: list | None = None,
+    current_omni_base_voice: str = "achernar",
+    current_omni_voice_name: str = "",
+    current_omni_character_name: str = "",
+    current_omni_character_audio_ids: list | None = None,
 ):
     """Шаг настроек видео после выбора модели и медиа."""
     # Если передан current_video_model, используем его
@@ -407,7 +457,13 @@ def get_create_video_keyboard(
 
     ratio_buttons = []
     available_durations = []
-    if current_model not in {"avatar_std", "avatar_pro"}:
+    no_ratio_duration_models = {
+        "avatar_std",
+        "avatar_pro",
+        "gemini_omni_audio",
+        "gemini_omni_character",
+    }
+    if current_model not in no_ratio_duration_models:
         supported_ratios = SUPPORTED_RATIOS.get(current_model, ["16:9", "9:16", "1:1"])
         for ratio in supported_ratios:
             check = "✅ " if current_ratio == ratio else ""
@@ -429,6 +485,8 @@ def get_create_video_keyboard(
         duration_costs = model_data_for_durations.get("duration_costs", {})
         if current_model.startswith("veo3"):
             available_durations = [2, 4, 6, 8, 10]
+        elif current_model in {"gemini_omni", "gemini_omni_video"}:
+            available_durations = [4, 6, 8, 10]
         elif duration_costs:
             available_durations = sorted([int(k) for k in duration_costs.keys()])
         else:
@@ -488,7 +546,7 @@ def get_create_video_keyboard(
         watermark_label = "off" if not current_veo_watermark else "on"
         builder.button(text=f"🎲 Seed: {seed_label}", callback_data="veo_seed_edit")
         builder.button(
-            text=f"🏷 Watermark: {watermark_label}",
+            text=f"🏷 Метка: {watermark_label}",
             callback_data="veo_watermark_edit",
         )
 
@@ -505,6 +563,57 @@ def get_create_video_keyboard(
         builder.button(
             text=f"🎚 CFG: {current_kling_cfg_scale:.1f}",
             callback_data="kling_cfg_scale_edit",
+        )
+
+    if current_model == "gemini_omni_video":
+        for resolution in ("720p", "1080p", "4k"):
+            check = "✅ " if current_omni_resolution == resolution else ""
+            label = resolution.upper() if resolution == "4k" else resolution
+            builder.button(
+                text=f"{check}🖥 {label}",
+                callback_data=f"omni_resolution_{resolution}",
+            )
+        seed_label = str(current_omni_seed) if current_omni_seed is not None else "auto"
+        audio_count = len(current_omni_audio_ids or [])
+        character_count = len(current_omni_character_ids or [])
+        builder.button(text=f"🎲 Seed: {seed_label}", callback_data="omni_seed_edit")
+        builder.button(
+            text=f"🎧 Audio IDs: {audio_count}",
+            callback_data="omni_audio_ids_edit",
+        )
+        builder.button(
+            text=f"🧍 Character IDs: {character_count}",
+            callback_data="omni_character_ids_edit",
+        )
+
+    if current_model == "gemini_omni_audio":
+        voice_label = (current_omni_base_voice or "achernar").title()
+        name_label = current_omni_voice_name or "auto"
+        if len(name_label) > 18:
+            name_label = name_label[:18] + "..."
+        builder.button(
+            text=f"🎙 Голос: {voice_label}",
+            callback_data="omni_voice_base_edit",
+        )
+        builder.button(
+            text=f"🏷 Имя: {name_label}",
+            callback_data="omni_voice_name_edit",
+        )
+        builder.button(text="🗣 Описание", callback_data="omni_voice_desc_edit")
+        builder.button(text="💬 Пример фразы", callback_data="omni_voice_dialogue_edit")
+
+    if current_model == "gemini_omni_character":
+        name_label = current_omni_character_name or "auto"
+        if len(name_label) > 18:
+            name_label = name_label[:18] + "..."
+        audio_count = len(current_omni_character_audio_ids or [])
+        builder.button(
+            text=f"🏷 Персонаж: {name_label}",
+            callback_data="omni_character_name_edit",
+        )
+        builder.button(
+            text=f"🎧 Audio IDs: {audio_count}",
+            callback_data="omni_character_audio_ids_edit",
         )
 
     if current_v_type == "video":
@@ -558,6 +667,12 @@ def get_create_video_keyboard(
             widths += [2 if current_model == "veo3_fast" else 1]
         widths += [3, 2]
     if current_model == "v26_pro":
+        widths += [2]
+    if current_model == "gemini_omni_video":
+        widths += [3, 3]
+    if current_model == "gemini_omni_audio":
+        widths += [2, 2]
+    if current_model == "gemini_omni_character":
         widths += [2]
     widths += [2]
     builder.adjust(*widths)
@@ -1001,6 +1116,15 @@ def get_failed_image_retry_keyboard(task_id: str):
     builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(2, 1)
+    return builder.as_markup()
+
+
+def get_gemini_omni_result_keyboard():
+    """Navigation for completed Gemini Omni Audio/Character ID results."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 В меню Gemini", callback_data="v_model_gemini_omni")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 

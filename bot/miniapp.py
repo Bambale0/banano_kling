@@ -62,6 +62,7 @@ from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.preset_manager import preset_manager
+from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
@@ -200,6 +201,55 @@ VIDEO_MODELS = (
         "max_video_references": 3,
     },
     {
+        "id": "gemini_omni",
+        "label": "Gemini Omni",
+        "description": "Единое меню для Gemini Omni Video, Audio ID и Character ID",
+        "durations": [4, 6, 8, 10],
+        "ratios": ["16:9", "9:16"],
+        "supports": ["text", "imgtxt", "video", "audio", "character"],
+        "omni_modes": ["video", "audio", "character"],
+        "omni_resolutions": ["720p", "1080p", "4k"],
+        "supports_omni_seed": True,
+        "supports_omni_audio_ids": True,
+        "supports_omni_character_ids": True,
+        "supports_omni_character_audio_ids": True,
+        "omni_base_voices": [
+            "achernar",
+            "achird",
+            "algenib",
+            "algieba",
+            "alnilam",
+            "aoede",
+            "autonoe",
+            "callirrhoe",
+            "charon",
+            "despina",
+            "enceladus",
+            "erinome",
+            "fenrir",
+            "gacrux",
+            "iapetus",
+            "kore",
+            "laomedeia",
+            "leda",
+            "orus",
+            "puck",
+            "pulcherrima",
+            "rasalgethi",
+            "sadachbia",
+            "sadaltager",
+            "schedar",
+            "sulafat",
+            "umbriel",
+            "vindemiatrix",
+            "zephyr",
+            "zubenelgenubi",
+        ],
+        "max_image_references": 7,
+        "max_video_references": 1,
+        "max_audio_references": 1,
+    },
+    {
         "id": "veo3_fast",
         "label": "Veo 3.1 Fast",
         "description": "Быстрый кинематографичный рендер",
@@ -266,6 +316,32 @@ VIDEO_MODELS = (
         "max_audio_references": 1,
     },
 )
+
+GEMINI_OMNI_INTERNAL_MODELS = {
+    "gemini_omni_video",
+    "gemini_omni_audio",
+    "gemini_omni_character",
+}
+
+
+def _find_video_model_meta(model: str) -> dict[str, Any] | None:
+    meta = next((item for item in VIDEO_MODELS if item["id"] == model), None)
+    if meta:
+        return meta
+    if model in GEMINI_OMNI_INTERNAL_MODELS:
+        return next((item for item in VIDEO_MODELS if item["id"] == "gemini_omni"), None)
+    return None
+
+
+def _resolve_gemini_omni_model(model: str, generation_type: str) -> str:
+    if model != "gemini_omni":
+        return model
+    if generation_type == "audio":
+        return "gemini_omni_audio"
+    if generation_type == "character":
+        return "gemini_omni_character"
+    return "gemini_omni_video"
+
 
 FILE_KIND_MAP = {
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
@@ -472,14 +548,26 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
 
 def _classify_video_generation_result(result: Any) -> tuple[str, str | None]:
     if isinstance(result, dict):
+        if result.get("status") == "done" and result.get("asset_id"):
+            return "done", None
         if result.get("task_id"):
             return "queued", None
-        return "failed", result.get("message") or result.get("error") or str(result)
+        return "failed", make_user_friendly_generation_error(
+            result.get("message") or result.get("error") or str(result)
+        )
     if isinstance(result, (bytes, bytearray)):
         return "done", None
     if result:
-        return "failed", f"Unexpected result type: {type(result).__name__}"
+        return "failed", make_user_friendly_generation_error(
+            f"Unexpected result type: {type(result).__name__}"
+        )
     return "failed", None
+
+
+def _derive_miniapp_asset_name(text: str, fallback: str) -> str:
+    value = " ".join(str(text or "").strip().split())
+    value = "".join(ch for ch in value if ch.isalnum() or ch in {" ", ".", "-", "_"})
+    return (value[:20] or fallback)[:20]
 
 
 async def _launch_video_generation_task(
@@ -503,7 +591,18 @@ async def _launch_video_generation_task(
     veo_watermark: str | None = None,
     kling_negative_prompt: str | None = None,
     kling_cfg_scale: float | None = None,
+    omni_resolution: str = "720p",
+    omni_seed: int | None = None,
+    omni_audio_ids: list[str] | None = None,
+    omni_character_ids: list[str] | None = None,
+    omni_base_voice: str = "achernar",
+    omni_voice_name: str | None = None,
+    omni_voice_description: str | None = None,
+    omni_example_dialogue: str | None = None,
+    omni_character_name: str | None = None,
+    omni_character_audio_ids: list[str] | None = None,
 ) -> dict[str, Any]:
+    from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
     from bot.services.kling_service import kling_service
     from bot.services.seedance_service import seedance_service
@@ -520,7 +619,55 @@ async def _launch_video_generation_task(
         max_count=get_max_video_references(model),
     )
 
-    if model in {"avatar_std", "avatar_pro"}:
+    if model == "gemini_omni_video":
+        omni_images: list[str] = []
+        if image_url:
+            omni_images.append(image_url)
+        for ref_url in image_references:
+            if ref_url and ref_url not in omni_images:
+                omni_images.append(ref_url)
+
+        omni_video_list = [
+            {
+                "url": ref_url,
+                "start": 0,
+                "ends": min(20, max(1, int(duration))),
+            }
+            for ref_url in video_references[:1]
+        ]
+        result = await gemini_omni_service.generate_video(
+            prompt=prompt,
+            duration=duration,
+            aspect_ratio=normalized_ratio,
+            resolution=omni_resolution,
+            image_urls=omni_images or None,
+            audio_ids=omni_audio_ids or None,
+            video_list=omni_video_list or None,
+            character_ids=omni_character_ids or None,
+            seed=omni_seed,
+            callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+        )
+    elif model == "gemini_omni_audio":
+        audio_name = omni_voice_name or _derive_miniapp_asset_name(prompt, "Omni Voice")
+        result = await gemini_omni_service.create_audio(
+            audio_id=omni_base_voice,
+            name=audio_name,
+            voice_description=omni_voice_description or prompt,
+            example_dialogue=omni_example_dialogue or "",
+        )
+    elif model == "gemini_omni_character":
+        character_name = omni_character_name or _derive_miniapp_asset_name(
+            prompt,
+            "Character",
+        )
+        character_images = [image_url] if image_url else []
+        result = await gemini_omni_service.create_character(
+            description=prompt,
+            image_urls=character_images,
+            character_name=character_name,
+            audio_ids=omni_character_audio_ids or None,
+        )
+    elif model in {"avatar_std", "avatar_pro"}:
         result = await kling_service.generate_video(
             prompt=prompt,
             model=model,
@@ -622,7 +769,11 @@ async def _launch_video_generation_task(
             aspect_ratio=normalized_ratio,
             image_url=image_url,
             video_urls=video_references if generation_type == "video" else None,
-            image_input=image_references if generation_type != "imgtxt" else None,
+            image_input=(
+                image_references
+                if generation_type != "imgtxt" or len(image_references) < 2
+                else None
+            ),
             elements=(
                 [
                     {
@@ -630,7 +781,7 @@ async def _launch_video_generation_task(
                         "reference_image_urls": image_references[:12],
                     }
                 ]
-                if generation_type == "imgtxt" and image_references
+                if generation_type == "imgtxt" and len(image_references) >= 2
                 else None
             ),
             negative_prompt=kling_negative_prompt,
@@ -640,13 +791,18 @@ async def _launch_video_generation_task(
 
     result_status, error_message = _classify_video_generation_result(result)
     cost = preset_manager.get_video_cost(model, duration)
+    task_type = (
+        "audio"
+        if model == "gemini_omni_audio"
+        else "character" if model == "gemini_omni_character" else "video"
+    )
 
     if result_status == "queued":
         await add_generation_task(
             user.id,
             telegram_id,
             result["task_id"],
-            "video",
+            task_type,
             "miniapp_video",
             model=model,
             duration=duration,
@@ -669,12 +825,66 @@ async def _launch_video_generation_task(
                 "veo_watermark": veo_watermark,
                 "kling_negative_prompt": kling_negative_prompt,
                 "kling_cfg_scale": kling_cfg_scale,
+                "omni_resolution": omni_resolution,
+                "omni_seed": omni_seed,
+                "omni_audio_ids": omni_audio_ids or [],
+                "omni_character_ids": omni_character_ids or [],
+                "omni_base_voice": omni_base_voice,
+                "omni_voice_name": omni_voice_name,
+                "omni_voice_description": omni_voice_description,
+                "omni_example_dialogue": omni_example_dialogue,
+                "omni_character_name": omni_character_name,
+                "omni_character_audio_ids": omni_character_audio_ids or [],
             },
         )
         return {
             "status": "queued",
             "task_id": result["task_id"],
             "cost": cost,
+            "task_type": task_type,
+        }
+
+    if (
+        result_status == "done"
+        and isinstance(result, dict)
+        and result.get("asset_id")
+    ):
+        asset_id = str(result["asset_id"])
+        await add_generation_task(
+            user.id,
+            telegram_id,
+            asset_id,
+            task_type,
+            "miniapp_video",
+            model=model,
+            duration=duration,
+            aspect_ratio=normalized_ratio,
+            prompt=prompt,
+            cost=cost,
+            request_data={
+                "source": "miniapp",
+                "v_type": generation_type,
+                "v_model": model,
+                "asset_kind": result.get("asset_kind"),
+                "asset_id": asset_id,
+                "v_image_url": image_url,
+                "reference_images": image_references,
+                "audio_url": audio_url,
+                "omni_base_voice": omni_base_voice,
+                "omni_voice_name": omni_voice_name,
+                "omni_voice_description": omni_voice_description,
+                "omni_example_dialogue": omni_example_dialogue,
+                "omni_character_name": omni_character_name,
+                "omni_character_audio_ids": omni_character_audio_ids or [],
+            },
+        )
+        await complete_video_task(asset_id, asset_id)
+        return {
+            "status": "done",
+            "task_id": asset_id,
+            "saved_url": asset_id,
+            "cost": cost,
+            "task_type": task_type,
         }
 
     local_task_id = f"miniapp_video_{int(time.time() * 1000)}_{telegram_id}"
@@ -682,7 +892,7 @@ async def _launch_video_generation_task(
         user.id,
         telegram_id,
         local_task_id,
-        "video",
+        task_type,
         "miniapp_video",
         model=model,
         duration=duration,
@@ -700,6 +910,7 @@ async def _launch_video_generation_task(
             "task_id": local_task_id,
             "saved_url": saved_url,
             "cost": cost,
+            "task_type": task_type,
         }
 
     await complete_video_task(local_task_id, None)
@@ -708,6 +919,7 @@ async def _launch_video_generation_task(
         "task_id": local_task_id,
         "error": error_message or "Не удалось создать видео задачу",
         "cost": cost,
+        "task_type": task_type,
     }
 
 
@@ -1126,6 +1338,18 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                         if item["id"] in {"motion_control_v26", "motion_control_v30"}
                         else {}
                     ),
+                    **(
+                        {
+                            "omni_audio_cost": preset_manager.get_video_cost(
+                                "gemini_omni_audio", 6
+                            ),
+                            "omni_character_cost": preset_manager.get_video_cost(
+                                "gemini_omni_character", 6
+                            ),
+                        }
+                        if item["id"] == "gemini_omni"
+                        else {}
+                    ),
                 }
                 for item in VIDEO_MODELS
             ],
@@ -1457,6 +1681,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 "status": launch_result["status"],
                 "task_id": launch_result["task_id"],
                 "saved_url": launch_result.get("saved_url"),
+                "task_type": launch_result.get("task_type", "video"),
                 "credits": fresh_user.credits,
                 "cost": unit_cost,
                 "model_label": get_image_model_label(img_service),
@@ -1483,6 +1708,8 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         image_references = list(body.get("reference_images", []) or [])
         video_references = list(body.get("v_reference_videos", []) or [])
         audio_url = str(body.get("audio_url", "") or "") or None
+        if not audio_url:
+            audio_url = str(body.get("audio_reference", "") or "") or None
         audio_references = list(body.get("audio_references", []) or [])
         if not audio_url and audio_references:
             audio_url = str(audio_references[0] or "") or None
@@ -1502,13 +1729,52 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             if kling_cfg_scale_raw not in (None, "")
             else None
         )
+        omni_resolution = str(body.get("omni_resolution", "720p") or "720p")
+        omni_seed_raw = body.get("omni_seed")
+        try:
+            omni_seed = (
+                int(omni_seed_raw)
+                if omni_seed_raw not in (None, "", False)
+                else None
+            )
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"ok": False, "error": "Seed должен быть числом"},
+                status=400,
+            )
+        omni_audio_ids = [
+            str(item).strip()
+            for item in list(body.get("omni_audio_ids", []) or [])
+            if str(item).strip()
+        ][:1]
+        omni_character_ids = [
+            str(item).strip()
+            for item in list(body.get("omni_character_ids", []) or [])
+            if str(item).strip()
+        ][:3]
+        omni_base_voice = str(body.get("omni_base_voice", "achernar") or "achernar")
+        omni_voice_name = str(body.get("omni_voice_name", "") or "")[:20] or None
+        omni_voice_description = (
+            str(body.get("omni_voice_description", "") or "")[:2000] or None
+        )
+        omni_example_dialogue = (
+            str(body.get("omni_example_dialogue", "") or "")[:2000] or None
+        )
+        omni_character_name = (
+            str(body.get("omni_character_name", "") or "")[:20] or None
+        )
+        omni_character_audio_ids = [
+            str(item).strip()
+            for item in list(body.get("omni_character_audio_ids", []) or [])
+            if str(item).strip()
+        ][:1]
 
         if not prompt:
             return web.json_response(
                 {"ok": False, "error": "Введите промпт для генерации видео"},
                 status=400,
             )
-        model_meta = next((item for item in VIDEO_MODELS if item["id"] == model), None)
+        model_meta = _find_video_model_meta(model)
         if not model_meta:
             return web.json_response(
                 {"ok": False, "error": f"Неизвестная видео модель: {model}"},
@@ -1522,7 +1788,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-        if generation_type == "video" and not video_model_supports_reference_videos(model):
+        effective_model = _resolve_gemini_omni_model(model, generation_type)
+        if effective_model in {"gemini_omni_audio", "gemini_omni_character"}:
+            duration = 6
+
+        if generation_type == "video" and not video_model_supports_reference_videos(effective_model):
             return web.json_response(
                 {
                     "ok": False,
@@ -1543,6 +1813,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": "Для режима Фото + Текст загрузите стартовое фото",
+                },
+                status=400,
+            )
+        if generation_type == "character" and not image_url:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Для Gemini Omni Character загрузите изображение персонажа",
                 },
                 status=400,
             )
@@ -1616,7 +1894,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if audio_url:
             await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
-        cost = preset_manager.get_video_cost(model, duration)
+        cost = preset_manager.get_video_cost(effective_model, duration)
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, cost):
             return web.json_response(
@@ -1633,7 +1911,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         launch_result = await _launch_video_generation_task(
             telegram_id=telegram_id,
             user=user,
-            model=model,
+            model=effective_model,
             prompt=prompt,
             duration=duration,
             aspect_ratio=aspect_ratio,
@@ -1650,6 +1928,16 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             veo_watermark=veo_watermark,
             kling_negative_prompt=kling_negative_prompt,
             kling_cfg_scale=kling_cfg_scale,
+            omni_resolution=omni_resolution,
+            omni_seed=omni_seed,
+            omni_audio_ids=omni_audio_ids,
+            omni_character_ids=omni_character_ids,
+            omni_base_voice=omni_base_voice,
+            omni_voice_name=omni_voice_name,
+            omni_voice_description=omni_voice_description,
+            omni_example_dialogue=omni_example_dialogue,
+            omni_character_name=omni_character_name,
+            omni_character_audio_ids=omni_character_audio_ids,
         )
 
         if launch_result["status"] == "failed":
@@ -1670,9 +1958,10 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 "status": launch_result["status"],
                 "task_id": launch_result["task_id"],
                 "saved_url": launch_result.get("saved_url"),
+                "task_type": launch_result.get("task_type"),
                 "credits": fresh_user.credits,
                 "cost": cost,
-                "model_label": get_video_model_label(model),
+                "model_label": get_video_model_label(effective_model),
             }
         )
     except Exception as e:
@@ -1923,7 +2212,7 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
 
 
 async def miniapp_ai_assistant(request: web.Request) -> web.Response:
-    """AI-ассистент через настоящий LLM backend (Kie.ai GPT 5.2)."""
+    """AI-ассистент через настоящий LLM backend."""
     try:
         body = await request.json()
         init_data = body.get("init_data", "")

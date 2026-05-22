@@ -11,6 +11,10 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
+GPT54_MAX_ATTEMPTS = 3
+GPT54_RETRYABLE_BODY_CODES = {429}
+CLAUDE_MAX_ATTEMPTS = 2
+
 
 SYSTEM_PROMPT = """
 You are a professional photo-to-prompt analyst for AI image generation.
@@ -100,7 +104,18 @@ def _parse_json_object(raw_text: str) -> Dict[str, Any]:
     }
 
 
-def _build_result(parsed: Dict[str, Any]) -> Dict[str, Any]:
+def _is_fast_fallback_application_error(data: Dict[str, Any]) -> bool:
+    """KIE sometimes returns HTTP 200 with body code 500 for upstream outages."""
+    try:
+        body_code = int(data.get("code", 0) or 0)
+    except (TypeError, ValueError):
+        body_code = 0
+
+    message = str(data.get("msg") or data.get("message") or "").lower()
+    return body_code >= 500 or "server exception" in message or "try again later" in message
+
+
+def _build_result(parsed: Dict[str, Any], *, provider: str = "") -> Dict[str, Any]:
     prompt_en = str(parsed.get("prompt_en") or "").strip()
     prompt_ru = str(parsed.get("prompt_ru") or "").strip()
     negative_prompt = str(parsed.get("negative_prompt") or "").strip()
@@ -129,6 +144,7 @@ def _build_result(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "negative_prompt": negative_prompt,
         "model_hint": model_hint,
         "key_details": key_details if isinstance(key_details, list) else [],
+        "provider": provider,
         "raw": parsed,
     }
 
@@ -167,7 +183,7 @@ class PhotoPromptService:
         timeout = aiohttp.ClientTimeout(total=120)
         data: Optional[Dict[str, Any]] = None
 
-        for attempt in range(3):
+        for attempt in range(GPT54_MAX_ATTEMPTS):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{self.base_url}/codex/v1/responses",
@@ -177,18 +193,26 @@ class PhotoPromptService:
                     text = await response.text()
 
                     if response.status >= 500:
-                        logger.error(
-                            "GPT-5.4 server error: status=%s body=%s attempt=%d",
+                        logger.info(
+                            "GPT-5.4 HTTP 5xx, fast fallback: status=%s body=%s",
+                            response.status,
+                            text[:500],
+                        )
+                        raise RuntimeError(
+                            f"GPT-5.4 недоступен. Код: {response.status}"
+                        )
+
+                    if response.status == 429:
+                        logger.warning(
+                            "GPT-5.4 rate limited: status=%s body=%s attempt=%d",
                             response.status,
                             text[:500],
                             attempt,
                         )
-                        if attempt < 2:
+                        if attempt < GPT54_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             continue
-                        raise RuntimeError(
-                            f"GPT-5.4 недоступен. Код: {response.status}"
-                        )
+                        raise RuntimeError("GPT-5.4 временно ограничил запросы")
 
                     if response.status >= 400:
                         raise RuntimeError(f"GPT-5.4 ошибка. Код: {response.status}")
@@ -198,14 +222,29 @@ class PhotoPromptService:
                     except Exception:
                         raise RuntimeError("GPT-5.4 вернул некорректный JSON")
 
-                    body_code = data.get("code") if isinstance(data, dict) else None
-                    if body_code and int(body_code) >= 400:
-                        logger.error(
+                    raw_body_code = data.get("code") if isinstance(data, dict) else None
+                    try:
+                        body_code = int(raw_body_code or 0)
+                    except (TypeError, ValueError):
+                        body_code = 0
+
+                    if _is_fast_fallback_application_error(data):
+                        logger.info(
+                            "GPT-5.4 application upstream error, fast fallback: %s",
+                            data,
+                        )
+                        raise RuntimeError(f"GPT-5.4 upstream error: {body_code}")
+
+                    if body_code >= 400:
+                        logger.warning(
                             "GPT-5.4 application error in body: %s attempt=%d",
                             data,
                             attempt,
                         )
-                        if attempt < 2:
+                        if (
+                            body_code in GPT54_RETRYABLE_BODY_CODES
+                            and attempt < GPT54_MAX_ATTEMPTS - 1
+                        ):
                             await asyncio.sleep(2**attempt)
                             data = None
                             continue
@@ -217,7 +256,7 @@ class PhotoPromptService:
 
         raw_output = _extract_output_text(data)
         parsed = _parse_json_object(raw_output)
-        return _build_result(parsed)
+        return _build_result(parsed, provider="gpt-5.4")
 
     async def _analyze_with_claude(
         self,
@@ -249,35 +288,55 @@ class PhotoPromptService:
 
         timeout = aiohttp.ClientTimeout(total=90)
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(
-                f"{self.base_url}/claude/v1/messages",
-                json=payload,
-                headers=headers,
-            ) as response:
-                text = await response.text()
+        data: Optional[Dict[str, Any]] = None
+        for attempt in range(CLAUDE_MAX_ATTEMPTS):
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/claude/v1/messages",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    text = await response.text()
 
-                if response.status >= 400:
-                    logger.error(
-                        "Claude Haiku fallback failed: status=%s body=%s",
-                        response.status,
-                        text[:2000],
-                    )
-                    raise RuntimeError(
-                        f"Claude Haiku недоступен. Код: {response.status}"
-                    )
+                    if response.status >= 500:
+                        logger.warning(
+                            "Claude Haiku fallback HTTP 5xx: status=%s body=%s attempt=%d",
+                            response.status,
+                            text[:1000],
+                            attempt,
+                        )
+                        if attempt < CLAUDE_MAX_ATTEMPTS - 1:
+                            await asyncio.sleep(2**attempt)
+                            continue
+                        raise RuntimeError(
+                            f"Claude Haiku недоступен. Код: {response.status}"
+                        )
 
-                try:
-                    data = json.loads(text)
-                except Exception:
-                    raise RuntimeError("Claude Haiku вернул некорректный JSON")
+                    if response.status >= 400:
+                        logger.error(
+                            "Claude Haiku fallback failed: status=%s body=%s",
+                            response.status,
+                            text[:2000],
+                        )
+                        raise RuntimeError(
+                            f"Claude Haiku недоступен. Код: {response.status}"
+                        )
+
+                    try:
+                        data = json.loads(text)
+                    except Exception:
+                        raise RuntimeError("Claude Haiku вернул некорректный JSON")
+            break
+
+        if data is None:
+            raise RuntimeError("Claude Haiku не вернул данных после всех попыток")
 
         raw_output = _extract_claude_text(data)
         if not raw_output:
             raise RuntimeError("Claude Haiku вернул пустой ответ")
 
         parsed = _parse_json_object(raw_output)
-        return _build_result(parsed)
+        return _build_result(parsed, provider="claude-haiku-4-5")
 
     async def analyze_photo(
         self,
@@ -303,6 +362,7 @@ class PhotoPromptService:
             "Content-Type": "application/json",
         }
 
+        gpt_error: Optional[Exception] = None
         try:
             return await self._analyze_with_gpt54(
                 image_url=image_url,
@@ -310,15 +370,28 @@ class PhotoPromptService:
                 headers=headers,
             )
         except Exception as exc:
-            logger.warning(
-                "GPT-5.4 failed (%s), switching to Claude Haiku fallback", exc
-            )
+            gpt_error = exc
 
-        return await self._analyze_with_claude(
-            image_url=image_url,
-            user_instruction=user_instruction,
-            headers=headers,
-        )
+        try:
+            result = await self._analyze_with_claude(
+                image_url=image_url,
+                user_instruction=user_instruction,
+                headers=headers,
+            )
+            logger.info(
+                "GPT-5.4 failed (%s); Claude Haiku fallback succeeded",
+                gpt_error,
+            )
+            return result
+        except Exception as fallback_exc:
+            logger.error(
+                "Claude Haiku fallback failed after GPT-5.4 failure (%s): %s",
+                gpt_error,
+                fallback_exc,
+            )
+            raise RuntimeError(
+                f"Не удалось разобрать фото через fallback: {fallback_exc}"
+            ) from fallback_exc
 
 
 photo_prompt_service = PhotoPromptService()

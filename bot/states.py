@@ -41,6 +41,15 @@ class GenerationStates(StatesGroup):
     waiting_for_kling_negative_prompt = State()  # Negative prompt для Kling 2.5
     waiting_for_kling_cfg_scale = State()  # CFG scale для Kling 2.5
     waiting_for_avatar_audio = State()  # Аудио для Kling AI Avatar
+    waiting_for_omni_seed = State()  # Seed для Gemini Omni Video
+    waiting_for_omni_audio_ids = State()  # Audio IDs для Gemini Omni Video
+    waiting_for_omni_character_ids = State()  # Character IDs для Gemini Omni Video
+    waiting_for_omni_voice_base = State()  # Базовый голос Gemini Omni Audio
+    waiting_for_omni_voice_name = State()  # Имя голоса Gemini Omni Audio
+    waiting_for_omni_voice_description = State()  # Описание голоса
+    waiting_for_omni_example_dialogue = State()  # Пример диалога
+    waiting_for_omni_character_name = State()  # Имя Gemini Omni Character
+    waiting_for_omni_character_audio_ids = State()  # Audio IDs для Character
 
 
 class PaymentStates(StatesGroup):

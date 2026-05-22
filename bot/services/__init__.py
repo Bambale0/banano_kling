@@ -4,6 +4,7 @@ Services for the Telegram bot
 
 from .cryptobot_service import CryptoBotService, cryptobot_service
 from .gpt_image_service import GPTImageService, gpt_image_service
+from .gemini_omni_service import GeminiOmniService, gemini_omni_service
 from .kling_service import KlingService, kling_service
 from .nano_banana_2_service import NanoBanana2Service, nano_banana_2_service
 from .nano_banana_pro_service import NanoBananaProService, nano_banana_pro_service
@@ -15,6 +16,8 @@ __all__ = [
     "CryptoBotService",
     "gpt_image_service",
     "GPTImageService",
+    "gemini_omni_service",
+    "GeminiOmniService",
     "kling_service",
     "KlingService",
     "nano_banana_pro_service",

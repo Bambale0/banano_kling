@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,11 +10,11 @@ from aiohttp import web
 
 import bot.database
 from bot.config import config
-from bot.main import handle_kling_webhook
+from bot.main import _extract_gemini_omni_asset_id, handle_kling_webhook
 
 
 @pytest.mark.asyncio
-async def test_handle_kling_webhook_signature_ok(monkeypatch):
+async def test_handle_kling_webhook_signature_ok(monkeypatch, caplog):
     # Prepare a minimal successful payload
     payload = {
         "id": "task123",
@@ -42,8 +43,11 @@ async def test_handle_kling_webhook_signature_ok(monkeypatch):
 
     req = FakeReq(body, {"x-replicate-signature": sig})
 
-    resp = await handle_kling_webhook(req)
+    with caplog.at_level(logging.WARNING):
+        resp = await handle_kling_webhook(req)
     assert resp.status == 200
+    assert "Task task123 not found in database" not in caplog.text
+    assert "Kling webhook error" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -70,3 +74,26 @@ async def test_handle_kling_webhook_signature_rejects_invalid_signature(monkeypa
 
     resp = await handle_kling_webhook(req)
     assert resp.status == 200
+
+
+def test_extract_gemini_omni_asset_id_from_result_json():
+    audio_payload = {
+        "data": {
+            "resultJson": json.dumps(
+                {"data": {"kieAudioId": "audio_abc"}}
+            )
+        }
+    }
+    character_payload = {
+        "data": {
+            "resultJson": json.dumps(
+                {"result": {"characterID": "character_abc"}}
+            )
+        }
+    }
+
+    assert _extract_gemini_omni_asset_id(audio_payload, "audio") == "audio_abc"
+    assert (
+        _extract_gemini_omni_asset_id(character_payload, "character")
+        == "character_abc"
+    )

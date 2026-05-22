@@ -73,6 +73,10 @@ export function РезультатCard({ task, onClose }: РезультатCard
                   ? 'Проверьте prompt, файлы и попробуйте снова'
                   : task.type === 'image'
                     ? 'Нажмите на изображение для полного просмотра'
+                    : task.type === 'audio'
+                      ? 'Audio ID готов к использованию'
+                      : task.type === 'character'
+                        ? 'Character ID готов к использованию'
                     : 'Видео можно открыть и воспроизвести'}
             </p>
           </div>
@@ -120,6 +124,17 @@ export function РезультатCard({ task, onClose }: РезультатCard
           </div>
         )}
 
+        {isCompleted && task.result_url && (task.type === 'audio' || task.type === 'character') && (
+          <div className="mb-4 rounded-xl border border-border/50 bg-secondary/50 p-3">
+            <p className="mb-1 text-xs text-muted-foreground">
+              {task.type === 'audio' ? 'Audio ID' : 'Character ID'}
+            </p>
+            <code className="block break-all font-mono text-sm text-foreground">
+              {task.result_url}
+            </code>
+          </div>
+        )}
+
         {isPending && (
           <div className="relative mb-4 flex aspect-video flex-col items-center justify-center overflow-hidden rounded-xl bg-secondary/50">
             <div className="relative h-16 w-16">
@@ -132,7 +147,7 @@ export function РезультатCard({ task, onClose }: РезультатCard
           </div>
         )}
 
-        {isCompleted && task.result_url && (
+        {isCompleted && task.result_url && task.result_url.startsWith('http') && (
           <Button asChild className="w-full bg-gold text-primary-foreground hover:bg-gold/90">
             <a href={task.result_url} target="_blank" rel="noreferrer">
               <ExternalLink className="mr-2 h-4 w-4" />

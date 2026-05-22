@@ -26,6 +26,52 @@ def _clip_text(text: str, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _escape_clip_text(text: str, escaped_limit: int) -> str:
+    raw = str(text or "")
+    escaped = html.escape(raw)
+    if len(escaped) <= escaped_limit:
+        return escaped
+
+    suffix = "…"
+    low = 0
+    high = len(raw)
+    best = suffix
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = html.escape(raw[:mid].rstrip() + suffix)
+        if len(candidate) <= escaped_limit:
+            best = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
+
+
+def _format_photo_prompt_result_text(result: dict) -> str:
+    prompt_en = (result.get("prompt_en") or "").strip()
+    prompt_ru = (result.get("prompt_ru") or "").strip()
+    negative_prompt = (result.get("negative_prompt") or "").strip()
+    model_hint = (result.get("model_hint") or "").strip()
+    provider = (result.get("provider") or "").strip()
+
+    provider_note = ""
+    if provider and provider != "gpt-5.4":
+        provider_note = f"\n\n<i>Fallback: {html.escape(provider)}</i>"
+
+    return (
+        "✅ <b>Промпт по фото готов</b>\n\n"
+        "<b>Prompt RU:</b>\n"
+        f"<pre>{_escape_clip_text(prompt_ru or '—', 900)}</pre>\n\n"
+        "<b>Prompt EN:</b>\n"
+        f"<pre>{_escape_clip_text(prompt_en or '—', 1400)}</pre>\n\n"
+        "<b>Negative prompt:</b>\n"
+        f"<pre>{_escape_clip_text(negative_prompt or '—', 450)}</pre>\n\n"
+        "<b>Рекомендация:</b>\n"
+        f"{_escape_clip_text(model_hint or '—', 500)}"
+        f"{provider_note}"
+    )
+
+
 async def _safe_edit_or_answer(processing: Message, source_message: Message, text: str, reply_markup=None, parse_mode=None, disable_web_page_preview=None) -> None:
     try:
         await processing.edit_text(
@@ -113,23 +159,7 @@ async def analyze_photo(message: Message, state: FSMContext):
         prompt_en = (result.get("prompt_en") or "").strip()
         prompt_ru = (result.get("prompt_ru") or "").strip()
         negative_prompt = (result.get("negative_prompt") or "").strip()
-        model_hint = html.escape((result.get("model_hint") or "").strip())
-
-        escaped_prompt_en = html.escape(prompt_en)
-        escaped_prompt_ru = html.escape(prompt_ru)
-        escaped_negative_prompt = html.escape(negative_prompt)
-
-        text = (
-            "✅ <b>Промпт по фото готов</b>\n\n"
-            "<b>Prompt RU:</b>\n"
-            f"<pre>{escaped_prompt_ru or '—'}</pre>\n\n"
-            "<b>Prompt EN:</b>\n"
-            f"<pre>{escaped_prompt_en or '—'}</pre>\n\n"
-            "<b>Negative prompt:</b>\n"
-            f"<pre>{escaped_negative_prompt or '—'}</pre>\n\n"
-            "<b>Рекомендация:</b>\n"
-            f"{model_hint or '—'}"
-        )
+        text = _format_photo_prompt_result_text(result)
 
         try:
             await processing.delete()

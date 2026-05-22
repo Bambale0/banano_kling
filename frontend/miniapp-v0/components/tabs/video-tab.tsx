@@ -26,6 +26,16 @@ export function VideoTab() {
     veoWatermark: string
     klingNegativePrompt: string
     klingCfgScale: number
+    omniResolution: string
+    omniSeed: number | null
+    omniAudioIds: string[]
+    omniCharacterIds: string[]
+    omniBaseVoice: string
+    omniVoiceName: string
+    omniVoiceDescription: string
+    omniExampleDialogue: string
+    omniCharacterName: string
+    omniCharacterAudioIds: string[]
     prompt: string
     startImage: string | null
     references: string[]
@@ -46,12 +56,22 @@ export function VideoTab() {
         selectTask(result.task)
       } else {
         const model = state.videoModels.find(m => m.id === data.model)
-        const cost = model?.costs[data.duration.toString()] || 5
+        const cost = data.scenario === 'audio'
+          ? model?.omni_audio_cost ?? 3
+          : data.scenario === 'character'
+            ? model?.omni_character_cost ?? 5
+            : model?.costs[data.duration.toString()] || 5
         const newTask: Task = {
           task_id: `task_${Date.now()}`,
-          type: 'video',
+          type: data.scenario === 'audio' ? 'audio' : data.scenario === 'character' ? 'character' : 'video',
           model: data.model,
-          model_label: model?.label || data.model,
+          model_label: data.model === 'gemini_omni'
+            ? data.scenario === 'audio'
+              ? 'Gemini Omni Audio'
+              : data.scenario === 'character'
+                ? 'Gemini Omni Character'
+                : 'Gemini Omni Video'
+            : model?.label || data.model,
           aspect_ratio: data.ratio,
           status: 'pending',
           created_at: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import html
 import io
 import json
 import logging
@@ -37,6 +38,7 @@ from bot.keyboards import (
     get_back_keyboard,
     get_create_image_keyboard,
     get_create_video_keyboard,
+    get_gemini_omni_result_keyboard,
     get_image_model_label,
     get_image_model_selection_keyboard,
     get_image_result_keyboard,
@@ -51,6 +53,7 @@ from bot.keyboards import (
     get_video_type_label,
 )
 from bot.services.gemini_service import gemini_service
+from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
@@ -67,6 +70,7 @@ from bot.utils.help_texts import (
     get_prompt_tips,
     get_reference_images_help,
 )
+from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     choose_video_reference_model,
@@ -79,6 +83,30 @@ from bot.video_reference_policy import (
 logger = logging.getLogger(__name__)
 router = Router()
 _reference_upload_locks: dict[int, asyncio.Lock] = {}
+
+def _parse_omni_ids(raw: str, *, max_count: int) -> list[str]:
+    """Parse comma/space separated Gemini Omni reusable asset ids."""
+    value = (raw or "").strip()
+    if value.lower() in {"off", "none", "нет", "clear", "очистить", "-"}:
+        return []
+    tokens = re.split(r"[\s,;]+", value)
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        item = token.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        parsed.append(item)
+        if len(parsed) >= max_count:
+            break
+    return parsed
+
+
+def _derive_omni_name(text: str, fallback: str) -> str:
+    value = re.sub(r"\s+", " ", (text or "").strip())
+    value = re.sub(r"[^\w\s.-]", "", value, flags=re.UNICODE).strip()
+    return (value[:20] or fallback)[:20]
 
 
 def _get_reference_upload_lock(user_id: int) -> asyncio.Lock:
@@ -200,11 +228,13 @@ def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
         if result.get("task_id"):
             return "queued", None
         error_message = result.get("message") or result.get("error") or str(result)
-        return "failed", error_message
+        return "failed", make_user_friendly_generation_error(error_message)
     if isinstance(result, (bytes, bytearray)):
         return "done", None
     if result:
-        return "failed", f"Unexpected result type: {type(result).__name__}"
+        return "failed", make_user_friendly_generation_error(
+            f"Unexpected result type: {type(result).__name__}"
+        )
     return "failed", None
 
 
@@ -1173,6 +1203,16 @@ async def _init_default_video_state(
         kling_negative_prompt="",
         kling_cfg_scale=0.5,
         avatar_audio_url=None,
+        omni_resolution="720p",
+        omni_seed=None,
+        omni_audio_ids=[],
+        omni_character_ids=[],
+        omni_base_voice="achernar",
+        omni_voice_name="",
+        omni_voice_description="",
+        omni_example_dialogue="",
+        omni_character_name="",
+        omni_character_audio_ids=[],
     )
 
 
@@ -1285,6 +1325,16 @@ async def _show_video_creation_screen(
     veo_watermark = data.get("veo_watermark", "")
     kling_negative_prompt = data.get("kling_negative_prompt", "")
     kling_cfg_scale = float(data.get("kling_cfg_scale", 0.5))
+    omni_resolution = data.get("omni_resolution", "720p")
+    omni_seed = data.get("omni_seed")
+    omni_audio_ids = data.get("omni_audio_ids", [])
+    omni_character_ids = data.get("omni_character_ids", [])
+    omni_base_voice = data.get("omni_base_voice", "achernar")
+    omni_voice_name = data.get("omni_voice_name", "")
+    omni_voice_description = data.get("omni_voice_description", "")
+    omni_example_dialogue = data.get("omni_example_dialogue", "")
+    omni_character_name = data.get("omni_character_name", "")
+    omni_character_audio_ids = data.get("omni_character_audio_ids", [])
 
     await _normalize_veo_state(state)
     await _normalize_video_duration_state(state)
@@ -1299,6 +1349,19 @@ async def _show_video_creation_screen(
     veo_resolution = data.get("veo_resolution", veo_resolution)
     veo_seed = data.get("veo_seed", veo_seed)
     veo_watermark = data.get("veo_watermark", veo_watermark)
+    omni_resolution = data.get("omni_resolution", omni_resolution)
+    omni_seed = data.get("omni_seed", omni_seed)
+    omni_audio_ids = data.get("omni_audio_ids", omni_audio_ids)
+    omni_character_ids = data.get("omni_character_ids", omni_character_ids)
+    omni_base_voice = data.get("omni_base_voice", omni_base_voice)
+    omni_voice_name = data.get("omni_voice_name", omni_voice_name)
+    omni_voice_description = data.get("omni_voice_description", omni_voice_description)
+    omni_example_dialogue = data.get("omni_example_dialogue", omni_example_dialogue)
+    omni_character_name = data.get("omni_character_name", omni_character_name)
+    omni_character_audio_ids = data.get(
+        "omni_character_audio_ids",
+        omni_character_audio_ids,
+    )
 
     # Формируем текст о референсах
     ref_text = ""
@@ -1321,7 +1384,10 @@ async def _show_video_creation_screen(
         ref_count = len(reference_images)
         total = start_count + ref_count
         if total > 0:
-            media_status = f"✅ <b>Фото загружено: {total}/9</b> (старт + рефы)\n"
+            max_image_refs = get_max_video_image_references(current_model)
+            media_status = (
+                f"✅ <b>Фото загружено: {total}/{max_image_refs}</b> (старт + рефы)\n"
+            )
         else:
             media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
     elif current_v_type == "video":
@@ -1333,6 +1399,11 @@ async def _show_video_creation_screen(
             media_status = (
                 f"📹 <b>Загрузите референсные видео (до {max_video_refs})</b>\n"
             )
+    elif current_v_type == "character":
+        media_status = (
+            f"{'✅' if v_image_url else '🖼'} <b>Character image:</b> "
+            f"<code>{'загружено' if v_image_url else 'не загружено'}</code>\n"
+        )
 
     # Формируем текст о промпте
     prompt_text = ""
@@ -1343,9 +1414,9 @@ async def _show_video_creation_screen(
         f"   📝 Тип: <code>{get_video_type_label(current_v_type)}</code>",
         f"   🤖 Модель: <code>{get_video_model_label(current_model)}</code>",
     ]
-    if current_model not in {"avatar_std", "avatar_pro"}:
+    if current_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         settings_lines.append(f"   ⏱ Длительность: <code>{current_duration} сек</code>")
-    if current_model not in {"avatar_std", "avatar_pro"}:
+    if current_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         settings_lines.append(f"   📐 Формат: <code>{current_ratio}</code>")
 
     if current_model == "grok_imagine":
@@ -1367,11 +1438,63 @@ async def _show_video_creation_screen(
         settings_lines.append(
             f"   🌐 Перевод: <code>{'вкл' if veo_translation else 'выкл'}</code>"
         )
-        settings_lines.append(f"   🖥 Resolution: <code>{veo_resolution}</code>")
+        settings_lines.append(f"   🖥 Качество: <code>{veo_resolution}</code>")
         if veo_seed is not None:
             settings_lines.append(f"   🎲 Seed: <code>{veo_seed}</code>")
         if veo_watermark:
-            settings_lines.append(f"   🏷 Watermark: <code>{veo_watermark}</code>")
+            settings_lines.append(f"   🏷 Метка: <code>{veo_watermark}</code>")
+    if current_model == "gemini_omni_video":
+        settings_lines.append(f"   🖥 Качество: <code>{omni_resolution}</code>")
+        if omni_seed is not None:
+            settings_lines.append(f"   🎲 Seed: <code>{omni_seed}</code>")
+        if omni_audio_ids:
+            settings_lines.append(f"   🎧 Audio ID: <code>{len(omni_audio_ids)}</code>")
+        if omni_character_ids:
+            settings_lines.append(
+                f"   🧍 Character ID: <code>{len(omni_character_ids)}</code>"
+            )
+    if current_model == "gemini_omni_audio":
+        settings_lines.append(f"   🎙 Базовый голос: <code>{omni_base_voice}</code>")
+        settings_lines.append(
+            f"   🏷 Имя: <code>{omni_voice_name or 'авто из промпта'}</code>"
+        )
+        if omni_voice_description:
+            settings_lines.append("   🗣 Описание: <code>заполнено</code>")
+        if omni_example_dialogue:
+            settings_lines.append("   💬 Пример фразы: <code>заполнено</code>")
+    if current_model == "gemini_omni_character":
+        settings_lines.append(
+            f"   🏷 Персонаж: <code>{omni_character_name or 'авто из промпта'}</code>"
+        )
+        if omni_character_audio_ids:
+            settings_lines.append(
+                f"   🎧 Audio ID: <code>{len(omni_character_audio_ids)}</code>"
+            )
+
+    if current_model == "gemini_omni_audio":
+        prompt_title = "Опишите голос"
+        prompt_guidance = (
+            "Напишите простыми словами:\n"
+            "• тембр и возраст звучания\n"
+            "• темп, эмоцию и акцент\n"
+            "• для каких роликов нужен голос"
+        )
+    elif current_model == "gemini_omni_character":
+        prompt_title = "Опишите персонажа"
+        prompt_guidance = (
+            "Напишите простыми словами:\n"
+            "• внешность и одежду\n"
+            "• характер и настроение\n"
+            "• какую роль персонаж будет играть в видео"
+        )
+    else:
+        prompt_title = "Опишите видео"
+        prompt_guidance = (
+            "Напишите простыми словами:\n"
+            "• что происходит в кадре\n"
+            "• как двигается камера\n"
+            "• какой нужен стиль или настроение"
+        )
 
     text = (
         f"🎬 <b>Создание видео</b>\n"
@@ -1380,16 +1503,15 @@ async def _show_video_creation_screen(
         f"⚙️ <b>Текущие настройки:</b>\n" + "\n".join(settings_lines) + "\n"
         f"{media_status}"
         f"{prompt_text}\n"
-        f"<b>Опишите видео</b>\n"
-        f"Напишите простыми словами:\n"
-        f"• что происходит в кадре\n"
-        f"• как двигается камера\n"
-        f"• какой нужен стиль или настроение"
+        f"<b>{prompt_title}</b>\n"
+        f"{prompt_guidance}"
     )
 
     # Напоминание о загрузке медиа
     if current_v_type == "avatar" and not (v_image_url and avatar_audio_url):
         text += "<i>🗣 Сначала загрузите фото аватара и аудио.</i>"
+    elif current_v_type == "character" and not v_image_url:
+        text += "<i>🖼 Сначала загрузите изображение персонажа.</i>"
     elif current_v_type == "imgtxt" and not v_image_url:
         text += f"<i>📷 Сначала загрузите фото для первого кадра.</i>"
     elif current_v_type == "video" and not v_reference_videos:
@@ -1469,6 +1591,14 @@ def _build_video_creation_keyboard(data: dict):
         current_veo_watermark=data.get("veo_watermark", ""),
         current_kling_negative_prompt=data.get("kling_negative_prompt", ""),
         current_kling_cfg_scale=float(data.get("kling_cfg_scale", 0.5)),
+        current_omni_resolution=data.get("omni_resolution", "720p"),
+        current_omni_seed=data.get("omni_seed"),
+        current_omni_audio_ids=data.get("omni_audio_ids", []),
+        current_omni_character_ids=data.get("omni_character_ids", []),
+        current_omni_base_voice=data.get("omni_base_voice", "achernar"),
+        current_omni_voice_name=data.get("omni_voice_name", ""),
+        current_omni_character_name=data.get("omni_character_name", ""),
+        current_omni_character_audio_ids=data.get("omni_character_audio_ids", []),
     )
 
 
@@ -1476,6 +1606,10 @@ def _get_supported_video_durations(model: str) -> list[int]:
     """Return supported durations for the Telegram video flow."""
     if model.startswith("veo3"):
         return [2, 4, 6, 8, 10]
+    if model in {"gemini_omni", "gemini_omni_video"}:
+        return [4, 6, 8, 10]
+    if model in {"gemini_omni_audio", "gemini_omni_character"}:
+        return [6]
     if model in {"avatar_std", "avatar_pro", "motion_control_v26", "motion_control_v30"}:
         return [5]
 
@@ -1567,9 +1701,9 @@ def _build_video_run_summary(
         f"🤖 <code>{get_video_model_label(v_model)}</code>",
         f"📝 <code>{get_video_type_label(v_type)}</code>",
     ]
-    if v_model not in {"avatar_std", "avatar_pro"}:
+    if v_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         parts.append(f"📐 <code>{v_ratio}</code>")
-    if v_model not in {"avatar_std", "avatar_pro"}:
+    if v_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         parts.append(f"⏱ <code>{v_duration}s</code>")
 
     if v_model == "grok_imagine":
@@ -1598,6 +1732,20 @@ def _build_video_run_summary(
         veo_watermark = data.get("veo_watermark")
         if veo_watermark:
             parts.append(f"🏷 <code>{veo_watermark}</code>")
+    if v_model == "gemini_omni_video":
+        parts.append(f"🖥 <code>{data.get('omni_resolution', '720p')}</code>")
+        if data.get("omni_seed") is not None:
+            parts.append(f"🎲 <code>{data.get('omni_seed')}</code>")
+        if data.get("omni_audio_ids"):
+            parts.append(f"🎧 <code>{len(data.get('omni_audio_ids') or [])}</code>")
+        if data.get("omni_character_ids"):
+            parts.append(
+                f"🧍 <code>{len(data.get('omni_character_ids') or [])}</code>"
+            )
+    if v_model == "gemini_omni_audio":
+        parts.append(f"🎙 <code>{data.get('omni_base_voice', 'achernar')}</code>")
+    if v_model == "gemini_omni_character":
+        parts.append(f"🧍 <code>{data.get('omni_character_name') or 'auto'}</code>")
 
     return " | ".join(parts)
 
@@ -1877,6 +2025,75 @@ async def _show_video_model_selection_screen(
     await state.set_state(GenerationStates.waiting_for_input)
 
 
+async def _show_gemini_omni_mode_screen(
+    message_or_callback, state: FSMContext, edit: bool = True
+):
+    user_id = (
+        message_or_callback.from_user.id
+        if hasattr(message_or_callback, "from_user")
+        else None
+    )
+    user_credits = await get_user_credits(user_id) if user_id else 0
+    audio_cost = preset_manager.get_video_cost("gemini_omni_audio", 6)
+    character_cost = preset_manager.get_video_cost("gemini_omni_character", 6)
+    video_cost_6 = preset_manager.get_video_cost("gemini_omni_video", 6)
+
+    text = (
+        "🔷 <b>Gemini Omni</b>\n"
+        f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+        "<b>Что умеет</b>\n"
+        "• <b>Video</b> — генерирует видео из текста, стартового изображения, фото-референсов, одного видео-рефа, Audio ID и Character ID.\n"
+        "  Длительность: <code>4/6/8/10</code> сек, формат: <code>16:9</code> или <code>9:16</code>, качество: <code>720p/1080p/4k</code>, seed опционален.\n"
+        "  Можно добавить до <code>7</code> визуальных референсов; один видео-реф тоже занимает часть этого лимита.\n\n"
+        "• <b>Audio ID</b> — создаёт сохранённый голос: выберите базовый голос, имя, описание тембра и пример фразы. Бот вернёт ID, который потом вставляется в Video.\n\n"
+        "• <b>Character ID</b> — создаёт сохранённого персонажа по одному изображению, описанию, имени и опциональному Audio ID. Бот вернёт ID персонажа для Video.\n\n"
+        "<b>Как лучше пользоваться</b>\n"
+        "1. Если нужен фирменный голос — сначала сделайте <b>Audio ID</b>.\n"
+        "2. Если нужен постоянный герой — сделайте <b>Character ID</b> и при желании привяжите к нему Audio ID.\n"
+        "3. Затем откройте <b>Video</b> и добавьте нужные ID вместе с промптом и референсами.\n\n"
+        "<b>Подсказка</b>: ID можно скопировать из результата и вставить в настройки Gemini Omni Video.\n\n"
+        f"<b>Стоимость</b>: Video от <code>{video_cost_6}</code>🍌 за 6 сек, "
+        f"Audio ID <code>{audio_cost}</code>🍌, Character ID <code>{character_cost}</code>🍌."
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Video", callback_data="omni_mode_video")
+    builder.button(text="🎧 Audio ID", callback_data="omni_mode_audio")
+    builder.button(text="🧍 Character ID", callback_data="omni_mode_character")
+    builder.button(text="🤖 К моделям", callback_data="video_change_model")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 2, 2)
+    keyboard = builder.as_markup()
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        elif edit:
+            await message_or_callback.edit_text(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+    except Exception:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
 async def _show_video_media_screen(
     message_or_callback, state: FSMContext, edit: bool = True
 ):
@@ -1924,6 +2141,20 @@ async def _show_video_media_screen(
             f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
             "Загрузите 1 фото аватара и 1 аудиофайл.\n"
             "После этого можно переходить к описанию."
+        )
+        next_state = GenerationStates.waiting_for_video_prompt
+    elif current_v_type == "character":
+        body = (
+            "<b>Шаг 2. Character image</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Отправьте одно изображение персонажа. После этого можно переходить к описанию."
+        )
+        next_state = GenerationStates.waiting_for_video_prompt
+    elif current_v_type == "audio":
+        body = (
+            "<b>Шаг 2. Audio ID</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Медиа не требуется. Настройте базовый голос и имя, затем отправьте описание."
         )
         next_state = GenerationStates.waiting_for_video_prompt
     elif current_v_type == "imgtxt":
@@ -2324,6 +2555,9 @@ async def handle_video_media_skip(callback: types.CallbackQuery, state: FSMConte
     if current_v_type == "avatar":
         await callback.answer("Для Avatar нужны и фото, и аудио", show_alert=True)
         return
+    if current_v_type == "character":
+        await callback.answer("Для Character нужно изображение", show_alert=True)
+        return
     if current_v_type == "imgtxt":
         await callback.answer(
             "Для режима Фото + Текст сначала загрузите стартовое фото", show_alert=True
@@ -2351,6 +2585,9 @@ async def handle_video_media_continue(callback: types.CallbackQuery, state: FSMC
         await state.update_data(video_flow_step="configure")
         await _show_video_creation_screen(callback, state)
         await callback.answer()
+        return
+    if current_v_type == "character" and not data.get("v_image_url"):
+        await callback.answer("Сначала загрузите изображение персонажа", show_alert=True)
         return
     if current_v_type == "imgtxt" and not data.get("v_image_url"):
         await callback.answer("Сначала загрузите стартовое фото", show_alert=True)
@@ -2455,6 +2692,20 @@ async def handle_v_model(callback: types.CallbackQuery, state: FSMContext):
     await _apply_video_model_selection(callback, state, model)
 
 
+@router.callback_query(
+    F.data.in_({"omni_mode_video", "omni_mode_audio", "omni_mode_character"})
+)
+async def handle_gemini_omni_mode(callback: types.CallbackQuery, state: FSMContext):
+    """Select a concrete Gemini Omni capability from the unified menu."""
+    mode_to_model = {
+        "omni_mode_video": "gemini_omni_video",
+        "omni_mode_audio": "gemini_omni_audio",
+        "omni_mode_character": "gemini_omni_character",
+    }
+    await state.update_data(video_flow_step="select_model")
+    await _apply_video_model_selection(callback, state, mode_to_model[callback.data])
+
+
 @router.callback_query(F.data.startswith("video_model_"))
 async def handle_video_model_legacy(callback: types.CallbackQuery, state: FSMContext):
     """Legacy handler for get_video_models_inline_keyboard callbacks"""
@@ -2494,6 +2745,18 @@ async def _apply_video_model_selection(
 ):
     """Apply video model selection across all keyboard variants."""
     data = await state.get_data()
+    if model == "gemini_omni":
+        await state.update_data(
+            v_model="gemini_omni",
+            v_type="text",
+            video_flow_step="omni_menu",
+            reference_images=[],
+            v_reference_videos=[],
+        )
+        await _show_gemini_omni_mode_screen(callback, state)
+        await callback.answer()
+        return
+
     current_v_type = data.get("v_type", "text")
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
@@ -2525,6 +2788,31 @@ async def _apply_video_model_selection(
             veo_translation=data.get("veo_translation", True),
             veo_resolution=data.get("veo_resolution", "720p"),
         )
+    elif model == "gemini_omni_video":
+        await state.update_data(
+            omni_resolution=data.get("omni_resolution", "720p"),
+            omni_seed=data.get("omni_seed"),
+            omni_audio_ids=data.get("omni_audio_ids", []),
+            omni_character_ids=data.get("omni_character_ids", []),
+        )
+    elif model == "gemini_omni_audio":
+        await state.update_data(
+            reference_images=[],
+            v_reference_videos=[],
+            v_image_url=None,
+            omni_base_voice=data.get("omni_base_voice", "achernar"),
+            omni_voice_name=data.get("omni_voice_name", ""),
+            omni_voice_description=data.get("omni_voice_description", ""),
+            omni_example_dialogue=data.get("omni_example_dialogue", ""),
+        )
+    elif model == "gemini_omni_character":
+        await state.update_data(
+            reference_images=[],
+            v_reference_videos=[],
+            v_image_url=data.get("v_image_url"),
+            omni_character_name=data.get("omni_character_name", ""),
+            omni_character_audio_ids=data.get("omni_character_audio_ids", []),
+        )
 
     # WanX LoRA is text-to-video only, so we force the UI into text mode
     # to expose aspect ratio and duration controls immediately.
@@ -2534,6 +2822,10 @@ async def _apply_video_model_selection(
         current_v_type = "video"
     if model in {"avatar_std", "avatar_pro"}:
         current_v_type = "avatar"
+    if model == "gemini_omni_audio":
+        current_v_type = "audio"
+    if model == "gemini_omni_character":
+        current_v_type = "character"
     if current_v_type == "video" and not video_model_supports_reference_videos(model):
         current_v_type = "text"
     if model == "v26_pro" and current_v_type == "video":
@@ -2754,7 +3046,7 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "model_banana_2")
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор модели Banana 2 (Kie Nano Banana 2)."""
+    """Выбор модели Banana 2."""
     await state.update_data(img_service="banana_2")
     data = await state.get_data()
     if data.get("img_flow_step") == "select_model":
@@ -3949,7 +4241,7 @@ async def process_photo_for_video_prompt_state(
     data = await state.get_data()
     v_type = data.get("v_type")
     current_model = data.get("v_model", "v3_std")
-    if v_type not in {"imgtxt", "avatar"}:
+    if v_type not in {"imgtxt", "avatar", "character"}:
         await message.answer(
             "Пожалуйста, отправьте текстовое описание.",
             reply_markup=get_main_menu_button_keyboard(),
@@ -3963,9 +4255,9 @@ async def process_photo_for_video_prompt_state(
         photo = message.document
 
     file_size = getattr(photo, "file_size", 0) or 0
-    if v_type == "avatar" and file_size and file_size > 10 * 1024 * 1024:
+    if v_type in {"avatar", "character"} and file_size and file_size > 20 * 1024 * 1024:
         await message.answer(
-            "❌ Фото аватара слишком большое. Максимум 10MB.",
+            "❌ Фото слишком большое. Максимум 20MB.",
             reply_markup=get_main_menu_button_keyboard(),
         )
         return
@@ -4030,6 +4322,15 @@ async def process_photo_for_video_prompt_state(
             await _show_video_creation_screen(message, state, edit=False)
         return
 
+    if v_type == "character":
+        await state.update_data(v_image_url=image_url)
+        await message.answer("✅ Изображение персонажа загружено.")
+        if data.get("video_flow_step") == "media":
+            await _show_video_media_screen(message, state, edit=False)
+        else:
+            await _show_video_creation_screen(message, state, edit=False)
+        return
+
     if current_model == "v26_pro" and v_image_url:
         await message.answer(
             "Для Kling 2.5 Turbo можно использовать только одно стартовое фото."
@@ -4039,9 +4340,10 @@ async def process_photo_for_video_prompt_state(
     start_count = 1 if v_image_url else 0
     current_refs = len(reference_images)
     total = start_count + current_refs + 1  # +1 for this photo
-    if total > 9:
+    max_images = get_max_video_image_references(current_model)
+    if total > max_images:
         await message.answer(
-            "❌ Можно загрузить максимум 9 фото: 1 основное и 8 дополнительных."
+            f"❌ Можно загрузить максимум {max_images} фото для выбранной модели."
         )
         return
 
@@ -4049,7 +4351,7 @@ async def process_photo_for_video_prompt_state(
         # Первое фото - стартовый кадр
         await state.update_data(v_image_url=image_url)
         logger.info(f"Saved start image for video (1st photo): {image_url}")
-        status = "✅ Основное фото загружено. (1/9)"
+        status = f"✅ Основное фото загружено. (1/{max_images})"
     else:
         # Последующие - референсы
         reference_images.append(image_url)
@@ -4057,7 +4359,7 @@ async def process_photo_for_video_prompt_state(
         logger.info(
             f"Saved reference image for video (ref #{current_refs + 1}): {image_url}"
         )
-        status = f"✅ Дополнительное фото загружено. Всего: {total}/9"
+        status = f"✅ Дополнительное фото загружено. Всего: {total}/{max_images}"
 
     # Update UI with current count
     data = await state.get_data()
@@ -4078,7 +4380,7 @@ async def process_photo_for_video_prompt_state(
     else:
         text = (
             f"🎬 <b>Фото + Текст → Видео</b>\n"
-            f"📎 Загружено фото: <code>{total_photos}/9</code>\n"
+            f"📎 Загружено фото: <code>{total_photos}/{max_images}</code>\n"
             f"{status}\n"
             f"⚙️ Модель: <code>{current_model}</code> | {current_duration}с | {current_ratio}\n\n"
             f"<b>Можно отправить ещё фото или сразу написать описание видео.</b>"
@@ -4137,7 +4439,7 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     v_type = data.get("v_type", "")
     if (
         generation_type == "video"
-        and v_type in ("imgtxt", "avatar", "video")
+        and v_type in ("imgtxt", "avatar", "video", "character")
         and data.get("video_flow_step") != "configure"
     ):
         if v_type == "imgtxt" and not data.get("v_image_url"):
@@ -4150,6 +4452,9 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
             if not data.get("avatar_audio_url"):
                 await message.answer("Сначала отправьте аудио для аватара.")
                 return
+        if v_type == "character" and not data.get("v_image_url"):
+            await message.answer("Сначала отправьте изображение персонажа.")
+            return
         await state.update_data(video_flow_step="configure")
     logger.info(f"Generation type: {generation_type}")
 
@@ -4249,6 +4554,16 @@ async def run_no_preset_video_from_message(
     veo_watermark = data.get("veo_watermark", "")
     motion_mode = data.get("v_mode", "720p")
     motion_direction = data.get("v_orientation", "video")
+    omni_resolution = data.get("omni_resolution", "720p")
+    omni_seed = data.get("omni_seed")
+    omni_audio_ids = data.get("omni_audio_ids", [])
+    omni_character_ids = data.get("omni_character_ids", [])
+    omni_base_voice = data.get("omni_base_voice", "achernar")
+    omni_voice_name = data.get("omni_voice_name", "")
+    omni_voice_description = data.get("omni_voice_description", "")
+    omni_example_dialogue = data.get("omni_example_dialogue", "")
+    omni_character_name = data.get("omni_character_name", "")
+    omni_character_audio_ids = data.get("omni_character_audio_ids", [])
 
     image_url = data.get("v_image_url")
     avatar_audio_url = data.get("avatar_audio_url")
@@ -4261,7 +4576,7 @@ async def run_no_preset_video_from_message(
     )
 
     elements_list = None
-    if v_type == "imgtxt" and image_refs:
+    if v_type == "imgtxt" and len(image_refs) >= 2:
         elements_list = [
             {
                 "description": "reference photos for video generation consistency and style",
@@ -4316,7 +4631,72 @@ async def run_no_preset_video_from_message(
         from bot.services.kling_service import kling_service
         from bot.services.seedance_service import seedance_service
 
-        if v_model.startswith("veo3"):
+        if v_model == "gemini_omni_video":
+            omni_images = []
+            if image_url:
+                omni_images.append(image_url)
+            for ref_url in image_refs:
+                if ref_url and ref_url not in omni_images:
+                    omni_images.append(ref_url)
+
+            omni_video_list = []
+            for ref_url in video_urls or []:
+                omni_video_list.append(
+                    {
+                        "url": ref_url,
+                        "start": 0,
+                        "ends": min(20, max(1, int(v_duration))),
+                    }
+                )
+                break
+
+            result = await gemini_omni_service.generate_video(
+                prompt=prompt,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                resolution=omni_resolution,
+                image_urls=omni_images or None,
+                audio_ids=omni_audio_ids,
+                video_list=omni_video_list or None,
+                character_ids=omni_character_ids,
+                seed=omni_seed,
+                callBackUrl=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+
+        elif v_model == "gemini_omni_audio":
+            audio_name = omni_voice_name or _derive_omni_name(prompt, "Omni Voice")
+            result = await gemini_omni_service.create_audio(
+                audio_id=omni_base_voice,
+                name=audio_name,
+                voice_description=omni_voice_description or prompt,
+                example_dialogue=omni_example_dialogue,
+            )
+
+        elif v_model == "gemini_omni_character":
+            if not image_url:
+                await message.answer(
+                    "❌ Gemini Omni Character требует изображение персонажа."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+
+            character_name = omni_character_name or _derive_omni_name(
+                prompt,
+                "Character",
+            )
+            result = await gemini_omni_service.create_character(
+                description=prompt,
+                image_urls=[image_url],
+                character_name=character_name,
+                audio_ids=omni_character_audio_ids,
+            )
+
+        elif v_model.startswith("veo3"):
             veo_image_urls = []
             if veo_generation_type == "TEXT_2_VIDEO":
                 veo_image_urls = []
@@ -4499,7 +4879,9 @@ async def run_no_preset_video_from_message(
                     if v_model in {"avatar_std", "avatar_pro"} and avatar_audio_url
                     else video_urls
                 ),
-                image_input=image_refs if v_type != "imgtxt" else None,
+                image_input=(
+                    image_refs if v_type != "imgtxt" or not elements_list else None
+                ),
                 elements=elements_list,
                 negative_prompt=kling_negative_prompt or None,
                 cfg_scale=kling_cfg_scale,
@@ -4512,12 +4894,66 @@ async def run_no_preset_video_from_message(
 
         await processing_msg.delete()
 
+        if result and result.get("status") == "done" and result.get("asset_id"):
+            asset_kind = result.get("asset_kind") or "asset"
+            task_type = "audio" if asset_kind == "audio" else "character"
+            asset_id = str(result["asset_id"])
+            await add_generation_task(
+                user.id,
+                message.from_user.id,
+                asset_id,
+                task_type,
+                "no_preset_video",
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                prompt=prompt,
+                cost=cost,
+                request_data={
+                    "source": "telegram",
+                    "v_type": v_type,
+                    "v_model": v_model,
+                    "asset_kind": asset_kind,
+                    "asset_id": asset_id,
+                    "v_image_url": image_url,
+                    "reference_images": image_refs,
+                    "omni_base_voice": omni_base_voice,
+                    "omni_voice_name": omni_voice_name,
+                    "omni_voice_description": omni_voice_description,
+                    "omni_example_dialogue": omni_example_dialogue,
+                    "omni_character_name": omni_character_name,
+                    "omni_character_audio_ids": omni_character_audio_ids,
+                },
+            )
+            await complete_video_task(asset_id, asset_id)
+            result_title = (
+                "Audio ID создан"
+                if asset_kind == "audio"
+                else "Character ID создан"
+            )
+            await message.answer(
+                f"✅ <b>{result_title}</b>\n"
+                f"• Модель: <code>{get_video_model_label(v_model)}</code>\n"
+                f"• ID: <code>{asset_id}</code>\n"
+                f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}\n\n"
+                "Этот ID можно использовать в Gemini Omni Video.",
+                parse_mode="HTML",
+                reply_markup=get_gemini_omni_result_keyboard(),
+            )
+            await state.clear()
+            return
+
         if result and "task_id" in result:
+            task_type = (
+                "audio"
+                if v_model == "gemini_omni_audio"
+                else "character" if v_model == "gemini_omni_character" else "video"
+            )
             await add_generation_task(
                 user.id,
                 message.from_user.id,
                 result["task_id"],
-                "video",
+                task_type,
                 "no_preset_video",
                 model=v_model,
                 duration=v_duration,
@@ -4542,10 +4978,29 @@ async def run_no_preset_video_from_message(
                     "kling_cfg_scale": data.get("kling_cfg_scale", 0.5),
                     "motion_mode": motion_mode,
                     "motion_direction": motion_direction,
+                    "omni_resolution": omni_resolution,
+                    "omni_seed": omni_seed,
+                    "omni_audio_ids": omni_audio_ids,
+                    "omni_character_ids": omni_character_ids,
+                    "omni_base_voice": omni_base_voice,
+                    "omni_voice_name": omni_voice_name,
+                    "omni_voice_description": omni_voice_description,
+                    "omni_example_dialogue": omni_example_dialogue,
+                    "omni_character_name": omni_character_name,
+                    "omni_character_audio_ids": omni_character_audio_ids,
                 },
             )
+            queued_title = (
+                "Audio ID создается"
+                if v_model == "gemini_omni_audio"
+                else (
+                    "Character ID создается"
+                    if v_model == "gemini_omni_character"
+                    else "Видео задача запущена"
+                )
+            )
             await message.answer(
-                f"✅ <b>Видео задача запущена!</b>"
+                f"✅ <b>{queued_title}!</b>"
                 f"🆔 <code>{result['task_id']}</code>\n"
                 f"{run_summary}\n"
                 f"💰 <code>{cost}</code>🍌 {'списано' if not is_admin else '(админ бесплатно)'}"
@@ -4555,8 +5010,20 @@ async def run_no_preset_video_from_message(
         else:
             if not is_admin:
                 await add_credits(message.from_user.id, cost)
+            error_text = ""
+            if isinstance(result, dict):
+                error_text = make_user_friendly_generation_error(
+                    result.get("message") or result.get("error") or ""
+                ) or ""
+            details = (
+                f"\nПричина: <code>{html.escape(error_text[:500])}</code>"
+                if error_text
+                else ""
+            )
             await message.answer(
                 "❌ Не получилось создать задачу. Бананы за попытку уже возвращены."
+                f"{details}",
+                parse_mode="HTML",
             )
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
@@ -4996,7 +5463,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         image_bytes = await message.bot.download_file(file.file_path)
         image_data = image_bytes.read()
 
-        # Validate image size (min 300x300 for Kie.ai)
+        # Validate image size required by the video model.
         try:
 
             img = Image.open(io.BytesIO(image_data))
@@ -5317,7 +5784,7 @@ async def handle_veo_resolution(callback: types.CallbackQuery, state: FSMContext
     resolution = callback.data.replace("veo_resolution_", "")
     await state.update_data(veo_resolution=resolution)
     await _show_video_creation_screen(callback, state)
-    await callback.answer(f"Resolution: {resolution}")
+    await callback.answer(f"Качество: {resolution}")
 
 
 @router.callback_query(F.data.startswith("veo_gen_"))
@@ -5360,7 +5827,7 @@ async def handle_veo_watermark_edit(callback: types.CallbackQuery, state: FSMCon
     data = await state.get_data()
     current_watermark = data.get("veo_watermark") or "off"
     await callback.message.answer(
-        "🏷 Введите watermark для Veo или `off`, чтобы убрать его.\n"
+        "🏷 Введите метку для Veo или `off`, чтобы убрать её.\n"
         f"Сейчас: <code>{current_watermark}</code>",
         parse_mode="HTML",
     )
@@ -5396,6 +5863,155 @@ async def handle_kling_cfg_scale_edit(callback: types.CallbackQuery, state: FSMC
         parse_mode="HTML",
     )
     await state.set_state(GenerationStates.waiting_for_kling_cfg_scale)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("omni_resolution_"))
+async def handle_omni_resolution(callback: types.CallbackQuery, state: FSMContext):
+    """Set Gemini Omni Video resolution."""
+    resolution = callback.data.replace("omni_resolution_", "")
+    if resolution not in {"720p", "1080p", "4k"}:
+        await callback.answer()
+        return
+    await state.update_data(omni_resolution=resolution)
+    await _show_video_creation_screen(callback, state)
+    await callback.answer(f"Качество: {resolution}")
+
+
+@router.callback_query(F.data == "omni_seed_edit")
+async def handle_omni_seed_edit(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current_seed = data.get("omni_seed")
+    await callback.message.answer(
+        "🎲 Введите seed для Gemini Omni (0-2147483647) или `auto`.\n"
+        f"Сейчас: <code>{current_seed if current_seed is not None else 'auto'}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_seed)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_audio_ids_edit")
+async def handle_omni_audio_ids_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_ids = ", ".join(data.get("omni_audio_ids") or []) or "off"
+    await callback.message.answer(
+        "🎧 Введите Audio ID для Gemini Omni Video или `off`.\n"
+        f"Сейчас: <code>{current_ids}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_audio_ids)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_character_ids_edit")
+async def handle_omni_character_ids_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_ids = ", ".join(data.get("omni_character_ids") or []) or "off"
+    await callback.message.answer(
+        "🧍 Введите до 3 Character ID через пробел/запятую или `off`.\n"
+        f"Сейчас: <code>{current_ids}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_character_ids)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_voice_base_edit")
+async def handle_omni_voice_base_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_voice = data.get("omni_base_voice", "achernar")
+    voices = ", ".join(sorted(gemini_omni_service.BASE_VOICES))
+    await callback.message.answer(
+        "🎙 Введите базовый голос для Gemini Omni Audio.\n"
+        f"Сейчас: <code>{current_voice}</code>\n"
+        f"Доступно: <code>{voices}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_voice_base)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_voice_name_edit")
+async def handle_omni_voice_name_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_name = data.get("omni_voice_name") or "auto"
+    await callback.message.answer(
+        "🏷 Введите имя голоса до 20 символов или `auto`.\n"
+        f"Сейчас: <code>{current_name}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_voice_name)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_voice_desc_edit")
+async def handle_omni_voice_desc_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    await callback.message.answer(
+        "🗣 Введите описание голоса до 2000 символов или `off`.",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_voice_description)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_voice_dialogue_edit")
+async def handle_omni_voice_dialogue_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    await callback.message.answer(
+        "💬 Введите пример реплики до 2000 символов или `off`.",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_example_dialogue)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_character_name_edit")
+async def handle_omni_character_name_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_name = data.get("omni_character_name") or "auto"
+    await callback.message.answer(
+        "🏷 Введите имя персонажа до 20 символов или `auto`.\n"
+        f"Сейчас: <code>{current_name}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_character_name)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_character_audio_ids_edit")
+async def handle_omni_character_audio_ids_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+    current_ids = ", ".join(data.get("omni_character_audio_ids") or []) or "off"
+    await callback.message.answer(
+        "🎧 Введите Audio ID для Gemini Omni Character или `off`.\n"
+        f"Сейчас: <code>{current_ids}</code>",
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_character_audio_ids)
     await callback.answer()
 
 
@@ -5453,6 +6069,103 @@ async def handle_kling_cfg_scale_input(message: types.Message, state: FSMContext
         return
 
     await state.update_data(kling_cfg_scale=round(cfg_scale, 1))
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_seed, F.text)
+async def handle_omni_seed_input(message: types.Message, state: FSMContext):
+    value = message.text.strip().lower()
+    if value in {"auto", "off", "none", "random"}:
+        await state.update_data(omni_seed=None)
+    else:
+        if not value.isdigit():
+            await message.answer("❌ Seed должен быть числом 0-2147483647 или `auto`.")
+            return
+        seed = int(value)
+        if seed < 0 or seed > 2_147_483_647:
+            await message.answer("❌ Seed должен быть в диапазоне 0-2147483647.")
+            return
+        await state.update_data(omni_seed=seed)
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_audio_ids, F.text)
+async def handle_omni_audio_ids_input(message: types.Message, state: FSMContext):
+    ids = _parse_omni_ids(message.text, max_count=1)
+    await state.update_data(omni_audio_ids=ids)
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_character_ids, F.text)
+async def handle_omni_character_ids_input(message: types.Message, state: FSMContext):
+    ids = _parse_omni_ids(message.text, max_count=3)
+    await state.update_data(omni_character_ids=ids)
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_voice_base, F.text)
+async def handle_omni_voice_base_input(message: types.Message, state: FSMContext):
+    voice = message.text.strip().lower()
+    if voice not in gemini_omni_service.BASE_VOICES:
+        await message.answer("❌ Такого базового голоса нет в Gemini Omni.")
+        return
+    await state.update_data(omni_base_voice=voice)
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_voice_name, F.text)
+async def handle_omni_voice_name_input(message: types.Message, state: FSMContext):
+    value = message.text.strip()
+    await state.update_data(
+        omni_voice_name="" if value.lower() in {"auto", "off", "none"} else value[:20]
+    )
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_voice_description, F.text)
+async def handle_omni_voice_description_input(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = message.text.strip()
+    await state.update_data(
+        omni_voice_description=""
+        if value.lower() in {"off", "none"}
+        else value[:2000]
+    )
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_example_dialogue, F.text)
+async def handle_omni_example_dialogue_input(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = message.text.strip()
+    await state.update_data(
+        omni_example_dialogue=""
+        if value.lower() in {"off", "none"}
+        else value[:2000]
+    )
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_character_name, F.text)
+async def handle_omni_character_name_input(message: types.Message, state: FSMContext):
+    value = message.text.strip()
+    await state.update_data(
+        omni_character_name="" if value.lower() in {"auto", "off", "none"} else value[:20]
+    )
+    await _show_video_creation_screen(message, state)
+
+
+@router.message(GenerationStates.waiting_for_omni_character_audio_ids, F.text)
+async def handle_omni_character_audio_ids_input(
+    message: types.Message,
+    state: FSMContext,
+):
+    ids = _parse_omni_ids(message.text, max_count=1)
+    await state.update_data(omni_character_audio_ids=ids)
     await _show_video_creation_screen(message, state)
 
 

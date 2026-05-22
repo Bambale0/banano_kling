@@ -100,6 +100,14 @@ async def _yookassa_reconcile_loop() -> None:
         await asyncio.sleep(YOOKASSA_RECONCILE_INTERVAL_SECONDS)
 
 def _configure_logging() -> None:
+    if os.environ.get("BANANO_DISABLE_FILE_LOGGING") == "1":
+        logging.basicConfig(
+            level=logging.INFO,
+            handlers=[logging.NullHandler()],
+            force=True,
+        )
+        return
+
     os.makedirs("logs", exist_ok=True)
 
     root_logger = logging.getLogger()
@@ -196,6 +204,10 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "veo3": "Veo 3.1 Quality",
         "veo3_fast": "Veo 3.1 Fast",
         "veo3_lite": "Veo 3.1 Lite",
+        "gemini_omni": "Gemini Omni",
+        "gemini_omni_video": "Gemini Omni Video",
+        "gemini_omni_audio": "Gemini Omni Audio",
+        "gemini_omni_character": "Gemini Omni Character",
         "banana_pro": "Banana Pro",
         "banana_2": "Banana 2",
         "seedream_edit": "Seedream 4.5",
@@ -226,6 +238,44 @@ def _extract_first(obj, keys):
             found = _extract_first(item, keys)
             if found not in (None, ""):
                 return found
+    return None
+
+
+def _extract_gemini_omni_asset_id(obj, asset_kind: str):
+    """Extract Gemini Omni Audio ID or Character ID from async KIE payloads."""
+    if asset_kind == "audio":
+        keys = (
+            "kieAudioId",
+            "kieAudioID",
+            "audioId",
+            "audioID",
+            "audio_id",
+        )
+    elif asset_kind == "character":
+        keys = (
+            "kieCharacterId",
+            "kieCharacterID",
+            "characterId",
+            "characterID",
+            "character_id",
+        )
+    else:
+        return None
+
+    candidates = [obj]
+    result_json = _extract_first(obj, ("resultJson", "result_json"))
+    if isinstance(result_json, str) and result_json.strip():
+        try:
+            candidates.append(json.loads(result_json))
+        except json.JSONDecodeError:
+            pass
+
+    for candidate in candidates:
+        found = _extract_first(candidate, keys)
+        if isinstance(found, list):
+            found = found[0] if found else None
+        if found not in (None, ""):
+            return str(found)
     return None
 
 
@@ -1407,15 +1457,15 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             task = await get_task_by_id(task_id)
 
             if not task:
-                logger.warning(f"Task {task_id} not found in database")
+                logger.info(
+                    "Ignoring orphan webhook for Kling task %s: task not found in database",
+                    task_id,
+                )
                 return web.Response(status=200)
 
             # Получаем Telegram ID пользователя по internal user_id
             telegram_id = await get_telegram_id_by_user_id(task.user_id)
 
-            if not task:
-                logger.info(f"Ignoring orphan webhook for {service_name} task {task_id}: task not found in database")
-                return web.Response(status=200)
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
@@ -2161,7 +2211,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             get_task_by_id,
             get_telegram_id_by_user_id,
         )
-        from bot.keyboards import get_video_result_keyboard
+        from bot.keyboards import (
+            get_gemini_omni_result_keyboard,
+            get_video_result_keyboard,
+        )
 
         # Flexible extraction for task_id, status, image_url
         webhook_data = data.get("data") if isinstance(data.get("data"), dict) else data
@@ -2202,6 +2255,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             service_name = "Bytedance Seedance 2.0"
         elif "veo" in model_lower or is_veo_payload:
             service_name = "Veo 3.1"
+        elif "gemini-omni-video" in model_lower:
+            service_name = "Gemini Omni Video"
+        elif "gemini-omni-audio" in model_lower:
+            service_name = "Gemini Omni Audio"
+        elif "gemini-omni-character" in model_lower:
+            service_name = "Gemini Omni Character"
         else:
             service_name = model or "AI"
 
@@ -2243,12 +2302,86 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     logger.warning(
                         f"Failed to parse Kie.ai resultJson: {result_json_str}"
                     )
+                if not result_url:
+                    direct_result = _extract_first(
+                        webhook_data,
+                        (
+                            "resultUrl",
+                            "result_url",
+                            "videoUrl",
+                            "imageUrl",
+                            "url",
+                        ),
+                    )
+                    if isinstance(direct_result, list) and direct_result:
+                        direct_result = direct_result[0]
+                    if isinstance(direct_result, str) and direct_result.startswith("http"):
+                        result_url = direct_result
 
             if result_url:
                 logger.info(
                     f"Extracted {service_name} result URL: {result_url[:50]}..."
                 )
             else:
+                asset_kind = None
+                if task and task.type in {"audio", "character"}:
+                    asset_kind = task.type
+                elif "gemini-omni-audio" in model_lower:
+                    asset_kind = "audio"
+                elif "gemini-omni-character" in model_lower:
+                    asset_kind = "character"
+
+                asset_id = (
+                    _extract_gemini_omni_asset_id(webhook_data, asset_kind)
+                    if asset_kind
+                    else None
+                )
+                if asset_id:
+                    if not task:
+                        logger.info(
+                            "Ignoring orphan webhook for %s task %s: task not found in database",
+                            service_name,
+                            task_id,
+                        )
+                        return web.Response(status=200)
+                    if not telegram_id:
+                        logger.error(
+                            "Cannot find telegram_id for user_id %s",
+                            task.user_id,
+                        )
+                        return web.Response(status=200)
+
+                    model_label = _get_task_model_label(task.model, task.type)
+                    title = (
+                        "Audio ID готов"
+                        if asset_kind == "audio"
+                        else "Character ID готов"
+                    )
+                    bot_instance = Bot(token=config.BOT_TOKEN)
+                    try:
+                        await bot_instance.send_message(
+                            chat_id=telegram_id,
+                            text=(
+                                f"✅ <b>{title}</b>\n"
+                                f"• Модель: <code>{html.escape(model_label)}</code>\n"
+                                f"• ID: <code>{html.escape(asset_id)}</code>\n\n"
+                                "Этот ID можно использовать в Gemini Omni Video."
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=get_gemini_omni_result_keyboard(),
+                        )
+                    finally:
+                        await bot_instance.session.close()
+
+                    await complete_video_task(task_id, asset_id)
+                    logger.info(
+                        "%s asset id %s sent to user %s",
+                        service_name,
+                        asset_id,
+                        telegram_id,
+                    )
+                    return web.Response(status=200)
+
                 logger.error(
                     f"No result URL found in {service_name} result: {webhook_data.get('resultJson', 'N/A')}"
                 )

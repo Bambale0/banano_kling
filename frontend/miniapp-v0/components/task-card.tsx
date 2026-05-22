@@ -3,7 +3,7 @@
 import { useApp } from '@/lib/app-context'
 import type { Task } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Image, Video, Clock, CheckCircle2, XCircle, Banana, ChevronRight } from 'lucide-react'
+import { Image, Video, Clock, CheckCircle2, XCircle, Banana, ChevronRight, Headphones, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 interface TaskCardProps {
@@ -46,7 +46,7 @@ export function TaskCard({ task, index }: TaskCardProps) {
 
   const status = statusConfig[task.status]
   const StatusIcon = status.icon
-  const TypeIcon = task.type === 'image' ? Image : Video
+  const TypeIcon = task.type === 'image' ? Image : task.type === 'audio' ? Headphones : task.type === 'character' ? UserRound : Video
 
   return (
     <motion.button
@@ -79,7 +79,7 @@ export function TaskCard({ task, index }: TaskCardProps) {
         ) : (
           <TypeIcon className={cn(
             "w-6 h-6",
-            task.type === 'image' ? "text-gold/70" : "text-cyan/70"
+            task.type === 'image' ? "text-gold/70" : task.type === 'audio' || task.type === 'character' ? "text-success/70" : "text-cyan/70"
           )} />
         )}
       </div>

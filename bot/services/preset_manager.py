@@ -46,6 +46,14 @@ CANONICAL_VIDEO_ALIASES = {
     "veo3": "veo3",
     "veo3_fast": "veo3_fast",
     "veo3_lite": "veo3_lite",
+    "gemini_omni": "gemini_omni_video",
+    "gemini-omni": "gemini_omni_video",
+    "gemini_omni_video": "gemini_omni_video",
+    "gemini-omni-video": "gemini_omni_video",
+    "gemini_omni_audio": "gemini_omni_audio",
+    "gemini-omni-audio": "gemini_omni_audio",
+    "gemini_omni_character": "gemini_omni_character",
+    "gemini-omni-character": "gemini_omni_character",
     "avatar_std": "avatar_std",
     "avatar_pro": "avatar_pro",
     "v26_motion_std": "v26_motion_std",
@@ -253,7 +261,7 @@ class PresetManager:
                 return int(specific[str(duration)])
             base = model_config.get("base") or model_config.get("cost")
             if base is not None:
-                default_dur = 6 if key.startswith("veo3") else 5
+                default_dur = 6 if key.startswith("veo3") or key.startswith("gemini_omni") else 5
                 per_sec = base / default_dur
                 raw = duration * per_sec
                 return int(raw) if raw == int(raw) else round(raw * 2) / 2

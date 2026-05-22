@@ -2,7 +2,7 @@
 
 import type { ScenarioType } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Type, ImageIcon, Video } from 'lucide-react'
+import { Type, ImageIcon, Video, Headphones, UserRound } from 'lucide-react'
 
 interface ScenarioSelectProps {
   scenarios: ScenarioType[]
@@ -30,10 +30,25 @@ const scenarioConfig: Record<ScenarioType, {
     icon: Video,
     description: 'Стилизация видео',
   },
+  'audio': {
+    label: 'Audio ID',
+    icon: Headphones,
+    description: 'Голосовой ID',
+  },
+  'character': {
+    label: 'Character ID',
+    icon: UserRound,
+    description: 'ID персонажа',
+  },
+  'avatar': {
+    label: 'Avatar',
+    icon: UserRound,
+    description: 'Аватар',
+  },
 }
 
 export function ScenarioSelect({ scenarios, value, onChange }: ScenarioSelectProps) {
-  const allScenarios: ScenarioType[] = ['text', 'imgtxt', 'video']
+  const allScenarios: ScenarioType[] = ['text', 'imgtxt', 'video', 'audio', 'character', 'avatar']
 
   return (
     <div className="flex gap-2">

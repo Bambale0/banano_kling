@@ -469,6 +469,9 @@ VIDEO_MODEL_LABELS = {
     "veo3": "Veo 3.1 Quality",
     "veo3_fast": "Veo 3.1 Fast",
     "veo3_lite": "Veo 3.1 Lite",
+    "gemini_omni_video": "Gemini Omni Video",
+    "gemini_omni_audio": "Gemini Omni Audio",
+    "gemini_omni_character": "Gemini Omni Character",
     "glow": "Kling Glow",
 }
 
