@@ -1,7 +1,46 @@
 1:"$Sreact.fragment"
-2:I[2593,["177","static/chunks/app/layout-253a400e2d889cd5.js"],""]
 3:I[7121,[],""]
 4:I[4581,[],""]
-5:I[4317,["177","static/chunks/app/layout-253a400e2d889cd5.js"],"Analytics"]
-:HL["/mini-app/_next/static/css/f9b9f7f66512ad81.css","style"]
-0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/f9b9f7f66512ad81.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","$L2",null,{"src":"https://telegram.org/js/telegram-web-app.js","strategy":"beforeInteractive"}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"wi9lj89GQu25IRUvEvIrU"}
+5:I[4317,["177","static/chunks/app/layout-a233c6d97239a274.js"],"Analytics"]
+:HL["/mini-app/_next/static/css/0403cb5e3c4cc902.css","style"]
+2:T4e8,
+(function () {
+  var attempts = 0;
+
+  function postTelegramEvent(eventType, eventData) {
+    var payload = JSON.stringify({ eventType: eventType, eventData: eventData || {} });
+    try {
+      if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+        window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData || {}));
+      }
+      if (window.external && typeof window.external.notify === 'function') {
+        window.external.notify(payload);
+      }
+      if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+        window.parent.postMessage(payload, '*');
+      }
+    } catch (e) {}
+  }
+
+  function markReady() {
+    attempts += 1;
+    var webApp = window.Telegram && window.Telegram.WebApp;
+
+    if (webApp) {
+      try { if (webApp.ready) webApp.ready(); } catch (e) {}
+      try { if (webApp.expand) webApp.expand(); } catch (e) {}
+    }
+
+    postTelegramEvent('web_app_ready');
+    postTelegramEvent('web_app_expand');
+
+    if (attempts < 80) {
+      window.setTimeout(markReady, 100);
+    }
+  }
+
+  markReady();
+  window.addEventListener('DOMContentLoaded', markReady, false);
+  window.addEventListener('load', markReady, false);
+})();
+0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/0403cb5e3c4cc902.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","script",null,{"src":"https://telegram.org/js/telegram-web-app.js","async":true}],["$","script",null,{"id":"telegram-early-ready","dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"cVkkEAEJ6aVy3-YjoT5wj"}

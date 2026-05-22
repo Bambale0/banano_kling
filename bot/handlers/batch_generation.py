@@ -443,7 +443,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         if _is_binary_image_payload(result):
             # Сохраняем результат
             result_bytes = bytes(result)
-            saved_url = save_uploaded_file(result_bytes, "png")
+            saved_url = _save_uploaded_file(result_bytes, "png")
 
             # Отправляем результат
             await callback.message.answer_photo(

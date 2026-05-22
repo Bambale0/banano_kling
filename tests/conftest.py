@@ -1,8 +1,3 @@
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
-
 import pytest
 
 
@@ -10,6 +5,18 @@ import pytest
 def temp_db_path(tmp_path):
     """Temporary database path"""
     return tmp_path / "test.db"
+
+
+@pytest.fixture(autouse=True)
+async def isolated_database(tmp_path, monkeypatch):
+    """Run every test against a fresh SQLite database, never the live bot.db."""
+    from bot import database
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    monkeypatch.setattr(database, "DATABASE_PATH", str(db_path))
+    await database.init_db()
+    yield
 
 
 @pytest.fixture

@@ -240,7 +240,7 @@ class Config:
         path = self.MINI_APP_PATH or "/mini-app"
         if not path.startswith("/"):
             path = f"/{path}"
-        return f"{base}{path}"
+        return f"{base}{path.rstrip('/')}/"
 
 
 config = Config()

@@ -81,7 +81,7 @@ export function UploadArea({
         )
       }
     }
-  }, [files, maxFiles, onFilesChange, onUpload])
+  }, [accept, files, maxFiles, onFilesChange, onUpload])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()

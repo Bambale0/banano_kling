@@ -11,6 +11,7 @@ import { RatioSelect } from './ratio-select'
 import { UploadArea } from './upload-area'
 import { ScenarioSelect } from './scenario-select'
 import { DurationSelect } from './duration-select'
+import { getStorageItem, removeStorageItem } from '@/hooks/browser-storage'
 import {
   AlertCircle,
   Banana,
@@ -38,6 +39,14 @@ function getVideoModelCost(model: VideoModel | undefined, duration: number, qual
 function getVideoModelPerSecondCost(model: VideoModel | undefined, duration: number, quality?: string) {
   return getVideoModelCost(model, duration, quality) / Math.max(duration, 1)
 }
+
+const HIDDEN_FROM_COMMON_VIDEO_LIST = new Set([
+  'avatar_std',
+  'avatar_pro',
+  'motion_control',
+  'motion_control_v26',
+  'motion_control_v30',
+])
 
 interface VideoGeneratorFormProps {
   models: VideoModel[]
@@ -121,17 +130,24 @@ export function VideoGeneratorForm({
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
   const [audioReference, setAudioReference] = useState<UploadedFile[]>([])
 
-  const hiddenFromCommonVideoList = new Set(['avatar_std', 'avatar_pro', 'motion_control', 'motion_control_v26', 'motion_control_v30', 'motion_control', 'motion_control_v26', 'motion_control_v30'])
   const regularVideoModels = useMemo(
-    () => models.filter((item) => !hiddenFromCommonVideoList.has(item.id)),
+    () => models.filter((item) => !HIDDEN_FROM_COMMON_VIDEO_LIST.has(item.id)),
     [models]
   )
-  const requestedServiceModel = hiddenFromCommonVideoList.has(selectedModel)
-    ? models.filter((item) => item.id === selectedModel)
-    : []
-  const visibleModels = requestedServiceModel.length
-    ? [...requestedServiceModel, ...regularVideoModels]
-    : regularVideoModels
+  const requestedServiceModel = useMemo(
+    () =>
+      HIDDEN_FROM_COMMON_VIDEO_LIST.has(selectedModel)
+        ? models.filter((item) => item.id === selectedModel)
+        : [],
+    [models, selectedModel]
+  )
+  const visibleModels = useMemo(
+    () =>
+      requestedServiceModel.length
+        ? [...requestedServiceModel, ...regularVideoModels]
+        : regularVideoModels,
+    [regularVideoModels, requestedServiceModel]
+  )
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
@@ -230,20 +246,19 @@ export function VideoGeneratorForm({
 
   // consume requested Avatar service
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const requestedModel = window.localStorage.getItem('miniapp_requested_video_model')
-    const requestedScenario = window.localStorage.getItem('miniapp_requested_video_scenario')
+    const requestedModel = getStorageItem('miniapp_requested_video_model')
+    const requestedScenario = getStorageItem('miniapp_requested_video_scenario')
     if (requestedModel && models.some((item) => item.id === requestedModel)) {
       setSelectedModel(requestedModel)
       if (requestedScenario) setSelectedScenario(requestedScenario as ScenarioType)
-      window.localStorage.removeItem('miniapp_requested_video_model')
-      window.localStorage.removeItem('miniapp_requested_video_scenario')
+      removeStorageItem('miniapp_requested_video_model')
+      removeStorageItem('miniapp_requested_video_scenario')
     }
   }, [models])
 
   // selected model is hidden motion: switch to first visible video model
   useEffect(() => {
-    if (hiddenFromCommonVideoList.has(selectedModel)) {
+    if (HIDDEN_FROM_COMMON_VIDEO_LIST.has(selectedModel)) {
       const nextModel = visibleModels[0]
       if (nextModel) setSelectedModel(nextModel.id)
     }

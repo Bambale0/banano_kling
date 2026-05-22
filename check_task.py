@@ -29,16 +29,19 @@ async def check_task(task_id: str):
         try:
             result = await method(task_id)
             if result:
+                payload = result.get("data") if isinstance(result.get("data"), dict) else result
                 print(f"✅ {name}:")
-                print(f"   Status: {result.get('status', 'N/A')}")
-                print(f"   Generated: {result.get('generated', [])}")
-                if result.get("error"):
-                    print(f"   Error: {result.get('error')}")
+                print(f"   Status: {payload.get('status', 'N/A')}")
+                print(f"   Generated: {payload.get('generated') or payload.get('output') or []}")
+                if payload.get("error"):
+                    print(f"   Error: {payload.get('error')}")
                 print()
             else:
-                print(f"❌ {name}: Нет данных\n")
+                print(f"❌ {name}: Нет данных")
+                print()
         except Exception as e:
-            print(f"⚠️ {name}: {e}\n")
+            print(f"⚠️ {name}: {e}")
+            print()
 
 
 if __name__ == "__main__":

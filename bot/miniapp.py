@@ -2975,9 +2975,6 @@ def setup_miniapp_routes(app: web.Application):
 
     app.middlewares.append(_miniapp_api_json_errors)
 
-    async def _redirect_to_slash(request: web.Request) -> web.Response:
-        raise web.HTTPFound(f"{miniapp_root}/")
-
     # miniapp_static_mount_v1
     from pathlib import Path as _MiniAppPath
 
@@ -3027,7 +3024,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/icon-dark-32x32.png", _miniapp_root_file)
     app.router.add_get("/favicon.ico", _miniapp_root_file)
     app.router.add_get("/_vercel/insights/script.js", _empty_vercel_insights)
-    app.router.add_get(miniapp_root, _redirect_to_slash)
+    app.router.add_get(miniapp_root, miniapp_index)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)

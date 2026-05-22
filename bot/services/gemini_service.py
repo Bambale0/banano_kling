@@ -46,9 +46,15 @@ class GeminiService:
         "4K",
     ]
 
-    def __init__(self, api_key: str, nanobanana_key: str = ""):
+    def __init__(
+        self,
+        api_key: str,
+        nanobanana_key: str = "",
+        openrouter_key: str = "",
+    ):
         self.api_key = api_key  # Legacy Gemini key
         self.nanobanana_key = nanobanana_key
+        self.openrouter_key = openrouter_key
         self._client = None
         self._session = None
         self._chats = {}  # Для многоходового редактирования

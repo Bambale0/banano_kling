@@ -4,8 +4,6 @@ import { useMemo, useState } from 'react'
 import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, PanelTopOpen, Send, Sparkles, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
-import { UploadArea } from '@/components/forms/upload-area'
-import type { UploadedFile } from '@/lib/types'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -665,60 +663,6 @@ function SupportPanel() {
   )
 }
 
-function BatchEditPanel() {
-  const presets = ['Удалить фон', 'Сделать единый стиль', 'Подготовить для карточек товара', 'Собрать набор превью']
-  const [selectedPreset, setSelectedPreset] = useState(presets[0])
-  const [files, setFiles] = useState<UploadedFile[]>([])
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-        <p className="text-xs text-muted-foreground">Выберите задачу</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {presets.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => setSelectedPreset(preset)}
-              className={cn(
-                'rounded-full border px-3 py-2 text-xs',
-                selectedPreset === preset
-                  ? 'border-gold/40 bg-gold/10 text-foreground'
-                  : 'border-border/50 bg-background/30 text-muted-foreground'
-              )}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
-        <p className="text-xs text-muted-foreground">Следующий шаг</p>
-        <p className="mt-2 text-sm text-foreground">Выбрано: {selectedPreset}.</p>
-
-        <div className="mt-4">
-          <UploadArea files={files} onFilesChange={setFiles} maxFiles={20} accept="image/*" />
-        </div>
-
-        <Button
-          onClick={() => {
-            if (files.length === 0) {
-              toast.error('Загрузите хотя бы одно изображение')
-              return
-            }
-            // Здесь можно добавить реальную логику отправки на сервер / создание задач
-            toast.success(`Серия из ${files.length} изображений подготовлена`)
-            setFiles([])
-          }}
-          className="mt-4 bg-gold text-primary-foreground hover:bg-gold/90"
-        >
-          Подготовить серию
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 function MorePanel({
   onPhoto,
   onVideo,
@@ -753,27 +697,6 @@ function MorePanel({
           <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
         </button>
       ))}
-    </div>
-  )
-}
-
-function InputCard({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-}) {
-  return (
-    <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="mt-3 w-full rounded-2xl border border-border/50 bg-background/50 px-4 py-3 text-sm text-foreground outline-none"
-      />
     </div>
   )
 }

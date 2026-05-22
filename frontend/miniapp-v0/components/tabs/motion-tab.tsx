@@ -7,7 +7,7 @@ import { generateMotion, uploadFile } from '@/lib/api'
 import type { Task, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { РезультатCard } from '../result-card'
+import { ResultCard } from '../result-card'
 import { cn } from '@/lib/utils'
 
 type MotionMode = '720p' | '1080p'
@@ -432,7 +432,7 @@ export function MotionTab() {
           </div>
 
           {lastРезультат ? (
-            <РезультатCard task={lastРезультат} onClose={() => setLastРезультат(null)} />
+            <ResultCard task={lastРезультат} onClose={() => setLastРезультат(null)} />
           ) : (
             <div className="rounded-[1.75rem] border border-cyan/20 bg-cyan/[0.06] p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">

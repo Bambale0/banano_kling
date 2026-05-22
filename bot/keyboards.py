@@ -1267,6 +1267,165 @@ def get_settings_keyboard(
     return builder.as_markup()
 
 
+def get_settings_keyboard_with_ai(
+    current_model: str = "flash",
+    current_video_model: str = "v3_std",
+    current_i2v_model: str = "v3_std",
+    image_service: str = "nanobanana",
+):
+    """Расширенная клавиатура настроек, которую используют callbacks настроек."""
+    builder = InlineKeyboardBuilder()
+
+    image_services = [
+        ("nanobanana", "🍌 Nano Banana"),
+        ("flux_pro", "💎 GPT Image 2"),
+        ("seedream", "🖌 Seedream"),
+        ("z_image_turbo", "⚡ Z-Image"),
+    ]
+    for service, label in image_services:
+        check = "✅ " if image_service == service else ""
+        builder.button(text=f"{check}{label}", callback_data=f"settings_service_{service}")
+
+    image_models = [
+        ("flash", "⚡ Flash"),
+        ("pro", "💎 Pro"),
+    ]
+    for model, label in image_models:
+        check = "✅ " if current_model == model else ""
+        builder.button(text=f"{check}{label}", callback_data=f"settings_model_{model}")
+
+    video_models = [
+        ("v3_std", "⚡ Kling v3"),
+        ("v3_pro", "💎 Kling 3.0"),
+        ("v26_pro", "🌀 Kling 2.5"),
+    ]
+    for model, label in video_models:
+        check = "✅ " if current_video_model == model else ""
+        builder.button(text=f"{check}{label}", callback_data=f"settings_video_{model}")
+
+    i2v_models = [
+        ("v3_std", "⚡ I2V Std"),
+        ("v3_pro", "💎 I2V Pro"),
+        ("v26_pro", "🌀 I2V 2.5"),
+    ]
+    for model, label in i2v_models:
+        check = "✅ " if current_i2v_model == model else ""
+        builder.button(text=f"{check}{label}", callback_data=f"settings_i2v_{model}")
+
+    builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 2, 3, 3, 2)
+    return builder.as_markup()
+
+
+def get_motion_control_keyboard(
+    current_mode: str = "720p",
+    current_orientation: str = "video",
+):
+    """Меню Motion Control и быстрые переключатели качества/ориентации."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="🎬 Standard", callback_data="motion_control_std")
+    builder.button(text="💎 Pro", callback_data="motion_control_pro")
+
+    for mode, label in (("720p", "📱 720p"), ("1080p", "🖥 1080p")):
+        check = "✅ " if current_mode == mode else ""
+        builder.button(text=f"{check}{label}", callback_data=f"motion_mode_{mode}")
+
+    for orientation, label in (("video", "🎬 Видео"), ("image", "🖼 Фото")):
+        check = "✅ " if current_orientation == orientation else ""
+        builder.button(
+            text=f"{check}{label}",
+            callback_data=f"motion_orientation_{orientation}",
+        )
+
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
+
+
+def get_video_options_no_preset_keyboard(
+    current_duration: int = 5,
+    current_ratio: str = "16:9",
+    generate_audio: bool = True,
+):
+    """Безопасная клавиатура legacy-настроек видео без привязки к пресету."""
+    builder = InlineKeyboardBuilder()
+
+    for duration in (5, 10, 15):
+        check = "✅ " if int(current_duration) == duration else ""
+        builder.button(text=f"{check}{duration} сек", callback_data=f"video_dur_{duration}")
+
+    for ratio in ("16:9", "9:16", "1:1"):
+        check = "✅ " if current_ratio == ratio else ""
+        builder.button(
+            text=f"{check}{ratio.replace(':', '∶')}",
+            callback_data=f"ratio_{ratio.replace(':', '_')}",
+        )
+
+    audio_label = "✅ Звук" if generate_audio else "Без звука"
+    builder.button(text=audio_label, callback_data="ignore")
+    builder.button(text="▶️ Продолжить", callback_data="video_media_continue")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(3, 3, 1, 2)
+    return builder.as_markup()
+
+
+def get_video_edit_input_type_keyboard():
+    """Выбор входного медиа для видео-эффектов."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Видео", callback_data="video_edit_input_video")
+    builder.button(text="🖼 Фото", callback_data="video_edit_input_image")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+
+def get_video_edit_keyboard(
+    input_type: str = "video",
+    quality: str = "std",
+    duration: int = 5,
+    aspect_ratio: str = "16:9",
+):
+    """Опции видео-эффектов."""
+    builder = InlineKeyboardBuilder()
+
+    for value, label in (("std", "⚡ STD"), ("pro", "💎 PRO")):
+        check = "✅ " if quality == value else ""
+        builder.button(text=f"{check}{label}", callback_data=f"video_edit_quality_{value}")
+
+    for value in (5, 10):
+        check = "✅ " if int(duration) == value else ""
+        builder.button(text=f"{check}{value} сек", callback_data=f"video_edit_duration_{value}")
+
+    for ratio in ("16:9", "9:16", "1:1"):
+        check = "✅ " if aspect_ratio == ratio else ""
+        builder.button(
+            text=f"{check}{ratio.replace(':', '∶')}",
+            callback_data=f"video_edit_ratio_{ratio.replace(':', '_')}",
+        )
+
+    change_label = "🎬 Сменить видео" if input_type == "video" else "🖼 Сменить фото"
+    builder.button(text=change_label, callback_data="video_edit_change_type")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 3, 2)
+    return builder.as_markup()
+
+
+def get_reference_images_keyboard(preset_id: str):
+    """Меню управления референсными изображениями для пресета/нового UX."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📤 Загрузить", callback_data=f"ref_upload_{preset_id}")
+    builder.button(text="📚 Сохранённые", callback_data="ref_saved_library")
+    builder.button(text="✅ Продолжить", callback_data=f"ref_confirm_{preset_id}")
+    builder.button(text="⏭ Пропустить", callback_data=f"ref_skip_{preset_id}")
+    builder.button(text="🧹 Очистить", callback_data=f"ref_clear_{preset_id}")
+    builder.button(text="🔄 Обновить", callback_data=f"ref_reload_{preset_id}")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
+
+
 def get_category_keyboard(category: str, presets: list, user_credits: int):
     """Клавиатура выбора пресета"""
     builder = InlineKeyboardBuilder()

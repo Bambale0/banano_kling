@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 
 from bot.config import config
 from tbank_payment.client import TBankAsyncClient
+from tbank_payment.config import TBankConfig
 from tbank_payment.models import GetStateRequest, InitPaymentRequest
 from tbank_payment.webhooks import WebhookHandler
 
@@ -15,9 +16,13 @@ class TBankService:
     def __init__(self, terminal_key: str, secret_key: str, api_url: str = None):
         self.terminal_key = terminal_key
         self.secret_key = secret_key
+        self.api_url = api_url or config.TBANK_API_URL
         self.client = TBankAsyncClient(
-            terminal_key=terminal_key,
-            password=secret_key,
+            config=TBankConfig(
+                terminal_key=terminal_key,
+                password=secret_key,
+                base_url=self.api_url,
+            ),
         )
         self.webhook_handler = WebhookHandler(secret_key)
 

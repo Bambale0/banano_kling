@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { ImageGeneratorForm } from '../forms/image-generator-form'
-import { РезультатCard } from '../result-card'
+import { ResultCard } from '../result-card'
 import type { Task, UploadedFile } from '@/lib/types'
 import { generateImage, uploadFile } from '@/lib/api'
 
@@ -132,7 +132,7 @@ export function PhotoTab() {
           )}
 
           {lastРезультат ? (
-            <РезультатCard 
+            <ResultCard 
               task={lastРезультат}
               onClose={() => setLastРезультат(null)}
             />

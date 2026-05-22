@@ -49,12 +49,18 @@ from bot.keyboards import (
     get_image_result_keyboard,
     get_main_menu_button_keyboard,
     get_main_menu_keyboard,
+    get_motion_control_keyboard,
+    get_preset_action_keyboard,
+    get_reference_images_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
     get_saved_reference_picker_keyboard,
+    get_video_edit_input_type_keyboard,
+    get_video_edit_keyboard,
     get_video_media_step_keyboard,
     get_video_model_label,
     get_video_model_selection_keyboard,
+    get_video_options_no_preset_keyboard,
     get_video_type_label,
 )
 from bot.services.gemini_service import gemini_service
@@ -5108,6 +5114,7 @@ async def process_video_for_gemini_omni_prompt_state(
         await _show_video_creation_screen(message, state, edit=False)
 
 
+@router.callback_query(F.data.startswith("motion_mode_"))
 async def handle_motion_mode(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик режимов Motion Control"""
     mode = callback.data.replace("motion_mode_", "")
@@ -7088,7 +7095,7 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(F.data.startswith("motion_mode_"))
+@router.callback_query(F.data == "avatar_service")
 async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(

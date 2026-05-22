@@ -275,6 +275,18 @@ class KlingService:
         """Backward-compatible alias."""
         return await self.get_task_status(task_id)
 
+    async def get_v3_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible status alias used by old tooling."""
+        return await self.get_task_status(task_id)
+
+    async def get_omni_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible status alias used by old tooling."""
+        return await self.get_task_status(task_id)
+
+    async def get_r2v_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible status alias used by old tooling."""
+        return await self.get_task_status(task_id)
+
     def _extract_output(self, task_data: Dict[str, Any]) -> Optional[Any]:
         """Extract result URL(s) from Kie.ai task data."""
         direct_fields = ["output", "resultUrl", "result_url", "videoUrl", "imageUrl"]

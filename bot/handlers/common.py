@@ -2331,8 +2331,6 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("back_cat_"))
 async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     """Возврат к категории пресетов"""
-    from bot.handlers.generation import show_category
-
     category = callback.data.replace("back_cat_", "")
 
     # Вызываем show_category напрямую с callback

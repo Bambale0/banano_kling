@@ -65,6 +65,25 @@ def _build_bonus_text(referral_bonus: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_first(obj: Any, keys: list[str] | tuple[str, ...]) -> Any:
+    """Recursively find the first non-empty value for any key in a webhook payload."""
+    if isinstance(obj, dict):
+        for key in keys:
+            value = obj.get(key)
+            if value not in (None, ""):
+                return value
+        for value in obj.values():
+            found = _extract_first(value, keys)
+            if found not in (None, ""):
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _extract_first(value, keys)
+            if found not in (None, ""):
+                return found
+    return None
+
+
 async def _resolve_payment_state(transaction) -> dict[str, Any]:
     provider = (getattr(transaction, "provider", None) or "cryptobot").lower()
     payment_id = getattr(transaction, "payment_id", None)

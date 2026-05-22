@@ -1,7 +1,48 @@
 import type { Metadata, Viewport } from 'next'
 import { Analytics } from '@vercel/analytics/next'
-import Script from 'next/script'
 import './globals.css'
+
+const telegramBootstrapScript = `
+(function () {
+  var attempts = 0;
+
+  function postTelegramEvent(eventType, eventData) {
+    var payload = JSON.stringify({ eventType: eventType, eventData: eventData || {} });
+    try {
+      if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === 'function') {
+        window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData || {}));
+      }
+      if (window.external && typeof window.external.notify === 'function') {
+        window.external.notify(payload);
+      }
+      if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+        window.parent.postMessage(payload, '*');
+      }
+    } catch (e) {}
+  }
+
+  function markReady() {
+    attempts += 1;
+    var webApp = window.Telegram && window.Telegram.WebApp;
+
+    if (webApp) {
+      try { if (webApp.ready) webApp.ready(); } catch (e) {}
+      try { if (webApp.expand) webApp.expand(); } catch (e) {}
+    }
+
+    postTelegramEvent('web_app_ready');
+    postTelegramEvent('web_app_expand');
+
+    if (attempts < 80) {
+      window.setTimeout(markReady, 100);
+    }
+  }
+
+  markReady();
+  window.addEventListener('DOMContentLoaded', markReady, false);
+  window.addEventListener('load', markReady, false);
+})();
+`
 
 export const metadata: Metadata = {
   title: 'Banano AI Studio',
@@ -42,7 +83,11 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <body className="font-sans antialiased">
-        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+        <script src="https://telegram.org/js/telegram-web-app.js" async />
+        <script
+          id="telegram-early-ready"
+          dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}
+        />
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedItem } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -27,6 +27,15 @@ function getPinAspectRatio(value?: string | null): CSSProperties['aspectRatio'] 
   return `${width} / ${height}`
 }
 
+function getPinHeightWeight(value?: string | null) {
+  const match = String(value || '').match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
+  if (!match) return 1.25
+  const width = Number(match[1])
+  const height = Number(match[2])
+  if (!width || !height) return 1.25
+  return height / width
+}
+
 export function FeedTab() {
   const { state, setActiveTab, setPromptPreset } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
@@ -36,6 +45,18 @@ export function FeedTab() {
   const [error, setError] = useState<string | null>(null)
 
   const isLive = state.mode === 'live'
+  const feedColumns = useMemo(() => {
+    const columns: [FeedItem[], FeedItem[]] = [[], []]
+    const heights = [0, 0.45]
+
+    items.forEach((item) => {
+      const columnIndex = heights[0] <= heights[1] ? 0 : 1
+      columns[columnIndex].push(item)
+      heights[columnIndex] += getPinHeightWeight(item.aspect_ratio) + 0.4
+    })
+
+    return columns
+  }, [items])
 
   useEffect(() => {
     let ignore = false
@@ -152,93 +173,100 @@ export function FeedTab() {
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : items.length ? (
-        <div className="columns-2 gap-3 sm:columns-3 xl:columns-4">
-          {items.map((item) => (
-            <article
-              key={item.id}
-              className="mb-3 break-inside-avoid overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
+        <div className="grid grid-cols-2 items-start gap-3 pb-28">
+          {feedColumns.map((column, columnIndex) => (
+            <div
+              key={columnIndex}
+              className={cn('flex min-w-0 flex-col gap-3', columnIndex === 1 && 'pt-8')}
             >
-              <button
-                type="button"
-                onClick={() => handleRemix(item)}
-                className="group relative block w-full overflow-hidden bg-secondary/50 text-left"
-                aria-label="Повторить с моим фото"
-              >
-                {isHttpUrl(item.result_url) ? (
-                  <img
-                    src={item.result_url}
-                    alt=""
-                    loading="lazy"
-                    style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
-                    className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                  />
-                ) : (
-                  <div
-                    style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
-                    className="flex w-full items-center justify-center text-muted-foreground"
-                  >
-                    <ImageOff className="h-8 w-8" />
-                  </div>
-                )}
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                <div className="absolute left-2 top-2 rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium text-foreground backdrop-blur">
-                  {item.aspect_ratio || 'image'}
-                </div>
-                <span className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gold text-primary-foreground opacity-95 shadow-lg shadow-background/30">
-                  <Sparkles className="h-4 w-4" />
-                </span>
-              </button>
-              <div className="space-y-2.5 px-2.5 pb-3 pt-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-semibold text-foreground">{item.model}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">{item.author}</p>
-                  </div>
-                  <div className="shrink-0 rounded-full bg-secondary/70 px-2 py-1 text-[10px] text-muted-foreground">
-                    {item.remixes}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Button
+              {column.map((item) => (
+                <article
+                  key={item.id}
+                  className="min-w-0 overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
+                >
+                  <button
                     type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="h-8 min-w-0 flex-1 rounded-full px-2 text-[11px]"
-                    disabled={busyId === item.id}
-                    onClick={() => handleLike(item)}
-                    aria-label="Лайк"
+                    onClick={() => handleRemix(item)}
+                    className="group relative block w-full overflow-hidden bg-secondary/50 text-left"
+                    aria-label="Повторить с моим фото"
                   >
-                    <Heart className="h-4 w-4" />
-                    {item.likes_count}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="h-8 min-w-0 flex-1 rounded-full px-2 text-[11px]"
-                    disabled={busyId === item.id}
-                    onClick={() => handleShare(item)}
-                    aria-label="Ссылка"
-                  >
-                    <Share2 className="h-4 w-4" />
-                    {item.shares_count}
-                  </Button>
-                  {item.is_mine ? (
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="secondary"
-                      className="h-8 w-8 rounded-full"
-                      disabled={busyId === item.id}
-                      onClick={() => handleRemove(item)}
-                      aria-label="Убрать"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            </article>
+                    {isHttpUrl(item.result_url) ? (
+                      <img
+                        src={item.result_url}
+                        alt=""
+                        loading="lazy"
+                        style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
+                        className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      />
+                    ) : (
+                      <div
+                        style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
+                        className="flex w-full items-center justify-center text-muted-foreground"
+                      >
+                        <ImageOff className="h-8 w-8" />
+                      </div>
+                    )}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <div className="absolute left-2 top-2 rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium text-foreground backdrop-blur">
+                      {item.aspect_ratio || 'image'}
+                    </div>
+                    <span className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gold text-primary-foreground opacity-95 shadow-lg shadow-background/30">
+                      <Sparkles className="h-4 w-4" />
+                    </span>
+                  </button>
+                  <div className="space-y-2.5 px-2.5 pb-3 pt-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-foreground">{item.model}</p>
+                        <p className="truncate text-[11px] text-muted-foreground">{item.author}</p>
+                      </div>
+                      <div className="shrink-0 rounded-full bg-secondary/70 px-2 py-1 text-[10px] text-muted-foreground">
+                        {item.remixes}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 min-w-0 flex-1 rounded-full px-2 text-[11px]"
+                        disabled={busyId === item.id}
+                        onClick={() => handleLike(item)}
+                        aria-label="Лайк"
+                      >
+                        <Heart className="h-4 w-4" />
+                        {item.likes_count}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 min-w-0 flex-1 rounded-full px-2 text-[11px]"
+                        disabled={busyId === item.id}
+                        onClick={() => handleShare(item)}
+                        aria-label="Ссылка"
+                      >
+                        <Share2 className="h-4 w-4" />
+                        {item.shares_count}
+                      </Button>
+                      {item.is_mine ? (
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="secondary"
+                          className="h-8 w-8 rounded-full"
+                          disabled={busyId === item.id}
+                          onClick={() => handleRemove(item)}
+                          aria-label="Убрать"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
           ))}
         </div>
       ) : (

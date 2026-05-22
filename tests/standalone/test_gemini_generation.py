@@ -23,7 +23,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def test_api_key_check():
+def _api_key_check():
     """Test that the module properly checks for API key"""
     print("Testing API key validation...")
 
@@ -33,9 +33,7 @@ def test_api_key_check():
         del os.environ["OPENROUTER_API_KEY"]
 
     try:
-        # This should raise ValueError
-        import gemini_image_generation
-
+        generate_image("API key validation smoke test")
         print("❌ API key check failed - should have raised ValueError")
         return False
     except ValueError:
@@ -50,7 +48,7 @@ def test_api_key_check():
             os.environ["OPENROUTER_API_KEY"] = original_key
 
 
-def test_image_generation():
+def _image_generation():
     """Test actual image generation (requires valid API key)"""
     print("\nTesting image generation...")
 
@@ -96,7 +94,7 @@ def test_image_generation():
         return False
 
 
-def test_different_models():
+def _different_models():
     """Test different Gemini models"""
     print("\nTesting different models...")
 
@@ -129,7 +127,7 @@ def main():
     """Run all tests"""
     print("=== Gemini Image Generation Test Suite ===\n")
 
-    tests = [test_api_key_check, test_image_generation, test_different_models]
+    tests = [_api_key_check, _image_generation, _different_models]
 
     results = []
     for test in tests:
@@ -155,3 +153,15 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_api_key_check():
+    assert _api_key_check()
+
+
+def test_image_generation():
+    assert _image_generation()
+
+
+def test_different_models():
+    assert _different_models()

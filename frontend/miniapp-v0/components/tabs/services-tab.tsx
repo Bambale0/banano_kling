@@ -5,6 +5,7 @@ import { useApp } from '@/lib/app-context'
 import { ServiceGrid } from '../service-grid'
 import { toast } from 'sonner'
 import type { WorkspacePanel } from '@/lib/types'
+import { setStorageItem } from '@/hooks/browser-storage'
 
 type ServiceConfig = {
   title: string
@@ -60,8 +61,8 @@ export function ServicesTab() {
     setActiveService(serviceId)
 
     if (serviceId === 'avatar' && typeof window !== 'undefined') {
-      window.localStorage.setItem('miniapp_requested_video_model', 'avatar_pro')
-      window.localStorage.setItem('miniapp_requested_video_scenario', 'avatar')
+      setStorageItem('miniapp_requested_video_model', 'avatar_pro')
+      setStorageItem('miniapp_requested_video_scenario', 'avatar')
     }
 
     if (typeof config.tab === 'number') {

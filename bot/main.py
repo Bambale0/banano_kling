@@ -2212,6 +2212,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             if not telegram_id:
                 return web.Response(status=200)
 
+            reference_preview_urls = _extract_reference_image_urls(task, webhook_data)
             caption = (
                 f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
                 if task.preset_id == "no_preset" and task.prompt

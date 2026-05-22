@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
-import { РезультатCard } from '../result-card'
+import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile, VideoModel } from '@/lib/types'
 import { generateVideo, uploadFile } from '@/lib/api'
 
@@ -188,7 +188,7 @@ export function VideoTab() {
           )}
 
           {lastРезультат ? (
-            <РезультатCard 
+            <ResultCard 
               task={lastРезультат}
               onClose={() => setLastРезультат(null)}
             />

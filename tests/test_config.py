@@ -62,7 +62,7 @@ class TestConfig:
     def test_payment_provider_default(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "invalid"
-        assert cfg.payment_provider == "tbank"
+        assert cfg.payment_provider == "cryptobot"
 
     def test_has_yookassa_true(self):
         cfg = Config()
