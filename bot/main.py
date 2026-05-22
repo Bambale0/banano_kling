@@ -63,6 +63,8 @@ YOOKASSA_RECONCILE_BATCH_SIZE = 50
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Главное меню"),
+    BotCommand(command="feed", description="Лента работ"),
+    BotCommand(command="prompts", description="Библиотека промптов"),
     BotCommand(command="help", description="Помощь и возможности"),
     BotCommand(command="ref", description="Партнёрская программа"),
     BotCommand(command="earn", description="Заработок на рефералах"),
@@ -220,6 +222,77 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
     return mapping.get(
         model, model if task_type != "image" else model.replace("_", " ").title()
     )
+
+
+async def _resolve_task_telegram_id(task, *, context: str = "") -> int | None:
+    """Resolve the Telegram chat for a generation task.
+
+    generation_tasks stores both the internal users.id and the launch-time
+    telegram_id. Prefer the launch-time telegram_id because it is the exact chat
+    that created the task; use users.id lookup only as a compatibility fallback.
+    """
+    if not task:
+        return None
+
+    stored_telegram_id = getattr(task, "telegram_id", None)
+    internal_user_id = getattr(task, "user_id", None)
+    task_id = getattr(task, "task_id", None)
+    resolved_telegram_id = None
+
+    if internal_user_id is not None:
+        try:
+            from bot.database import get_telegram_id_by_user_id
+
+            resolved_telegram_id = await get_telegram_id_by_user_id(internal_user_id)
+        except Exception:
+            logger.exception(
+                "Failed to resolve telegram_id by internal user_id=%s for task=%s context=%s",
+                internal_user_id,
+                task_id,
+                context,
+            )
+
+    if stored_telegram_id:
+        try:
+            normalized_stored = int(stored_telegram_id)
+        except (TypeError, ValueError):
+            normalized_stored = None
+
+        if normalized_stored:
+            if (
+                resolved_telegram_id
+                and int(resolved_telegram_id) != normalized_stored
+            ):
+                logger.error(
+                    "Task recipient mismatch: task=%s context=%s internal_user_id=%s "
+                    "generation_tasks.telegram_id=%s users.telegram_id=%s. "
+                    "Using generation_tasks.telegram_id.",
+                    task_id,
+                    context,
+                    internal_user_id,
+                    normalized_stored,
+                    resolved_telegram_id,
+                )
+            return normalized_stored
+
+    if resolved_telegram_id:
+        logger.warning(
+            "Task %s has no generation_tasks.telegram_id; using users.telegram_id=%s "
+            "from internal_user_id=%s context=%s",
+            task_id,
+            resolved_telegram_id,
+            internal_user_id,
+            context,
+        )
+        return int(resolved_telegram_id)
+
+    logger.error(
+        "Cannot resolve telegram_id for task=%s internal_user_id=%s context=%s",
+        task_id,
+        internal_user_id,
+        context,
+    )
+    return None
 
 
 def _extract_first(obj, keys):
@@ -1185,7 +1258,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.database import (
                     complete_video_task,
                     get_task_by_id,
-                    get_telegram_id_by_user_id,
                 )
                 from bot.keyboards import get_video_result_keyboard
 
@@ -1200,7 +1272,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
                 if task:
                     reference_preview_urls = _extract_reference_image_urls(task, data.get("data"))
-                    telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                    telegram_id = await _resolve_task_telegram_id(
+                        task, context="kling_success_code200"
+                    )
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
@@ -1253,7 +1327,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     add_credits,
                     complete_video_task,
                     get_task_by_id,
-                    get_telegram_id_by_user_id,
                 )
 
                 task = await get_task_by_id(task_id)
@@ -1268,7 +1341,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
                 if task:
                     reference_preview_urls = _extract_reference_image_urls(task, kie_data)
-                    telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                    telegram_id = await _resolve_task_telegram_id(
+                        task, context="kie_legacy"
+                    )
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
@@ -1451,7 +1526,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             from bot.database import (
                 complete_video_task,
                 get_task_by_id,
-                get_telegram_id_by_user_id,
             )
 
             task = await get_task_by_id(task_id)
@@ -1463,11 +1537,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
                 return web.Response(status=200)
 
-            # Получаем Telegram ID пользователя по internal user_id
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            telegram_id = await _resolve_task_telegram_id(
+                task, context="kling_fallback_success"
+            )
 
             if not telegram_id:
-                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
             logger.info(
@@ -1591,12 +1665,13 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 add_credits,
                 complete_video_task,
                 get_task_by_id,
-                get_telegram_id_by_user_id,
             )
 
             task = await get_task_by_id(task_id)
             if task and task.cost:
-                telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                telegram_id = await _resolve_task_telegram_id(
+                    task, context="kling_failure"
+                )
                 if telegram_id:
                     bot_instance = Bot(token=config.BOT_TOKEN)
                     try:
@@ -1644,12 +1719,13 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.database import (
                     add_credits,
                     get_task_by_id,
-                    get_telegram_id_by_user_id,
                 )
 
                 task = await get_task_by_id(task_id)
                 if task:
-                    telegram_id = await get_telegram_id_by_user_id(task.user_id)
+                    telegram_id = await _resolve_task_telegram_id(
+                        task, context="kling_sensitive_failure"
+                    )
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
@@ -1772,13 +1848,11 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                 logger.warning(f"Task {task_id} not found in database")
                 return web.Response(status=200)
 
-            # Получаем Telegram ID пользователя
-            from bot.database import get_telegram_id_by_user_id
-
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            telegram_id = await _resolve_task_telegram_id(
+                task, context="seedream_success"
+            )
 
             if not telegram_id:
-                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
             logger.info(
@@ -1979,13 +2053,11 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                 logger.warning(f"Task {task_id} not found in database")
                 return web.Response(status=200)
 
-            # Получаем Telegram ID пользователя
-            from bot.database import get_telegram_id_by_user_id
-
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            telegram_id = await _resolve_task_telegram_id(
+                task, context="novita_success"
+            )
 
             if not telegram_id:
-                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
             logger.info(
@@ -2127,7 +2199,6 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             from bot.database import (
                 complete_video_task,
                 get_task_by_id,
-                get_telegram_id_by_user_id,
             )
 
             task = await get_task_by_id(task_id)
@@ -2135,9 +2206,10 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 logger.info(f"Ignoring orphan webhook for WanX task {task_id}: task not found in database")
                 return web.Response(status=200)
 
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            telegram_id = await _resolve_task_telegram_id(
+                task, context="wanx_success"
+            )
             if not telegram_id:
-                logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
                 return web.Response(status=200)
 
             caption = (
@@ -2209,7 +2281,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             add_credits,
             complete_video_task,
             get_task_by_id,
-            get_telegram_id_by_user_id,
         )
         from bot.keyboards import (
             get_gemini_omni_result_keyboard,
@@ -2276,7 +2347,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         task = await get_task_by_id(task_id)
         telegram_id = None
         if task:
-            telegram_id = await get_telegram_id_by_user_id(task.user_id)
+            telegram_id = await _resolve_task_telegram_id(
+                task, context="kie_ai"
+            )
 
         if is_veo_payload and not normalized_status:
             if response_code == 200:

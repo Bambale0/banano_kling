@@ -22,6 +22,23 @@ import {
   Video,
 } from 'lucide-react'
 
+function roundVideoCost(raw: number) {
+  return Math.round(raw * 2) / 2
+}
+
+function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string) {
+  if (!model) return 5
+  const qualityCost = quality ? model.quality_costs?.[quality] : undefined
+  if (typeof qualityCost === 'number') {
+    return roundVideoCost(qualityCost * duration)
+  }
+  return model.costs[duration.toString()] ?? Object.values(model.costs)[0] ?? 5
+}
+
+function getVideoModelPerSecondCost(model: VideoModel | undefined, duration: number, quality?: string) {
+  return getVideoModelCost(model, duration, quality) / Math.max(duration, 1)
+}
+
 interface VideoGeneratorFormProps {
   models: VideoModel[]
   onSubmit: (data: {
@@ -122,7 +139,28 @@ export function VideoGeneratorForm({
   const isOmniAudio = selectedModel === 'gemini_omni_audio' || (isGeminiOmni && selectedScenario === 'audio')
   const isOmniCharacter = selectedModel === 'gemini_omni_character' || (isGeminiOmni && selectedScenario === 'character')
   const isOmniVideo = selectedModel === 'gemini_omni_video' || (isGeminiOmni && !isOmniAudio && !isOmniCharacter)
-  const baseCost = model?.costs[selectedDuration.toString()] || 5
+  const qualityForModel = (item?: VideoModel) => {
+    if (!item) return undefined
+    if (item.veo_resolutions?.length) {
+      return item.veo_resolutions.includes(veoResolution) ? veoResolution : item.veo_resolutions[0]
+    }
+    if ((item.id === 'gemini_omni' || item.id === 'gemini_omni_video') && selectedScenario !== 'audio' && selectedScenario !== 'character') {
+      return item.omni_resolutions?.includes(omniResolution) ? omniResolution : item.omni_resolutions?.[0]
+    }
+    return undefined
+  }
+  const selectedQuality = qualityForModel(model)
+  const durationCosts = useMemo(
+    () =>
+      Object.fromEntries(
+        (model?.durations || [selectedDuration]).map((duration) => [
+          duration.toString(),
+          getVideoModelCost(model, duration, selectedQuality),
+        ])
+      ),
+    [model, selectedDuration, selectedQuality]
+  )
+  const baseCost = getVideoModelCost(model, selectedDuration, selectedQuality)
   const cost = isOmniAudio
     ? model?.omni_audio_cost ?? 3
     : isOmniCharacter
@@ -130,19 +168,30 @@ export function VideoGeneratorForm({
       : baseCost
   const perSecondCost = cost / Math.max(selectedDuration, 1)
   const canAfford = credits >= cost
-  const parseAssetIds = (value: string, maxCount: number) =>
+  const parseAssetIds = (value: string) =>
     value
       .split(/[\s,;]+/)
       .map((item) => item.trim())
       .filter(Boolean)
-      .slice(0, maxCount)
+  const parsedOmniAudioIds = parseAssetIds(omniAudioIds)
+  const parsedOmniCharacterIds = parseAssetIds(omniCharacterIds)
+  const parsedOmniCharacterAudioIds = parseAssetIds(omniCharacterAudioIds)
+  const omniImageCount = isOmniVideo ? startImage.length + photoReferences.length : 0
+  const omniVideoCount = isOmniVideo ? videoReferences.length : 0
+  const omniInputUnits = omniImageCount + omniVideoCount * 2 + parsedOmniCharacterIds.length
+  const omniTooManyVideos = isOmniVideo && omniVideoCount > 1
+  const omniTooManyAudioIds = isOmniVideo && parsedOmniAudioIds.length > 1
+  const omniTooManyCharacterIds = isOmniVideo && parsedOmniCharacterIds.length > 3
+  const omniTooManyCharacterAudioIds = isOmniCharacter && parsedOmniCharacterAudioIds.length > 1
+  const omniOverQuota = isOmniVideo && omniInputUnits > 7
+  const omniHasVideoReference = isOmniVideo && omniVideoCount > 0
   
   // Check if scenario is supported
   const scenarioSupported = model?.supports.includes(selectedScenario) ?? false
   
   // Validation
-  const needsStartImage = (selectedScenario === 'imgtxt' || selectedScenario === 'character') && startImage.length === 0
-  const needsVideoRef = selectedScenario === 'video' && videoReferences.length === 0
+  const needsStartImage = ((selectedScenario === 'imgtxt' && !isOmniVideo) || selectedScenario === 'character') && startImage.length === 0
+  const needsVideoRef = selectedScenario === 'video' && !isOmniVideo && videoReferences.length === 0
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
@@ -154,7 +203,12 @@ export function VideoGeneratorForm({
     !needsVideoRef &&
     !needsAvatarImage &&
     !needsAvatarAudio &&
-    !needsOmniVoiceName
+    !needsOmniVoiceName &&
+    !omniTooManyVideos &&
+    !omniTooManyAudioIds &&
+    !omniTooManyCharacterIds &&
+    !omniTooManyCharacterAudioIds &&
+    !omniOverQuota
 
   const omniGuideSteps = [
     {
@@ -261,18 +315,18 @@ export function VideoGeneratorForm({
       klingCfgScale,
       omniResolution,
       omniSeed: omniSeed.trim() ? Number(omniSeed) : null,
-      omniAudioIds: parseAssetIds(omniAudioIds, 1),
-      omniCharacterIds: parseAssetIds(omniCharacterIds, 3),
+      omniAudioIds: parsedOmniAudioIds,
+      omniCharacterIds: parsedOmniCharacterIds,
       omniBaseVoice,
       omniVoiceName,
       omniVoiceDescription,
       omniExampleDialogue,
       omniCharacterName,
-      omniCharacterAudioIds: parseAssetIds(omniCharacterAudioIds, 1),
+      omniCharacterAudioIds: parsedOmniCharacterAudioIds,
       prompt,
       startImage: isOmniAudio ? null : startImage[0]?.url || null,
       references: isOmniAudio || isOmniCharacter ? [] : photoReferences.map(r => r.url),
-      videoReferences: selectedScenario === 'video' ? videoReferences.map(r => r.url) : [],
+      videoReferences: isOmniVideo || selectedScenario === 'video' ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
     setPrompt('')
@@ -298,8 +352,7 @@ export function VideoGeneratorForm({
                   ? m.omni_audio_cost ?? 3
                   : m.id === 'gemini_omni' && selectedScenario === 'character'
                     ? m.omni_character_cost ?? 5
-                    : ((m.costs[selectedDuration.toString()] || Object.values(m.costs)[0] || 0) /
-                      Math.max(selectedDuration, 1)),
+                    : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m)),
             }))}
             value={selectedModel}
             onChange={setSelectedModel}
@@ -409,7 +462,7 @@ export function VideoGeneratorForm({
                 durations={model?.durations || [5]}
                 value={selectedDuration}
                 onChange={setSelectedDuration}
-                costs={model?.costs || {}}
+                costs={durationCosts}
               />
             </div>
           </div>
@@ -499,21 +552,25 @@ export function VideoGeneratorForm({
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">Качество</label>
                 <div className="flex gap-2">
-                  {(model.veo_resolutions || ['720p']).map((resolution) => (
-                    <button
-                      key={resolution}
-                      type="button"
-                      onClick={() => setVeoResolution(resolution)}
-                      className={cn(
-                        'flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-all duration-200',
-                        veoResolution === resolution
-                          ? 'border-cyan/50 bg-cyan/15 text-cyan'
-                          : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
-                      )}
-                    >
-                      {resolution}
-                    </button>
-                  ))}
+                  {(model.veo_resolutions || ['720p']).map((resolution) => {
+                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution)
+                    return (
+                      <button
+                        key={resolution}
+                        type="button"
+                        onClick={() => setVeoResolution(resolution)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-xs font-medium leading-tight transition-all duration-200',
+                          veoResolution === resolution
+                            ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                            : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                        )}
+                      >
+                        <span className="block">{resolution}</span>
+                        <span className="block text-[10px] text-gold">{resolutionCost}🍌</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -571,21 +628,25 @@ export function VideoGeneratorForm({
               <div className="space-y-2">
                 <label className="text-sm font-medium text-foreground">Качество</label>
                 <div className="flex gap-2">
-                  {(model?.omni_resolutions || ['720p', '1080p', '4k']).map((resolution) => (
-                    <button
-                      key={resolution}
-                      type="button"
-                      onClick={() => setOmniResolution(resolution)}
-                      className={cn(
-                        'flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-all duration-200',
-                        omniResolution === resolution
-                          ? 'border-cyan/50 bg-cyan/15 text-cyan'
-                          : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
-                      )}
-                    >
-                      {resolution}
-                    </button>
-                  ))}
+                  {(model?.omni_resolutions || ['720p', '1080p', '4k']).map((resolution) => {
+                    const resolutionCost = getVideoModelCost(model, selectedDuration, resolution)
+                    return (
+                      <button
+                        key={resolution}
+                        type="button"
+                        onClick={() => setOmniResolution(resolution)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-xs font-medium leading-tight transition-all duration-200',
+                          omniResolution === resolution
+                            ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                            : 'border-border/50 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                        )}
+                      >
+                        <span className="block">{resolution}</span>
+                        <span className="block text-[10px] text-gold">{resolutionCost}🍌</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
               <div className="space-y-2">
@@ -620,6 +681,22 @@ export function VideoGeneratorForm({
                   className="bg-secondary/50 border-border/50"
                 />
               </div>
+            </div>
+            <div className="rounded-xl border border-border/50 bg-background/40 p-3 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-3">
+                <span>Inputs</span>
+                <span className={cn('font-medium', omniOverQuota ? 'text-destructive' : 'text-foreground')}>
+                  {omniInputUnits}/7
+                </span>
+              </div>
+              <p className="mt-1">
+                Фото: {omniImageCount} · Видео: {omniVideoCount}×2 · Character ID: {parsedOmniCharacterIds.length}
+              </p>
+              {omniHasVideoReference ? (
+                <p className="mt-1 text-cyan">
+                  С видео-референсом настройка секунд не фиксирует финальную длину.
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -709,14 +786,18 @@ export function VideoGeneratorForm({
                 : selectedScenario === 'avatar'
                   ? 'Фото аватара'
                   : 'Стартовое изображение'}
-              <span className="text-destructive ml-1">*</span>
+              {isOmniVideo ? (
+                <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              ) : (
+                <span className="text-destructive ml-1">*</span>
+              )}
             </label>
             <UploadArea
               files={startImage}
               onFilesChange={setStartImage}
               maxFiles={1}
               accept="image/*"
-              required
+              required={!isOmniVideo}
               onUpload={onUploadImageReference}
               libraryFiles={savedImageReferences}
               libraryLabel="Сохранённые стартовые кадры"
@@ -724,18 +805,22 @@ export function VideoGeneratorForm({
           </div>
         )}
 
-        {selectedScenario === 'video' && (
+        {(selectedScenario === 'video' || isOmniVideo) && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
-              Видео-референсы
-              <span className="text-destructive ml-1">*</span>
+              {isOmniVideo ? 'Видео-референс' : 'Видео-референсы'}
+              {isOmniVideo ? (
+                <span className="text-xs text-muted-foreground ml-2">(опционально)</span>
+              ) : (
+                <span className="text-destructive ml-1">*</span>
+              )}
             </label>
           <UploadArea
             files={videoReferences}
             onFilesChange={setVideoReferences}
-            maxFiles={model?.max_video_references || 5}
+            maxFiles={isOmniVideo ? 1 : model?.max_video_references || 5}
             accept="video/*"
-            required
+            required={!isOmniVideo}
             onUpload={onUploadVideoReference}
             libraryFiles={savedVideoReferences}
             libraryLabel="Сохранённые видео-референсы"
@@ -828,7 +913,11 @@ export function VideoGeneratorForm({
                         : 'Видео + Текст'}
             </p>
             <p className="text-muted-foreground mt-1">
-              {isOmniAudio || isOmniCharacter ? model?.label : `${selectedRatio} • ${selectedDuration} сек.`}
+              {isOmniAudio || isOmniCharacter
+                ? model?.label
+                : omniHasVideoReference
+                  ? `${selectedRatio} • длина по видео-рефу`
+                  : `${selectedRatio} • ${selectedDuration} сек.`}
             </p>
           </div>
           <div className="rounded-xl bg-secondary/40 p-3">
@@ -860,7 +949,9 @@ export function VideoGeneratorForm({
             <p className="text-xs text-muted-foreground/70">
               {isOmniAudio || isOmniCharacter
                 ? `${model?.label} • ${cost}🍌`
-                : `${selectedDuration} сек. • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`}
+                : omniHasVideoReference
+                  ? `видео-реф • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`
+                  : `${selectedDuration} сек. • ${selectedRatio} • ${formatPerSecondCost(perSecondCost)}🍌/с`}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
@@ -914,6 +1005,23 @@ export function VideoGeneratorForm({
           <div className="flex items-center gap-2 p-3 rounded-xl bg-cyan/10 border border-cyan/30">
             <AlertCircle className="w-4 h-4 text-cyan flex-shrink-0" />
             <p className="text-xs text-cyan">Укажите имя для Audio ID</p>
+          </div>
+        )}
+
+        {(omniTooManyVideos || omniTooManyAudioIds || omniTooManyCharacterIds || omniTooManyCharacterAudioIds || omniOverQuota) && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-destructive/10 border border-destructive/30">
+            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
+            <p className="text-xs text-destructive">
+              {omniOverQuota
+                ? 'Слишком много входов для Gemini Omni: фото + видео×2 + Character ID <= 7.'
+                : omniTooManyVideos
+                  ? 'Gemini Omni принимает только один видео-референс.'
+                  : omniTooManyCharacterIds
+                    ? 'Gemini Omni принимает максимум 3 Character ID.'
+                    : omniTooManyCharacterAudioIds
+                      ? 'Character ID принимает один Audio ID.'
+                      : 'Gemini Omni Video принимает один Audio ID.'}
+            </p>
           </div>
         )}
 

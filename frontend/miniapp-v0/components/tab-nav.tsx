@@ -2,14 +2,16 @@
 
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Image, Video, Sparkles, Grid3X3 } from 'lucide-react'
+import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, BookOpen } from 'lucide-react'
 
 const tabs = [
   { id: 0, label: 'Студия', icon: LayoutDashboard },
   { id: 1, label: 'Фото', icon: Image },
   { id: 2, label: 'Видео', icon: Video },
   { id: 3, label: 'Motion', icon: Sparkles },
-  { id: 4, label: 'Сервисы', icon: Grid3X3 },
+  { id: 4, label: 'Лента', icon: Images },
+  { id: 5, label: 'Промпты', icon: BookOpen },
+  { id: 6, label: 'Сервисы', icon: Grid3X3 },
 ]
 
 export function TabNav() {
@@ -29,7 +31,7 @@ export function TabNav() {
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
                   "relative flex flex-col items-center justify-center",
-                  "flex-1 py-2 px-1 rounded-xl",
+                  "flex-1 py-2 px-0.5 rounded-xl",
                   "transition-all duration-300 ease-out",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isActive 
@@ -57,7 +59,7 @@ export function TabNav() {
                 
                 {/* Label */}
                 <span className={cn(
-                  "text-[10px] mt-1 font-medium",
+                  "text-[9px] mt-1 font-medium",
                   "transition-all duration-300",
                   isActive ? "opacity-100" : "opacity-70"
                 )}>

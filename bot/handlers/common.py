@@ -1,8 +1,11 @@
 import logging
 import html
+import mimetypes
 import uuid
+from urllib.parse import urlparse
 
 import aiosqlite
+import aiohttp
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, StateFilter
@@ -18,14 +21,25 @@ from bot.database import (
     create_partner_withdrawal,
     get_partner_available_withdrawal,
     get_or_create_user,
+    get_approved_prompts,
+    get_feed_generation_card,
+    get_feed_generations,
     get_partner_overview,
+    get_popular_prompts,
+    get_prompt_by_id,
     get_referral_stats,
     get_partner_withdrawal_request,
+    get_top_prompts,
     get_user_by_referral_code,
     get_user_settings,
     get_user_stats,
+    increment_feed_share,
+    like_feed_generation,
+    like_prompt,
     process_referral,
     save_user_settings,
+    update_user_profile,
+    use_prompt,
 )
 from bot.config import config
 from bot.keyboards import (
@@ -198,7 +212,8 @@ def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> s
         "• Создать фото\n"
         "• Создать видео\n"
         "• Изменить фото\n"
-        "• Получить промпт по фото\n\n"
+        "• Получить промпт по фото\n"
+        "• Смотреть ленту и библиотеку промптов\n\n"
         f"🍌 <b>Баланс:</b> <code>{user_credits}</code> бананов"
         f"{bonus_block}"
         "🎁 <b>Welcome-бонус для новых пользователей:</b> <code>15</code> бананов\n"
@@ -255,6 +270,794 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
         "• персонаж или иллюстрация\n"
         "• любой объект, которому нужно передать движение"
     )
+
+
+FEED_PAGE_LIMIT = 24
+PROMPT_PAGE_LIMIT = 24
+FEED_PREVIEW_MAX_BYTES = 9 * 1024 * 1024
+FEED_PREVIEW_MAX_SIDE = 1800
+
+FEED_SOURCE_CODES = {
+    "r": "recent",
+    "d": "top_day",
+    "t": "top",
+}
+PROMPT_MODE_CODES = {
+    "u": "top",
+    "p": "popular",
+    "n": "new",
+}
+
+
+def _parse_int(value, default: int = 0) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(value, high))
+
+
+def _short_text(value: str, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)].rstrip()}…"
+
+
+def _feed_source_label(source_code: str) -> str:
+    return {
+        "r": "Новые",
+        "d": "Топ дня",
+        "t": "Топ",
+    }.get(source_code, "Новые")
+
+
+def _prompt_mode_label(mode_code: str) -> str:
+    return {
+        "u": "Лучшие",
+        "p": "Популярные",
+        "n": "Новые",
+    }.get(mode_code, "Лучшие")
+
+
+def _message_has_media(message: types.Message) -> bool:
+    return bool(
+        getattr(message, "photo", None)
+        or getattr(message, "video", None)
+        or getattr(message, "animation", None)
+        or getattr(message, "document", None)
+    )
+
+
+async def _safe_show_text(
+    message: types.Message,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+    *,
+    parse_mode: str = "HTML",
+) -> None:
+    if _message_has_media(message):
+        try:
+            await message.delete()
+        except Exception as e:
+            if _should_log_edit_warning(e):
+                logger.info("Cannot delete media message before text render: %s", e)
+        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
+
+    if not getattr(getattr(message, "from_user", None), "is_bot", False):
+        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
+
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        if _should_log_edit_warning(e):
+            logger.info("Cannot edit message text, sending a new one: %s", e)
+        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def _bot_username(bot: Bot) -> str:
+    try:
+        me = await bot.get_me()
+        return me.username or ""
+    except Exception as e:
+        logger.info("Cannot resolve bot username for share link: %s", e)
+        return ""
+
+
+async def _sync_telegram_profile(user: types.User | None) -> None:
+    if not user:
+        return
+    try:
+        await update_user_profile(
+            user.id,
+            username=getattr(user, "username", None),
+            first_name=getattr(user, "first_name", None),
+            last_name=getattr(user, "last_name", None),
+        )
+    except Exception:
+        logger.debug("Unable to sync Telegram profile for %s", getattr(user, "id", None), exc_info=True)
+
+
+async def _activate_referral_code(
+    bot: Bot,
+    referred: types.User,
+    referral_code: str | None,
+) -> str:
+    code = str(referral_code or "").strip().upper()
+    if not code:
+        return ""
+
+    referrer = await get_user_by_referral_code(code)
+    processed = await process_referral(referred.id, code)
+    if not processed:
+        return ""
+
+    if referrer:
+        await _notify_partner_about_new_referral(
+            bot,
+            referrer_telegram_id=referrer.telegram_id,
+            referred=referred,
+        )
+
+    return (
+        "\n🎁 <b>Реферальный бонус активирован!</b>\n"
+        "Вы получили бонус за регистрацию по приглашению."
+    )
+
+
+def _feed_start_param(gen_id: int | str, referral_code: str | None = None) -> str:
+    code = str(referral_code or "").strip().upper()
+    base = f"feed_{gen_id}"
+    return f"{base}_ref_{code}" if code else base
+
+
+def _feed_share_link(bot_username: str, gen_id: int | str, referral_code: str | None = None) -> str:
+    if not bot_username or not gen_id:
+        return config.mini_app_url
+    return f"https://t.me/{bot_username}?start={_feed_start_param(gen_id, referral_code)}"
+
+
+def _split_feed_deeplink(value: str) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    gen_id, sep, referral_code = raw.partition("_ref_")
+    return gen_id, (referral_code if sep else "")
+
+
+def _feed_card_photos(card: dict) -> list[str]:
+    urls = [
+        str(item).strip()
+        for item in card.get("result_urls", []) or []
+        if str(item or "").strip()
+    ]
+    result_url = str(card.get("result_url") or "").strip()
+    if result_url and result_url not in urls:
+        urls.insert(0, result_url)
+    return urls
+
+
+def _preview_filename(url: str, content_type: str = "") -> str:
+    parsed_name = urlparse(url).path.rsplit("/", 1)[-1].strip()
+    if parsed_name and "." in parsed_name and len(parsed_name) <= 80:
+        return parsed_name
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    extension = mimetypes.guess_extension(media_type) or ".jpg"
+    if extension == ".jpe":
+        extension = ".jpg"
+    return f"feed-preview{extension}"
+
+
+def _build_feed_preview_photo_bytes(image_bytes: bytes) -> bytes:
+    if not image_bytes:
+        raise ValueError("empty preview image")
+
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    with Image.open(BytesIO(image_bytes)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in {"RGBA", "LA"}:
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            alpha = img.getchannel("A") if "A" in img.getbands() else None
+            background.paste(img.convert("RGBA"), mask=alpha)
+            img = background
+        else:
+            img = img.convert("RGB")
+
+        if max(img.size) > FEED_PREVIEW_MAX_SIDE:
+            img.thumbnail((FEED_PREVIEW_MAX_SIDE, FEED_PREVIEW_MAX_SIDE))
+
+        for max_side in (FEED_PREVIEW_MAX_SIDE, 1600, 1400, 1200, 960):
+            working = img.copy()
+            if max(working.size) > max_side:
+                working.thumbnail((max_side, max_side))
+            for quality in (88, 80, 72, 64, 56, 48, 40):
+                out = BytesIO()
+                working.save(out, format="JPEG", quality=quality, optimize=True)
+                data = out.getvalue()
+                if data and len(data) <= FEED_PREVIEW_MAX_BYTES:
+                    return data
+
+    raise ValueError("could not build feed preview under Telegram photo limit")
+
+
+def _build_feed_placeholder_photo_bytes() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.new("RGB", (1200, 900), (22, 24, 28))
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=86, optimize=True)
+    return out.getvalue()
+
+
+async def _download_preview_photo(url: str) -> types.BufferedInputFile:
+    timeout = aiohttp.ClientTimeout(total=20)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Telegram Bot SDK/1.0)",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.get(url) as response:
+            response.raise_for_status()
+            data = await response.read()
+
+    if not data:
+        raise ValueError("empty preview response")
+    preview = _build_feed_preview_photo_bytes(data)
+    return types.BufferedInputFile(
+        preview,
+        filename="feed-preview.jpg",
+    )
+
+
+def _feed_placeholder_photo() -> types.BufferedInputFile:
+    return types.BufferedInputFile(
+        _build_feed_placeholder_photo_bytes(),
+        filename="feed-preview.jpg",
+    )
+
+
+def _build_feed_caption(
+    card: dict,
+    *,
+    index: int,
+    total: int,
+    photo_index: int,
+    photos_count: int,
+    source_code: str,
+) -> str:
+    model = html.escape(str(card.get("model") or "AI"))
+    author = html.escape(str(card.get("author") or "автор"))
+    aspect_ratio = html.escape(str(card.get("aspect_ratio") or ""))
+    likes = int(card.get("likes_count") or 0)
+    shares = int(card.get("shares_count") or 0)
+    remixes = int(card.get("remixes") or 0)
+    photo_line = (
+        f"\nФото: <code>{photo_index + 1}/{photos_count}</code>"
+        if photos_count > 1
+        else ""
+    )
+    ratio_line = f" • {aspect_ratio}" if aspect_ratio else ""
+    return (
+        f"🖼 <b>Лента</b> · {_feed_source_label(source_code)} "
+        f"<code>{index + 1}/{total}</code>\n"
+        f"<b>{model}</b>{ratio_line}{photo_line}\n"
+        f"Автор: <code>{author}</code>\n\n"
+        f"❤️ <code>{likes}</code> · 🔁 <code>{remixes}</code> · "
+        f"🔗 <code>{shares}</code>\n"
+        "Листайте работы кнопками ниже."
+    )
+
+
+async def _build_feed_keyboard(
+    *,
+    bot: Bot,
+    card: dict,
+    index: int,
+    total: int,
+    photo_index: int,
+    photos_count: int,
+    source_code: str,
+) -> types.InlineKeyboardMarkup:
+    gen_id = int(card.get("id") or 0)
+    author_referral_code = str(card.get("author_referral_code") or "").strip()
+    prev_index = (index - 1) % total
+    next_index = (index + 1) % total
+    rows: list[list[types.InlineKeyboardButton]] = [
+        [
+            types.InlineKeyboardButton(
+                text="◀️", callback_data=f"bf:{source_code}:{prev_index}:0"
+            ),
+            types.InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data="noop"),
+            types.InlineKeyboardButton(
+                text="▶️", callback_data=f"bf:{source_code}:{next_index}:0"
+            ),
+        ]
+    ]
+
+    if photos_count > 1:
+        prev_photo = (photo_index - 1) % photos_count
+        next_photo = (photo_index + 1) % photos_count
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="◀️ Фото",
+                    callback_data=f"bf:{source_code}:{index}:{prev_photo}",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"{photo_index + 1}/{photos_count}",
+                    callback_data="noop",
+                ),
+                types.InlineKeyboardButton(
+                    text="Фото ▶️",
+                    callback_data=f"bf:{source_code}:{index}:{next_photo}",
+                ),
+            ]
+        )
+
+    task_id = str(card.get("task_id") or "").strip()
+    if task_id:
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🔁 Повторить prompt",
+                    callback_data=f"repeat_image_{task_id}",
+                )
+            ]
+        )
+
+    action_row = [
+        types.InlineKeyboardButton(
+            text=f"❤️ {int(card.get('likes_count') or 0)}",
+            callback_data=f"bfl:{gen_id}:{source_code}:{index}:{photo_index}",
+        )
+    ]
+    username = await _bot_username(bot)
+    if username and gen_id:
+        action_row.append(
+            types.InlineKeyboardButton(
+                text="🔗 Скопировать ссылку",
+                copy_text=types.CopyTextButton(
+                    text=_feed_share_link(username, gen_id, author_referral_code)
+                ),
+            )
+        )
+    elif gen_id:
+        action_row.append(
+            types.InlineKeyboardButton(
+                text="🔗 Ссылка",
+                callback_data=f"bfs:{gen_id}",
+            )
+        )
+    rows.append(action_row)
+
+    rows.extend(
+        [
+            [
+                types.InlineKeyboardButton(text="🆕 Новые", callback_data="bf:r:0:0"),
+                types.InlineKeyboardButton(text="🔥 Топ дня", callback_data="bf:d:0:0"),
+                types.InlineKeyboardButton(text="⭐ Топ", callback_data="bf:t:0:0"),
+            ],
+            [
+                types.InlineKeyboardButton(text="📚 Промпты", callback_data="menu_prompts"),
+                types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"),
+            ],
+        ]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _fetch_feed_cards(
+    source_code: str,
+    *,
+    viewer_user_id: int | None = None,
+) -> list[dict]:
+    source = FEED_SOURCE_CODES.get(source_code, "recent")
+    return await get_feed_generations(
+        limit=FEED_PAGE_LIMIT,
+        source=source,
+        viewer_user_id=viewer_user_id,
+    )
+
+
+async def _render_feed_carousel(
+    message: types.Message,
+    cards: list[dict],
+    *,
+    index: int = 0,
+    photo_index: int = 0,
+    source_code: str = "r",
+    replace_message: bool = False,
+) -> None:
+    if not cards:
+        await _safe_show_text(
+            message,
+            "🖼 <b>Лента</b>\n\nПока здесь нет опубликованных работ. "
+            "Когда пользователи начнут делиться генерациями, они появятся в этом разделе.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    total = len(cards)
+    index = _clamp(index, 0, total - 1)
+    card = cards[index]
+    photos = _feed_card_photos(card)
+    if not photos:
+        await _safe_show_text(
+            message,
+            "🖼 <b>Лента</b>\n\nУ этого поста нет доступного изображения.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    photo_index = photo_index % len(photos)
+    photo_url = photos[photo_index]
+    caption = _build_feed_caption(
+        card,
+        index=index,
+        total=total,
+        photo_index=photo_index,
+        photos_count=len(photos),
+        source_code=source_code,
+    )
+    markup = await _build_feed_keyboard(
+        bot=message.bot,
+        card=card,
+        index=index,
+        total=total,
+        photo_index=photo_index,
+        photos_count=len(photos),
+        source_code=source_code,
+    )
+
+    if not replace_message and getattr(message, "photo", None):
+        try:
+            await message.edit_media(
+                media=types.InputMediaPhoto(
+                    media=photo_url,
+                    caption=caption,
+                    parse_mode="HTML",
+                ),
+                reply_markup=markup,
+            )
+            return
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                return
+            logger.info("Cannot edit feed media, sending new photo: %s", e)
+        except Exception as e:
+            logger.info("Cannot edit feed media, sending new photo: %s", e)
+
+        try:
+            downloaded_photo = await _download_preview_photo(photo_url)
+            await message.edit_media(
+                media=types.InputMediaPhoto(
+                    media=downloaded_photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                ),
+                reply_markup=markup,
+            )
+            return
+        except Exception as e:
+            logger.info("Cannot edit feed media with downloaded preview: %s", e)
+
+        try:
+            await message.edit_media(
+                media=types.InputMediaPhoto(
+                    media=_feed_placeholder_photo(),
+                    caption=caption,
+                    parse_mode="HTML",
+                ),
+                reply_markup=markup,
+            )
+            return
+        except Exception as e:
+            logger.warning("Cannot edit feed media with placeholder preview: %s", e)
+
+    should_replace_bot_message = replace_message or bool(
+        getattr(getattr(message, "from_user", None), "is_bot", False)
+    )
+    if should_replace_bot_message:
+        try:
+            await message.delete()
+        except Exception as e:
+            if _should_log_edit_warning(e):
+                logger.info("Cannot delete old feed message before replacement: %s", e)
+
+    try:
+        photo = await _download_preview_photo(photo_url)
+    except Exception as e:
+        logger.warning(
+            "Cannot build feed preview for %s, using placeholder: %s",
+            photo_url,
+            e,
+        )
+        photo = _feed_placeholder_photo()
+
+    try:
+        await message.answer_photo(
+            photo=photo,
+            caption=caption,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Cannot send feed preview photo, trying placeholder: %s", e)
+        try:
+            await message.answer_photo(
+                photo=_feed_placeholder_photo(),
+                caption=caption,
+                reply_markup=markup,
+                parse_mode="HTML",
+            )
+        except Exception as placeholder_error:
+            logger.error("Cannot send feed placeholder photo: %s", placeholder_error)
+
+
+async def _render_feed_by_source(
+    message: types.Message,
+    *,
+    telegram_id: int,
+    source_code: str = "r",
+    index: int = 0,
+    photo_index: int = 0,
+    replace_message: bool = False,
+) -> None:
+    user = await get_or_create_user(telegram_id)
+    cards = await _fetch_feed_cards(source_code, viewer_user_id=user.id)
+    await _render_feed_carousel(
+        message,
+        cards,
+        index=index,
+        photo_index=photo_index,
+        source_code=source_code,
+        replace_message=replace_message,
+    )
+
+
+async def _render_feed_deeplink(message: types.Message, user, gen_id: str) -> bool:
+    card = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
+    if not card:
+        await message.answer(
+            "🖼 <b>Лента</b>\n\nПост не найден или больше не опубликован.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return True
+
+    cards = await _fetch_feed_cards("r", viewer_user_id=user.id)
+    index = next((i for i, item in enumerate(cards) if item.get("id") == card.get("id")), -1)
+    if index < 0:
+        cards.insert(0, card)
+        index = 0
+    await _render_feed_carousel(
+        message,
+        cards,
+        index=index,
+        source_code="r",
+    )
+    return True
+
+
+async def _fetch_prompt_cards(mode_code: str) -> list[dict]:
+    if mode_code == "p":
+        return await get_popular_prompts(PROMPT_PAGE_LIMIT)
+    if mode_code == "n":
+        return await get_approved_prompts(limit=PROMPT_PAGE_LIMIT)
+    return await get_top_prompts(PROMPT_PAGE_LIMIT)
+
+
+def _build_prompt_card_text(
+    prompt: dict,
+    *,
+    index: int,
+    total: int,
+    mode_code: str,
+) -> str:
+    title = html.escape(str(prompt.get("title") or "Промпт"))
+    description = html.escape(_short_text(prompt.get("description") or "", 180))
+    category = html.escape(str(prompt.get("category") or "other"))
+    model = html.escape(str(prompt.get("model") or "любой"))
+    tags = [
+        html.escape(str(tag))
+        for tag in prompt.get("tags", []) or []
+        if str(tag).strip()
+    ][:4]
+    tags_line = f"\nТеги: <code>{', '.join(tags)}</code>" if tags else ""
+    preview_url = str(prompt.get("preview_url") or "").strip()
+    preview_line = f"\n<a href=\"{html.escape(preview_url)}\">Превью</a>" if preview_url else ""
+    prompt_preview = html.escape(_short_text(prompt.get("prompt_text") or "", 650))
+    return (
+        f"📚 <b>Библиотека промптов</b> · {_prompt_mode_label(mode_code)} "
+        f"<code>{index + 1}/{total}</code>\n\n"
+        f"<b>{title}</b>\n"
+        f"{description}\n\n"
+        f"Категория: <code>{category}</code> · Модель: <code>{model}</code>"
+        f"{tags_line}{preview_line}\n"
+        f"❤️ <code>{int(prompt.get('likes') or 0)}</code> · "
+        f"Использований: <code>{int(prompt.get('uses_count') or 0)}</code>\n\n"
+        f"<pre>{prompt_preview}</pre>"
+    )
+
+
+def _build_prompt_keyboard(
+    prompt: dict,
+    *,
+    index: int,
+    total: int,
+    mode_code: str,
+) -> types.InlineKeyboardMarkup:
+    prompt_id = int(prompt.get("id") or 0)
+    prev_index = (index - 1) % total
+    next_index = (index + 1) % total
+    prompt_text = str(prompt.get("prompt_text") or "")
+    copy_label = "📋 Скопировать" if len(prompt_text) <= 256 else "📋 Скопировать начало"
+    rows: list[list[types.InlineKeyboardButton]] = [
+        [
+            types.InlineKeyboardButton(
+                text="◀️", callback_data=f"bp:{mode_code}:{prev_index}"
+            ),
+            types.InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data="noop"),
+            types.InlineKeyboardButton(
+                text="▶️", callback_data=f"bp:{mode_code}:{next_index}"
+            ),
+        ],
+        [
+            types.InlineKeyboardButton(text="⭐ Лучшие", callback_data="bp:u:0"),
+            types.InlineKeyboardButton(text="🔥 Популярные", callback_data="bp:p:0"),
+            types.InlineKeyboardButton(text="🆕 Новые", callback_data="bp:n:0"),
+        ],
+        [
+            types.InlineKeyboardButton(
+                text=f"❤️ {int(prompt.get('likes') or 0)}",
+                callback_data=f"bpl:{prompt_id}:{mode_code}:{index}",
+            ),
+            types.InlineKeyboardButton(
+                text="📄 Полный prompt",
+                callback_data=f"bpu:{prompt_id}",
+            ),
+        ],
+    ]
+    if prompt_text:
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=copy_label,
+                    copy_text=types.CopyTextButton(text=prompt_text[:256]),
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [
+                types.InlineKeyboardButton(
+                    text="🖼 Создать фото",
+                    callback_data="create_image_text_new",
+                ),
+                types.InlineKeyboardButton(
+                    text="🎬 Создать видео",
+                    callback_data="create_video_new",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(text="🖼 Лента", callback_data="menu_feed"),
+                types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"),
+            ],
+        ]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_prompt_use_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="🖼 Создать фото",
+                    callback_data="create_image_text_new",
+                ),
+                types.InlineKeyboardButton(
+                    text="🎬 Создать видео",
+                    callback_data="create_video_new",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(text="📚 Библиотека", callback_data="menu_prompts"),
+                types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"),
+            ],
+        ]
+    )
+
+
+async def _render_prompt_library(
+    message: types.Message,
+    prompts: list[dict],
+    *,
+    index: int = 0,
+    mode_code: str = "u",
+) -> None:
+    if not prompts:
+        await _safe_show_text(
+            message,
+            "📚 <b>Библиотека промптов</b>\n\n"
+            "Пока здесь нет одобренных промптов. Новые промпты появятся после модерации.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    total = len(prompts)
+    index = _clamp(index, 0, total - 1)
+    prompt = prompts[index]
+    await _safe_show_text(
+        message,
+        _build_prompt_card_text(
+            prompt,
+            index=index,
+            total=total,
+            mode_code=mode_code,
+        ),
+        reply_markup=_build_prompt_keyboard(
+            prompt,
+            index=index,
+            total=total,
+            mode_code=mode_code,
+        ),
+        parse_mode="HTML",
+    )
+
+
+async def _render_prompt_deeplink(message: types.Message, prompt_id: str) -> bool:
+    prompt = await get_prompt_by_id(_parse_int(prompt_id), approved_public_only=True)
+    if not prompt:
+        await message.answer(
+            "📚 <b>Библиотека промптов</b>\n\nПромпт не найден или ещё не опубликован.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return True
+
+    prompts = await _fetch_prompt_cards("u")
+    index = next((i for i, item in enumerate(prompts) if item.get("id") == prompt.get("id")), -1)
+    if index < 0:
+        prompts.insert(0, prompt)
+        index = 0
+    await _render_prompt_library(message, prompts, index=index, mode_code="u")
+    return True
+
+
+async def _send_full_prompt(message: types.Message, prompt: dict) -> None:
+    raw_prompt = str(prompt.get("prompt_text") or "").strip()
+    if not raw_prompt:
+        await message.answer(
+            "У этого элемента нет текста prompt.",
+            reply_markup=_build_prompt_use_keyboard(),
+        )
+        return
+
+    # HTML escaping can expand special characters, so keep raw chunks conservative.
+    chunk_size = 500
+    chunks = [
+        raw_prompt[i : i + chunk_size] for i in range(0, len(raw_prompt), chunk_size)
+    ] or [raw_prompt]
+    title = html.escape(str(prompt.get("title") or "Промпт"))
+    for idx, chunk in enumerate(chunks):
+        part = f" · часть {idx + 1}/{len(chunks)}" if len(chunks) > 1 else ""
+        await message.answer(
+            f"📄 <b>{title}</b>{part}\n\n<pre>{html.escape(chunk)}</pre>",
+            reply_markup=_build_prompt_use_keyboard() if idx == len(chunks) - 1 else None,
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "ux_create")
@@ -326,6 +1129,167 @@ async def show_more_menu(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "noop")
+async def noop_callback(callback: types.CallbackQuery):
+    await _safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "menu_feed")
+async def show_feed(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает публичную ленту как карусель в одном сообщении."""
+    await _safe_callback_answer(callback)
+    await state.clear()
+    await _render_feed_by_source(
+        callback.message,
+        telegram_id=callback.from_user.id,
+        source_code="r",
+        index=0,
+        photo_index=0,
+        replace_message=True,
+    )
+
+
+@router.message(Command("feed"), StateFilter(None))
+async def cmd_feed(message: types.Message, state: FSMContext):
+    """Команда /feed: публичная лента в боте."""
+    await state.clear()
+    await _render_feed_by_source(
+        message,
+        telegram_id=message.from_user.id,
+        source_code="r",
+        index=0,
+        photo_index=0,
+    )
+
+
+@router.callback_query(F.data.startswith("bf:"))
+async def navigate_feed(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    source_code = parts[1] if len(parts) > 1 and parts[1] in FEED_SOURCE_CODES else "r"
+    index = _parse_int(parts[2], 0) if len(parts) > 2 else 0
+    photo_index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    await _render_feed_by_source(
+        callback.message,
+        telegram_id=callback.from_user.id,
+        source_code=source_code,
+        index=index,
+        photo_index=photo_index,
+    )
+    await _safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("bfl:"))
+async def like_feed_card(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    gen_id = _parse_int(parts[1], 0) if len(parts) > 1 else 0
+    source_code = parts[2] if len(parts) > 2 and parts[2] in FEED_SOURCE_CODES else "r"
+    index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    photo_index = _parse_int(parts[4], 0) if len(parts) > 4 else 0
+    user = await get_or_create_user(callback.from_user.id)
+    liked = await like_feed_generation(gen_id, user.id)
+    if not liked:
+        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
+        return
+
+    cards = await _fetch_feed_cards(source_code, viewer_user_id=user.id)
+    refreshed_index = next(
+        (i for i, item in enumerate(cards) if item.get("id") == liked.get("id")),
+        index,
+    )
+    await _render_feed_carousel(
+        callback.message,
+        cards,
+        index=refreshed_index,
+        photo_index=photo_index,
+        source_code=source_code,
+    )
+    await _safe_callback_answer(callback, "❤️ Готово")
+
+
+@router.callback_query(F.data.startswith("bfs:"))
+async def share_feed_card(callback: types.CallbackQuery):
+    gen_id = _parse_int((callback.data or "").replace("bfs:", "", 1), 0)
+    card = await increment_feed_share(gen_id)
+    if not card:
+        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
+        return
+
+    username = await _bot_username(callback.bot)
+    link = _feed_share_link(username, card["id"], card.get("author_referral_code"))
+    await _safe_callback_answer(callback, f"Ссылка: {link}", show_alert=True)
+
+
+@router.callback_query(F.data == "menu_prompts")
+async def show_prompt_library(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает библиотеку промптов внутри Telegram-бота."""
+    await _safe_callback_answer(callback)
+    await state.clear()
+    prompts = await _fetch_prompt_cards("u")
+    await _render_prompt_library(callback.message, prompts, index=0, mode_code="u")
+
+
+@router.message(Command("prompts"), StateFilter(None))
+async def cmd_prompts(message: types.Message, state: FSMContext):
+    """Команда /prompts: библиотека промптов в боте."""
+    await state.clear()
+    prompts = await _fetch_prompt_cards("u")
+    await _render_prompt_library(message, prompts, index=0, mode_code="u")
+
+
+@router.callback_query(F.data.startswith("bp:"))
+async def navigate_prompt_library(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    mode_code = parts[1] if len(parts) > 1 and parts[1] in PROMPT_MODE_CODES else "u"
+    index = _parse_int(parts[2], 0) if len(parts) > 2 else 0
+    prompts = await _fetch_prompt_cards(mode_code)
+    await _render_prompt_library(
+        callback.message,
+        prompts,
+        index=index,
+        mode_code=mode_code,
+    )
+    await _safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("bpl:"))
+async def like_prompt_card(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    prompt_id = _parse_int(parts[1], 0) if len(parts) > 1 else 0
+    mode_code = parts[2] if len(parts) > 2 and parts[2] in PROMPT_MODE_CODES else "u"
+    index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    user = await get_or_create_user(callback.from_user.id)
+    liked = await like_prompt(prompt_id, user.id)
+    if not liked:
+        await _safe_callback_answer(callback, "Промпт не найден", show_alert=True)
+        return
+
+    prompts = await _fetch_prompt_cards(mode_code)
+    refreshed_index = next(
+        (i for i, item in enumerate(prompts) if item.get("id") == liked.get("id")),
+        index,
+    )
+    await _render_prompt_library(
+        callback.message,
+        prompts,
+        index=refreshed_index,
+        mode_code=mode_code,
+    )
+    await _safe_callback_answer(callback, "❤️ Готово")
+
+
+@router.callback_query(F.data.startswith("bpu:"))
+async def send_prompt_to_use(callback: types.CallbackQuery):
+    prompt_id = _parse_int((callback.data or "").replace("bpu:", "", 1), 0)
+    user = await get_or_create_user(callback.from_user.id)
+    prompt = await use_prompt(prompt_id, user.id)
+    if not prompt:
+        await _safe_callback_answer(callback, "Промпт не найден", show_alert=True)
+        return
+
+    await _send_full_prompt(callback.message, prompt)
+    await _safe_callback_answer(callback, "Prompt отправлен")
+
+
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start"""
@@ -334,6 +1298,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     # Создаём или получаем пользователя
     user = await get_or_create_user(message.from_user.id)
+    await _sync_telegram_profile(message.from_user)
 
     # Проверяем deep linking для возврата после оплаты
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
@@ -409,22 +1374,39 @@ async def cmd_start(message: types.Message, state: FSMContext):
         )
         return
 
+    elif args and args[0].startswith("feed_"):
+        feed_gen_id, referral_code = _split_feed_deeplink(
+            args[0].replace("feed_", "", 1)
+        )
+        referral_bonus_text = await _activate_referral_code(
+            message.bot,
+            message.from_user,
+            referral_code,
+        )
+        if referral_bonus_text:
+            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        await _render_feed_deeplink(
+            message,
+            user,
+            feed_gen_id,
+        )
+        return
+
+    elif args and args[0].startswith("prompt_"):
+        await _render_prompt_deeplink(
+            message,
+            args[0].replace("prompt_", "", 1),
+        )
+        return
+
     referral_bonus_text = ""
     if args and args[0].startswith("ref_"):
         referral_code = args[0].replace("ref_", "", 1)
-        referrer = await get_user_by_referral_code(referral_code)
-        processed = await process_referral(message.from_user.id, referral_code)
-        if processed:
-            referral_bonus_text = (
-                "\n🎁 <b>Реферальный бонус активирован!</b>\n"
-                "Вы получили бонус за регистрацию по приглашению."
-            )
-            if referrer:
-                await _notify_partner_about_new_referral(
-                    message.bot,
-                    referrer_telegram_id=referrer.telegram_id,
-                    referred=message.from_user,
-                )
+        referral_bonus_text = await _activate_referral_code(
+            message.bot,
+            message.from_user,
+            referral_code,
+        )
 
     welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
 
@@ -709,6 +1691,7 @@ async def render_partner_program(target, user_id: int):
         "<b>Ваша статистика:</b>\n"
         f"👥 1 уровень: <code>{stats.get('level1_count', stats.get('referrals_count', 0))}</code>\n"
         f"👥 2 уровень: <code>{stats.get('level2_count', 0)}</code>\n"
+        f"🔁 Повторы prompt: <code>{stats.get('prompt_repeat_balance_rub', 0)}</code> ₽\n"
         f"💰 К выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
         f"💸 Выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽"
     )
@@ -768,6 +1751,7 @@ async def partner_stats(callback: types.CallbackQuery):
         f"• Активных за 7 дней: <code>{stats.get('active_7d', 0)}</code>\n"
         f"• Всего покупок: <code>{stats.get('total_payments', 0)}</code>\n"
         f"• Доход за 30 дней: <code>{stats.get('monthly_revenue', 0)}</code> ₽\n"
+        f"• Баланс с повторов prompt: <code>{stats.get('prompt_repeat_balance_rub', 0)}</code> ₽\n"
         f"• Новые за сегодня: <code>{stats.get('today_payments', 0)}</code>\n"
         f"• Доход за сегодня: <code>{stats.get('today_revenue', 0)}</code> ₽\n"
     )
@@ -1624,7 +2608,8 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     actual_duration = max(1, min(30, raw_duration)) if raw_duration > 0 else 5
     from bot.services.preset_manager import preset_manager as _pm
 
-    cost = _pm.get_video_cost(video_model, actual_duration)
+    quality = mode if mode in {"720p", "1080p", "4k"} else None
+    cost = _pm.get_video_cost_with_quality(video_model, actual_duration, quality)
 
     await deduct_credits(telegram_id, cost)
 

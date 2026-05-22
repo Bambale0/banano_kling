@@ -8,7 +8,7 @@ import type { Task, UploadedFile } from '@/lib/types'
 import { generateImage, uploadFile } from '@/lib/api'
 
 export function PhotoTab() {
-  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference } = useApp()
+  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, promptPreset, setPromptPreset } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -20,6 +20,8 @@ export function PhotoTab() {
     count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
+    promptId?: number | null
+    sourceFeedGenId?: number | null
     prompt: string
     references: string[]
   }) => {
@@ -37,6 +39,8 @@ export function PhotoTab() {
             quality: data.quality,
             nsfwChecker: data.nsfwChecker,
             nsfwEnabled: data.nsfwEnabled,
+            promptId: data.promptId,
+            sourceFeedGenId: data.sourceFeedGenId,
             prompt: data.prompt,
             references: data.references,
           })
@@ -57,8 +61,12 @@ export function PhotoTab() {
             aspect_ratio: data.ratio,
             status: 'pending',
             created_at: new Date().toISOString(),
-            prompt_preview: data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
+            prompt_preview: data.sourceFeedGenId
+              ? ''
+              : data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
             cost: unitCost,
+            prompt_hidden: Boolean(data.sourceFeedGenId),
+            prompt_actions_allowed: !data.sourceFeedGenId,
           }
           addTask(newTask)
           latestCredits = Math.max(latestCredits - unitCost, 0)
@@ -110,6 +118,8 @@ export function PhotoTab() {
           onSubmit={handleSubmit}
           onUploadReference={handleUploadReference}
           savedReferences={state.savedReferences}
+          promptPreset={promptPreset}
+          onPromptPresetConsumed={() => setPromptPreset(null)}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
         />

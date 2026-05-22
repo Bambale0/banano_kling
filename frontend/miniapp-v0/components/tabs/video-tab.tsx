@@ -4,8 +4,21 @@ import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { РезультатCard } from '../result-card'
-import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
+import type { Task, ScenarioType, UploadedFile, VideoModel } from '@/lib/types'
 import { generateVideo, uploadFile } from '@/lib/api'
+
+function roundVideoCost(raw: number) {
+  return Math.round(raw * 2) / 2
+}
+
+function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string) {
+  if (!model) return 5
+  const qualityCost = quality ? model.quality_costs?.[quality] : undefined
+  if (typeof qualityCost === 'number') {
+    return roundVideoCost(qualityCost * duration)
+  }
+  return model.costs[duration.toString()] ?? Object.values(model.costs)[0] ?? 5
+}
 
 export function VideoTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference } = useApp()
@@ -56,11 +69,16 @@ export function VideoTab() {
         selectTask(result.task)
       } else {
         const model = state.videoModels.find(m => m.id === data.model)
+        const quality = model?.veo_resolutions?.length
+          ? data.veoResolution
+          : (data.model === 'gemini_omni' || data.model === 'gemini_omni_video') && data.scenario !== 'audio' && data.scenario !== 'character'
+            ? data.omniResolution
+            : undefined
         const cost = data.scenario === 'audio'
           ? model?.omni_audio_cost ?? 3
           : data.scenario === 'character'
             ? model?.omni_character_cost ?? 5
-            : model?.costs[data.duration.toString()] || 5
+            : getVideoModelCost(model, data.duration, quality)
         const newTask: Task = {
           task_id: `task_${Date.now()}`,
           type: data.scenario === 'audio' ? 'audio' : data.scenario === 'character' ? 'character' : 'video',

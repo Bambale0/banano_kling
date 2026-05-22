@@ -113,8 +113,7 @@ export function MotionTab() {
   const motionModelData = state.videoModels.find((item) => item.id === motionModel)
   const perSecondCost =
     (motionModelData?.quality_costs?.[mode] ??
-    motionModelData?.costs?.['5'] ??
-    15) / 5
+    (motionModelData?.costs?.['5'] ?? 15) / 5)
   const motionCost = Math.round(perSecondCost * videoDuration * 2) / 2
 
   async function uploadImage(file: File) {
@@ -285,8 +284,7 @@ export function MotionTab() {
                     const itemModel = state.videoModels.find((model) => model.id === item.id)
                     const itemPerSecondCost =
                       (itemModel?.quality_costs?.[mode] ??
-                      itemModel?.costs?.['5'] ??
-                      15) / 5
+                      (itemModel?.costs?.['5'] ?? 15) / 5)
                     const itemCost = Math.round(itemPerSecondCost * videoDuration * 2) / 2
                     return (
                     <button
@@ -317,8 +315,7 @@ export function MotionTab() {
                 <div className="grid grid-cols-2 gap-2">
                   {(['720p', '1080p'] as MotionMode[]).map((item) => {
                     const qPerSec = (motionModelData?.quality_costs?.[item] ??
-                      motionModelData?.costs?.['5'] ??
-                      15) / 5
+                      (motionModelData?.costs?.['5'] ?? 15) / 5)
                     const qCost = Math.round(qPerSec * videoDuration * 2) / 2
                     return (
                     <button

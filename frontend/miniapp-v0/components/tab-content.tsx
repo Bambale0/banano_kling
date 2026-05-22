@@ -5,10 +5,12 @@ import { StudioTab } from './tabs/studio-tab'
 import { PhotoTab } from './tabs/photo-tab'
 import { VideoTab } from './tabs/video-tab'
 import { MotionTab } from './tabs/motion-tab'
+import { FeedTab } from './tabs/feed-tab'
+import { PromptsTab } from './tabs/prompts-tab'
 import { ServicesTab } from './tabs/services-tab'
 import { AnimatePresence, motion } from 'framer-motion'
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, ServicesTab]
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, PromptsTab, ServicesTab]
 
 export function TabContent() {
   const { activeTab } = useApp()

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import type { ImageModel, UploadedFile } from '@/lib/types'
+import type { ImageModel, PromptPreset, UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -20,11 +20,15 @@ interface ImageGeneratorFormProps {
     count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
+    promptId?: number | null
+    sourceFeedGenId?: number | null
     prompt: string
     references: string[]
   }) => Promise<void>
   onUploadReference?: (file: File) => Promise<UploadedFile>
   savedReferences?: UploadedFile[]
+  promptPreset?: PromptPreset | null
+  onPromptPresetConsumed?: () => void
   isSubmitting: boolean
   credits: number
 }
@@ -34,6 +38,8 @@ export function ImageGeneratorForm({
   onSubmit, 
   onUploadReference,
   savedReferences = [],
+  promptPreset,
+  onPromptPresetConsumed,
   isSubmitting,
   credits,
 }: ImageGeneratorFormProps) {
@@ -44,6 +50,9 @@ export function ImageGeneratorForm({
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [nsfwEnabled, setNsfwEnabled] = useState(false)
   const [prompt, setPrompt] = useState('')
+  const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
+  const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
+  const [hiddenPromptTitle, setHiddenPromptTitle] = useState('')
   const [references, setReferences] = useState<UploadedFile[]>([])
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
@@ -52,27 +61,48 @@ export function ImageGeneratorForm({
   const unitCost = isBanana ? (selectedQuality === '4K' ? 3.5 : 2.5) : (model?.cost || 0)
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
-  const needsReference = model?.requires_reference && references.length === 0
-  const isValid = prompt.trim().length > 0 && canAfford && !needsReference
+  const isFeedRemix = sourceFeedGenId !== null
+  const needsReference = (model?.requires_reference || isFeedRemix) && references.length === 0
+  const hasPrompt = prompt.trim().length > 0 || isFeedRemix
+  const isValid = hasPrompt && canAfford && !needsReference
 
-    useEffect(() => {
-      if (!model) return
-      if (!model.ratios.includes(selectedRatio)) {
-        setSelectedRatio(model.ratios[0] || '1:1')
-      }
-      const bananaQualities = ['2K', '4K']
-      if (model.qualities?.length && !model.qualities.includes(selectedQuality) ||
-          (model.id === 'banana_pro' || model.id === 'banana_2') && !bananaQualities.includes(selectedQuality)) {
-        const q = (model.id === 'banana_pro' || model.id === 'banana_2') ? '2K' : model.qualities![0]
-        setSelectedQuality(q)
-      }
-      if (!(model.supports_nsfw_checker || model.id === 'seedream_edit' || model.id === 'flux_pro')) {
-        setNsfwChecker(false)
-      }
-      if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
-        setNsfwEnabled(false)
-      }
-    }, [model, selectedQuality, selectedRatio])
+  useEffect(() => {
+    if (!promptPreset) return
+    setPrompt(promptPreset.prompt)
+    setSelectedPromptId(promptPreset.promptId || null)
+    setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
+    setHiddenPromptTitle(promptPreset.promptHidden ? promptPreset.title : '')
+    if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
+      setSelectedModel(promptPreset.model)
+    }
+    if (promptPreset.ratio) {
+      setSelectedRatio(promptPreset.ratio)
+    }
+    setReferences([])
+    onPromptPresetConsumed?.()
+  }, [models, onPromptPresetConsumed, promptPreset])
+
+  useEffect(() => {
+    if (!model) return
+    if (!model.ratios.includes(selectedRatio)) {
+      setSelectedRatio(model.ratios[0] || '1:1')
+    }
+    const bananaQualities = ['2K', '4K']
+    if (
+      (model.qualities?.length && !model.qualities.includes(selectedQuality)) ||
+      ((model.id === 'banana_pro' || model.id === 'banana_2') &&
+        !bananaQualities.includes(selectedQuality))
+    ) {
+      const q = model.id === 'banana_pro' || model.id === 'banana_2' ? '2K' : model.qualities![0]
+      setSelectedQuality(q)
+    }
+    if (!(model.supports_nsfw_checker || model.id === 'seedream_edit' || model.id === 'flux_pro')) {
+      setNsfwChecker(false)
+    }
+    if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
+      setNsfwEnabled(false)
+    }
+  }, [model, selectedQuality, selectedRatio])
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -83,10 +113,15 @@ export function ImageGeneratorForm({
       count: selectedCount,
       nsfwChecker,
       nsfwEnabled,
+      promptId: selectedPromptId,
+      sourceFeedGenId,
       prompt,
       references: references.map(r => r.url),
     })
     setPrompt('')
+    setSelectedPromptId(null)
+    setSourceFeedGenId(null)
+    setHiddenPromptTitle('')
     setReferences([])
   }
 
@@ -229,7 +264,7 @@ export function ImageGeneratorForm({
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
             Референсы
-            {model?.requires_reference && (
+            {(model?.requires_reference || isFeedRemix) && (
               <span className="text-destructive ml-1">*</span>
             )}
           </label>
@@ -238,36 +273,60 @@ export function ImageGeneratorForm({
             onFilesChange={setReferences}
             maxFiles={model?.max_references || 4}
             accept="image/*"
-            required={model?.requires_reference}
+            required={model?.requires_reference || isFeedRemix}
             onUpload={onUploadReference}
             libraryFiles={savedReferences.filter((item) => item.type === 'image')}
             libraryLabel="Сохранённые фото-референсы"
           />
           <p className="text-xs text-muted-foreground">
-            {model?.requires_reference
-              ? 'Для этой модели нужен хотя бы один исходник или референс.'
-              : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
+            {isFeedRemix
+              ? 'Добавьте своё фото или референс. Описание из ленты уже подставлено.'
+              : model?.requires_reference
+                ? 'Для этой модели нужен хотя бы один исходник или референс.'
+                : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
           </p>
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Промпт</label>
-          <Textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат..."
-            className={cn(
-              "min-h-[140px] resize-none",
-              "bg-secondary/50 border-border/50",
-              "focus:border-gold/50 focus:ring-gold/20",
-              "placeholder:text-muted-foreground/50"
-            )}
-          />
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{prompt.trim().length > 0 ? 'Промпт готов к запуску' : 'Пустой prompt не отправится'}</span>
-            <span>{prompt.length} симв.</span>
+        {isFeedRemix ? (
+          <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4">
+            <p className="text-sm font-medium text-foreground">
+              {hiddenPromptTitle || 'Повторить образ из ленты'}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Описание автора уже учтено. Добавьте своё фото или референс выше и запускайте генерацию.
+            </p>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Промпт</label>
+            <Textarea
+              value={prompt}
+              onChange={(e) => {
+                setPrompt(e.target.value)
+                if (selectedPromptId) {
+                  setSelectedPromptId(null)
+                }
+              }}
+              placeholder="Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат..."
+              className={cn(
+                "min-h-[140px] resize-none",
+                "bg-secondary/50 border-border/50",
+                "focus:border-gold/50 focus:ring-gold/20",
+                "placeholder:text-muted-foreground/50"
+              )}
+            />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                {selectedPromptId
+                  ? 'Используется промпт из библиотеки'
+                  : prompt.trim().length > 0
+                    ? 'Промпт готов к запуску'
+                    : 'Пустой prompt не отправится'}
+              </span>
+              <span>{prompt.length} симв.</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="glass rounded-2xl p-4 space-y-4">
@@ -286,7 +345,7 @@ export function ImageGeneratorForm({
             <p className="text-muted-foreground mb-1">Файлы</p>
             <p className="text-foreground font-medium">{references.length} / {model?.max_references || 0}</p>
             <p className="text-muted-foreground mt-1">
-              {model?.requires_reference ? 'Минимум 1 обязателен' : 'Опционально'}
+              {model?.requires_reference || isFeedRemix ? 'Минимум 1 обязателен' : 'Опционально'}
             </p>
           </div>
         </div>
@@ -311,8 +370,8 @@ export function ImageGeneratorForm({
         {needsReference && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-gold/10 border border-gold/30">
             <AlertCircle className="w-4 h-4 text-gold flex-shrink-0" />
-          <p className="text-xs text-gold">
-              Загрузите референс для этой модели
+            <p className="text-xs text-gold">
+              {isFeedRemix ? 'Добавьте своё фото для повтора из ленты' : 'Загрузите референс для этой модели'}
             </p>
           </div>
         )}
@@ -334,7 +393,7 @@ export function ImageGeneratorForm({
           ) : (
             <>
               <Sparkles className="w-5 h-5 mr-2" />
-              Запустить фото
+              {isFeedRemix ? 'Повторить с моим фото' : 'Запустить фото'}
             </>
           )}
         </Button>

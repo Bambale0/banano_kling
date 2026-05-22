@@ -478,12 +478,26 @@ VIDEO_MODEL_LABELS = {
 
 def _model_per_sec(model_cfg: dict) -> str:
     """Возвращает строку 'X🍌/с' для модели."""
+    def _format_per_sec(value: float) -> str:
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+
+    quality_costs = (model_cfg or {}).get("quality_costs", {})
+    if quality_costs:
+        values = [float(value) for value in quality_costs.values()]
+        if not values:
+            return "?"
+        min_value = min(values)
+        max_value = max(values)
+        if min_value == max_value:
+            return _format_per_sec(min_value)
+        return f"{_format_per_sec(min_value)}-{_format_per_sec(max_value)}"
+
     duration_costs = (model_cfg or {}).get("duration_costs", {})
     if duration_costs:
         ref_dur = 5 if "5" in duration_costs else int(min(duration_costs, key=int))
         cost = duration_costs[str(ref_dur)]
         per_sec = cost / ref_dur
-        return f"{per_sec:.1f}".rstrip("0").rstrip(".")
+        return _format_per_sec(per_sec)
     base = (model_cfg or {}).get("base", (model_cfg or {}).get("cost"))
     return str(base) if base is not None else "?"
 
@@ -521,14 +535,18 @@ def _admin_video_model_keyboard(model_key: str) -> types.InlineKeyboardMarkup:
     model_cfg = video_models.get(model_key, {})
     quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
+    quality_order = {"720p": 0, "1080p": 1, "4k": 2}
 
     buttons = []
     if quality_costs:
-        for quality in sorted(quality_costs.keys()):
+        for quality in sorted(
+            quality_costs.keys(),
+            key=lambda q: (quality_order.get(str(q).lower(), 99), str(q)),
+        ):
             cost = quality_costs[quality]
             buttons.append(
                 types.InlineKeyboardButton(
-                    text=f"{quality} → {cost}🍌",
+                    text=f"{quality} → {cost}🍌/с",
                     callback_data=f"admin_price_video_{model_key}_q{quality}",
                 )
             )
@@ -1135,13 +1153,20 @@ async def admin_video_model(callback: types.CallbackQuery):
     per_sec = _model_per_sec(model_cfg)
     quality_costs = model_cfg.get("quality_costs", {})
     duration_costs = model_cfg.get("duration_costs", {})
+    quality_order = {"720p": 0, "1080p": 1, "4k": 2}
 
     if quality_costs:
         lines = "\n".join(
-            f"• {quality} → <code>{cost}</code>🍌"
-            for quality, cost in sorted(quality_costs.items())
+            f"• {quality} → <code>{cost}</code>🍌/с"
+            for quality, cost in sorted(
+                quality_costs.items(),
+                key=lambda item: (
+                    quality_order.get(str(item[0]).lower(), 99),
+                    str(item[0]),
+                ),
+            )
         )
-        detail = f"Цены по качеству:\n{lines}"
+        detail = f"Цены по качеству за 1 секунду:\n{lines}"
     elif duration_costs:
         lines = "\n".join(
             f"• {dur}с → <code>{cost}</code>🍌"
@@ -1303,7 +1328,7 @@ async def admin_price_video(callback: types.CallbackQuery, state: FSMContext):
         quality = field[1:]
         quality_costs = model.get("quality_costs") or {}
         current_value = quality_costs.get(quality)
-        hint_text = f"Введите новую стоимость для качества <b>{quality}</b> (за одну генерацию)."
+        hint_text = f"Введите стоимость качества <b>{quality}</b> за <b>1 секунду</b>."
         param_label = f"качество {quality}"
     else:
         current_value = (model.get("duration_costs") or {}).get(field)

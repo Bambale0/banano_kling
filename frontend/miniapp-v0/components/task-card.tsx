@@ -2,7 +2,7 @@
 
 import { useApp } from '@/lib/app-context'
 import type { Task } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import { cn, isHttpUrl } from '@/lib/utils'
 import { Image, Video, Clock, CheckCircle2, XCircle, Banana, ChevronRight, Headphones, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 
@@ -47,6 +47,10 @@ export function TaskCard({ task, index }: TaskCardProps) {
   const status = statusConfig[task.status]
   const StatusIcon = status.icon
   const TypeIcon = task.type === 'image' ? Image : task.type === 'audio' ? Headphones : task.type === 'character' ? UserRound : Video
+  const thumbnailUrl =
+    task.type === 'image' && task.status === 'completed' && isHttpUrl(task.result_url)
+      ? task.result_url
+      : null
 
   return (
     <motion.button
@@ -70,9 +74,9 @@ export function TaskCard({ task, index }: TaskCardProps) {
         "bg-secondary/80 flex items-center justify-center",
         task.status === 'pending' && "pulse-soft"
       )}>
-        {task.result_url && task.status === 'completed' ? (
+        {thumbnailUrl ? (
           <img 
-            src={task.result_url} 
+            src={thumbnailUrl}
             alt="" 
             className="w-full h-full object-cover"
           />

@@ -47,6 +47,8 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
+    builder.button(text="🖼 Лента", callback_data="menu_feed")
+    builder.button(text="📚 Библиотека промптов", callback_data="menu_prompts")
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
     builder.button(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
@@ -54,9 +56,9 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 2, 2, 1)
     else:
-        builder.adjust(2, 2, 2, 2, 1)
+        builder.adjust(2, 2, 2, 2, 2, 1)
 
     return builder.as_markup()
 
@@ -229,6 +231,22 @@ def get_image_model_label(model: str) -> str:
     return IMAGE_MODEL_LABELS.get(model, model)
 
 
+def _video_pricing_quality(
+    model: str,
+    veo_resolution: str = "720p",
+    omni_resolution: str = "720p",
+    motion_quality: str = "720p",
+) -> str | None:
+    key = preset_manager.normalize_video_model_key(model)
+    if key.startswith("veo3"):
+        return veo_resolution
+    if key == "gemini_omni_video":
+        return omni_resolution
+    if key.startswith("motion_control"):
+        return motion_quality
+    return None
+
+
 def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
     """Первый шаг: отдельный выбор модели видео."""
     builder = InlineKeyboardBuilder()
@@ -283,8 +301,13 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
         default_duration = (
             6 if model_key.startswith("veo3") or model_key.startswith("gemini_omni") else 5
         )
+        pricing_quality = (
+            "720p"
+            if model_key.startswith("veo3") or model_key == "gemini_omni"
+            else None
+        )
         per_second = preset_manager.get_video_cost_per_second(
-            model_key, default_duration
+            model_key, default_duration, pricing_quality
         )
         if model_key == "gemini_omni":
             price_label = f"от {preset_manager.get_video_cost('gemini_omni_audio', 6)}🍌"
@@ -364,6 +387,25 @@ def get_video_media_step_keyboard(
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")
         builder.adjust(1, 2)
+        return builder.as_markup()
+
+    if current_model == "gemini_omni_video":
+        image_count = (1 if has_start_image else 0) + reference_image_count
+        text_check = "✅ " if current_v_type == "text" else ""
+        imgtxt_check = "✅ " if current_v_type == "imgtxt" else ""
+        video_check = "✅ " if current_v_type == "video" else ""
+        builder.button(text=f"{text_check}📝 Текст", callback_data="v_type_text")
+        builder.button(text=f"{imgtxt_check}🖼 Фото", callback_data="v_type_imgtxt")
+        builder.button(text=f"{video_check}🎬 Видео", callback_data="v_type_video")
+        builder.button(text=f"🖼 Фото: {image_count}", callback_data="ignore")
+        builder.button(
+            text=f"📹 Видео: {reference_video_count}/{max_reference_video_count}",
+            callback_data="ignore",
+        )
+        builder.button(text="▶️ К настройкам", callback_data="video_media_continue")
+        builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
+        builder.button(text="🏠 Главное меню", callback_data="back_main")
+        builder.adjust(3, 2, 1, 2)
         return builder.as_markup()
 
     text_check = "✅ " if current_v_type == "text" else ""
@@ -537,8 +579,11 @@ def get_create_video_keyboard(
         for resolution in ("720p", "1080p", "4k"):
             check = "✅ " if current_veo_resolution == resolution else ""
             label = resolution.upper() if resolution == "4k" else resolution
+            resolution_cost = preset_manager.get_video_cost_with_quality(
+                current_model, current_duration, resolution
+            )
             builder.button(
-                text=f"{check}🖥 {label}",
+                text=f"{check}🖥 {label} • {resolution_cost}🍌",
                 callback_data=f"veo_resolution_{resolution}",
             )
 
@@ -569,8 +614,11 @@ def get_create_video_keyboard(
         for resolution in ("720p", "1080p", "4k"):
             check = "✅ " if current_omni_resolution == resolution else ""
             label = resolution.upper() if resolution == "4k" else resolution
+            resolution_cost = preset_manager.get_video_cost_with_quality(
+                current_model, current_duration, resolution
+            )
             builder.button(
-                text=f"{check}🖥 {label}",
+                text=f"{check}🖥 {label} • {resolution_cost}🍌",
                 callback_data=f"omni_resolution_{resolution}",
             )
         seed_label = str(current_omni_seed) if current_omni_seed is not None else "auto"
@@ -639,9 +687,17 @@ def get_create_video_keyboard(
         )
 
     # Рассчитываем цену
-    total_cost = preset_manager.get_video_cost(current_model, current_duration)
+    pricing_quality = _video_pricing_quality(
+        current_model,
+        current_veo_resolution,
+        current_omni_resolution,
+        current_mode,
+    )
+    total_cost = preset_manager.get_video_cost_with_quality(
+        current_model, current_duration, pricing_quality
+    )
     per_second_cost = preset_manager.get_video_cost_per_second(
-        current_model, current_duration
+        current_model, current_duration, pricing_quality
     )
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
@@ -1097,15 +1153,29 @@ def get_video_result_keyboard(
     return builder.as_markup()
 
 
-def get_image_result_keyboard(image_url: str, task_id: str = None):
+def get_image_result_keyboard(
+    image_url: str,
+    task_id: str = None,
+    is_public_feed: bool = False,
+    is_prompt_library: bool = False,
+):
     """Клавиатура для готового фото."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📥 Скачать оригинал", url=image_url)
     if task_id:
+        builder.button(text="🎬 Оживить в Grok", callback_data=f"grokvid_{task_id}")
+        builder.button(
+            text="🗑 Убрать из ленты" if is_public_feed else "🖼 В ленту",
+            callback_data=f"feedrm_{task_id}" if is_public_feed else f"feedpub_{task_id}",
+        )
+        builder.button(
+            text="🗑 Убрать из промптов" if is_prompt_library else "📚 В промпты",
+            callback_data=f"promptrm_{task_id}" if is_prompt_library else f"promptsave_{task_id}",
+        )
         builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
         builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2, 1)
+    builder.adjust(1, 1, 2, 2, 1)
     return builder.as_markup()
 
 

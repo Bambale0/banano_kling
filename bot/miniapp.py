@@ -15,19 +15,45 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     DATABASE_PATH,
+    MAX_ACTIVE_PROMPTS_PER_USER,
     SavedReference,
     add_credits,
     add_generation_task,
+    approve_prompt,
     check_can_afford,
     complete_video_task,
     create_transaction,
+    count_active_prompts_by_author,
+    credit_feed_prompt_repeat,
+    create_prompt,
     deduct_credits,
+    deactivate_prompt,
+    get_approved_prompts,
     get_and_clear_miniapp_notifications,
+    get_author_prompts,
+    get_feed_generation_card,
+    get_feed_generations,
+    get_generation_task_payload,
     get_or_create_user,
     get_partner_overview,
+    get_popular_prompts,
+    get_prompt_by_id,
+    get_prompts_by_tag,
+    get_top_prompts,
+    get_user_feed_generations,
     get_user_stats,
+    increment_feed_share,
+    like_feed_generation,
+    like_prompt,
     list_saved_references,
+    reject_prompt,
+    remove_from_feed,
+    remove_from_library,
+    share_to_feed,
+    share_to_library,
     touch_saved_references,
+    update_user_profile,
+    use_prompt,
 )
 from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
@@ -261,7 +287,7 @@ VIDEO_MODELS = (
             "FIRST_AND_LAST_FRAMES_2_VIDEO",
             "REFERENCE_2_VIDEO",
         ],
-        "veo_resolutions": ["720p"],
+        "veo_resolutions": ["720p", "1080p", "4k"],
         "supports_translation": True,
         "supports_seed": True,
         "supports_watermark": True,
@@ -343,6 +369,72 @@ def _resolve_gemini_omni_model(model: str, generation_type: str) -> str:
     return "gemini_omni_video"
 
 
+def _video_pricing_quality(
+    model: str,
+    veo_resolution: str | None = None,
+    omni_resolution: str | None = None,
+) -> str | None:
+    key = preset_manager.normalize_video_model_key(model)
+    if key.startswith("veo3"):
+        return veo_resolution or "720p"
+    if key == "gemini_omni_video":
+        return omni_resolution or "720p"
+    return None
+
+
+def _clean_unique_values(values: list[Any] | None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
+def _collect_gemini_omni_images(
+    image_url: str | None,
+    image_references: list[str] | None,
+) -> list[str]:
+    return _clean_unique_values([image_url, *list(image_references or [])])
+
+
+def _collect_gemini_omni_video_urls(video_references: list[str] | None) -> list[str]:
+    return _clean_unique_values(video_references)
+
+
+def _build_gemini_omni_video_list(
+    video_references: list[str],
+    duration: int,
+) -> list[dict[str, Any]]:
+    try:
+        ends = min(20, max(1, int(duration)))
+    except (TypeError, ValueError):
+        ends = 10
+    return [{"url": url, "start": 0, "ends": ends} for url in video_references]
+
+
+def _validate_gemini_omni_video_inputs(
+    *,
+    image_urls: list[str],
+    video_urls: list[str],
+    audio_ids: list[str],
+    character_ids: list[str],
+) -> str | None:
+    if len(video_urls) > 1:
+        return "Gemini Omni принимает только один видео-референс. Удалите текущий или замените его."
+    if len(audio_ids) > 1:
+        return "Gemini Omni Video принимает один Audio ID за запуск."
+    if len(character_ids) > 3:
+        return "Gemini Omni принимает максимум 3 Character ID."
+    units = len(image_urls) + len(video_urls) * 2 + len(character_ids)
+    if units > 7:
+        return "Слишком много входов для Gemini Omni. Лимит: фото + видео*2 + Character ID <= 7."
+    return None
+
+
 FILE_KIND_MAP = {
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
@@ -416,7 +508,15 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
 
 async def _get_user_context(app: web.Application, init_data: str) -> tuple[int, dict]:
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
-    telegram_id = int(payload["user"]["id"])
+    telegram_user = payload["user"]
+    telegram_id = int(telegram_user["id"])
+    await get_or_create_user(telegram_id)
+    await update_user_profile(
+        telegram_id,
+        username=telegram_user.get("username"),
+        first_name=telegram_user.get("first_name"),
+        last_name=telegram_user.get("last_name"),
+    )
     user = await get_or_create_user(telegram_id)
     return telegram_id, {"payload": payload, "user": user}
 
@@ -457,6 +557,53 @@ def _parse_request_data(raw_value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _task_prompt_hidden(row_or_payload: Any) -> bool:
+    try:
+        return bool(row_or_payload["source_feed_gen_id"])
+    except Exception:
+        return bool(getattr(row_or_payload, "source_feed_gen_id", None))
+
+
+def _task_prompt_actions_allowed(row_or_payload: Any) -> bool:
+    return not _task_prompt_hidden(row_or_payload)
+
+
+def _public_result_urls(payload: dict[str, Any]) -> list[str]:
+    urls = payload.get("result_urls") or []
+    if isinstance(urls, str):
+        try:
+            urls = json.loads(urls)
+        except (TypeError, json.JSONDecodeError):
+            urls = []
+    normalized = [str(item) for item in urls if str(item).strip()]
+    result_url = payload.get("result_url")
+    if result_url and result_url not in normalized:
+        normalized.insert(0, result_url)
+    return normalized
+
+
+async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if request.can_read_body:
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                payload.update(raw)
+        except Exception:
+            pass
+    payload.update(dict(request.query))
+    for key, value in request.match_info.items():
+        payload.setdefault(key, value)
+    if "gen_id" not in payload and "generation_id" in payload:
+        payload["gen_id"] = payload["generation_id"]
+    if "prompt_id" in payload and str(payload["prompt_id"]).isdigit():
+        payload["prompt_id"] = int(payload["prompt_id"])
+    init_data = request.headers.get("X-Telegram-Init-Data")
+    if init_data and not payload.get("init_data"):
+        payload["init_data"] = init_data
+    return payload
+
+
 def _normalize_video_ratio(ratio: str) -> str:
     if ratio == "Auto":
         return "auto"
@@ -468,7 +615,9 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT task_id, type, model, aspect_ratio, prompt, cost, status, result_url, created_at
+            SELECT id, task_id, type, model, aspect_ratio, prompt, cost, status,
+                   result_url, result_urls, is_public_feed, is_prompt_library,
+                   source_feed_gen_id, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -496,8 +645,14 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "aspect_ratio": row["aspect_ratio"] or "",
                 "status": row["status"] or "pending",
                 "result_url": row["result_url"],
+                "result_urls": _public_result_urls(dict(row)),
                 "created_at": row["created_at"],
-                "prompt_preview": _task_preview(row["prompt"]),
+                "prompt_preview": "" if _task_prompt_hidden(row) else _task_preview(row["prompt"]),
+                "prompt_hidden": _task_prompt_hidden(row),
+                "prompt_actions_allowed": _task_prompt_actions_allowed(row),
+                "is_public_feed": bool(row["is_public_feed"]),
+                "is_prompt_library": bool(row["is_prompt_library"]),
+                "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
         )
@@ -509,8 +664,9 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT task_id, type, model, duration, aspect_ratio, prompt, cost, status,
-                   result_url, created_at, request_data
+            SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
+                   result_url, result_urls, is_public_feed, is_prompt_library,
+                   source_feed_gen_id, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -532,15 +688,21 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
     )
     return {
         "task_id": row["task_id"],
+        "feed_id": row["id"],
         "type": task_type,
         "model": model,
         "model_label": model_label,
         "duration": row["duration"],
         "aspect_ratio": row["aspect_ratio"] or "",
-        "prompt": row["prompt"] or "",
+        "prompt": "" if _task_prompt_hidden(row) else (row["prompt"] or ""),
+        "prompt_hidden": _task_prompt_hidden(row),
+        "prompt_actions_allowed": _task_prompt_actions_allowed(row),
         "cost": row["cost"] or 0,
         "status": row["status"] or "pending",
         "result_url": row["result_url"],
+        "result_urls": _public_result_urls(dict(row)),
+        "is_public_feed": bool(row["is_public_feed"]),
+        "is_prompt_library": bool(row["is_prompt_library"]),
         "created_at": row["created_at"],
         "request_data": request_data,
     }
@@ -610,31 +772,22 @@ async def _launch_video_generation_task(
 
     normalized_ratio = _normalize_video_ratio(aspect_ratio)
     callback_url = config.kling_notification_url if config.WEBHOOK_HOST else None
-    image_references = normalize_reference_urls(
-        image_references,
-        max_count=get_max_video_image_references(model),
-    )
-    video_references = normalize_reference_urls(
-        video_references,
-        max_count=get_max_video_references(model),
-    )
+    if model == "gemini_omni_video":
+        image_references = _clean_unique_values(image_references)
+        video_references = _clean_unique_values(video_references)
+    else:
+        image_references = normalize_reference_urls(
+            image_references,
+            max_count=get_max_video_image_references(model),
+        )
+        video_references = normalize_reference_urls(
+            video_references,
+            max_count=get_max_video_references(model),
+        )
 
     if model == "gemini_omni_video":
-        omni_images: list[str] = []
-        if image_url:
-            omni_images.append(image_url)
-        for ref_url in image_references:
-            if ref_url and ref_url not in omni_images:
-                omni_images.append(ref_url)
-
-        omni_video_list = [
-            {
-                "url": ref_url,
-                "start": 0,
-                "ends": min(20, max(1, int(duration))),
-            }
-            for ref_url in video_references[:1]
-        ]
+        omni_images = _collect_gemini_omni_images(image_url, image_references)
+        omni_video_list = _build_gemini_omni_video_list(video_references, duration)
         result = await gemini_omni_service.generate_video(
             prompt=prompt,
             duration=duration,
@@ -790,7 +943,8 @@ async def _launch_video_generation_task(
         )
 
     result_status, error_message = _classify_video_generation_result(result)
-    cost = preset_manager.get_video_cost(model, duration)
+    pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
+    cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
     task_type = (
         "audio"
         if model == "gemini_omni_audio"
@@ -1187,6 +1341,7 @@ async def _send_partner(app: web.Application, telegram_id: int):
     text = (
         "🤝 <b>Партнёрская программа</b>\n\n"
         f"• Рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
+        f"• Повторы prompt: <code>{stats.get('prompt_repeat_balance_rub', 0)}</code> ₽\n"
         f"• Баланс партнёра: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
         f"• Статус: <code>{'partner' if stats.get('is_partner') else 'basic'}</code>\n\n"
         "<i>Ниже доступны оферта, статистика, вывод и ваша ссылка.</i>"
@@ -1297,7 +1452,7 @@ async def miniapp_asset(request: web.Request) -> web.Response:
 
 async def miniapp_bootstrap(request: web.Request) -> web.Response:
     try:
-        body = await request.json()
+        body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         telegram_id, ctx = await _get_user_context(request.app, init_data)
         user = ctx["user"]
@@ -1326,17 +1481,8 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                         )
                         for duration in item["durations"]
                     },
-                    **(
-                        {
-                            "quality_costs": {
-                                q: preset_manager.get_video_cost_with_quality(
-                                    item["id"], item["durations"][0], q
-                                )
-                                for q in ["720p", "1080p"]
-                            }
-                        }
-                        if item["id"] in {"motion_control_v26", "motion_control_v30"}
-                        else {}
+                    "quality_costs": preset_manager.get_video_quality_costs(
+                        item["id"]
                     ),
                     **(
                         {
@@ -1582,6 +1728,439 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def miniapp_prompts(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        source = (
+            "my"
+            if request.path.endswith("/prompts/my")
+            else str(body.get("source", "catalog") or "catalog")
+        )
+        tag = str(body.get("tag", "") or "").strip()
+        category = str(body.get("category", "") or "").strip() or None
+        page = max(int(body.get("page", 1) or 1), 1)
+        limit = min(max(int(body.get("limit", 40) or 40), 1), 100)
+
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+
+        if source == "my":
+            prompts = await get_author_prompts(user.id)
+        elif source == "top":
+            prompts = await get_top_prompts(limit)
+        elif source in {"popular", "trending", "best"}:
+            prompts = await get_popular_prompts(limit)
+        elif source == "tag" and tag:
+            prompts = await get_prompts_by_tag(tag, limit)
+        else:
+            prompts = await get_approved_prompts(
+                category=category,
+                offset=(page - 1) * limit,
+                limit=limit,
+            )
+
+        return web.json_response({"ok": True, "prompts": prompts})
+    except Exception as e:
+        logger.exception("Mini App prompts list failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_detail(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+
+        prompt = await get_prompt_by_id(prompt_id)
+        if not prompt:
+            return web.json_response({"ok": False, "error": "Промпт не найден"}, status=404)
+        if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
+            return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt detail failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_like(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        prompt = await like_prompt(prompt_id, ctx["user"].id)
+        if not prompt:
+            return web.json_response(
+                {"ok": False, "error": "Можно лайкать только опубликованные промпты"},
+                status=404,
+            )
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt like failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_use(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        prompt = await use_prompt(prompt_id, ctx["user"].id)
+        if not prompt:
+            return web.json_response(
+                {"ok": False, "error": "Промпт не найден или ещё не опубликован"},
+                status=404,
+            )
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt use failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_link(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+        prompt = await get_prompt_by_id(prompt_id)
+        if not prompt:
+            return web.json_response({"ok": False, "error": "Промпт не найден"}, status=404)
+        if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
+            return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
+        me = await request.app["bot"].get_me()
+        link = f"https://t.me/{me.username}?start=prompt_{prompt_id}" if me.username else config.mini_app_url
+        return web.json_response({"ok": True, "prompt": prompt, "link": link})
+    except Exception as e:
+        logger.exception("Mini App prompt link failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_submit(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+        prompt_text = str(body.get("prompt_text", "") or body.get("prompt", "") or "").strip()
+        if not prompt_text:
+            return web.json_response({"ok": False, "error": "Введите текст промпта"}, status=400)
+
+        policy_error = detect_explicit_prompt_policy_violation(prompt_text)
+        if policy_error:
+            return web.json_response({"ok": False, "error": policy_error}, status=400)
+
+        active_count = await count_active_prompts_by_author(user.id)
+        if active_count >= MAX_ACTIVE_PROMPTS_PER_USER and not config.is_admin(telegram_id):
+            return web.json_response(
+                {"ok": False, "error": f"Лимит активных промптов: {MAX_ACTIVE_PROMPTS_PER_USER}"},
+                status=400,
+            )
+
+        prompt = await create_prompt(
+            author_id=user.id,
+            prompt_text=prompt_text,
+            title=str(body.get("title", "") or "").strip() or None,
+            description=str(body.get("description", "") or "").strip() or None,
+            category=str(body.get("category", "") or "").strip() or None,
+            preview_url=str(body.get("preview_url", "") or "").strip() or None,
+            model=str(body.get("model", "") or "").strip() or None,
+            tags=[str(item) for item in list(body.get("tags", []) or [])],
+            is_public=True,
+        )
+        if prompt:
+            prompt = await approve_prompt(prompt["id"])
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt submit failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_deactivate(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        prompt = await deactivate_prompt(prompt_id, author_id=ctx["user"].id)
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt deactivate failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_prompt_moderate(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        action = str(body.get("action", "") or "")
+        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        if not config.is_admin(telegram_id):
+            return web.json_response({"ok": False, "error": "Нет доступа"}, status=403)
+        if action == "approve":
+            prompt = await approve_prompt(prompt_id)
+        elif action == "reject":
+            prompt = await reject_prompt(prompt_id, str(body.get("reason", "") or ""))
+        elif action == "deactivate":
+            prompt = await deactivate_prompt(prompt_id)
+        else:
+            return web.json_response({"ok": False, "error": "Неизвестное действие"}, status=400)
+        return web.json_response({"ok": True, "prompt": prompt})
+    except Exception as e:
+        logger.exception("Mini App prompt moderate failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        source = str(body.get("source", "recent") or "recent")
+        limit = min(max(int(body.get("limit", 40) or 40), 1), 100)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        feed = await get_feed_generations(
+            limit=limit,
+            source=source,
+            viewer_user_id=ctx["user"].id,
+        )
+        return web.json_response({"ok": True, "feed": feed})
+    except Exception as e:
+        logger.exception("Mini App feed list failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_my_feed(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        limit = min(max(int(body.get("limit", 200) or 200), 1), 300)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        feed = await get_user_feed_generations(ctx["user"].id, limit=limit)
+        return web.json_response({"ok": True, "feed": feed})
+    except Exception as e:
+        logger.exception("Mini App my feed failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_generation_share(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        card = await share_to_feed(gen_id, ctx["user"].id)
+        if not card:
+            return web.json_response(
+                {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
+                status=403,
+            )
+        return web.json_response({"ok": True, "feed_item": card})
+    except Exception as e:
+        logger.exception("Mini App share generation failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_remove(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        removed = await remove_from_feed(gen_id, ctx["user"].id)
+        return web.json_response({"ok": True, "removed": removed})
+    except Exception as e:
+        logger.exception("Mini App remove feed failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_like(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        card = await like_feed_generation(gen_id, ctx["user"].id)
+        if not card:
+            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        return web.json_response({"ok": True, "feed_item": card})
+    except Exception as e:
+        logger.exception("Mini App feed like failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_share(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        card = await increment_feed_share(gen_id)
+        if not card:
+            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        me = await request.app["bot"].get_me()
+        author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
+        start_param = (
+            f"feed_{card['id']}_ref_{author_referral_code}"
+            if author_referral_code
+            else f"feed_{card['id']}"
+        )
+        link = f"https://t.me/{me.username}?start={start_param}" if me.username else config.mini_app_url
+        logger.info("Feed share link issued by %s for feed %s", telegram_id, card["id"])
+        return web.json_response({"ok": True, "feed_item": card, "link": link})
+    except Exception as e:
+        logger.exception("Mini App feed share failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_generation_share_library(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        task = await share_to_library(gen_id, ctx["user"].id)
+        if not task:
+            return web.json_response(
+                {"ok": False, "error": "Нельзя сохранить prompt этой генерации"},
+                status=403,
+            )
+        return web.json_response({"ok": True, "generation": task})
+    except Exception as e:
+        logger.exception("Mini App share library failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_generation_remove_library(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        removed = await remove_from_library(gen_id, ctx["user"].id)
+        return web.json_response({"ok": True, "removed": removed})
+    except Exception as e:
+        logger.exception("Mini App remove library failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_remix(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        user = ctx["user"]
+
+        source = await get_generation_task_payload(gen_id)
+        if not source or not (
+            source.get("type") == "image"
+            and source.get("status") == "completed"
+            and source.get("result_url")
+            and bool(source.get("is_public_feed"))
+        ):
+            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+
+        prompt = str(source.get("prompt") or "").strip()
+        if not prompt:
+            return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
+
+        img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
+        img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
+        references = [str(item) for item in list(body.get("reference_images", []) or []) if str(item).strip()]
+        if not references and source.get("result_url"):
+            references = [str(source["result_url"])]
+        img_quality = str(body.get("img_quality", "2K"))
+        img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
+        nsfw_enabled = bool(body.get("nsfw_enabled", False))
+
+        model_meta = next((item for item in IMAGE_MODELS if item["id"] == img_service), None)
+        if not model_meta:
+            return web.json_response({"ok": False, "error": f"Неизвестная модель: {img_service}"}, status=400)
+        if model_meta["requires_reference"] and not references:
+            return web.json_response({"ok": False, "error": "Для этой модели нужен референс"}, status=400)
+        if len(references) > model_meta["max_references"]:
+            return web.json_response(
+                {"ok": False, "error": f"Слишком много референсов. Максимум: {model_meta['max_references']}"},
+                status=400,
+            )
+
+        user_references = [url for url in references if url != source.get("result_url")]
+        if user_references:
+            await touch_saved_references(telegram_id, user_references, kind="image")
+
+        unit_cost = (
+            QUALITY_COSTS.get(img_quality, preset_manager.get_generation_cost(img_service))
+            if img_service in ("banana_pro", "banana_2")
+            else preset_manager.get_generation_cost(img_service)
+        )
+        is_admin = config.is_admin(telegram_id)
+        if not is_admin and not await check_can_afford(telegram_id, unit_cost):
+            return web.json_response(
+                {"ok": False, "error": f"Недостаточно бананов. Нужно {unit_cost}🍌", "credits": user.credits},
+                status=400,
+            )
+        if not is_admin:
+            await deduct_credits(telegram_id, unit_cost)
+
+        launch_result = await _start_image_generation_task(
+            user=user,
+            telegram_id=telegram_id,
+            img_service=img_service,
+            prompt=prompt,
+            img_ratio=img_ratio,
+            reference_images=references,
+            unit_cost=unit_cost,
+            img_quality=img_quality,
+            img_nsfw_checker=img_nsfw_checker,
+            nsfw_enabled=nsfw_enabled,
+            callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+            source_feed_gen_id=int(source["id"]),
+            parent_generation_id=int(source["id"]),
+            action_type="remix",
+        )
+
+        if launch_result["status"] == "failed":
+            if not is_admin:
+                await add_credits(telegram_id, unit_cost)
+            return web.json_response(
+                {"ok": False, "error": "Не удалось запустить remix. Бананы уже возвращены."},
+                status=500,
+            )
+
+        await credit_feed_prompt_repeat(
+            int(source["id"]),
+            user.id,
+            repeat_task_id=str(launch_result.get("task_id") or ""),
+            credits_spent=unit_cost,
+        )
+
+        fresh_user = await get_or_create_user(telegram_id)
+        return web.json_response(
+            {
+                "ok": True,
+                "status": launch_result["status"],
+                "task_id": launch_result["task_id"],
+                "saved_url": launch_result.get("saved_url"),
+                "task_type": "image",
+                "credits": fresh_user.credits,
+                "cost": unit_cost,
+                "model_label": get_image_model_label(img_service),
+                "prompt_hidden": True,
+                "prompt_actions_allowed": False,
+                "source_feed_gen_id": int(source["id"]),
+            }
+        )
+    except Exception as e:
+        logger.exception("Mini App feed remix failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def miniapp_generate_image(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -1590,12 +2169,67 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "")).strip()
-        img_service = str(body.get("img_service", "banana_pro"))
-        img_ratio = str(body.get("img_ratio", "1:1"))
-        references = list(body.get("reference_images", []) or [])
+        prompt_id_raw = body.get("prompt_id")
+        prompt_id = int(prompt_id_raw) if str(prompt_id_raw or "").isdigit() else None
+        references = [
+            str(item).strip()
+            for item in list(body.get("reference_images", []) or [])
+            if str(item).strip()
+        ]
+        source_feed_gen_id_raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
+        source_feed_gen_id = (
+            int(source_feed_gen_id_raw)
+            if str(source_feed_gen_id_raw or "").isdigit()
+            else None
+        )
+        source_feed_task = None
+        if source_feed_gen_id:
+            source_feed_task = await get_generation_task_payload(source_feed_gen_id)
+            if not source_feed_task or not (
+                source_feed_task.get("type") == "image"
+                and source_feed_task.get("status") == "completed"
+                and source_feed_task.get("result_url")
+                and bool(source_feed_task.get("is_public_feed"))
+            ):
+                return web.json_response(
+                    {"ok": False, "error": "Пост ленты не найден"},
+                    status=404,
+                )
+            prompt = str(source_feed_task.get("prompt") or "").strip()
+            if not prompt:
+                return web.json_response(
+                    {"ok": False, "error": "У исходной генерации нет prompt"},
+                    status=400,
+                )
+            if not references:
+                return web.json_response(
+                    {"ok": False, "error": "Добавьте своё фото или референс для remix"},
+                    status=400,
+                )
+
+        img_service = str(
+            body.get("img_service")
+            or (source_feed_task or {}).get("model")
+            or "banana_pro"
+        )
+        img_ratio = str(
+            body.get("img_ratio")
+            or (source_feed_task or {}).get("aspect_ratio")
+            or "1:1"
+        )
         img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
+
+        prompt_source = None
+        if prompt_id and not source_feed_gen_id:
+            prompt_source = await get_prompt_by_id(prompt_id, approved_public_only=True)
+            if not prompt_source:
+                return web.json_response(
+                    {"ok": False, "error": "Промпт не найден или ещё не опубликован"},
+                    status=404,
+                )
+            prompt = str(prompt_source["prompt_text"]).strip()
 
         if not prompt:
             return web.json_response(
@@ -1661,6 +2295,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+            prompt_source_id=(None if source_feed_gen_id else prompt_id),
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=source_feed_gen_id,
+            action_type=("remix" if source_feed_gen_id else None),
         )
 
         if launch_result["status"] == "failed":
@@ -1674,17 +2312,32 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=500,
             )
 
+        if source_feed_gen_id:
+            await credit_feed_prompt_repeat(
+                source_feed_gen_id,
+                user.id,
+                repeat_task_id=str(launch_result.get("task_id") or ""),
+                credits_spent=unit_cost,
+            )
+        elif prompt_id:
+            await use_prompt(prompt_id, user.id, credits_spent=unit_cost)
+
         fresh_user = await get_or_create_user(telegram_id)
+        prompt_hidden = bool(source_feed_gen_id)
         return web.json_response(
             {
                 "ok": True,
                 "status": launch_result["status"],
                 "task_id": launch_result["task_id"],
                 "saved_url": launch_result.get("saved_url"),
-                "task_type": launch_result.get("task_type", "video"),
+                "task_type": launch_result.get("task_type", "image"),
                 "credits": fresh_user.credits,
                 "cost": unit_cost,
                 "model_label": get_image_model_label(img_service),
+                "prompt_hidden": prompt_hidden,
+                "prompt_actions_allowed": not prompt_hidden,
+                "prompt_id": (None if source_feed_gen_id else prompt_id),
+                "source_feed_gen_id": source_feed_gen_id,
             }
         )
     except Exception as e:
@@ -1746,12 +2399,12 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             str(item).strip()
             for item in list(body.get("omni_audio_ids", []) or [])
             if str(item).strip()
-        ][:1]
+        ]
         omni_character_ids = [
             str(item).strip()
             for item in list(body.get("omni_character_ids", []) or [])
             if str(item).strip()
-        ][:3]
+        ]
         omni_base_voice = str(body.get("omni_base_voice", "achernar") or "achernar")
         omni_voice_name = str(body.get("omni_voice_name", "") or "")[:20] or None
         omni_voice_description = (
@@ -1808,7 +2461,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-        if generation_type == "imgtxt" and not image_url:
+        if (
+            generation_type == "imgtxt"
+            and not image_url
+            and effective_model != "gemini_omni_video"
+        ):
             return web.json_response(
                 {
                     "ok": False,
@@ -1824,7 +2481,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-        if generation_type == "video" and not video_references:
+        if (
+            generation_type == "video"
+            and not video_references
+            and effective_model != "gemini_omni_video"
+        ):
             return web.json_response(
                 {
                     "ok": False,
@@ -1868,6 +2529,20 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        if effective_model == "gemini_omni_video":
+            omni_images = _collect_gemini_omni_images(image_url, image_references)
+            omni_video_urls = _collect_gemini_omni_video_urls(video_references)
+            validation_error = _validate_gemini_omni_video_inputs(
+                image_urls=omni_images,
+                video_urls=omni_video_urls,
+                audio_ids=omni_audio_ids,
+                character_ids=omni_character_ids,
+            )
+            if validation_error:
+                return web.json_response(
+                    {"ok": False, "error": validation_error},
+                    status=400,
+                )
         if generation_type == "motion" and (not image_url or not video_references):
             return web.json_response(
                 {
@@ -1894,7 +2569,12 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if audio_url:
             await touch_saved_references(telegram_id, [audio_url], kind="audio")
 
-        cost = preset_manager.get_video_cost(effective_model, duration)
+        pricing_quality = _video_pricing_quality(
+            effective_model, veo_resolution, omni_resolution
+        )
+        cost = preset_manager.get_video_cost_with_quality(
+            effective_model, duration, pricing_quality
+        )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, cost):
             return web.json_response(
@@ -2179,6 +2859,12 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
                 "is_partner": bool(stats.get("is_partner")),
                 "referrals_count": int(stats.get("referrals_count", 0) or 0),
                 "balance_rub": float(stats.get("balance_rub", 0) or 0),
+                "prompt_repeat_balance_rub": float(
+                    stats.get("prompt_repeat_balance_rub", 0) or 0
+                ),
+                "prompt_repeat_total_rub": float(
+                    stats.get("prompt_repeat_total_rub", 0) or 0
+                ),
                 "referral_link": referral_link,
                 "status": "partner" if stats.get("is_partner") else "basic",
             }
@@ -2252,11 +2938,42 @@ async def miniapp_ai_assistant(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def miniapp_api_not_found(request: web.Request) -> web.Response:
+    logger.warning(
+        "Mini App API route not found: method=%s path=%s",
+        request.method,
+        request.path,
+    )
+    return web.json_response(
+        {"ok": False, "error": "API endpoint not found"},
+        status=404,
+    )
+
+
 def setup_miniapp_routes(app: web.Application):
     miniapp_path = config.MINI_APP_PATH or "/mini-app"
     if not miniapp_path.startswith("/"):
         miniapp_path = f"/{miniapp_path}"
     miniapp_root = miniapp_path.rstrip("/")
+
+    @web.middleware
+    async def _miniapp_api_json_errors(
+        request: web.Request,
+        handler,
+    ) -> web.StreamResponse:
+        try:
+            return await handler(request)
+        except web.HTTPException as exc:
+            if request.path.startswith(f"{miniapp_root}/api/") or request.path.startswith(
+                "/api/v1/"
+            ):
+                return web.json_response(
+                    {"ok": False, "error": exc.reason or "API request failed"},
+                    status=exc.status,
+                )
+            raise
+
+    app.middlewares.append(_miniapp_api_json_errors)
 
     async def _redirect_to_slash(request: web.Request) -> web.Response:
         raise web.HTTPFound(f"{miniapp_root}/")
@@ -2316,6 +3033,30 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
     app.router.add_post(miniapp_root + "/api/upload", miniapp_upload)
     app.router.add_post(miniapp_root + "/api/photo-to-prompt", miniapp_photo_to_prompt)
+    app.router.add_post(miniapp_root + "/api/prompts", miniapp_prompts)
+    app.router.add_post(miniapp_root + "/api/prompts/detail", miniapp_prompt_detail)
+    app.router.add_post(miniapp_root + "/api/prompts/like", miniapp_prompt_like)
+    app.router.add_post(miniapp_root + "/api/prompts/use", miniapp_prompt_use)
+    app.router.add_post(miniapp_root + "/api/prompts/link", miniapp_prompt_link)
+    app.router.add_post(miniapp_root + "/api/prompts/submit", miniapp_prompt_submit)
+    app.router.add_post(miniapp_root + "/api/prompts/deactivate", miniapp_prompt_deactivate)
+    app.router.add_post(miniapp_root + "/api/admin/prompts/moderate", miniapp_prompt_moderate)
+    app.router.add_post(miniapp_root + "/api/feed", miniapp_feed)
+    app.router.add_post(miniapp_root + "/api/feed/my", miniapp_my_feed)
+    app.router.add_post(miniapp_root + "/api/feed/like", miniapp_feed_like)
+    app.router.add_post(miniapp_root + "/api/feed/share", miniapp_feed_share)
+    app.router.add_post(miniapp_root + "/api/feed/remove", miniapp_feed_remove)
+    app.router.add_post(miniapp_root + "/api/feed/remix", miniapp_feed_remix)
+    app.router.add_post(miniapp_root + "/api/generations/share", miniapp_generation_share)
+    app.router.add_post(miniapp_root + "/api/generations/publish", miniapp_generation_share)
+    app.router.add_post(
+        miniapp_root + "/api/generations/share-library",
+        miniapp_generation_share_library,
+    )
+    app.router.add_post(
+        miniapp_root + "/api/generations/remove-library",
+        miniapp_generation_remove_library,
+    )
     app.router.add_post(miniapp_root + "/api/generate-image", miniapp_generate_image)
     app.router.add_post(miniapp_root + "/api/generate-video", miniapp_generate_video)
     app.router.add_post(miniapp_root + "/api/generate-motion", miniapp_generate_motion)
@@ -2325,4 +3066,36 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/create-payment", miniapp_create_payment)
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
+    app.router.add_route("*", miniapp_root + "/api/{tail:.*}", miniapp_api_not_found)
+
+    api_v1_root = "/api/v1"
+    app.router.add_get(api_v1_root + "/feed", miniapp_feed)
+    app.router.add_get(api_v1_root + "/me/feed", miniapp_my_feed)
+    app.router.add_post(api_v1_root + "/generations/{gen_id}/share", miniapp_generation_share)
+    app.router.add_post(api_v1_root + "/generations/{gen_id}/publish", miniapp_generation_share)
+    app.router.add_post(
+        api_v1_root + "/generations/{gen_id}/share-library",
+        miniapp_generation_share_library,
+    )
+    app.router.add_post(
+        api_v1_root + "/generations/{gen_id}/remove-library",
+        miniapp_generation_remove_library,
+    )
+    app.router.add_post(api_v1_root + "/feed/{gen_id}/remove", miniapp_feed_remove)
+    app.router.add_post(api_v1_root + "/feed/{gen_id}/like", miniapp_feed_like)
+    app.router.add_post(api_v1_root + "/feed/{gen_id}/remix", miniapp_feed_remix)
+    app.router.add_get(api_v1_root + "/feed/{gen_id}/link", miniapp_feed_share)
+    app.router.add_get(api_v1_root + "/prompts", miniapp_prompts)
+    app.router.add_post(api_v1_root + "/prompts", miniapp_prompt_submit)
+    app.router.add_get(api_v1_root + "/prompts/my", miniapp_prompts)
+    app.router.add_get(api_v1_root + "/prompts/{prompt_id}", miniapp_prompt_detail)
+    app.router.add_get(api_v1_root + "/prompts/{prompt_id}/link", miniapp_prompt_link)
+    app.router.add_post(api_v1_root + "/prompts/{prompt_id}/like", miniapp_prompt_like)
+    app.router.add_post(api_v1_root + "/prompts/{prompt_id}/use", miniapp_prompt_use)
+    app.router.add_post(
+        api_v1_root + "/prompts/{prompt_id}/deactivate",
+        miniapp_prompt_deactivate,
+    )
+    app.router.add_post(api_v1_root + "/generate/image", miniapp_generate_image)
+    app.router.add_route("*", api_v1_root + "/{tail:.*}", miniapp_api_not_found)
     app.router.add_get(miniapp_root + "/{tail:.*}", miniapp_asset)

@@ -26,6 +26,7 @@ from bot.database import (
     add_generation_task,
     check_can_afford,
     complete_video_task,
+    credit_feed_prompt_repeat,
     deduct_credits,
     delete_saved_reference,
     get_or_create_user,
@@ -33,6 +34,10 @@ from bot.database import (
     get_user_credits,
     get_user_settings,
     list_saved_references,
+    remove_from_feed,
+    remove_from_library,
+    share_to_feed,
+    share_to_library,
 )
 from bot.keyboards import (
     get_back_keyboard,
@@ -84,7 +89,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 _reference_upload_locks: dict[int, asyncio.Lock] = {}
 
-def _parse_omni_ids(raw: str, *, max_count: int) -> list[str]:
+def _parse_omni_ids(raw: str, *, max_count: int | None = None) -> list[str]:
     """Parse comma/space separated Gemini Omni reusable asset ids."""
     value = (raw or "").strip()
     if value.lower() in {"off", "none", "нет", "clear", "очистить", "-"}:
@@ -98,7 +103,7 @@ def _parse_omni_ids(raw: str, *, max_count: int) -> list[str]:
             continue
         seen.add(item)
         parsed.append(item)
-        if len(parsed) >= max_count:
+        if max_count is not None and len(parsed) >= max_count:
             break
     return parsed
 
@@ -107,6 +112,70 @@ def _derive_omni_name(text: str, fallback: str) -> str:
     value = re.sub(r"\s+", " ", (text or "").strip())
     value = re.sub(r"[^\w\s.-]", "", value, flags=re.UNICODE).strip()
     return (value[:20] or fallback)[:20]
+
+
+def _clean_unique_urls(values) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        url = str(value or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        cleaned.append(url)
+    return cleaned
+
+
+def _collect_gemini_omni_image_urls(
+    image_url: str | None,
+    reference_images,
+) -> list[str]:
+    return _clean_unique_urls([image_url, *list(reference_images or [])])
+
+
+def _collect_gemini_omni_video_urls(video_references) -> list[str]:
+    return _clean_unique_urls(video_references)
+
+
+def _build_gemini_omni_video_list(video_urls, duration: int) -> list[dict]:
+    try:
+        ends = min(20, max(1, int(duration)))
+    except (TypeError, ValueError):
+        ends = 10
+    return [{"url": url, "start": 0, "ends": ends} for url in video_urls or []]
+
+
+def _gemini_omni_input_units(
+    image_urls,
+    video_urls,
+    character_ids,
+) -> int:
+    return len(image_urls or []) + len(video_urls or []) * 2 + len(character_ids or [])
+
+
+def _validate_gemini_omni_video_inputs(
+    *,
+    image_urls,
+    video_urls,
+    character_ids,
+    audio_ids=None,
+) -> str | None:
+    audio_count = len(audio_ids or [])
+    character_count = len(character_ids or [])
+    video_count = len(video_urls or [])
+    units = _gemini_omni_input_units(image_urls, video_urls, character_ids)
+    if video_count > gemini_omni_service.MAX_VIDEO_INPUTS:
+        return "Gemini Omni принимает только один видео-референс. Удалите текущий или замените его."
+    if audio_count > gemini_omni_service.MAX_AUDIO_IDS:
+        return "Gemini Omni Video принимает один Audio ID за запуск."
+    if character_count > gemini_omni_service.MAX_CHARACTER_IDS:
+        return "Gemini Omni принимает максимум 3 Character ID."
+    if units > gemini_omni_service.MAX_IMAGE_SLOTS:
+        return (
+            "Слишком много входов для Gemini Omni. "
+            "Лимит: фото + видео*2 + Character ID <= 7."
+        )
+    return None
 
 
 def _get_reference_upload_lock(user_id: int) -> asyncio.Lock:
@@ -305,6 +374,24 @@ def _apply_reference_detail_preservation(
         "flux_pro",
     }:
         return prompt
+    if img_service == "seedream_edit":
+        if not prompt:
+            return (
+                "Use the uploaded image as the identity reference. Preserve the same "
+                "recognizable person and face, but allow pose, body posture, scene, "
+                "background, camera angle, framing, lighting, and styling to change."
+            )
+        return (
+            f"EDIT REQUEST (highest priority): {prompt}\n\n"
+            "Use the uploaded image as the identity reference, not as a locked pose. "
+            "Follow the edit request even when it changes pose, body posture, action, "
+            "scene, background, camera angle, framing, lighting, styling, or outfit.\n\n"
+            "Preserve the same recognizable person: face identity, facial geometry, "
+            "skin tone and texture, hair, age appearance, body proportions, and "
+            "distinctive marks. Do not copy the original pose or composition unless "
+            "the edit request asks for it. Do not ignore requested pose, action, "
+            "location, or composition changes."
+        )
     instruction = """
 STRICT IDENTITY AND DETAIL PRESERVATION. HIGHEST PRIORITY.
 
@@ -397,16 +484,50 @@ def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
     return normalized
 
 
+def _is_identity_sensitive_prompt(prompt: str) -> bool:
+    text = f" {(prompt or '').lower()} "
+    keywords = (
+        "person",
+        "people",
+        "human",
+        "face",
+        "portrait",
+        "woman",
+        "man",
+        "girl",
+        "boy",
+        "model",
+        "character",
+        "selfie",
+        "человек",
+        "люди",
+        "лицо",
+        "портрет",
+        "селфи",
+        "девуш",
+        "женщ",
+        "мужчин",
+        "парн",
+        "модель",
+        "персонаж",
+        "герой",
+        "героиня",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
 def _prepare_banana_reference_images(
-    img_service: str, reference_images: list[str] | None
+    img_service: str, reference_images: list[str] | None, prompt: str = ""
 ) -> list[str]:
     normalized = _snapshot_reference_images(reference_images)
     if img_service not in {"banana_pro", "banana_2", "nanobanana"}:
         return normalized
     if len(normalized) <= 1:
         return normalized
-    # For identity-sensitive Banana edits, extra refs often cause identity blending.
-    # Keep the first user-selected reference as the source-of-truth person image.
+    if _is_identity_sensitive_prompt(prompt):
+        # Extra person refs can make Banana blend identities. Use the first
+        # selected image as the face source-of-truth for person-centric edits.
+        return normalized[:1]
     return normalized[:8]
 
 
@@ -423,6 +544,10 @@ async def _start_image_generation_task(
     img_nsfw_checker: bool = False,
     nsfw_enabled: bool = False,
     callback_url: Optional[str] = None,
+    source_feed_gen_id: Optional[int] = None,
+    parent_generation_id: Optional[int] = None,
+    action_type: Optional[str] = None,
+    prompt_source_id: Optional[int] = None,
 ):
     """Launch one image generation task and persist enough data for repeats."""
     runtime_img_service = img_service
@@ -442,7 +567,7 @@ async def _start_image_generation_task(
             "error": policy_error,
         }
     reference_images = _prepare_banana_reference_images(
-        runtime_img_service, reference_images
+        runtime_img_service, reference_images, prompt
     )
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
 
@@ -463,6 +588,10 @@ async def _start_image_generation_task(
         "img_nsfw_checker": img_nsfw_checker,
         "nsfw_enabled": nsfw_enabled,
         "provider_model": provider_model,
+        "source_feed_gen_id": source_feed_gen_id,
+        "parent_generation_id": parent_generation_id,
+        "action_type": action_type,
+        "prompt_source_id": prompt_source_id,
     }
     await add_generation_task(
         user.id,
@@ -475,6 +604,9 @@ async def _start_image_generation_task(
         prompt=prompt,
         cost=unit_cost,
         request_data=request_snapshot,
+        source_feed_gen_id=source_feed_gen_id,
+        parent_generation_id=parent_generation_id,
+        action_type=action_type,
     )
     logger.info(
         "Image route: local_task_id=%s selected_model=%s runtime_model=%s provider_model=%s references=%s ratio=%s ref_sample=%s prompt_len=%s",
@@ -506,7 +638,7 @@ async def _start_image_generation_task(
         )
     elif runtime_img_service == "seedream_edit":
         result = await seedream_service.generate_image(
-            prompt=prompt,
+            prompt=effective_prompt,
             model="seedream/4.5-edit",
             aspect_ratio=img_ratio,
             image_urls=reference_images,
@@ -517,7 +649,7 @@ async def _start_image_generation_task(
     elif runtime_img_service == "flux_pro":
         if reference_images:
             result = await gpt_image_service.generate_image_to_image(
-                prompt=prompt,
+                prompt=effective_prompt,
                 input_urls=reference_images,
                 model="gpt-image-2-image-to-image",
                 aspect_ratio=img_ratio,
@@ -534,7 +666,7 @@ async def _start_image_generation_task(
             )
     elif runtime_img_service in {"seedream", "seedream_45"}:
         result = await gemini_service.generate_image(
-            prompt=prompt,
+            prompt=effective_prompt,
             model="pro",
             aspect_ratio=img_ratio,
             reference_image_urls=reference_images,
@@ -743,7 +875,13 @@ async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer("Wan 2.7 Pro выбран")
 
 
-async def _restore_image_task_to_state(task, state: FSMContext) -> tuple[bool, str | None]:
+async def _restore_image_task_to_state(
+    task,
+    state: FSMContext,
+    *,
+    include_references: bool = True,
+    repeat_source_task_id: str | None = None,
+) -> tuple[bool, str | None]:
     if not task or task.type != "image" or not task.request_data:
         return False, "Не удалось найти данные задачи."
 
@@ -754,26 +892,38 @@ async def _restore_image_task_to_state(task, state: FSMContext) -> tuple[bool, s
 
     img_service = request_data.get("img_service", task.model or "banana_pro")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
-    reference_images = _snapshot_reference_images(
+    original_reference_images = _snapshot_reference_images(
         request_data.get("reference_images", [])
     )
+    reference_images = original_reference_images if include_references else []
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+    prompt = request_data.get("prompt", task.prompt or "")
 
     await state.clear()
-    await state.update_data(
-        generation_type="image",
-        img_service=img_service,
-        img_ratio=img_ratio,
-        img_count=1,
-        reference_images=reference_images,
-        img_quality=img_quality,
-        img_nsfw_checker=img_nsfw_checker,
-        nsfw_enabled=nsfw_enabled,
-        preset_id="new",
-        img_flow_step="configure",
-    )
+    updates = {
+        "generation_type": "image",
+        "img_service": img_service,
+        "img_ratio": img_ratio,
+        "img_count": 1,
+        "reference_images": reference_images,
+        "img_quality": img_quality,
+        "img_nsfw_checker": img_nsfw_checker,
+        "nsfw_enabled": nsfw_enabled,
+        "preset_id": "new",
+        "img_flow_step": "configure",
+    }
+    if repeat_source_task_id:
+        updates.update(
+            {
+                "repeat_source_task_id": repeat_source_task_id,
+                "repeat_prompt": prompt,
+                "repeat_unit_cost": task.cost or 0,
+                "repeat_original_ref_count": len(reference_images),
+            }
+        )
+    await state.update_data(**updates)
     await state.set_state(GenerationStates.waiting_for_input)
     return True, None
 
@@ -793,10 +943,351 @@ async def retry_image_with_new_prompt(callback: types.CallbackQuery, state: FSMC
     await callback.answer("Отправь новый промпт — рефы и настройки сохранены")
 
 
+_GROK_IMAGE_VIDEO_RATIOS = {"16:9", "9:16", "1:1", "3:2", "2:3"}
+
+
+def _grok_video_ratio_from_image_task(task) -> str:
+    ratio = str(getattr(task, "aspect_ratio", "") or "").strip()
+    return ratio if ratio in _GROK_IMAGE_VIDEO_RATIOS else "16:9"
+
+
+def _publication_confirm_keyboard(confirm_data: str):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтверждаю", callback_data=confirm_data)
+    builder.button(text="❌ Отмена", callback_data="ignore")
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
+def _publication_disclaimer_text(kind: str) -> str:
+    target = "ленту работ" if kind == "feed" else "ленту промптов"
+    return (
+        f"⚠️ <b>Публикация в {target}</b>\n\n"
+        "Публикуя материал, вы подтверждаете, что у вас есть права или согласие "
+        "на исходники, результат и текст промпта.\n\n"
+        "Ответственность за опубликованный пользовательский контент несёт пользователь. "
+        "Администрация бота не проводит предварительную модерацию и не отвечает за "
+        "материалы, которые пользователи выкладывают самостоятельно.\n\n"
+        "Спорный материал может быть удалён по жалобе правообладателя или другого "
+        "заинтересованного лица."
+    )
+
+
+async def _owned_completed_image_task(
+    callback: types.CallbackQuery, task_id: str
+):
+    user = await get_or_create_user(callback.from_user.id)
+    task = await get_task_by_id(task_id)
+    if not task or task.user_id != user.id:
+        return None, "Не удалось найти эту генерацию."
+    if task.type != "image" or task.status != "completed" or not task.result_url:
+        return None, "Действие доступно только для готового изображения."
+    return task, None
+
+
+async def _refresh_image_result_reply_markup(
+    callback: types.CallbackQuery,
+    task_id: str,
+) -> None:
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url or not callback.message:
+        return
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=get_image_result_keyboard(
+                task.result_url,
+                task_id=task.task_id,
+                is_public_feed=task.is_public_feed,
+                is_prompt_library=task.is_prompt_library,
+            )
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.debug("Unable to refresh image result keyboard: %s", e)
+    except Exception:
+        logger.exception("Unable to refresh image result keyboard")
+
+
+@router.callback_query(F.data.startswith("grokvid_"))
+async def animate_image_result_with_grok(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Передаёт готовую картинку в Grok Imagine i2v как стартовый кадр."""
+    task_id = callback.data.replace("grokvid_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Не удалось открыть Grok.", show_alert=True)
+        return
+
+    await state.clear()
+    await _init_default_video_state(
+        state,
+        v_type="imgtxt",
+        v_model="grok_imagine",
+        v_duration=6,
+        v_ratio=_grok_video_ratio_from_image_task(task),
+    )
+    await state.update_data(
+        v_image_url=task.result_url,
+        reference_images=[],
+        v_reference_videos=[],
+        video_flow_step="configure",
+        source_image_task_id=task.task_id,
+        source_image_generation_id=task.id,
+        grok_mode="normal",
+    )
+    await _show_video_creation_screen(callback, state)
+    await callback.answer("Фото передано в Grok. Напишите промпт движения.")
+
+
+@router.callback_query(F.data.startswith("feedpub_"))
+async def publish_image_result_to_feed(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Показывает предупреждение перед публикацией готовой фото-генерации."""
+    task_id = callback.data.replace("feedpub_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        _publication_disclaimer_text("feed"),
+        parse_mode="HTML",
+        reply_markup=_publication_confirm_keyboard(f"feedpubok_{task.task_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("feedpubok_"))
+async def confirm_publish_image_result_to_feed(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Публикует готовую фото-генерацию в miniapp-ленту после подтверждения."""
+    task_id = callback.data.replace("feedpubok_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
+        return
+
+    card = await share_to_feed(task.task_id, task.user_id)
+    if not card:
+        await callback.answer("Эту генерацию нельзя опубликовать в ленту.", show_alert=True)
+        return
+
+    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await callback.answer("Готово — появится в Mini App > Лента.")
+
+
+@router.callback_query(F.data.startswith("feedrm_"))
+async def remove_image_result_from_feed(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Убирает готовую фото-генерацию автора из miniapp-ленты."""
+    task_id = callback.data.replace("feedrm_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя убрать из ленты.", show_alert=True)
+        return
+
+    removed = await remove_from_feed(task.task_id, task.user_id)
+    if not removed:
+        await callback.answer("Не удалось убрать из ленты.", show_alert=True)
+        return
+
+    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await callback.answer("Убрано из ленты.")
+
+
+@router.callback_query(F.data.startswith("promptsave_"))
+async def save_image_result_prompt_to_library(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Показывает предупреждение перед сохранением prompt в miniapp."""
+    task_id = callback.data.replace("promptsave_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя сохранить prompt.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        _publication_disclaimer_text("prompts"),
+        parse_mode="HTML",
+        reply_markup=_publication_confirm_keyboard(f"promptsaveok_{task.task_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("promptsaveok_"))
+async def confirm_save_image_result_prompt_to_library(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Сохраняет prompt готовой фото-генерации для miniapp после подтверждения."""
+    task_id = callback.data.replace("promptsaveok_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя сохранить prompt.", show_alert=True)
+        return
+
+    saved = await share_to_library(task.task_id, task.user_id)
+    if not saved:
+        await callback.answer("Prompt этой генерации нельзя сохранить.", show_alert=True)
+        return
+
+    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await callback.answer("Промпт сохранён в Mini App.")
+
+
+@router.callback_query(F.data.startswith("promptrm_"))
+async def remove_image_result_prompt_from_library(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Убирает prompt автора из miniapp-библиотеки."""
+    task_id = callback.data.replace("promptrm_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя убрать prompt.", show_alert=True)
+        return
+
+    removed = await remove_from_library(task.task_id, task.user_id)
+    if not removed:
+        await callback.answer("Не удалось убрать prompt.", show_alert=True)
+        return
+
+    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await callback.answer("Убрано из промптов.")
+
+
+def _repeat_image_keyboard(task_id: str, reference_count: int = 0) -> types.InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="📸 Добавить своё фото" if reference_count == 0 else "📸 Добавить ещё фото",
+        callback_data=f"repeat_refs_{task_id}",
+    )
+    builder.button(
+        text="🚀 Запустить с фото" if reference_count else "🚀 Повторить без фото",
+        callback_data=f"repeat_run_{task_id}",
+    )
+    builder.button(text="✏️ Изменить prompt", callback_data=f"retry_prompt_image_{task_id}")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1, 1, 1)
+    return builder.as_markup()
+
+
+def _repeat_image_text(data: dict, task_id: str) -> str:
+    prompt = " ".join(str(data.get("repeat_prompt") or "").split())
+    prompt_preview = html.escape(prompt[:500] + ("..." if len(prompt) > 500 else ""))
+    img_service = data.get("img_service", "banana_pro")
+    img_ratio = str(data.get("img_ratio") or "1:1")
+    img_quality = data.get("img_quality", "2K")
+    reference_images = list(data.get("reference_images") or [])
+    unit_cost = data.get("repeat_unit_cost", 0)
+    original_ref_count = int(data.get("repeat_original_ref_count") or 0)
+    ref_note = (
+        f"<code>{len(reference_images)}</code>"
+        if reference_images
+        else (
+            "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
+            if original_ref_count == 0
+            else f"<code>{original_ref_count}</code> прежних референсов"
+        )
+    )
+    return (
+        "🔁 <b>Повторить prompt</b>\n\n"
+        "Чтобы не получить результат без вашего лица, сначала отправьте фото прямо в чат. "
+        "Генерация запустится только после отдельного подтверждения.\n\n"
+        "<b>Текущие настройки</b>\n"
+        f"• Модель: <code>{get_image_model_label(img_service)}</code>\n"
+        f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+        f"• Референсы: {ref_note}\n"
+        f"• Стоимость: <code>{unit_cost}</code>🍌\n\n"
+        "<b>Prompt</b> <i>(превью, в генерацию уйдёт полностью)</i>\n"
+        f"<pre>{prompt_preview or html.escape(task_id)}</pre>"
+    )
+
+
+async def _show_repeat_image_screen(
+    message_or_callback,
+    state: FSMContext,
+    *,
+    edit: bool = False,
+) -> None:
+    data = await state.get_data()
+    task_id = str(data.get("repeat_source_task_id") or "")
+    reference_count = len(data.get("reference_images") or [])
+    text = _repeat_image_text(data, task_id)
+    keyboard = _repeat_image_keyboard(task_id, reference_count)
+
+    try:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            if edit:
+                await message_or_callback.message.edit_text(
+                    text, reply_markup=keyboard, parse_mode="HTML"
+                )
+            else:
+                await message_or_callback.message.answer(
+                    text, reply_markup=keyboard, parse_mode="HTML"
+                )
+        else:
+            await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    except TelegramBadRequest:
+        if isinstance(message_or_callback, types.CallbackQuery):
+            await message_or_callback.message.answer(
+                text, reply_markup=keyboard, parse_mode="HTML"
+            )
+        else:
+            await message_or_callback.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
 @router.callback_query(F.data.startswith("repeat_image_"))
 async def repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
-    """Повторяет фото-задачу с тем же промптом, моделью и исходниками."""
+    """Opens a safe repeat flow instead of launching generation immediately."""
     task_id = callback.data.replace("repeat_image_", "", 1)
+    task = await get_task_by_id(task_id)
+    user = await get_or_create_user(callback.from_user.id)
+
+    include_references = bool(task and task.user_id == user.id)
+    restored, error_message = await _restore_image_task_to_state(
+        task,
+        state,
+        include_references=include_references,
+        repeat_source_task_id=task_id,
+    )
+    if not restored:
+        await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
+        return
+
+    await _show_repeat_image_screen(callback, state)
+    await callback.answer("Сначала можно добавить своё фото")
+
+
+@router.callback_query(F.data.startswith("repeat_refs_"))
+async def repeat_image_wait_for_references(callback: types.CallbackQuery, state: FSMContext):
+    task_id = callback.data.replace("repeat_refs_", "", 1)
+    data = await state.get_data()
+    if data.get("repeat_source_task_id") != task_id:
+        task = await get_task_by_id(task_id)
+        user = await get_or_create_user(callback.from_user.id)
+        restored, error_message = await _restore_image_task_to_state(
+            task,
+            state,
+            include_references=bool(task and task.user_id == user.id),
+            repeat_source_task_id=task_id,
+        )
+        if not restored:
+            await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
+            return
+
+    await state.set_state(GenerationStates.uploading_reference_images)
+    await callback.answer("Отправьте фото прямо в чат")
+
+
+@router.callback_query(F.data.startswith("repeat_run_"))
+async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
+    """Launches repeat generation after explicit user confirmation."""
+    task_id = callback.data.replace("repeat_run_", "", 1)
     task = await get_task_by_id(task_id)
 
     if not task or task.type != "image" or not task.request_data:
@@ -807,6 +1298,32 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
         request_data = json.loads(task.request_data)
     except Exception:
         await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
+        return
+
+    user = await get_or_create_user(callback.from_user.id)
+    data = await state.get_data()
+    state_matches_repeat = data.get("repeat_source_task_id") == task_id
+
+    img_service = request_data.get("img_service", task.model or "banana_pro")
+    prompt = (
+        data.get("repeat_prompt")
+        if state_matches_repeat and data.get("repeat_prompt")
+        else request_data.get("prompt", task.prompt or "")
+    )
+    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    if state_matches_repeat:
+        reference_images = _snapshot_reference_images(data.get("reference_images", []))
+    elif task.user_id == user.id:
+        reference_images = _snapshot_reference_images(request_data.get("reference_images", []))
+    else:
+        reference_images = []
+    img_quality = request_data.get("img_quality", "2K")
+    img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
+    nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+
+    if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
+        await callback.answer("Для этой модели сначала отправьте фото.", show_alert=True)
+        await state.set_state(GenerationStates.uploading_reference_images)
         return
 
     unit_cost = task.cost or 0
@@ -820,19 +1337,9 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             await callback.answer("Не удалось списать бананы.", show_alert=True)
             return
 
-    user = await get_or_create_user(callback.from_user.id)
-    img_service = request_data.get("img_service", task.model or "banana_pro")
-    prompt = request_data.get("prompt", task.prompt or "")
-    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
-    reference_images = _snapshot_reference_images(
-        request_data.get("reference_images", [])
-    )
-    img_quality = request_data.get("img_quality", "2K")
-    img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
-    nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
     callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
-
     model_label = get_image_model_label(img_service)
+    source_feed_gen_id = task.id if task.is_public_feed and task.user_id != user.id else None
     progress_message = await callback.message.answer(
         "🔁 <b>Повторяю генерацию</b>\n"
         f"• Модель: <code>{model_label}</code>\n"
@@ -854,10 +1361,20 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=callback_url,
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=source_feed_gen_id,
+            action_type="repeat" if source_feed_gen_id else None,
         )
         await progress_message.delete()
 
         if launch_result["status"] == "queued":
+            if source_feed_gen_id:
+                await credit_feed_prompt_repeat(
+                    task.id,
+                    user.id,
+                    repeat_task_id=str(launch_result.get("task_id") or ""),
+                    credits_spent=unit_cost,
+                )
             await callback.message.answer(
                 "🚀 <b>Повторная генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
@@ -867,6 +1384,13 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
                 parse_mode="HTML",
             )
         elif launch_result["status"] == "done":
+            if source_feed_gen_id:
+                await credit_feed_prompt_repeat(
+                    task.id,
+                    user.id,
+                    repeat_task_id=str(launch_result.get("task_id") or ""),
+                    credits_spent=unit_cost,
+                )
             result_bytes = launch_result["result_bytes"]
             saved_url = launch_result["saved_url"]
             await callback.message.answer_photo(
@@ -894,6 +1418,7 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
                 "❌ Не получилось повторить генерацию. Бананы за попытку уже возвращены."
             )
 
+        await state.clear()
         await callback.answer("Повтор запускаю")
     except Exception:
         logger.exception("Repeat image generation failed")
@@ -1365,9 +1890,27 @@ async def _show_video_creation_screen(
 
     # Формируем текст о референсах
     ref_text = ""
-    if reference_images:
+    omni_image_urls = []
+    omni_video_urls = []
+    omni_units = 0
+    has_omni_video_ref = False
+    if current_model == "gemini_omni_video":
+        omni_image_urls = _collect_gemini_omni_image_urls(v_image_url, reference_images)
+        omni_video_urls = _collect_gemini_omni_video_urls(v_reference_videos)
+        omni_units = _gemini_omni_input_units(
+            omni_image_urls,
+            omni_video_urls,
+            omni_character_ids,
+        )
+        has_omni_video_ref = bool(omni_video_urls)
+        ref_text = (
+            f"🎛 Входы Gemini Omni: <code>{omni_units}/7</code> "
+            f"(фото {len(omni_image_urls)}, видео {len(omni_video_urls)}×2, "
+            f"Character ID {len(omni_character_ids)})\n"
+        )
+    elif reference_images:
         ref_text = f"📎 Изображений реф: <code>{len(reference_images)}</code>\n"
-    if v_reference_videos:
+    if v_reference_videos and current_model != "gemini_omni_video":
         ref_text += f"📹 Видео реф: <code>{len(v_reference_videos)}</code>\n"
 
     # Формируем статус медиа в зависимости от типа
@@ -1415,7 +1958,14 @@ async def _show_video_creation_screen(
         f"   🤖 Модель: <code>{get_video_model_label(current_model)}</code>",
     ]
     if current_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
-        settings_lines.append(f"   ⏱ Длительность: <code>{current_duration} сек</code>")
+        if has_omni_video_ref:
+            settings_lines.append(
+                "   ⏱ Длительность: <code>по видео-референсу</code>"
+            )
+        else:
+            settings_lines.append(
+                f"   ⏱ Длительность: <code>{current_duration} сек</code>"
+            )
     if current_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         settings_lines.append(f"   📐 Формат: <code>{current_ratio}</code>")
 
@@ -1512,12 +2062,21 @@ async def _show_video_creation_screen(
         text += "<i>🗣 Сначала загрузите фото аватара и аудио.</i>"
     elif current_v_type == "character" and not v_image_url:
         text += "<i>🖼 Сначала загрузите изображение персонажа.</i>"
-    elif current_v_type == "imgtxt" and not v_image_url:
+    elif (
+        current_v_type == "imgtxt"
+        and not v_image_url
+        and current_model != "gemini_omni_video"
+    ):
         text += f"<i>📷 Сначала загрузите фото для первого кадра.</i>"
     elif current_v_type == "video" and not v_reference_videos:
         text += (
             f"<i>📹 При желании загрузите до {max_video_refs} коротких "
             "видео-референсов.</i>"
+        )
+    elif current_model == "gemini_omni_video" and has_omni_video_ref:
+        text += (
+            "\n<i>Когда добавлен видео-референс, настройка секунд не гарантирует "
+            "финальную длину ролика.</i>"
         )
 
     keyboard = _build_video_creation_keyboard(data)
@@ -1701,10 +2260,17 @@ def _build_video_run_summary(
         f"🤖 <code>{get_video_model_label(v_model)}</code>",
         f"📝 <code>{get_video_type_label(v_type)}</code>",
     ]
+    has_omni_video_ref = (
+        v_model == "gemini_omni_video"
+        and bool(_collect_gemini_omni_video_urls(data.get("v_reference_videos", [])))
+    )
     if v_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
         parts.append(f"📐 <code>{v_ratio}</code>")
     if v_model not in {"avatar_std", "avatar_pro", "gemini_omni_audio", "gemini_omni_character"}:
-        parts.append(f"⏱ <code>{v_duration}s</code>")
+        if has_omni_video_ref:
+            parts.append("⏱ <code>по видео-рефу</code>")
+        else:
+            parts.append(f"⏱ <code>{v_duration}s</code>")
 
     if v_model == "grok_imagine":
         parts.append(f"🧠 <code>{data.get('grok_mode', 'normal')}</code>")
@@ -2036,7 +2602,9 @@ async def _show_gemini_omni_mode_screen(
     user_credits = await get_user_credits(user_id) if user_id else 0
     audio_cost = preset_manager.get_video_cost("gemini_omni_audio", 6)
     character_cost = preset_manager.get_video_cost("gemini_omni_character", 6)
-    video_cost_6 = preset_manager.get_video_cost("gemini_omni_video", 6)
+    video_cost_6 = preset_manager.get_video_cost_with_quality(
+        "gemini_omni_video", 6, "720p"
+    )
 
     text = (
         "🔷 <b>Gemini Omni</b>\n"
@@ -2143,6 +2711,25 @@ async def _show_video_media_screen(
             "После этого можно переходить к описанию."
         )
         next_state = GenerationStates.waiting_for_video_prompt
+    elif current_model == "gemini_omni_video":
+        omni_image_urls = _collect_gemini_omni_image_urls(v_image_url, reference_images)
+        omni_video_urls = _collect_gemini_omni_video_urls(v_reference_videos)
+        omni_character_ids = data.get("omni_character_ids", [])
+        omni_units = _gemini_omni_input_units(
+            omni_image_urls,
+            omni_video_urls,
+            omni_character_ids,
+        )
+        body = (
+            "<b>Шаг 2. Фото + видео</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            "Можно отправить фото, одно видео или сразу промпт. "
+            "Фото задают объект/сцену/стиль, видео задаёт движение или камеру.\n"
+            f"Входы: <code>{omni_units}/7</code> "
+            f"(фото {len(omni_image_urls)}, видео {len(omni_video_urls)}×2, "
+            f"Character ID {len(omni_character_ids)})."
+        )
+        next_state = GenerationStates.waiting_for_video_prompt
     elif current_v_type == "character":
         body = (
             "<b>Шаг 2. Character image</b>\n"
@@ -2244,6 +2831,11 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
     generation_type = data.get("generation_type")
     current_service = data.get("img_service", "banana_pro")
     reference_images = data.get("reference_images", [])
+
+    if data.get("repeat_source_task_id"):
+        await _show_repeat_image_screen(callback, state, edit=True)
+        await callback.answer("Проверьте фото и запустите повтор")
+        return
 
     if (
         generation_type == "image"
@@ -2552,13 +3144,14 @@ async def handle_video_media_skip(callback: types.CallbackQuery, state: FSMConte
     """Пропускает медиашаг, если он опционален."""
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v3_std")
     if current_v_type == "avatar":
         await callback.answer("Для Avatar нужны и фото, и аудио", show_alert=True)
         return
     if current_v_type == "character":
         await callback.answer("Для Character нужно изображение", show_alert=True)
         return
-    if current_v_type == "imgtxt":
+    if current_v_type == "imgtxt" and current_model != "gemini_omni_video":
         await callback.answer(
             "Для режима Фото + Текст сначала загрузите стартовое фото", show_alert=True
         )
@@ -2575,6 +3168,7 @@ async def handle_video_media_continue(callback: types.CallbackQuery, state: FSMC
     """Переходит к шагу настроек после выбора типа и загрузки медиа."""
     data = await state.get_data()
     current_v_type = data.get("v_type", "text")
+    current_model = data.get("v_model", "v3_std")
     if current_v_type == "avatar":
         if not data.get("v_image_url"):
             await callback.answer("Сначала загрузите фото аватара", show_alert=True)
@@ -2589,7 +3183,11 @@ async def handle_video_media_continue(callback: types.CallbackQuery, state: FSMC
     if current_v_type == "character" and not data.get("v_image_url"):
         await callback.answer("Сначала загрузите изображение персонажа", show_alert=True)
         return
-    if current_v_type == "imgtxt" and not data.get("v_image_url"):
+    if (
+        current_v_type == "imgtxt"
+        and not data.get("v_image_url")
+        and current_model != "gemini_omni_video"
+    ):
         await callback.answer("Сначала загрузите стартовое фото", show_alert=True)
         return
     await state.update_data(video_flow_step="configure")
@@ -4241,7 +4839,8 @@ async def process_photo_for_video_prompt_state(
     data = await state.get_data()
     v_type = data.get("v_type")
     current_model = data.get("v_model", "v3_std")
-    if v_type not in {"imgtxt", "avatar", "character"}:
+    is_gemini_omni_video = current_model == "gemini_omni_video"
+    if v_type not in {"imgtxt", "avatar", "character"} and not is_gemini_omni_video:
         await message.answer(
             "Пожалуйста, отправьте текстовое описание.",
             reply_markup=get_main_menu_button_keyboard(),
@@ -4331,6 +4930,42 @@ async def process_photo_for_video_prompt_state(
             await _show_video_creation_screen(message, state, edit=False)
         return
 
+    if is_gemini_omni_video:
+        existing_images = _collect_gemini_omni_image_urls(v_image_url, reference_images)
+        existing_videos = _collect_gemini_omni_video_urls(
+            data.get("v_reference_videos", [])
+        )
+        validation_error = _validate_gemini_omni_video_inputs(
+            image_urls=[*existing_images, image_url],
+            video_urls=existing_videos,
+            character_ids=data.get("omni_character_ids", []),
+            audio_ids=data.get("omni_audio_ids", []),
+        )
+        if validation_error:
+            await message.answer(f"❌ {validation_error}")
+            return
+
+        if v_type == "imgtxt" and not v_image_url:
+            await state.update_data(v_image_url=image_url)
+            status = (
+                f"✅ Стартовое фото добавлено. "
+                f"Фото: {len(existing_images) + 1}"
+            )
+        else:
+            reference_images = _clean_unique_urls([*reference_images, image_url])
+            await state.update_data(reference_images=reference_images)
+            status = (
+                f"✅ Фото-референс добавлен. "
+                f"Фото: {len(_collect_gemini_omni_image_urls(v_image_url, reference_images))}"
+            )
+
+        await message.answer(status)
+        if data.get("video_flow_step") == "media":
+            await _show_video_media_screen(message, state, edit=False)
+        else:
+            await _show_video_creation_screen(message, state, edit=False)
+        return
+
     if current_model == "v26_pro" and v_image_url:
         await message.answer(
             "Для Kling 2.5 Turbo можно использовать только одно стартовое фото."
@@ -4398,6 +5033,81 @@ async def process_photo_for_video_prompt_state(
         )
 
 
+@router.message(
+    GenerationStates.waiting_for_video_prompt,
+    F.video | (F.document & F.document.mime_type.startswith("video/")),
+)
+async def process_video_for_gemini_omni_prompt_state(
+    message: types.Message,
+    state: FSMContext,
+):
+    """Accept one Gemini Omni video reference without forcing the old video mode."""
+    data = await state.get_data()
+    if data.get("v_model") != "gemini_omni_video":
+        await message.answer(
+            "Пожалуйста, отправьте текстовое описание.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    if message.video:
+        video_obj = message.video
+    elif message.document and message.document.mime_type.startswith("video/"):
+        video_obj = message.document
+    else:
+        await message.answer("❌ Отправьте видео-файл.")
+        return
+
+    file_size = getattr(video_obj, "file_size", 0) or 0
+    if file_size > 20 * 1024 * 1024:
+        await message.answer("❌ Видео слишком большое (макс 20MB).")
+        return
+
+    existing_videos = _collect_gemini_omni_video_urls(
+        data.get("v_reference_videos", [])
+    )
+    if len(existing_videos) >= gemini_omni_service.MAX_VIDEO_INPUTS:
+        await message.answer(
+            "❌ Gemini Omni принимает только один видео-референс. "
+            "Удалите текущий или начните заново."
+        )
+        return
+
+    validation_error = _validate_gemini_omni_video_inputs(
+        image_urls=_collect_gemini_omni_image_urls(
+            data.get("v_image_url"),
+            data.get("reference_images", []),
+        ),
+        video_urls=[*existing_videos, "__new_video__"],
+        character_ids=data.get("omni_character_ids", []),
+        audio_ids=data.get("omni_audio_ids", []),
+    )
+    if validation_error:
+        await message.answer(f"❌ {validation_error}")
+        return
+
+    file = await message.bot.get_file(video_obj.file_id)
+    video_bytes = await message.bot.download_file(file.file_path)
+    video_url = await _persist_reusable_media_reference(
+        message.from_user.id,
+        video_bytes.read(),
+        "mp4",
+        kind="video",
+        original_filename=f"video_ref_{video_obj.file_id}.mp4",
+        content_type=getattr(video_obj, "mime_type", None) or "video/mp4",
+    )
+    if not video_url:
+        await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
+        return
+
+    await state.update_data(v_reference_videos=[*existing_videos, video_url])
+    await message.answer("✅ Видео-референс добавлен. Можно отправить промпт.")
+    if data.get("video_flow_step") == "media":
+        await _show_video_media_screen(message, state, edit=False)
+    else:
+        await _show_video_creation_screen(message, state, edit=False)
+
+
 async def handle_motion_mode(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик режимов Motion Control"""
     mode = callback.data.replace("motion_mode_", "")
@@ -4437,12 +5147,17 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
     generation_type = data.get("generation_type", "")
     v_type = data.get("v_type", "")
+    is_gemini_omni_video = data.get("v_model") == "gemini_omni_video"
     if (
         generation_type == "video"
         and v_type in ("imgtxt", "avatar", "video", "character")
         and data.get("video_flow_step") != "configure"
     ):
-        if v_type == "imgtxt" and not data.get("v_image_url"):
+        if (
+            v_type == "imgtxt"
+            and not data.get("v_image_url")
+            and not is_gemini_omni_video
+        ):
             await message.answer("Сначала отправьте стартовое фото.")
             return
         if v_type == "avatar":
@@ -4536,10 +5251,7 @@ async def run_no_preset_video_from_message(
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
     max_video_refs = get_max_video_references(v_model)
-    video_urls = normalize_reference_urls(
-        data.get("v_reference_videos", []),
-        max_count=max_video_refs,
-    )
+    raw_video_urls = _clean_unique_urls(data.get("v_reference_videos", []))
 
     v_duration = _normalize_video_duration_value(
         v_model, int(data.get("v_duration", 5))
@@ -4567,13 +5279,19 @@ async def run_no_preset_video_from_message(
 
     image_url = data.get("v_image_url")
     avatar_audio_url = data.get("avatar_audio_url")
-    video_urls = (
-        video_urls if v_type in {"video", "motion"} else None
-    )
-    image_refs = normalize_reference_urls(
-        data.get("reference_images", []),
-        max_count=get_max_video_image_references(v_model),
-    )
+    if v_model == "gemini_omni_video":
+        video_urls = raw_video_urls
+        image_refs = _clean_unique_urls(data.get("reference_images", []))
+    else:
+        video_urls = normalize_reference_urls(
+            raw_video_urls,
+            max_count=max_video_refs,
+        )
+        video_urls = video_urls if v_type in {"video", "motion"} else None
+        image_refs = normalize_reference_urls(
+            data.get("reference_images", []),
+            max_count=get_max_video_image_references(v_model),
+        )
 
     elements_list = None
     if v_type == "imgtxt" and len(image_refs) >= 2:
@@ -4594,7 +5312,31 @@ async def run_no_preset_video_from_message(
         await state.clear()
         return
 
-    cost = preset_manager.get_video_cost_with_quality(v_model, v_duration, motion_mode)
+    omni_images: list[str] = []
+    omni_video_urls: list[str] = []
+    if v_model == "gemini_omni_video":
+        omni_images = _collect_gemini_omni_image_urls(image_url, image_refs)
+        omni_video_urls = _collect_gemini_omni_video_urls(video_urls or [])
+        validation_error = _validate_gemini_omni_video_inputs(
+            image_urls=omni_images,
+            video_urls=omni_video_urls,
+            character_ids=omni_character_ids,
+            audio_ids=omni_audio_ids,
+        )
+        if validation_error:
+            await message.answer(f"❌ {validation_error}")
+            return
+
+    pricing_quality = None
+    if v_model.startswith("veo3"):
+        pricing_quality = veo_resolution
+    elif v_model == "gemini_omni_video":
+        pricing_quality = omni_resolution
+    elif v_type == "motion" or v_model.startswith("motion_control"):
+        pricing_quality = motion_mode
+    cost = preset_manager.get_video_cost_with_quality(
+        v_model, v_duration, pricing_quality
+    )
 
     user = await get_or_create_user(message.from_user.id)
     is_admin = config.is_admin(message.from_user.id)
@@ -4632,23 +5374,10 @@ async def run_no_preset_video_from_message(
         from bot.services.seedance_service import seedance_service
 
         if v_model == "gemini_omni_video":
-            omni_images = []
-            if image_url:
-                omni_images.append(image_url)
-            for ref_url in image_refs:
-                if ref_url and ref_url not in omni_images:
-                    omni_images.append(ref_url)
-
-            omni_video_list = []
-            for ref_url in video_urls or []:
-                omni_video_list.append(
-                    {
-                        "url": ref_url,
-                        "start": 0,
-                        "ends": min(20, max(1, int(v_duration))),
-                    }
-                )
-                break
+            omni_video_list = _build_gemini_omni_video_list(
+                omni_video_urls,
+                v_duration,
+            )
 
             result = await gemini_omni_service.generate_video(
                 prompt=prompt,
@@ -5085,6 +5814,10 @@ async def upload_reference_image_for_any_image_flow(
             reference_images.append(public_url)
             await state.update_data(reference_images=reference_images)
 
+            if data.get("repeat_source_task_id"):
+                await _show_repeat_image_screen(message, state)
+                return
+
             title = (
                 "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
             )
@@ -5373,6 +6106,20 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             )
             return
 
+        if current_model == "gemini_omni_video":
+            validation_error = _validate_gemini_omni_video_inputs(
+                image_urls=_collect_gemini_omni_image_urls(
+                    data.get("v_image_url"),
+                    data.get("reference_images", []),
+                ),
+                video_urls=[*v_reference_videos, "__new_video__"],
+                character_ids=data.get("omni_character_ids", []),
+                audio_ids=data.get("omni_audio_ids", []),
+            )
+            if validation_error:
+                await message.answer(f"❌ {validation_error}", parse_mode="HTML")
+                return
+
         file = await message.bot.get_file(video_obj.file_id)
         video_bytes = await message.bot.download_file(file.file_path)
         video_data = video_bytes.read()
@@ -5513,6 +6260,10 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
             preset_id = data.get("preset_id", "new")
             current_count = len(reference_images)
 
+            if data.get("repeat_source_task_id"):
+                await _show_repeat_image_screen(message, state)
+                return
+
             text = (
                 f"📎 <b>Загрузка референсов</b>\n"
                 f"Загружено: <code>{current_count}/{max_refs}</code>\n"
@@ -5622,7 +6373,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
         stable_reference_images = _prepare_banana_reference_images(
-            img_service, reference_images
+            img_service, reference_images, prompt
         )
 
         for index in range(img_count):
@@ -6091,14 +6842,20 @@ async def handle_omni_seed_input(message: types.Message, state: FSMContext):
 
 @router.message(GenerationStates.waiting_for_omni_audio_ids, F.text)
 async def handle_omni_audio_ids_input(message: types.Message, state: FSMContext):
-    ids = _parse_omni_ids(message.text, max_count=1)
+    ids = _parse_omni_ids(message.text)
+    if len(ids) > gemini_omni_service.MAX_AUDIO_IDS:
+        await message.answer("❌ Gemini Omni Video принимает один Audio ID.")
+        return
     await state.update_data(omni_audio_ids=ids)
     await _show_video_creation_screen(message, state)
 
 
 @router.message(GenerationStates.waiting_for_omni_character_ids, F.text)
 async def handle_omni_character_ids_input(message: types.Message, state: FSMContext):
-    ids = _parse_omni_ids(message.text, max_count=3)
+    ids = _parse_omni_ids(message.text)
+    if len(ids) > gemini_omni_service.MAX_CHARACTER_IDS:
+        await message.answer("❌ Gemini Omni принимает максимум 3 Character ID.")
+        return
     await state.update_data(omni_character_ids=ids)
     await _show_video_creation_screen(message, state)
 
@@ -6164,7 +6921,10 @@ async def handle_omni_character_audio_ids_input(
     message: types.Message,
     state: FSMContext,
 ):
-    ids = _parse_omni_ids(message.text, max_count=1)
+    ids = _parse_omni_ids(message.text)
+    if len(ids) > gemini_omni_service.MAX_CHARACTER_AUDIO_IDS:
+        await message.answer("❌ Gemini Omni Character принимает один Audio ID.")
+        return
     await state.update_data(omni_character_audio_ids=ids)
     await _show_video_creation_screen(message, state)
 

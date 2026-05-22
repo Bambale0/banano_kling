@@ -198,6 +198,18 @@ class GeminiOmniService(KlingService):
                 break
         return cleaned
 
+    @staticmethod
+    def _clean_unique_values(values: Optional[List[Any]]) -> List[str]:
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for value in values or []:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+        return cleaned
+
     def _safe_duration(self, duration: int) -> int:
         value = int(duration)
         if value in self.DURATIONS:
@@ -412,12 +424,14 @@ class GeminiOmniService(KlingService):
         video_list: Optional[List[Dict[str, Any]]],
     ) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
+        seen_urls: set[str] = set()
         for item in video_list or []:
             if not isinstance(item, dict):
                 continue
             url = str(item.get("url") or item.get("video_url") or "").strip()
-            if not url:
+            if not url or url in seen_urls:
                 continue
+            seen_urls.add(url)
             try:
                 start = max(0, int(item.get("start", item.get("start_time", 0)) or 0))
             except (TypeError, ValueError):
@@ -428,8 +442,6 @@ class GeminiOmniService(KlingService):
                 ends = 10
             ends = max(start + 1, min(20, ends))
             normalized.append({"url": url, "start": start, "ends": ends})
-            if len(normalized) >= self.MAX_VIDEO_INPUTS:
-                break
         return normalized
 
     async def generate_video(
@@ -450,26 +462,36 @@ class GeminiOmniService(KlingService):
             return self._build_error("prompt_required", "Введите промпт для видео")
 
         cleaned_video_list = self._normalize_video_list(video_list)
-        cleaned_audio_ids = self._clean_list(
-            audio_ids,
-            max_count=self.MAX_AUDIO_IDS,
-        )
-        cleaned_character_ids = self._clean_list(
-            character_ids,
-            max_count=self.MAX_CHARACTER_IDS,
-        )
+        cleaned_audio_ids = self._clean_unique_values(audio_ids)
+        cleaned_character_ids = self._clean_unique_values(character_ids)
+        cleaned_image_urls = self._clean_unique_values(image_urls)
 
-        used_slots = len(cleaned_video_list) * 2 + len(cleaned_character_ids)
+        if len(cleaned_video_list) > self.MAX_VIDEO_INPUTS:
+            return self._build_error(
+                "too_many_video_references",
+                "Gemini Omni принимает только один видео-референс. Удалите текущий или замените его.",
+            )
+        if len(cleaned_audio_ids) > self.MAX_AUDIO_IDS:
+            return self._build_error(
+                "too_many_audio_ids",
+                "Gemini Omni Video принимает один Audio ID за запуск.",
+            )
+        if len(cleaned_character_ids) > self.MAX_CHARACTER_IDS:
+            return self._build_error(
+                "too_many_character_ids",
+                "Gemini Omni принимает максимум 3 Character ID.",
+            )
+
+        used_slots = (
+            len(cleaned_image_urls)
+            + len(cleaned_video_list) * 2
+            + len(cleaned_character_ids)
+        )
         if used_slots > self.MAX_IMAGE_SLOTS:
             return self._build_error(
                 "too_many_references",
-                "Gemini Omni Video принимает до 7 визуальных референсов за один запуск.",
+                "Слишком много входов для Gemini Omni. Лимит: фото + видео*2 + Character ID <= 7.",
             )
-        remaining_image_slots = max(0, self.MAX_IMAGE_SLOTS - used_slots)
-        cleaned_image_urls = self._clean_list(
-            image_urls,
-            max_count=remaining_image_slots,
-        )
 
         input_data: Dict[str, Any] = {
             "prompt": prompt[:4000],

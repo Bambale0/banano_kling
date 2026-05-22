@@ -180,7 +180,7 @@ async def test_gemini_omni_video_payload_uses_jobs_api():
         aspect_ratio="9:16",
         resolution="1080p",
         image_urls=["https://example.com/a.png"],
-        audio_ids=["audio_1", "audio_2"],
+        audio_ids=["audio_1"],
         video_list=[{"video_url": "https://example.com/ref.mp4", "duration": 10}],
         character_ids=["character_1"],
         seed=42,
@@ -201,6 +201,38 @@ async def test_gemini_omni_video_payload_uses_jobs_api():
     ]
     assert payload["input"]["character_ids"] == ["character_1"]
     assert payload["input"]["seed"] == 42
+
+
+@pytest.mark.asyncio
+async def test_gemini_omni_video_rejects_multiple_video_references():
+    service = GeminiOmniService(kie_key="test")
+    service._kie_post = AsyncMock()
+
+    result = await service.generate_video(
+        prompt="make a city scene",
+        video_list=[
+            {"url": "https://example.com/a.mp4"},
+            {"url": "https://example.com/b.mp4"},
+        ],
+    )
+
+    assert result["error"] == "too_many_video_references"
+    service._kie_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gemini_omni_video_rejects_over_quota_inputs():
+    service = GeminiOmniService(kie_key="test")
+    service._kie_post = AsyncMock()
+
+    result = await service.generate_video(
+        prompt="make a city scene",
+        image_urls=[f"https://example.com/{idx}.png" for idx in range(6)],
+        video_list=[{"url": "https://example.com/ref.mp4"}],
+    )
+
+    assert result["error"] == "too_many_references"
+    service._kie_post.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -342,9 +374,32 @@ def test_get_image_result_keyboard_contains_repeat_and_main_menu():
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
+    assert "🎬 Оживить в Grok" in button_texts
+    assert "🖼 В ленту" in button_texts
+    assert "📚 В промпты" in button_texts
+    assert "grokvid_img_123" in callback_ids
+    assert "feedpub_img_123" in callback_ids
+    assert "promptsave_img_123" in callback_ids
     assert "🔁 Повторить" in button_texts
     assert "repeat_image_img_123" in callback_ids
     assert "back_main" in callback_ids
+
+
+def test_get_image_result_keyboard_allows_author_removal_from_public_surfaces():
+    kb = get_image_result_keyboard(
+        "https://example.com/image.png",
+        task_id="img_123",
+        is_public_feed=True,
+        is_prompt_library=True,
+    )
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "🗑 Убрать из ленты" in button_texts
+    assert "🗑 Убрать из промптов" in button_texts
+    assert "feedrm_img_123" in callback_ids
+    assert "promptrm_img_123" in callback_ids
 
 
 def test_photo_prompt_service_detects_fast_fallback_body_500():

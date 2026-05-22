@@ -165,7 +165,7 @@ function AssistantChat({ starters }: { starters: string[] }) {
       const errorMessage = error instanceof Error ? error.message : 'Не удалось получить ответ'
       toast.error('Помощник недоступен', { description: errorMessage })
 
-      // Fallback на сценарный ответ, если backend недоступен
+      // Показываем готовый ответ, если помощник временно недоступен.
       const fallbackReply = buildFallbackReply(content, state.user.credits)
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -614,7 +614,7 @@ function PartnersPanel() {
         <div className="mt-3 space-y-2">
           {[
             'Пользователь переходит по вашей ссылке.',
-            'Backend фиксирует приглашение в партнёрской системе.',
+            'Мы привязываем приглашение к вашему профилю.',
             'Статистика и баланс обновляются в этом разделе.',
           ].map((item, index) => (
             <div key={item} className="flex gap-3 rounded-xl bg-background/35 px-3 py-3">

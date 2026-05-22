@@ -2,9 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import aiosqlite
 
@@ -13,12 +14,17 @@ logger = logging.getLogger(__name__)
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
 SAVED_REFERENCES_MAX_PER_KIND = int(os.getenv("SAVED_REFERENCES_MAX_PER_KIND", "3"))
+MAX_ACTIVE_PROMPTS_PER_USER = 5
+TOP_PROMPTS_LIMIT = 10
+
+PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "other"}
 
 # Партнёрская программа — единственный источник констант
 PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
 PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-го уровня
 PARTNER_NEW_USER_BONUS: int = 15   # бананы новому пользователю при регистрации
 PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему за каждую регистрацию
+PROMPT_REPEAT_REWARD_RUB: float = float(os.getenv("PROMPT_REPEAT_REWARD_RUB", "10"))
 
 
 class Credits(float):
@@ -42,6 +48,9 @@ class User:
     credits: float
     created_at: datetime
     updated_at: datetime
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     referral_code: Optional[str] = None
     referred_by: Optional[int] = None
     referral_earned: int = 0
@@ -50,6 +59,8 @@ class User:
     partner_total_revenue_rub: float = 0.0
     partner_balance_rub: float = 0.0
     partner_withdrawn_rub: float = 0.0
+    prompt_repeat_balance_rub: float = 0.0
+    prompt_repeat_total_rub: float = 0.0
     partner_tier: str = "basic"
 
 
@@ -79,6 +90,305 @@ class SavedReference:
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
+
+
+@dataclass
+class UserPrompt:
+    id: int
+    author_id: int
+    title: str
+    description: str
+    category: str
+    prompt_text: str
+    preview_url: Optional[str] = None
+    model: Optional[str] = None
+    tags: Optional[list[str]] = None
+    likes: int = 0
+    uses_count: int = 0
+    is_public: bool = True
+    status: str = "pending"
+    reject_reason: Optional[str] = None
+    ai_moderation_decision: Optional[str] = None
+    ai_moderation_risk: Optional[str] = None
+    ai_moderation_reason: Optional[str] = None
+    ai_moderation_recommendation: Optional[str] = None
+    ai_moderation_raw: Optional[str] = None
+    ai_moderated_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+def _parse_json_list(value: Any) -> list[Any]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _row_to_user_prompt(row: aiosqlite.Row | None) -> Optional[UserPrompt]:
+    if not row:
+        return None
+
+    ai_moderated_at = None
+    if row["ai_moderated_at"]:
+        try:
+            ai_moderated_at = datetime.fromisoformat(row["ai_moderated_at"])
+        except (TypeError, ValueError):
+            ai_moderated_at = None
+
+    created_at = None
+    if row["created_at"]:
+        try:
+            created_at = datetime.fromisoformat(row["created_at"])
+        except (TypeError, ValueError):
+            created_at = None
+
+    return UserPrompt(
+        id=row["id"],
+        author_id=row["author_id"],
+        title=row["title"],
+        description=row["description"] or "",
+        category=row["category"] or "other",
+        prompt_text=row["prompt_text"],
+        preview_url=row["preview_url"],
+        model=row["model"],
+        tags=[str(tag) for tag in _parse_json_list(row["tags"])],
+        likes=int(row["likes"] or 0),
+        uses_count=int(row["uses_count"] or 0),
+        is_public=bool(row["is_public"]),
+        status=row["status"] or "pending",
+        reject_reason=row["reject_reason"],
+        ai_moderation_decision=row["ai_moderation_decision"],
+        ai_moderation_risk=row["ai_moderation_risk"],
+        ai_moderation_reason=row["ai_moderation_reason"],
+        ai_moderation_recommendation=row["ai_moderation_recommendation"],
+        ai_moderation_raw=row["ai_moderation_raw"],
+        ai_moderated_at=ai_moderated_at,
+        created_at=created_at,
+    )
+
+
+def _prompt_to_dict(prompt: UserPrompt | None) -> Optional[dict[str, Any]]:
+    if prompt is None:
+        return None
+    return {
+        "id": prompt.id,
+        "author_id": prompt.author_id,
+        "title": prompt.title,
+        "description": prompt.description,
+        "category": prompt.category,
+        "prompt_text": prompt.prompt_text,
+        "preview_url": prompt.preview_url,
+        "model": prompt.model,
+        "tags": prompt.tags or [],
+        "likes": prompt.likes,
+        "uses_count": prompt.uses_count,
+        "is_public": prompt.is_public,
+        "status": prompt.status,
+        "reject_reason": prompt.reject_reason,
+        "ai_moderation_decision": prompt.ai_moderation_decision,
+        "ai_moderation_risk": prompt.ai_moderation_risk,
+        "ai_moderation_reason": prompt.ai_moderation_reason,
+        "ai_moderation_recommendation": prompt.ai_moderation_recommendation,
+        "created_at": prompt.created_at.isoformat() if prompt.created_at else None,
+    }
+
+
+def normalize_prompt_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in tags or []:
+        value = re.sub(r"[^a-z0-9а-яё_-]+", "-", str(tag).strip().lower()).strip("-_")
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value[:32])
+        if len(normalized) >= 12:
+            break
+    return normalized
+
+
+def infer_tags(prompt_text: str) -> list[str]:
+    text = f" {str(prompt_text or '').lower()} "
+    rules = {
+        "cinematic": ("cinematic", "movie", "film", "lens", "camera", "кино"),
+        "realism": ("photo", "realistic", "photorealistic", "realism", "реалист"),
+        "portrait": ("portrait", "face", "person", "character", "портрет", "лицо"),
+        "product": ("product", "packshot", "ecommerce", "brand", "товар", "упаков"),
+        "fashion": ("fashion", "clothes", "dress", "editorial", "мода", "одежд"),
+        "marketing": ("ad ", "advert", "banner", "campaign", "реклама", "баннер"),
+        "cyberpunk": ("cyberpunk", "neon", "futuristic", "киберпанк", "неон"),
+        "anime": ("anime", "manga", "аниме", "манга"),
+        "music": ("music", "album", "cover art", "музык", "обложк"),
+        "business": ("business", "office", "startup", "presentation", "бизнес"),
+    }
+    tags = [
+        tag
+        for tag, keywords in rules.items()
+        if any(keyword in text for keyword in keywords)
+    ]
+    return normalize_prompt_tags(tags or ["best"])
+
+
+def infer_category(prompt_text: str, tags: list[str] | None = None) -> str:
+    text = str(prompt_text or "").lower()
+    tag_set = set(tags or [])
+    if {"product", "marketing"} & tag_set or any(
+        word in text for word in ("advert", "banner", "реклама", "бренд", "campaign")
+    ):
+        return "marketing"
+    if "business" in tag_set or any(
+        word in text for word in ("business", "office", "startup", "presentation", "бизнес")
+    ):
+        return "business"
+    if {"realism", "portrait", "fashion"} & tag_set or any(
+        word in text for word in ("photo", "portrait", "camera", "фото", "портрет")
+    ):
+        return "photo"
+    if any(word in text for word in ("art", "illustration", "anime", "арт", "иллюстрац")):
+        return "art"
+    return "other"
+
+
+def derive_title(prompt_text: str) -> str:
+    text = " ".join(str(prompt_text or "").split())
+    if not text:
+        return "Новый промпт"
+    title = re.split(r"[.!?\n]", text, maxsplit=1)[0].strip()
+    return (title[:57] + "...") if len(title) > 60 else title
+
+
+def derive_description(prompt_text: str) -> str:
+    text = " ".join(str(prompt_text or "").split())
+    if not text:
+        return "Готовая идея для генерации."
+    return (text[:197] + "...") if len(text) > 200 else text
+
+
+async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            category TEXT DEFAULT 'other',
+            prompt_text TEXT NOT NULL,
+            preview_url TEXT,
+            model TEXT,
+            tags TEXT DEFAULT '[]',
+            likes INTEGER DEFAULT 0,
+            uses_count INTEGER DEFAULT 0,
+            is_public BOOLEAN DEFAULT 1,
+            status TEXT DEFAULT 'pending',
+            reject_reason TEXT,
+            ai_moderation_decision TEXT,
+            ai_moderation_risk TEXT,
+            ai_moderation_reason TEXT,
+            ai_moderation_recommendation TEXT,
+            ai_moderation_raw TEXT,
+            ai_moderated_at TIMESTAMP,
+            source_generation_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP,
+            FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+    try:
+        await db.execute("ALTER TABLE user_prompts ADD COLUMN source_generation_id INTEGER")
+    except aiosqlite.OperationalError:
+        pass
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS prompt_likes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            prompt_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (prompt_id) REFERENCES user_prompts (id) ON DELETE CASCADE,
+            UNIQUE(user_id, prompt_id)
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS feed_generation_likes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            generation_task_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (generation_task_id) REFERENCES generation_tasks (id) ON DELETE CASCADE,
+            UNIQUE(user_id, generation_task_id)
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS feed_remix_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_generation_task_id INTEGER NOT NULL,
+            remix_generation_task_id INTEGER NOT NULL,
+            source_author_id INTEGER NOT NULL,
+            remix_author_id INTEGER NOT NULL,
+            credits_spent REAL DEFAULT 0,
+            royalty_credits REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_generation_task_id, remix_generation_task_id)
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS prompt_repeat_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            author_id INTEGER NOT NULL,
+            repeater_id INTEGER NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            repeat_task_id TEXT,
+            credits_spent REAL DEFAULT 0,
+            amount_rub REAL NOT NULL DEFAULT 10,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE CASCADE,
+            FOREIGN KEY (repeater_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    """)
+
+    for _column_name, statement in [
+        ("result_urls", "ALTER TABLE generation_tasks ADD COLUMN result_urls TEXT"),
+        ("is_public_feed", "ALTER TABLE generation_tasks ADD COLUMN is_public_feed BOOLEAN DEFAULT 0"),
+        ("is_prompt_library", "ALTER TABLE generation_tasks ADD COLUMN is_prompt_library BOOLEAN DEFAULT 0"),
+        ("source_feed_gen_id", "ALTER TABLE generation_tasks ADD COLUMN source_feed_gen_id INTEGER"),
+        ("parent_generation_id", "ALTER TABLE generation_tasks ADD COLUMN parent_generation_id INTEGER"),
+        ("action_type", "ALTER TABLE generation_tasks ADD COLUMN action_type TEXT"),
+        ("likes_count", "ALTER TABLE generation_tasks ADD COLUMN likes_count INTEGER DEFAULT 0"),
+        ("shares_count", "ALTER TABLE generation_tasks ADD COLUMN shares_count INTEGER DEFAULT 0"),
+    ]:
+        try:
+            await db.execute(statement)
+        except aiosqlite.OperationalError:
+            pass
+
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created ON generation_tasks(user_id, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_source_feed ON generation_tasks(source_feed_gen_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_prompts_status ON user_prompts(status, is_public, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_prompts_author_status ON user_prompts(author_id, status)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_prompts_source_generation ON user_prompts(source_generation_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prompt_repeat_events_author ON prompt_repeat_events(author_id, created_at DESC)"
+    )
 
 
 async def _ensure_saved_references_schema(db: aiosqlite.Connection) -> None:
@@ -152,7 +462,15 @@ class GenerationTask:
     status: str = "pending"
     telegram_id: Optional[int] = None
     result_url: Optional[str] = None
+    result_urls: Optional[List[str]] = None
     request_data: Optional[str] = None
+    is_public_feed: bool = False
+    is_prompt_library: bool = False
+    source_feed_gen_id: Optional[int] = None
+    parent_generation_id: Optional[int] = None
+    action_type: Optional[str] = None
+    likes_count: int = 0
+    shares_count: int = 0
     created_at: Optional[datetime] = None
 
 
@@ -175,6 +493,15 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
         except aiosqlite.OperationalError:
             pass
+        for statement in (
+            "ALTER TABLE users ADD COLUMN username TEXT",
+            "ALTER TABLE users ADD COLUMN first_name TEXT",
+            "ALTER TABLE users ADD COLUMN last_name TEXT",
+        ):
+            try:
+                await db.execute(statement)
+            except aiosqlite.OperationalError:
+                pass
         try:
             await db.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
         except aiosqlite.OperationalError:
@@ -208,6 +535,18 @@ async def init_db():
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_withdrawn_rub REAL DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN prompt_repeat_balance_rub REAL DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN prompt_repeat_total_rub REAL DEFAULT 0"
             )
         except aiosqlite.OperationalError:
             pass
@@ -362,6 +701,18 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN prompt_repeat_balance_rub REAL DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN prompt_repeat_total_rub REAL DEFAULT 0"
+            )
+        except aiosqlite.OperationalError:
+            pass
 
         try:
             await db.execute(
@@ -424,6 +775,7 @@ async def init_db():
         """)
 
         await _ensure_saved_references_schema(db)
+        await _ensure_prompt_feed_schema(db)
 
         await db.commit()
         logger.info("Database initialized successfully")
@@ -473,6 +825,9 @@ async def get_or_create_user(telegram_id: int) -> User:
                 credits=Credits(row["credits"] or 0),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
+                username=row["username"] if "username" in row.keys() else None,
+                first_name=row["first_name"] if "first_name" in row.keys() else None,
+                last_name=row["last_name"] if "last_name" in row.keys() else None,
                 referral_code=referral_code,
                 referred_by=referred_by,
                 referral_earned=referral_earned or 0,
@@ -491,6 +846,16 @@ async def get_or_create_user(telegram_id: int) -> User:
                 partner_withdrawn_rub=(
                     float(row["partner_withdrawn_rub"] or 0)
                     if "partner_withdrawn_rub" in row.keys()
+                    else 0.0
+                ),
+                prompt_repeat_balance_rub=(
+                    float(row["prompt_repeat_balance_rub"] or 0)
+                    if "prompt_repeat_balance_rub" in row.keys()
+                    else 0.0
+                ),
+                prompt_repeat_total_rub=(
+                    float(row["prompt_repeat_total_rub"] or 0)
+                    if "prompt_repeat_total_rub" in row.keys()
                     else 0.0
                 ),
                 partner_tier=(
@@ -547,6 +912,9 @@ async def get_or_create_user(telegram_id: int) -> User:
             credits=Credits(row["credits"] or 0),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+            username=row["username"] if "username" in row.keys() else None,
+            first_name=row["first_name"] if "first_name" in row.keys() else None,
+            last_name=row["last_name"] if "last_name" in row.keys() else None,
             referral_code=referral_code,
             referred_by=referred_by,
             referral_earned=referral_earned or 0,
@@ -579,6 +947,35 @@ async def get_master_partner_user() -> User:
     """Возвращает центрального партнёра, которому начисляются все реферальные бонусы."""
     master = await get_or_create_user(MASTER_PARTNER_TELEGRAM_ID)
     return master
+
+
+async def update_user_profile(
+    telegram_id: int,
+    *,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+) -> bool:
+    """Stores lightweight Telegram profile fields for public author labels."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users
+            SET username = ?,
+                first_name = ?,
+                last_name = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            """,
+            (
+                (username or "").lstrip("@") or None,
+                (first_name or "").strip() or None,
+                (last_name or "").strip() or None,
+                telegram_id,
+            ),
+        )
+        await db.commit()
+        return True
 
 
 async def generate_referral_code(db: Optional[aiosqlite.Connection] = None) -> str:
@@ -627,6 +1024,9 @@ async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
             credits=row["credits"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+            username=row["username"] if "username" in row.keys() else None,
+            first_name=row["first_name"] if "first_name" in row.keys() else None,
+            last_name=row["last_name"] if "last_name" in row.keys() else None,
             referral_code=(
                 row["referral_code"] if "referral_code" in row.keys() else None
             ),
@@ -964,6 +1364,13 @@ async def get_partner_overview(telegram_id: int) -> dict:
         pending_rub = float(pending_row["pending"] or 0)
         raw_balance = float(target_user.partner_balance_rub or 0)
         available_balance = round(max(0.0, raw_balance - pending_rub), 2)
+        prompt_repeat_balance = round(
+            min(
+                max(0.0, float(target_user.prompt_repeat_balance_rub or 0)),
+                available_balance,
+            ),
+            2,
+        )
 
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
         percent = get_partner_percent_by_tier(tier)
@@ -981,6 +1388,10 @@ async def get_partner_overview(telegram_id: int) -> dict:
             "total_revenue_rub": round(target_user.partner_total_revenue_rub or 0, 2),
             "balance_rub": available_balance,
             "total_balance_rub": round(raw_balance, 2),
+            "prompt_repeat_balance_rub": prompt_repeat_balance,
+            "prompt_repeat_total_rub": round(
+                target_user.prompt_repeat_total_rub or 0, 2
+            ),
             "pending_rub": round(pending_rub, 2),
             "withdrawn_rub": round(target_user.partner_withdrawn_rub or 0, 2),
             "tier": tier,
@@ -1145,6 +1556,14 @@ async def get_admin_partner_details(
             ),
             partner_balance_rub=float(user_row["partner_balance_rub"] or 0),
             partner_withdrawn_rub=float(user_row["partner_withdrawn_rub"] or 0),
+            prompt_repeat_balance_rub=float(
+                user_row["prompt_repeat_balance_rub"] or 0
+            )
+            if "prompt_repeat_balance_rub" in user_row.keys()
+            else 0.0,
+            prompt_repeat_total_rub=float(user_row["prompt_repeat_total_rub"] or 0)
+            if "prompt_repeat_total_rub" in user_row.keys()
+            else 0.0,
             partner_tier=user_row["partner_tier"] or "basic",
         )
 
@@ -1911,10 +2330,14 @@ async def approve_partner_withdrawal(withdrawal_id: int) -> Optional[dict]:
             UPDATE users
             SET partner_balance_rub = partner_balance_rub - ?,
                 partner_withdrawn_rub = partner_withdrawn_rub + ?,
+                prompt_repeat_balance_rub = MIN(
+                    COALESCE(prompt_repeat_balance_rub, 0),
+                    MAX(COALESCE(partner_balance_rub, 0) - ?, 0)
+                ),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (amount_rub, amount_rub, row["user_id"]),
+            (amount_rub, amount_rub, amount_rub, row["user_id"]),
         )
         await db.commit()
 
@@ -2575,6 +2998,9 @@ async def add_generation_task(
     prompt: Optional[str] = None,
     cost: Optional[int] = None,
     request_data: Optional[dict | str] = None,
+    source_feed_gen_id: Optional[int] = None,
+    parent_generation_id: Optional[int] = None,
+    action_type: Optional[str] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -2585,8 +3011,9 @@ async def add_generation_task(
         )
         result = await db.execute(
             """INSERT OR IGNORE INTO generation_tasks 
-               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, request_data, status) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+               (user_id, telegram_id, task_id, type, preset_id, model, duration, aspect_ratio, prompt, cost, request_data, status,
+                source_feed_gen_id, parent_generation_id, action_type) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
             (
                 user_id,
                 telegram_id,
@@ -2599,6 +3026,9 @@ async def add_generation_task(
                 prompt,
                 cost,
                 serialized_request,
+                source_feed_gen_id,
+                parent_generation_id,
+                action_type,
             ),
         )
         await db.commit()
@@ -2639,7 +3069,36 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             status=row["status"],
             telegram_id=row["telegram_id"],
             result_url=row["result_url"],
+            result_urls=[
+                str(item)
+                for item in _parse_json_list(row["result_urls"])
+            ]
+            if "result_urls" in row.keys()
+            else None,
             request_data=row["request_data"] if "request_data" in row.keys() else None,
+            is_public_feed=(
+                bool(row["is_public_feed"]) if "is_public_feed" in row.keys() else False
+            ),
+            is_prompt_library=(
+                bool(row["is_prompt_library"])
+                if "is_prompt_library" in row.keys()
+                else False
+            ),
+            source_feed_gen_id=(
+                row["source_feed_gen_id"] if "source_feed_gen_id" in row.keys() else None
+            ),
+            parent_generation_id=(
+                row["parent_generation_id"]
+                if "parent_generation_id" in row.keys()
+                else None
+            ),
+            action_type=row["action_type"] if "action_type" in row.keys() else None,
+            likes_count=(
+                int(row["likes_count"] or 0) if "likes_count" in row.keys() else 0
+            ),
+            shares_count=(
+                int(row["shares_count"] or 0) if "shares_count" in row.keys() else 0
+            ),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -2653,6 +3112,938 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
                SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP 
                WHERE task_id = ?""",
             (final_status, result_url, task_id),
+        )
+        await db.commit()
+        return True
+
+
+async def create_prompt(
+    *,
+    author_id: int,
+    prompt_text: str,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    preview_url: Optional[str] = None,
+    model: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    is_public: bool = True,
+) -> Optional[dict[str, Any]]:
+    prompt_text = str(prompt_text or "").strip()
+    if not prompt_text:
+        return None
+
+    inferred_tags = normalize_prompt_tags(tags) or infer_tags(prompt_text)
+    final_category = (category or infer_category(prompt_text, inferred_tags)).strip()
+    if final_category not in PROMPT_CATEGORIES:
+        final_category = "other"
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            INSERT INTO user_prompts (
+                author_id, title, description, category, prompt_text, preview_url,
+                model, tags, is_public, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                author_id,
+                (title or derive_title(prompt_text)).strip()[:60],
+                (description or derive_description(prompt_text)).strip()[:200],
+                final_category,
+                prompt_text,
+                preview_url,
+                model,
+                json.dumps(inferred_tags, ensure_ascii=False),
+                1 if is_public else 0,
+            ),
+        )
+        await db.commit()
+        return await get_prompt_by_id(cursor.lastrowid)
+
+
+async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        sql = "SELECT * FROM user_prompts WHERE id = ?"
+        params: list[Any] = [prompt_id]
+        if approved_public_only:
+            sql += " AND status = 'approved' AND is_public = 1"
+        cursor = await db.execute(sql, params)
+        row = await cursor.fetchone()
+    return _prompt_to_dict(_row_to_user_prompt(row))
+
+
+async def count_active_prompts_by_author(author_id: int) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT COUNT(*) FROM user_prompts
+            WHERE author_id = ? AND status IN ('pending', 'approved')
+            """,
+            (author_id,),
+        )
+        row = await cursor.fetchone()
+        return int((row or [0])[0] or 0)
+
+
+async def _fetch_prompt_list(
+    where_sql: str,
+    params: list[Any],
+    *,
+    order_sql: str,
+    limit: int,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 20), 1), 100)
+    safe_offset = max(int(offset or 0), 0)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"""
+            SELECT * FROM user_prompts
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_limit, safe_offset),
+        )
+        rows = await cursor.fetchall()
+    return [
+        item
+        for item in (_prompt_to_dict(_row_to_user_prompt(row)) for row in rows)
+        if item is not None
+    ]
+
+
+async def get_top_prompts(limit: int = TOP_PROMPTS_LIMIT) -> list[dict[str, Any]]:
+    return await _fetch_prompt_list(
+        "status = 'approved' AND is_public = 1",
+        [],
+        order_sql="uses_count DESC, created_at DESC",
+        limit=limit,
+    )
+
+
+async def get_popular_prompts(limit: int = TOP_PROMPTS_LIMIT) -> list[dict[str, Any]]:
+    return await _fetch_prompt_list(
+        "status = 'approved' AND is_public = 1",
+        [],
+        order_sql="likes DESC, uses_count DESC, created_at DESC",
+        limit=limit,
+    )
+
+
+async def get_prompts_by_tag(tag: str, limit: int = TOP_PROMPTS_LIMIT) -> list[dict[str, Any]]:
+    normalized = normalize_prompt_tags([tag])
+    if not normalized:
+        return []
+    return await _fetch_prompt_list(
+        "status = 'approved' AND is_public = 1 AND tags LIKE ?",
+        [f'%"{normalized[0]}"%'],
+        order_sql="uses_count DESC, likes DESC, created_at DESC",
+        limit=limit,
+    )
+
+
+async def get_approved_prompts(
+    category: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 40,
+) -> list[dict[str, Any]]:
+    where = "status = 'approved' AND is_public = 1"
+    params: list[Any] = []
+    if category and category in PROMPT_CATEGORIES:
+        where += " AND category = ?"
+        params.append(category)
+    return await _fetch_prompt_list(
+        where,
+        params,
+        order_sql="created_at DESC",
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def count_approved_prompts(category: Optional[str] = None) -> int:
+    where = "status = 'approved' AND is_public = 1"
+    params: list[Any] = []
+    if category and category in PROMPT_CATEGORIES:
+        where += " AND category = ?"
+        params.append(category)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(f"SELECT COUNT(*) FROM user_prompts WHERE {where}", params)
+        row = await cursor.fetchone()
+        return int((row or [0])[0] or 0)
+
+
+async def like_prompt(prompt_id: int, user_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM user_prompts WHERE id = ? AND status = 'approved' AND is_public = 1",
+            (prompt_id,),
+        )
+        prompt = await cursor.fetchone()
+        if not prompt:
+            return None
+
+        cursor = await db.execute(
+            "INSERT OR IGNORE INTO prompt_likes (user_id, prompt_id) VALUES (?, ?)",
+            (user_id, prompt_id),
+        )
+        if cursor.rowcount > 0:
+            await db.execute(
+                "UPDATE user_prompts SET likes = likes + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (prompt_id,),
+            )
+        await db.commit()
+
+    return await get_prompt_by_id(prompt_id, approved_public_only=True)
+
+
+async def _credit_prompt_repeat_reward_in_db(
+    db: aiosqlite.Connection,
+    *,
+    author_id: int,
+    repeater_id: int,
+    source_type: str,
+    source_id: int,
+    repeat_task_id: Optional[str] = None,
+    credits_spent: Optional[float] = None,
+    amount_rub: float = PROMPT_REPEAT_REWARD_RUB,
+) -> bool:
+    if not author_id or not repeater_id or author_id == repeater_id:
+        return False
+    reward = round(float(amount_rub or 0), 2)
+    if reward <= 0:
+        return False
+
+    await db.execute(
+        """
+        INSERT INTO prompt_repeat_events (
+            author_id, repeater_id, source_type, source_id,
+            repeat_task_id, credits_spent, amount_rub
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            author_id,
+            repeater_id,
+            source_type[:32],
+            int(source_id),
+            (repeat_task_id or None),
+            float(credits_spent or 0),
+            reward,
+        ),
+    )
+    await db.execute(
+        """
+        UPDATE users
+        SET partner_balance_rub = COALESCE(partner_balance_rub, 0) + ?,
+            prompt_repeat_balance_rub = COALESCE(prompt_repeat_balance_rub, 0) + ?,
+            prompt_repeat_total_rub = COALESCE(prompt_repeat_total_rub, 0) + ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (reward, reward, reward, author_id),
+    )
+    return True
+
+
+async def credit_feed_prompt_repeat(
+    source_generation_id: int | str,
+    repeater_user_id: int,
+    *,
+    repeat_task_id: Optional[str] = None,
+    credits_spent: Optional[float] = None,
+) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT id, user_id
+            FROM generation_tasks
+            WHERE id = ?
+              AND type = 'image'
+              AND status = 'completed'
+              AND is_public_feed = 1
+            LIMIT 1
+            """,
+            (int(source_generation_id),),
+        )
+        source = await cursor.fetchone()
+        if not source:
+            return False
+        credited = await _credit_prompt_repeat_reward_in_db(
+            db,
+            author_id=int(source["user_id"]),
+            repeater_id=int(repeater_user_id),
+            source_type="feed",
+            source_id=int(source["id"]),
+            repeat_task_id=repeat_task_id,
+            credits_spent=credits_spent,
+        )
+        if credited:
+            await db.commit()
+        return credited
+
+
+async def use_prompt(
+    prompt_id: int,
+    user_id: int,
+    credits_spent: Optional[float] = None,
+) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM user_prompts WHERE id = ? AND status = 'approved' AND is_public = 1",
+            (prompt_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        await db.execute(
+            "UPDATE user_prompts SET uses_count = uses_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (prompt_id,),
+        )
+        if credits_spent is not None and float(credits_spent or 0) > 0:
+            await _credit_prompt_repeat_reward_in_db(
+                db,
+                author_id=int(row["author_id"]),
+                repeater_id=int(user_id),
+                source_type="prompt",
+                source_id=int(prompt_id),
+                credits_spent=credits_spent,
+            )
+        await db.commit()
+    return await get_prompt_by_id(prompt_id, approved_public_only=True)
+
+
+async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE user_prompts
+            SET status = 'approved', reject_reason = NULL, is_public = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (prompt_id,),
+        )
+        await db.commit()
+    return await get_prompt_by_id(prompt_id)
+
+
+async def reject_prompt(prompt_id: int, reject_reason: str = "") -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE user_prompts
+            SET status = 'rejected', reject_reason = ?, is_public = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (reject_reason[:500], prompt_id),
+        )
+        await db.commit()
+    return await get_prompt_by_id(prompt_id)
+
+
+async def deactivate_prompt(prompt_id: int, author_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    params: list[Any] = [prompt_id]
+    where = "id = ?"
+    if author_id is not None:
+        where += " AND author_id = ?"
+        params.append(author_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"SELECT source_generation_id, author_id FROM user_prompts WHERE {where} LIMIT 1",
+            params,
+        )
+        row = await cursor.fetchone()
+        await db.execute(
+            f"""
+            UPDATE user_prompts
+            SET status = 'deactivated', is_public = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE {where}
+            """,
+            params,
+        )
+        if row and row["source_generation_id"]:
+            await db.execute(
+                """
+                UPDATE generation_tasks
+                SET is_prompt_library = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+                """,
+                (row["source_generation_id"], row["author_id"]),
+            )
+        await db.commit()
+    return await get_prompt_by_id(prompt_id)
+
+
+async def get_author_prompts(author_id: int) -> list[dict[str, Any]]:
+    return await _fetch_prompt_list(
+        "author_id = ? AND status != 'deactivated'",
+        [author_id],
+        order_sql="created_at DESC",
+        limit=100,
+    )
+
+
+async def get_author_total_uses(author_id: int) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(uses_count), 0) FROM user_prompts WHERE author_id = ?",
+            (author_id,),
+        )
+        row = await cursor.fetchone()
+        return int((row or [0])[0] or 0)
+
+
+async def set_ai_moderation_result(
+    prompt_id: int,
+    *,
+    decision: str,
+    risk: Optional[str] = None,
+    reason: Optional[str] = None,
+    recommendation: Optional[str] = None,
+    raw: Optional[dict[str, Any] | str] = None,
+) -> Optional[dict[str, Any]]:
+    raw_value = json.dumps(raw, ensure_ascii=False) if isinstance(raw, dict) else raw
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE user_prompts
+            SET ai_moderation_decision = ?,
+                ai_moderation_risk = ?,
+                ai_moderation_reason = ?,
+                ai_moderation_recommendation = ?,
+                ai_moderation_raw = ?,
+                ai_moderated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                decision[:64],
+                (risk or "")[:64] or None,
+                (reason or "")[:1000] or None,
+                (recommendation or "")[:1000] or None,
+                raw_value,
+                prompt_id,
+            ),
+        )
+        await db.commit()
+    return await get_prompt_by_id(prompt_id)
+
+
+def generation_prompt_hidden(generation: GenerationTask | dict[str, Any] | aiosqlite.Row | None) -> bool:
+    if generation is None:
+        return False
+    if isinstance(generation, GenerationTask):
+        return bool(generation.source_feed_gen_id)
+    try:
+        return bool(generation["source_feed_gen_id"])
+    except Exception:
+        return bool(getattr(generation, "source_feed_gen_id", None))
+
+
+def _generation_identifier_clause(identifier: int | str) -> tuple[str, Any]:
+    value = str(identifier).strip()
+    if value.isdigit():
+        return "id = ?", int(value)
+    return "task_id = ?", value
+
+
+async def _fetch_generation_row(
+    db: aiosqlite.Connection,
+    identifier: int | str,
+    *,
+    user_id: Optional[int] = None,
+    public_only: bool = False,
+) -> Optional[aiosqlite.Row]:
+    clause, value = _generation_identifier_clause(identifier)
+    where = [clause]
+    params: list[Any] = [value]
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(user_id)
+    if public_only:
+        where.extend(
+            [
+                "type = 'image'",
+                "status = 'completed'",
+                "result_url IS NOT NULL",
+                "is_public_feed = 1",
+            ]
+        )
+    cursor = await db.execute(
+        f"SELECT * FROM generation_tasks WHERE {' AND '.join(where)} LIMIT 1",
+        params,
+    )
+    return await cursor.fetchone()
+
+
+def _generation_result_urls(row: aiosqlite.Row) -> list[str]:
+    urls = [
+        str(item)
+        for item in _parse_json_list(row["result_urls"] if "result_urls" in row.keys() else None)
+        if str(item).strip()
+    ]
+    result_url = row["result_url"]
+    if result_url and result_url not in urls:
+        urls.insert(0, result_url)
+    return urls
+
+
+def _calculate_feed_score(row: aiosqlite.Row) -> float:
+    remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
+    likes_count = int(row["likes_count"] or 0)
+    shares_count = int(row["shares_count"] or 0)
+    generation_count = 1 + remix_count
+    score = likes_count + remix_count * 3 + shares_count * 5 + generation_count * 4
+    try:
+        created_at = datetime.fromisoformat(str(row["created_at"]))
+        age_seconds = (datetime.now() - created_at).total_seconds()
+        if age_seconds <= 2 * 3600:
+            score *= 1.5
+    except (TypeError, ValueError):
+        pass
+    return float(score)
+
+
+def _author_display_name(row: aiosqlite.Row) -> str:
+    username = ""
+    if "author_username" in row.keys() and row["author_username"]:
+        username = str(row["author_username"]).strip().lstrip("@")
+    if username:
+        return f"@{username}"
+
+    name_parts = []
+    for key in ("author_first_name", "author_last_name"):
+        if key in row.keys() and row[key]:
+            name_parts.append(str(row[key]).strip())
+    display_name = " ".join(part for part in name_parts if part)
+    if display_name:
+        return display_name
+
+    if "author_telegram_id" in row.keys() and row["author_telegram_id"]:
+        return f"user_{row['author_telegram_id']}"
+    return f"user_{row['user_id']}"
+
+
+def _generation_row_to_card(
+    row: aiosqlite.Row,
+    *,
+    viewer_user_id: Optional[int] = None,
+) -> dict[str, Any]:
+    remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
+    author = _author_display_name(row)
+    return {
+        "id": row["id"],
+        "task_id": row["task_id"],
+        "model": row["model"] or row["preset_id"],
+        "gen_type": row["type"],
+        "result_url": row["result_url"],
+        "result_urls": _generation_result_urls(row),
+        "likes_count": int(row["likes_count"] or 0),
+        "shares_count": int(row["shares_count"] or 0),
+        "aspect_ratio": row["aspect_ratio"] or "",
+        "author": author,
+        "author_referral_code": (
+            row["author_referral_code"]
+            if "author_referral_code" in row.keys()
+            else None
+        ),
+        "author_photo_url": None,
+        "is_mine": bool(viewer_user_id and row["user_id"] == viewer_user_id),
+        "remixes": remix_count,
+        "score": _calculate_feed_score(row),
+        "created_at": row["created_at"],
+        "prompt_hidden": generation_prompt_hidden(row),
+        "prompt_actions_allowed": not generation_prompt_hidden(row),
+    }
+
+
+async def get_feed_generations(
+    *,
+    limit: int = 40,
+    source: str = "recent",
+    viewer_user_id: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 40), 1), 100)
+    source = source if source in {"recent", "top_day", "top"} else "recent"
+    where = [
+        "gt.type = 'image'",
+        "gt.status = 'completed'",
+        "gt.result_url IS NOT NULL",
+        "gt.is_public_feed = 1",
+    ]
+    if source == "top_day":
+        where.append("gt.created_at >= datetime('now', '-1 day')")
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"""
+            SELECT gt.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count
+            FROM generation_tasks gt
+            LEFT JOIN users u ON u.id = gt.user_id
+            WHERE {' AND '.join(where)}
+            ORDER BY gt.created_at DESC
+            LIMIT ?
+            """,
+            (safe_limit * 3 if source in {"top", "top_day"} else safe_limit,),
+        )
+        rows = await cursor.fetchall()
+
+    cards = [_generation_row_to_card(row, viewer_user_id=viewer_user_id) for row in rows]
+    if source in {"top", "top_day"}:
+        cards.sort(key=lambda item: item["score"], reverse=True)
+    return cards[:safe_limit]
+
+
+async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 200), 1), 300)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT gt.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count
+            FROM generation_tasks gt
+            LEFT JOIN users u ON u.id = gt.user_id
+            WHERE gt.user_id = ? AND gt.is_public_feed = 1
+            ORDER BY gt.created_at DESC
+            LIMIT ?
+            """,
+            (user_id, safe_limit),
+        )
+        rows = await cursor.fetchall()
+    return [_generation_row_to_card(row, viewer_user_id=user_id) for row in rows]
+
+
+async def get_top_day_generations(limit: int = 40) -> list[dict[str, Any]]:
+    return await get_feed_generations(limit=limit, source="top_day")
+
+
+async def get_feed_generation_card(
+    gen_id: int | str,
+    *,
+    viewer_user_id: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        value = str(gen_id).strip()
+        if value.isdigit():
+            clause, param = "gt.id = ?", int(value)
+        else:
+            clause, param = "gt.task_id = ?", value
+        cursor = await db.execute(
+            f"""
+            SELECT gt.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count
+            FROM generation_tasks gt
+            LEFT JOIN users u ON u.id = gt.user_id
+            WHERE {clause}
+              AND gt.type = 'image'
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND gt.is_public_feed = 1
+            LIMIT 1
+            """,
+            (param,),
+        )
+        row = await cursor.fetchone()
+    return _generation_row_to_card(row, viewer_user_id=viewer_user_id) if row else None
+
+
+async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, Any]]:
+    return await get_feed_generation_card(gen_id)
+
+
+async def get_generation_task_payload(
+    gen_id: int | str,
+    *,
+    user_id: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        if not row:
+            return None
+        payload = dict(row)
+        payload["result_urls"] = _generation_result_urls(row)
+        try:
+            payload["request_data"] = json.loads(row["request_data"]) if row["request_data"] else {}
+        except (TypeError, json.JSONDecodeError):
+            payload["request_data"] = {}
+        return payload
+
+
+async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        if (
+            not row
+            or row["type"] != "image"
+            or row["status"] != "completed"
+            or not row["result_url"]
+            or row["source_feed_gen_id"] is not None
+        ):
+            return None
+        await db.execute(
+            "UPDATE generation_tasks SET is_public_feed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (row["id"],),
+        )
+        await db.commit()
+        gen_id = row["id"]
+    return await get_feed_generation_card(gen_id, viewer_user_id=user_id)
+
+
+async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        if not row:
+            return False
+        await db.execute(
+            "UPDATE generation_tasks SET is_public_feed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (row["id"],),
+        )
+        await db.commit()
+        return True
+
+
+async def share_to_library(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        if (
+            not row
+            or row["type"] != "image"
+            or row["status"] != "completed"
+            or not row["result_url"]
+            or not str(row["prompt"] or "").strip()
+            or row["source_feed_gen_id"] is not None
+        ):
+            return None
+        prompt_text = str(row["prompt"] or "").strip()
+        tags = infer_tags(prompt_text)
+        category = infer_category(prompt_text, tags)
+        await db.execute(
+            "UPDATE generation_tasks SET is_prompt_library = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (row["id"],),
+        )
+        existing_cursor = await db.execute(
+            """
+            SELECT id
+            FROM user_prompts
+            WHERE author_id = ?
+              AND (
+                source_generation_id = ?
+                OR (
+                  prompt_text = ?
+                  AND COALESCE(preview_url, '') = ?
+                  AND COALESCE(model, '') = ?
+                )
+              )
+              AND status != 'deactivated'
+            LIMIT 1
+            """,
+            (
+                user_id,
+                row["id"],
+                prompt_text,
+                str(row["result_url"] or ""),
+                str(row["model"] or ""),
+            ),
+        )
+        existing = await existing_cursor.fetchone()
+        if existing:
+            await db.execute(
+                """
+                UPDATE user_prompts
+                SET is_public = 1,
+                    status = 'approved',
+                    reject_reason = NULL,
+                    source_generation_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (row["id"], existing["id"]),
+            )
+        else:
+            await db.execute(
+                """
+                INSERT INTO user_prompts (
+                    author_id, title, description, category, prompt_text,
+                    preview_url, model, tags, source_generation_id, is_public, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'approved')
+                """,
+                (
+                    user_id,
+                    derive_title(prompt_text),
+                    derive_description(prompt_text),
+                    category,
+                    prompt_text,
+                    row["result_url"],
+                    row["model"],
+                    json.dumps(tags, ensure_ascii=False),
+                    row["id"],
+                ),
+            )
+        await db.commit()
+    return await get_generation_task_payload(gen_id, user_id=user_id)
+
+
+async def remove_from_library(gen_id: int | str, user_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        if not row:
+            return False
+        prompt_text = str(row["prompt"] or "").strip()
+        await db.execute(
+            "UPDATE generation_tasks SET is_prompt_library = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (row["id"],),
+        )
+        if prompt_text:
+            await db.execute(
+                """
+                UPDATE user_prompts
+                SET status = 'deactivated',
+                    is_public = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE author_id = ?
+                  AND (
+                    source_generation_id = ?
+                    OR (
+                      prompt_text = ?
+                      AND COALESCE(preview_url, '') = ?
+                      AND COALESCE(model, '') = ?
+                    )
+                  )
+                  AND status != 'deactivated'
+                """,
+                (
+                    user_id,
+                    row["id"],
+                    prompt_text,
+                    str(row["result_url"] or ""),
+                    str(row["model"] or ""),
+                ),
+            )
+        await db.commit()
+        return True
+
+
+async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, public_only=True)
+        if not row:
+            return None
+        cursor = await db.execute(
+            """
+            INSERT OR IGNORE INTO feed_generation_likes (user_id, generation_task_id)
+            VALUES (?, ?)
+            """,
+            (user_id, row["id"]),
+        )
+        if cursor.rowcount > 0:
+            await db.execute(
+                "UPDATE generation_tasks SET likes_count = likes_count + 1 WHERE id = ?",
+                (row["id"],),
+            )
+        await db.commit()
+        internal_id = row["id"]
+    return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+
+
+async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, gen_id, public_only=True)
+        if not row:
+            return None
+        await db.execute(
+            "UPDATE generation_tasks SET shares_count = shares_count + 1 WHERE id = ?",
+            (row["id"],),
+        )
+        await db.commit()
+        internal_id = row["id"]
+    return await get_feed_generation_card(internal_id)
+
+
+async def create_feed_remix_event(remix_task_id: int | str) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await _fetch_generation_row(db, remix_task_id)
+        if not row or row["source_feed_gen_id"] is None:
+            return False
+        cursor = await db.execute(
+            "SELECT * FROM generation_tasks WHERE id = ? LIMIT 1",
+            (row["source_feed_gen_id"],),
+        )
+        source = await cursor.fetchone()
+        if not source or source["user_id"] == row["user_id"]:
+            return False
+        credits_spent = float(row["cost"] or 0)
+        if credits_spent <= 0:
+            return False
+        royalty = round(credits_spent * 0.05, 3)
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO feed_remix_events (
+                source_generation_task_id, remix_generation_task_id,
+                source_author_id, remix_author_id, credits_spent, royalty_credits
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source["id"],
+                row["id"],
+                source["user_id"],
+                row["user_id"],
+                credits_spent,
+                royalty,
+            ),
         )
         await db.commit()
         return True

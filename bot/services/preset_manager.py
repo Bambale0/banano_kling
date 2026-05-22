@@ -279,8 +279,8 @@ class PresetManager:
     ) -> float:
         """Вернуть стоимость видео с учётом качества (например, 720p/1080p для Motion Control).
 
-        quality_costs хранят базовую стоимость за 5 секунд; реальная цена
-        масштабируется пропорционально длительности.
+        quality_costs хранят стоимость за 1 секунду; реальная цена
+        считается пропорционально длительности.
         """
         if quality:
             video_models = self._video_costs()
@@ -288,19 +288,35 @@ class PresetManager:
             if key in video_models:
                 model_config = video_models[key] or {}
                 quality_costs = model_config.get("quality_costs", {})
-                if quality in quality_costs:
-                    base_5s = quality_costs[quality]
+                quality_key = str(quality).strip().lower()
+                quality_lookup = {
+                    str(item_key).strip().lower(): item_value
+                    for item_key, item_value in quality_costs.items()
+                }
+                if quality_key in quality_lookup:
+                    per_sec = quality_lookup[quality_key]
                     duration = max(3, min(30, int(duration)))
-                    per_sec = base_5s / 5
                     raw = per_sec * duration
                     cost = int(raw) if raw == int(raw) else round(raw * 2) / 2
                     return self._format_cost(cost)
         return self.get_video_cost(model, duration)
 
-    def get_video_cost_per_second(self, model: str, duration: int = 5):
+    def get_video_quality_costs(self, model: str) -> Dict[str, float]:
+        """Вернуть цены качества за 1 секунду для видео-модели."""
+        video_models = self._video_costs()
+        key = self.normalize_video_model_key(model)
+        model_config = video_models.get(key) or {}
+        return deepcopy(model_config.get("quality_costs", {}))
+
+    def get_video_cost_per_second(
+        self, model: str, duration: int = 5, quality: str | None = None
+    ):
         """Вернуть стоимость генерации видео за одну секунду."""
         duration = max(1, int(duration))
-        total_cost = self.get_video_cost(model, duration)
+        if quality:
+            total_cost = self.get_video_cost_with_quality(model, duration, quality)
+        else:
+            total_cost = self.get_video_cost(model, duration)
         return self._format_cost(total_cost / duration)
 
     def get_image_cost(self, model: str) -> int:

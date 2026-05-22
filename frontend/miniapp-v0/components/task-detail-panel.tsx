@@ -1,16 +1,36 @@
 'use client'
 
+import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
 import { 
   X, Image, Video, Clock, CheckCircle2, XCircle, 
-  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound
+  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
+import {
+  publishGeneration,
+  removeGenerationPrompt,
+  saveGenerationPrompt,
+  unpublishGeneration,
+} from '@/lib/api'
+import { toast } from 'sonner'
 
 export function TaskDetailPanel() {
-  const { taskDetail, isTaskDetailOpen, closeTaskDetail } = useApp()
+  const { taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
+  const [publishBusy, setPublishBusy] = useState(false)
+  const [libraryBusy, setLibraryBusy] = useState(false)
+
+  const confirmPublication = (target: string) => {
+    if (typeof window === 'undefined') return true
+    return window.confirm(
+      `Публикация в ${target}\n\n` +
+        'Вы подтверждаете, что у вас есть права или согласие на исходники, результат и текст промпта.\n\n' +
+        'Ответственность за опубликованный пользовательский контент несёт пользователь. Администрация бота не проводит предварительную модерацию и не отвечает за материалы, которые пользователи выкладывают самостоятельно.\n\n' +
+        'Спорный материал может быть удалён по жалобе правообладателя или другого заинтересованного лица.'
+    )
+  }
 
   const handleCopyTaskId = async () => {
     if (!taskDetail || typeof navigator === 'undefined') return
@@ -22,11 +42,53 @@ export function TaskDetailPanel() {
   }
 
   const handleCopyPrompt = async () => {
-    if (!taskDetail?.prompt || typeof navigator === 'undefined') return
+    if (!taskDetail?.prompt || taskDetail.prompt_hidden || typeof navigator === 'undefined') return
     try {
       await navigator.clipboard.writeText(taskDetail.prompt)
     } catch {
       // Ignore clipboard failures in constrained webviews
+    }
+  }
+
+  const handlePublish = async () => {
+    if (!taskDetail || publishBusy) return
+    if (!taskDetail.is_public_feed && !confirmPublication('ленту работ')) return
+    setPublishBusy(true)
+    try {
+      if (taskDetail.is_public_feed) {
+        await unpublishGeneration(taskDetail.task_id)
+        updateTask(taskDetail.task_id, { is_public_feed: false })
+        toast.success('Убрано из ленты')
+      } else {
+        await publishGeneration(taskDetail.task_id)
+        updateTask(taskDetail.task_id, { is_public_feed: true })
+        toast.success('Опубликовано в ленте')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
+    } finally {
+      setPublishBusy(false)
+    }
+  }
+
+  const handleSavePrompt = async () => {
+    if (!taskDetail || libraryBusy) return
+    if (!taskDetail.is_prompt_library && !confirmPublication('ленту промптов')) return
+    setLibraryBusy(true)
+    try {
+      if (taskDetail.is_prompt_library) {
+        await removeGenerationPrompt(taskDetail.task_id)
+        updateTask(taskDetail.task_id, { is_prompt_library: false })
+        toast.success('Убрано из промптов')
+      } else {
+        await saveGenerationPrompt(taskDetail.task_id)
+        updateTask(taskDetail.task_id, { is_prompt_library: true })
+        toast.success('Промпт сохранён')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось сохранить prompt')
+    } finally {
+      setLibraryBusy(false)
     }
   }
 
@@ -216,14 +278,14 @@ export function TaskDetailPanel() {
                     size="sm"
                     className="h-8 px-3"
                     onClick={handleCopyPrompt}
-                    disabled={!taskDetail.prompt}
+                    disabled={!taskDetail.prompt || taskDetail.prompt_hidden}
                   >
                     <Copy className="mr-2 h-4 w-4" />
                     Скопировать
                   </Button>
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50 whitespace-pre-wrap break-words">
-                  {taskDetail.prompt || '—'}
+                  {taskDetail.prompt_hidden ? 'Описание автора уже использовано для этой работы.' : taskDetail.prompt || '—'}
                 </p>
               </div>
 
@@ -248,16 +310,40 @@ export function TaskDetailPanel() {
 
               {/* Actions */}
               {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
-                <Button
-                  asChild
-                  className="w-full bg-gold hover:bg-gold/90 text-primary-foreground"
-                  size="lg"
-                >
-                  <a href={taskDetail.result_url} target="_blank" rel="noreferrer">
-                    <ExternalLink className="w-4 h-4 mr-2" />
-                    Открыть оригинал
-                  </a>
-                </Button>
+                <div className="space-y-2">
+                  {taskDetail.type === 'image' && taskDetail.prompt_actions_allowed !== false && !taskDetail.prompt_hidden && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={publishBusy}
+                        onClick={handlePublish}
+                      >
+                        {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+                        {taskDetail.is_public_feed ? 'Убрать из ленты' : 'В ленту'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={libraryBusy}
+                        onClick={handleSavePrompt}
+                      >
+                        {libraryBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+                        {taskDetail.is_prompt_library ? 'Убрать из промптов' : 'В промпты'}
+                      </Button>
+                    </div>
+                  )}
+                  <Button
+                    asChild
+                    className="w-full bg-gold hover:bg-gold/90 text-primary-foreground"
+                    size="lg"
+                  >
+                    <a href={taskDetail.result_url} target="_blank" rel="noreferrer">
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      Открыть оригинал
+                    </a>
+                  </Button>
+                </div>
               )}
 
               {/* Time */}
