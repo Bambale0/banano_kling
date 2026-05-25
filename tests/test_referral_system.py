@@ -3,7 +3,10 @@
 import asyncio
 import importlib
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+import aiosqlite
 import pytest
 
 
@@ -58,6 +61,159 @@ def test_process_referral_adds_bonus_and_links_user(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.asyncio
+async def test_referral_notification_uses_username_not_telegram_id():
+    from bot.handlers.common import _notify_partner_about_new_referral
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    referred = SimpleNamespace(
+        id=123456789,
+        username="uvas_m",
+        full_name="vasilina <3",
+    )
+
+    await _notify_partner_about_new_referral(
+        bot,
+        referrer_telegram_id=987654321,
+        referred=referred,
+    )
+
+    bot.send_message.assert_awaited_once()
+    text = bot.send_message.await_args.args[1]
+
+    assert "@uvas_m" in text
+    assert "123456789" not in text
+    assert "ID <code>" not in text
+    assert "vasilina &lt;3" in text
+
+
+@pytest.mark.asyncio
+async def test_referral_notification_uses_stored_username_when_missing_from_update():
+    from bot.handlers.common import _notify_partner_about_new_referral
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    referred = SimpleNamespace(id=123456789, username=None, full_name="")
+    stored_referred = SimpleNamespace(
+        username="stored_user",
+        first_name="Stored",
+        last_name="Referral",
+    )
+
+    with patch(
+        "bot.handlers.common.get_or_create_user",
+        AsyncMock(return_value=stored_referred),
+    ):
+        await _notify_partner_about_new_referral(
+            bot,
+            referrer_telegram_id=987654321,
+            referred=referred,
+        )
+
+    text = bot.send_message.await_args.args[1]
+
+    assert "@stored_user" in text
+    assert "Stored Referral" in text
+    assert "123456789" not in text
+    assert "ID <code>" not in text
+
+
+def test_process_referral_rejects_user_with_completed_payment(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(3001)
+        referred = await db.get_or_create_user(3002)
+        await db.create_transaction(
+            order_id="paid-before-referral",
+            user_id=referred.id,
+            payment_id="paid-before-referral-payment",
+            provider="yookassa",
+            credits=25,
+            amount_rub=250,
+            status="completed",
+        )
+
+        ok = await db.process_referral(referred.telegram_id, referrer.referral_code)
+
+        updated_referred = await db.get_or_create_user(referred.telegram_id)
+        updated_referrer = await db.get_or_create_user(referrer.telegram_id)
+        stats = await db.get_referral_stats(referrer.telegram_id)
+
+        assert ok is False
+        assert updated_referred.referred_by is None
+        assert updated_referrer.referral_earned == 0
+        assert stats["referrals_count"] == 0
+
+    asyncio.run(run())
+
+
+def test_process_referral_keeps_first_referrer(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        first_referrer = await db.get_or_create_user(3201)
+        second_referrer = await db.get_or_create_user(3202)
+        referred = await db.get_or_create_user(3203)
+
+        assert await db.process_referral(referred.telegram_id, first_referrer.referral_code)
+        assert not await db.process_referral(referred.telegram_id, second_referrer.referral_code)
+
+        updated_referred = await db.get_or_create_user(referred.telegram_id)
+        updated_first = await db.get_or_create_user(first_referrer.telegram_id)
+        updated_second = await db.get_or_create_user(second_referrer.telegram_id)
+
+        assert updated_referred.referred_by == first_referrer.id
+        assert updated_first.referral_earned == db.PARTNER_INVITER_BONUS
+        assert updated_second.referral_earned == 0
+
+    asyncio.run(run())
+
+
+def test_process_referral_rejects_referral_cycles(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(3301)
+        referred = await db.get_or_create_user(3302)
+
+        assert await db.process_referral(referred.telegram_id, referrer.referral_code)
+        assert not await db.process_referral(referrer.telegram_id, referred.referral_code)
+
+        updated_referrer = await db.get_or_create_user(referrer.telegram_id)
+        updated_referred = await db.get_or_create_user(referred.telegram_id)
+
+        assert updated_referrer.referred_by is None
+        assert updated_referred.referred_by == referrer.id
+
+    asyncio.run(run())
+
+
+def test_unreferred_payment_marks_user_paid(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        buyer = await db.get_or_create_user(3101)
+
+        result = await db.credit_first_payment_referral_bonus(
+            buyer.telegram_id, 25, transaction_amount_rub=250
+        )
+
+        updated_buyer = await db.get_or_create_user(buyer.telegram_id)
+
+        assert result["mode"] == "none"
+        assert updated_buyer.has_paid is True
+
+    asyncio.run(run())
+
+
 def test_commission_awarded_every_payment(tmp_path, monkeypatch):
     """Commission is credited on every payment, not just the first."""
     async def run():
@@ -84,6 +240,68 @@ def test_commission_awarded_every_payment(tmp_path, monkeypatch):
         assert updated_referred.has_paid is True
         expected_total = round(100 * db.PARTNER_LEVEL1_PERCENT / 100 + 200 * db.PARTNER_LEVEL1_PERCENT / 100, 2)
         assert updated_referrer.partner_balance_rub == expected_total
+
+    asyncio.run(run())
+
+
+def test_partner_overview_counts_only_payments_after_referral(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(7007)
+        referred = await db.get_or_create_user(7008)
+        assert await db.process_referral(referred.telegram_id, referrer.referral_code)
+
+        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            referral_row = await (
+                await conn.execute(
+                    """
+                    SELECT created_at
+                    FROM referrals
+                    WHERE referrer_id = ? AND referred_id = ?
+                    """,
+                    (referrer.id, referred.id),
+                )
+            ).fetchone()
+            referral_at = referral_row["created_at"]
+
+            await conn.execute(
+                """
+                INSERT INTO transactions
+                    (order_id, user_id, payment_id, provider, credits, amount_rub, status, created_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, 'completed', datetime(?, '-1 minute')),
+                    (?, ?, ?, ?, ?, ?, 'completed', datetime(?, '+1 minute'))
+                """,
+                (
+                    "pre-referral-payment",
+                    referred.id,
+                    "pre-referral-payment-id",
+                    "yookassa",
+                    25,
+                    250,
+                    referral_at,
+                    "post-referral-payment",
+                    referred.id,
+                    "post-referral-payment-id",
+                    "yookassa",
+                    50,
+                    500,
+                    referral_at,
+                ),
+            )
+            await conn.commit()
+
+        overview = await db.get_partner_overview(referrer.telegram_id)
+        details = await db.get_admin_partner_details(referrer.telegram_id)
+
+        assert overview["total_payments"] == 1
+        assert overview["monthly_revenue"] == 500
+        assert details["referrals"][0]["payments_count"] == 1
+        assert details["referrals"][0]["spent_rub"] == 500
 
     asyncio.run(run())
 

@@ -10,7 +10,12 @@ from aiohttp import web
 
 import bot.database
 from bot.config import config
-from bot.main import _extract_gemini_omni_asset_id, handle_kling_webhook
+from bot.main import (
+    _build_failure_notification_text,
+    _build_plain_result_link_text,
+    _extract_gemini_omni_asset_id,
+    handle_kling_webhook,
+)
 
 
 @pytest.mark.asyncio
@@ -97,3 +102,32 @@ def test_extract_gemini_omni_asset_id_from_result_json():
         _extract_gemini_omni_asset_id(character_payload, "character")
         == "character_abc"
     )
+
+
+def test_failure_notification_escapes_html_reason():
+    text = _build_failure_notification_text(
+        service_name="WAN <pro>",
+        task_id="task<1>",
+        reason="<ContentLengthError: 400, message='Not enough data'>",
+        media_kind="результата",
+        refund_text="\n\nБананы возвращены.",
+    )
+
+    assert "WAN &lt;pro&gt;" in text
+    assert "task&lt;1&gt;" in text
+    assert "&lt;ContentLengthError: 400" in text
+    assert "<ContentLengthError:" not in text
+
+
+def test_plain_result_link_text_does_not_use_html_markup():
+    text = _build_plain_result_link_text(
+        media_label="Видео",
+        model_label="Model <raw>",
+        task_id="task<1>",
+        result_url="https://example.com/video.mp4?x=<raw>",
+    )
+
+    assert "Model <raw>" in text
+    assert "task<1>" in text
+    assert "<code>" not in text
+    assert "parse_mode" not in text

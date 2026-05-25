@@ -2,11 +2,29 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
-import type { FeedItem } from '@/lib/types'
+import type { FeedComment, FeedItem } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { fetchFeed, likeFeedItem, removeFeedItem, shareFeedItem } from '@/lib/api'
-import { Heart, ImageOff, Loader2, Share2, Sparkles, Trash2 } from 'lucide-react'
+import {
+  addFeedComment,
+  fetchFeed,
+  fetchFeedComments,
+  likeFeedItem,
+  removeFeedItem,
+  shareFeedItem,
+} from '@/lib/api'
+import {
+  Heart,
+  ImageOff,
+  Loader2,
+  MessageCircle,
+  Send,
+  Share2,
+  Sparkles,
+  Trash2,
+  UserRound,
+  X,
+} from 'lucide-react'
 
 const sources = [
   { id: 'recent', label: 'Новые' },
@@ -37,12 +55,17 @@ function getPinHeightWeight(value?: string | null) {
 }
 
 export function FeedTab() {
-  const { state, setActiveTab, setPromptPreset } = useApp()
+  const { state, setActiveTab, setPromptPreset, openProfile } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [items, setItems] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
+  const [comments, setComments] = useState<FeedComment[]>([])
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentText, setCommentText] = useState('')
 
   const isLive = state.mode === 'live'
   const feedColumns = useMemo(() => {
@@ -81,6 +104,29 @@ export function FeedTab() {
       ignore = true
     }
   }, [isLive, source])
+
+  useEffect(() => {
+    let ignore = false
+    async function loadComments() {
+      if (!commentsItem || !isLive) {
+        setComments([])
+        return
+      }
+      setCommentsLoading(true)
+      try {
+        const nextComments = await fetchFeedComments(commentsItem.id)
+        if (!ignore) setComments(nextComments)
+      } catch (e) {
+        if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить комментарии'))
+      } finally {
+        if (!ignore) setCommentsLoading(false)
+      }
+    }
+    loadComments()
+    return () => {
+      ignore = true
+    }
+  }, [commentsItem, isLive])
 
   const handleLike = async (item: FeedItem) => {
     if (!isLive) return
@@ -137,6 +183,35 @@ export function FeedTab() {
     }
   }
 
+  const handleOpenAuthor = (item: FeedItem) => {
+    const code = String(item.author_referral_code || '').trim()
+    if (!code) return
+    openProfile(code)
+  }
+
+  const handleSubmitComment = async () => {
+    const text = commentText.trim()
+    if (!isLive || !commentsItem || !text) return
+    setBusyId(commentsItem.id)
+    try {
+      const { comment, commentsCount } = await addFeedComment(commentsItem.id, text)
+      setComments((prev) => [...prev, comment])
+      setCommentText('')
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === commentsItem.id ? { ...item, comments_count: commentsCount } : item
+        )
+      )
+      setCommentsItem((prev) =>
+        prev ? { ...prev, comments_count: commentsCount } : prev
+      )
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось отправить комментарий'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div className="px-4 space-y-5">
       <div>
@@ -184,41 +259,59 @@ export function FeedTab() {
                   key={item.id}
                   className="min-w-0 overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
                 >
-                  <button
-                    type="button"
-                    onClick={() => handleRemix(item)}
-                    className="group relative block w-full overflow-hidden bg-secondary/50 text-left"
-                    aria-label="Повторить с моим фото"
-                  >
-                    {isHttpUrl(item.result_url) ? (
-                      <img
-                        src={item.result_url}
-                        alt=""
-                        loading="lazy"
-                        style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
-                        className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                      />
-                    ) : (
-                      <div
-                        style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
-                        className="flex w-full items-center justify-center text-muted-foreground"
-                      >
-                        <ImageOff className="h-8 w-8" />
-                      </div>
-                    )}
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                  <div className="relative overflow-hidden bg-secondary/50">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewItem(item)}
+                      className="group block w-full text-left"
+                      aria-label="Открыть фото"
+                    >
+                      {isHttpUrl(item.result_url) ? (
+                        <img
+                          src={item.result_url}
+                          alt=""
+                          loading="lazy"
+                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
+                          className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        />
+                      ) : (
+                        <div
+                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
+                          className="flex w-full items-center justify-center text-muted-foreground"
+                        >
+                          <ImageOff className="h-8 w-8" />
+                        </div>
+                      )}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    </button>
                     <div className="absolute left-2 top-2 rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium text-foreground backdrop-blur">
                       {item.aspect_ratio || 'image'}
                     </div>
-                    <span className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gold text-primary-foreground opacity-95 shadow-lg shadow-background/30">
+                    <button
+                      type="button"
+                      onClick={() => handleRemix(item)}
+                      className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gold text-primary-foreground opacity-95 shadow-lg shadow-background/30"
+                      aria-label="Повторить"
+                    >
                       <Sparkles className="h-4 w-4" />
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                   <div className="space-y-2.5 px-2.5 pb-3 pt-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate text-xs font-semibold text-foreground">{item.model}</p>
-                        <p className="truncate text-[11px] text-muted-foreground">{item.author}</p>
+                        <button
+                          type="button"
+                          className={cn(
+                            'mt-0.5 flex max-w-full items-center gap-1 truncate text-[11px] text-muted-foreground transition-colors',
+                            item.author_referral_code && 'hover:text-cyan'
+                          )}
+                          disabled={!item.author_referral_code}
+                          onClick={() => handleOpenAuthor(item)}
+                        >
+                          <UserRound className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{item.author}</span>
+                        </button>
                       </div>
                       <div className="shrink-0 rounded-full bg-secondary/70 px-2 py-1 text-[10px] text-muted-foreground">
                         {item.remixes}
@@ -249,6 +342,17 @@ export function FeedTab() {
                         <Share2 className="h-4 w-4" />
                         {item.shares_count}
                       </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 min-w-0 flex-1 rounded-full px-2 text-[11px]"
+                        onClick={() => setCommentsItem(item)}
+                        aria-label="Комментарии"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                        {item.comments_count || 0}
+                      </Button>
                       {item.is_mine ? (
                         <Button
                           type="button"
@@ -274,6 +378,98 @@ export function FeedTab() {
           {isLive ? 'В ленте пока нет опубликованных работ.' : 'Откройте mini app из Telegram, чтобы увидеть ленту.'}
         </div>
       )}
+
+      {previewItem ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/95 px-3 py-6">
+          <button
+            type="button"
+            onClick={() => setPreviewItem(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/80 text-foreground"
+            aria-label="Закрыть"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {isHttpUrl(previewItem.result_url) ? (
+            <img
+              src={previewItem.result_url}
+              alt=""
+              className="max-h-full w-auto max-w-full object-contain"
+            />
+          ) : (
+            <div className="flex h-48 w-full items-center justify-center text-muted-foreground">
+              <ImageOff className="h-8 w-8" />
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {commentsItem ? (
+        <div className="fixed inset-0 z-[85] flex items-end bg-background/70 backdrop-blur-sm">
+          <div className="flex max-h-[82vh] w-full flex-col rounded-t-2xl border border-border/60 bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">Комментарии</div>
+              <button
+                type="button"
+                onClick={() => setCommentsItem(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-muted-foreground"
+                aria-label="Закрыть"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+              {commentsLoading ? (
+                <div className="flex justify-center py-6 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : comments.length ? (
+                comments.map((comment) => (
+                  <div key={comment.id} className="flex gap-2 text-sm">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-foreground">
+                      {comment.author.replace(/^@/, '').slice(0, 1).toUpperCase() || 'U'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="mr-2 font-semibold text-foreground">{comment.author}</span>
+                      <span className="break-words text-foreground/90">{comment.text}</span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center text-sm text-muted-foreground">Пока пусто</div>
+              )}
+            </div>
+            <div className="flex items-center gap-2 border-t border-border/60 p-3">
+              <input
+                value={commentText}
+                onChange={(event) => setCommentText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleSubmitComment()
+                  }
+                }}
+                maxLength={500}
+                className="h-10 min-w-0 flex-1 rounded-full border border-border/60 bg-background px-4 text-sm text-foreground outline-none focus:border-cyan"
+                placeholder="Комментарий"
+              />
+              <Button
+                type="button"
+                size="icon"
+                className="h-10 w-10 rounded-full"
+                disabled={!commentText.trim() || busyId === commentsItem.id}
+                onClick={handleSubmitComment}
+                aria-label="Отправить"
+              >
+                {busyId === commentsItem.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

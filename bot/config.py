@@ -66,6 +66,12 @@ class Config:
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    PHOTO_PROMPT_MODEL: str = os.getenv(
+        "PHOTO_PROMPT_MODEL", "gpt-5-5"
+    )
+    PHOTO_PROMPT_MAX_AUDIO_BYTES: int = int(
+        os.getenv("PHOTO_PROMPT_MAX_AUDIO_BYTES", str(10 * 1024 * 1024))
+    )
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
     # PIAPI_API_KEY is used by kling_service. Allow fallback to KLING_API_KEY
     # for environments that still provide the old variable name.

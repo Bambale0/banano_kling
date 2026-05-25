@@ -67,6 +67,12 @@ from bot.services.gemini_service import gemini_service
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
+from bot.services.media_input_utils import (
+    filter_available_image_sources,
+    is_reference_contact_sheet_url,
+    missing_local_upload_sources,
+    reference_sources_to_contact_sheet_url,
+)
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -335,34 +341,69 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
         "banana_pro",
         "banana_2",
         "nanobanana",
+        "seedream_edit",
         "grok_imagine_i2i",
         "wan_27",
     }:
         return prompt
 
-    replacements = {
-        r"\blingerie\b": "fashion outfit",
-        r"\bunderwear\b": "fashion outfit",
-        r"\bbra\b": "top",
-        r"\bthong\b": "swimwear bottom",
-        r"\bstockings\b": "fashion stockings",
-        r"\bgarter\b": "fashion accessory",
-        r"\bбелье\b": "модный образ",
-        r"\bнижнее белье\b": "модный образ",
-        r"\bбюстгальтер\b": "топ",
-        r"\bстринги\b": "низ от купальника",
-        r"\bчулки\b": "fashion-чулки",
-        r"\bкорсет\b": "fashion-корсет",
-    }
+    replacements = [
+        (r"\blingerie\b", "fashion outfit"),
+        (r"\bunderwear\b", "fashion outfit"),
+        (r"\bbra\b", "top"),
+        (r"\bthong\b", "swimwear bottom"),
+        (r"\bstockings\b", "fashion stockings"),
+        (r"\bgarter\b", "fashion accessory"),
+        (r"\bbikini\b", "fashion swimwear"),
+        (r"\bswimsuit\b", "fashion swimwear"),
+        (r"\bнижн(?:ее|ем|его|ей|юю|им)\s+бель[еёя]\b", "модный образ"),
+        (r"\bбелье\b", "модный образ"),
+        (r"\bбельё\b", "модный образ"),
+        (r"\bбелья\b", "модный образ"),
+        (r"\bбюстгальтер\b", "топ"),
+        (r"\bлиф(?:чик|а|ом|е)?\b", "топ"),
+        (r"\bстринг\w*\b", "низ от купального образа"),
+        (r"\bбикини\b", "купальный fashion-образ"),
+        (r"\bкупальник\w*\b", "купальный fashion-образ"),
+        (r"\bчулки\b", "fashion-чулки"),
+        (r"\bкорсет\b", "fashion-корсет"),
+    ]
     normalized = prompt
-    for pattern, replacement in replacements.items():
+    for pattern, replacement in replacements:
         normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
 
     safety_prefix = (
         "Safe, non-explicit editorial image of an adult subject. "
         "Fashion or product focused, no nudity, no explicit anatomy, no sexual content. "
     )
-    return f"{safety_prefix}{normalized}"
+    selfie_instruction = ""
+    if _prompt_requests_selfie_without_visible_device(prompt):
+        selfie_instruction = (
+            "Selfie means front-camera style only; do not show a phone, mirror, "
+            "visible camera, or hand holding a device unless explicitly requested. "
+        )
+    if normalized.lower().startswith("safe, non-explicit editorial image"):
+        return f"{selfie_instruction}{normalized}"
+    return f"{safety_prefix}{selfie_instruction}{normalized}"
+
+
+def _prompt_requests_selfie_without_visible_device(prompt: str) -> bool:
+    text = f" {(prompt or '').lower()} "
+    if "selfie" not in text and "селфи" not in text:
+        return False
+    explicit_device_terms = (
+        "phone",
+        "smartphone",
+        "iphone",
+        "camera",
+        "mirror",
+        "телефон",
+        "смартфон",
+        "айфон",
+        "камера",
+        "зеркал",
+    )
+    return not any(term in text for term in explicit_device_terms)
 
 
 def _apply_reference_detail_preservation(
@@ -380,16 +421,68 @@ def _apply_reference_detail_preservation(
         "flux_pro",
     }:
         return prompt
+    has_reference_board = bool(
+        reference_images and is_reference_contact_sheet_url(reference_images[0])
+    )
+    reference_role_instruction = ""
+    if len(reference_images) > 1:
+        primary_source = (
+            "Use panel 1 of the reference board and the first separate original image after the board as the primary identity source"
+            if has_reference_board
+            else "Use the first uploaded image as the primary identity source"
+        )
+        secondary_source = (
+            "Use panel 2 and later of the reference board plus the remaining separate original images as mandatory material references"
+            if has_reference_board
+            else "Use additional uploaded images as mandatory material references"
+        )
+        board_instruction = (
+            "The first uploaded image is a reference board/contact sheet. It is not a scene to reproduce; it exists so all user references are visible together.\n"
+            if has_reference_board
+            else ""
+        )
+        reference_role_instruction = (
+            "MANDATORY MULTI-REFERENCE COMPOSITION:\n"
+            f"{board_instruction}"
+            "The uploaded image order is meaningful and every uploaded image must influence the result.\n"
+            f"{primary_source} for the main subject: face, body proportions, age appearance, hair, skin, and distinctive marks.\n"
+            f"{secondary_source} for clothing, dress, accessories, pose, product, style, color palette, or scene details.\n"
+            "If the user request is brief or does not name a specific secondary element, still transfer the most salient non-identity element from each secondary reference onto the primary subject.\n"
+            "When a secondary reference shows clothing, outfit, or a dress, transfer that garment design onto the primary person while preserving the primary person's identity.\n"
+            "Do not keep the first reference outfit when a secondary reference clearly provides the outfit or dress to use.\n"
+            "If an additional reference contains another person, do not copy that person's face or add them as a new person unless the user explicitly asks for multiple people.\n"
+            "If the user mentions the second, third, or another numbered reference, follow that reference for the named element while preserving identity from the first reference.\n"
+            "Do not ignore the second or later uploaded images."
+        )
     if img_service == "seedream_edit":
+        if len(reference_images) > 1:
+            identity_reference = (
+                "The first uploaded image is a reference board/contact sheet, not a scene to reproduce. "
+                "Use panel 1 of that board and the first separate original image after the board as the primary identity reference, not as a locked pose. "
+                "Use panel 2 and later of the board plus the remaining separate original images as mandatory visual material references, not optional. "
+                if has_reference_board
+                else
+                "Use the first uploaded image as the primary identity reference, not as a locked pose. "
+                "All additional uploaded images are mandatory visual material references, not optional. "
+            )
+            identity_reference += (
+                "Transfer their most salient non-identity elements onto the primary person: clothing, dress "
+                "designs, accessories, pose, product, style, color palette, or scene details. If a secondary "
+                "reference shows an outfit or dress, use that outfit or dress instead of preserving the first "
+                "reference outfit. Unless the edit request explicitly asks to include those people, do not add "
+                "people from secondary references."
+            )
+        else:
+            identity_reference = "Use the uploaded image as the identity reference, not as a locked pose."
         if not prompt:
             return (
-                "Use the uploaded image as the identity reference. Preserve the same "
+                f"{identity_reference} Preserve the same "
                 "recognizable person and face, but allow pose, body posture, scene, "
                 "background, camera angle, framing, lighting, and styling to change."
             )
         return (
             f"EDIT REQUEST (highest priority): {prompt}\n\n"
-            "Use the uploaded image as the identity reference, not as a locked pose. "
+            f"{identity_reference} "
             "Follow the edit request even when it changes pose, body posture, action, "
             "scene, background, camera angle, framing, lighting, styling, or outfit.\n\n"
             "Preserve the same recognizable person: face identity, facial geometry, "
@@ -398,6 +491,26 @@ def _apply_reference_detail_preservation(
             "the edit request asks for it. Do not ignore requested pose, action, "
             "location, or composition changes."
         )
+    if reference_role_instruction:
+        identity_transfer_instruction = """
+IDENTITY LOCK:
+Preserve only the main subject identity from reference image 1: face geometry, age appearance, skin tone and texture, hair, body proportions, tattoos, marks, and other distinctive identity details. Do not beautify, stylize, average, morph, or replace the face.
+
+SECONDARY MATERIAL LOCK:
+Reference images 2 and later are mandatory material sources. Transfer their visible requested or salient non-identity details onto the primary subject, especially dress, outfit, accessories, colors, fabrics, product details, pose, style, and scene cues. Do not copy secondary faces or create extra people unless explicitly requested.
+
+CONFLICT RULE:
+If the first reference conflicts with a secondary reference, keep identity from the first reference and take non-identity materials from the secondary reference. Never resolve the conflict by ignoring the secondary reference.
+
+The uploaded images are visual references, not text content. Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
+""".strip()
+        if prompt:
+            return (
+                f"EDIT REQUEST (highest priority): {prompt}\n\n"
+                f"{reference_role_instruction}\n\n"
+                f"{identity_transfer_instruction}"
+            )
+        return f"{reference_role_instruction}\n\n{identity_transfer_instruction}"
     instruction = """
 STRICT IDENTITY AND DETAIL PRESERVATION. HIGHEST PRIORITY.
 
@@ -490,6 +603,35 @@ def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
     return normalized
 
 
+def _available_reference_images(
+    reference_images: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    normalized = _snapshot_reference_images(reference_images)
+    missing = missing_local_upload_sources(normalized)
+    if not missing:
+        return normalized, []
+
+    available = [
+        str(source).strip()
+        for source in filter_available_image_sources(normalized)
+        if isinstance(source, str) and str(source).strip()
+    ]
+    return _snapshot_reference_images(available), missing
+
+
+def _source_reference_images_from_request(request_data: dict) -> list[str]:
+    """Return user-provided refs, excluding generated contact sheets."""
+    source_refs = request_data.get("source_reference_images")
+    if source_refs:
+        return _snapshot_reference_images(source_refs)
+
+    return [
+        ref
+        for ref in _snapshot_reference_images(request_data.get("reference_images", []))
+        if not is_reference_contact_sheet_url(ref)
+    ]
+
+
 def _is_identity_sensitive_prompt(prompt: str) -> bool:
     text = f" {(prompt or '').lower()} "
     keywords = (
@@ -526,15 +668,17 @@ def _prepare_banana_reference_images(
     img_service: str, reference_images: list[str] | None, prompt: str = ""
 ) -> list[str]:
     normalized = _snapshot_reference_images(reference_images)
-    if img_service not in {"banana_pro", "banana_2", "nanobanana"}:
+    if img_service not in {"banana_pro", "banana_2", "nanobanana", "seedream_edit"}:
         return normalized
-    if len(normalized) <= 1:
-        return normalized
-    if _is_identity_sensitive_prompt(prompt):
-        # Extra person refs can make Banana blend identities. Use the first
-        # selected image as the face source-of-truth for person-centric edits.
-        return normalized[:1]
-    return normalized[:8]
+    max_refs = 5 if img_service == "seedream_edit" else 8
+    if len(normalized) > 1 and not is_reference_contact_sheet_url(normalized[0]):
+        board_url = reference_sources_to_contact_sheet_url(
+            normalized,
+            max_sources=max(2, min(4, max_refs - 1)),
+        )
+        if board_url:
+            normalized = [board_url, *normalized]
+    return normalized[:max_refs]
 
 
 async def _start_image_generation_task(
@@ -572,6 +716,24 @@ async def _start_image_generation_task(
             "runtime_img_service": runtime_img_service,
             "error": policy_error,
         }
+    reference_images, missing_reference_images = _available_reference_images(
+        reference_images
+    )
+    if missing_reference_images:
+        logger.warning(
+            "Image task blocked before provider call: telegram_id=%s model=%s missing_local_refs=%s sample=%s",
+            telegram_id,
+            runtime_img_service,
+            len(missing_reference_images),
+            missing_reference_images[:3],
+        )
+        return {
+            "status": "failed",
+            "task_id": None,
+            "runtime_img_service": runtime_img_service,
+            "error": "missing_local_references",
+        }
+    source_reference_images = list(reference_images)
     reference_images = _prepare_banana_reference_images(
         runtime_img_service, reference_images, prompt
     )
@@ -590,6 +752,7 @@ async def _start_image_generation_task(
         "effective_prompt": effective_prompt,
         "img_ratio": img_ratio,
         "reference_images": reference_images,
+        "source_reference_images": source_reference_images,
         "img_quality": img_quality,
         "img_nsfw_checker": img_nsfw_checker,
         "nsfw_enabled": nsfw_enabled,
@@ -898,16 +1061,17 @@ async def _restore_image_task_to_state(
 
     img_service = request_data.get("img_service", task.model or "banana_pro")
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
-    original_reference_images = _snapshot_reference_images(
-        request_data.get("reference_images", [])
-    )
-    reference_images = original_reference_images if include_references else []
+    original_reference_images = _source_reference_images_from_request(request_data)
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
     prompt = request_data.get("prompt", task.prompt or "")
 
     await state.clear()
+    available_reference_images, missing_reference_images = _available_reference_images(
+        original_reference_images
+    )
+    reference_images = available_reference_images if include_references else []
     updates = {
         "generation_type": "image",
         "img_service": img_service,
@@ -920,13 +1084,15 @@ async def _restore_image_task_to_state(
         "preset_id": "new",
         "img_flow_step": "configure",
     }
+    if include_references and missing_reference_images:
+        updates["repeat_missing_ref_count"] = len(missing_reference_images)
     if repeat_source_task_id:
         updates.update(
             {
                 "repeat_source_task_id": repeat_source_task_id,
                 "repeat_prompt": prompt,
                 "repeat_unit_cost": task.cost or 0,
-                "repeat_original_ref_count": len(reference_images),
+                "repeat_original_ref_count": len(original_reference_images),
             }
         )
     await state.update_data(**updates)
@@ -946,7 +1112,14 @@ async def retry_image_with_new_prompt(callback: types.CallbackQuery, state: FSMC
         return
 
     await _show_image_creation_screen(callback, state)
-    await callback.answer("Отправь новый промпт — рефы и настройки сохранены")
+    data = await state.get_data()
+    if data.get("repeat_missing_ref_count"):
+        await callback.answer(
+            "Часть старых фото уже очищена — добавьте фото заново",
+            show_alert=True,
+        )
+    else:
+        await callback.answer("Отправь новый промпт — рефы и настройки сохранены")
 
 
 _GROK_IMAGE_VIDEO_RATIOS = {"16:9", "9:16", "1:1", "3:2", "2:3"}
@@ -1189,15 +1362,20 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     reference_images = list(data.get("reference_images") or [])
     unit_cost = data.get("repeat_unit_cost", 0)
     original_ref_count = int(data.get("repeat_original_ref_count") or 0)
-    ref_note = (
-        f"<code>{len(reference_images)}</code>"
-        if reference_images
-        else (
-            "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
-            if original_ref_count == 0
-            else f"<code>{original_ref_count}</code> прежних референсов"
+    missing_ref_count = int(data.get("repeat_missing_ref_count") or 0)
+    if missing_ref_count:
+        ref_note = (
+            f"<code>{len(reference_images)}</code> доступно, "
+            f"<code>{missing_ref_count}</code> очищено"
+            if reference_images
+            else "<code>0</code> — прежние фото уже очищены, добавьте их заново"
         )
-    )
+    elif reference_images:
+        ref_note = f"<code>{len(reference_images)}</code>"
+    elif original_ref_count == 0:
+        ref_note = "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
+    else:
+        ref_note = f"<code>{original_ref_count}</code> прежних референсов"
     return (
         "🔁 <b>Повторить prompt</b>\n\n"
         "Чтобы не получить результат без вашего лица, сначала отправьте фото прямо в чат. "
@@ -1318,14 +1496,46 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     )
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     if state_matches_repeat:
-        reference_images = _snapshot_reference_images(data.get("reference_images", []))
+        raw_reference_images = [
+            ref
+            for ref in _snapshot_reference_images(data.get("reference_images", []))
+            if not is_reference_contact_sheet_url(ref)
+        ]
     elif task.user_id == user.id:
-        reference_images = _snapshot_reference_images(request_data.get("reference_images", []))
+        raw_reference_images = _source_reference_images_from_request(request_data)
     else:
-        reference_images = []
+        raw_reference_images = []
+    reference_images, missing_reference_images = _available_reference_images(
+        raw_reference_images
+    )
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+
+    if missing_reference_images:
+        await state.update_data(
+            generation_type="image",
+            img_service=img_service,
+            img_ratio=img_ratio,
+            img_count=1,
+            reference_images=reference_images,
+            img_quality=img_quality,
+            img_nsfw_checker=img_nsfw_checker,
+            nsfw_enabled=nsfw_enabled,
+            preset_id="new",
+            img_flow_step="configure",
+            repeat_source_task_id=task_id,
+            repeat_prompt=prompt,
+            repeat_unit_cost=task.cost or 0,
+            repeat_original_ref_count=len(raw_reference_images),
+            repeat_missing_ref_count=len(missing_reference_images),
+        )
+        await _show_repeat_image_screen(callback, state, edit=True)
+        await callback.answer(
+            "Часть старых фото уже очищена. Добавьте фото заново.",
+            show_alert=True,
+        )
+        return
 
     if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
         await callback.answer("Для этой модели сначала отправьте фото.", show_alert=True)
@@ -6324,6 +6534,20 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     reference_images = data.get("reference_images", [])
     nsfw_enabled = data.get("nsfw_enabled", False)
+    reference_images, missing_reference_images = _available_reference_images(
+        reference_images
+    )
+    if missing_reference_images:
+        await state.update_data(
+            reference_images=reference_images,
+            repeat_missing_ref_count=len(missing_reference_images),
+        )
+        await message.answer(
+            "Часть старых фото уже очищена, поэтому я не запускаю задачу с битыми ссылками.\n"
+            "Загрузите фото заново и отправьте prompt ещё раз.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
 
     if img_service == "grok_imagine_i2i" and not reference_images:
         await message.answer(

@@ -33,7 +33,12 @@ from aiogram.types import (
 from aiohttp import web
 
 from bot.config import config
-from bot.database import init_db
+from bot.database import (
+    cleanup_orphaned_reference_files,
+    cleanup_saved_references,
+    cleanup_stale_local_generation_tasks,
+    init_db,
+)
 from bot.handlers import (
     admin_router,
     batch_generation_router,
@@ -727,6 +732,77 @@ def _with_original_link(base_caption: str, result_url: str | None) -> str:
     return f"{base}\n\n🔗 <a href='{safe_url}'>Открыть оригинал</a>"
 
 
+def _html_fragment(value, limit: int | None = None) -> str:
+    text = "" if value is None else str(value)
+    if limit is not None and len(text) > limit:
+        text = text[:limit]
+    return html.escape(text)
+
+
+def _build_plain_result_link_text(
+    *,
+    media_label: str,
+    model_label: str,
+    task_id: str,
+    result_url: str,
+    notice: str | None = None,
+) -> str:
+    lines = [
+        f"{media_label} готово.",
+        f"Модель: {model_label or 'AI'}",
+        f"ID: {task_id}",
+        "",
+        notice or "Telegram не смог прикрепить файл автоматически.",
+        "Оригинал можно открыть по ссылке:",
+        str(result_url),
+    ]
+    text = "\n".join(lines)
+    return text[:4000]
+
+
+async def _send_plain_result_link(
+    bot_instance: Bot,
+    telegram_id: int,
+    *,
+    media_label: str,
+    model_label: str,
+    task_id: str,
+    result_url: str,
+    reply_markup=None,
+    notice: str | None = None,
+) -> None:
+    await bot_instance.send_message(
+        chat_id=telegram_id,
+        text=_build_plain_result_link_text(
+            media_label=media_label,
+            model_label=model_label,
+            task_id=task_id,
+            result_url=result_url,
+            notice=notice,
+        ),
+        reply_markup=reply_markup,
+        disable_web_page_preview=False,
+    )
+
+
+def _build_failure_notification_text(
+    *,
+    service_name: str,
+    task_id: str,
+    reason: str | None,
+    media_kind: str = "результата",
+    refund_text: str = "",
+) -> str:
+    safe_reason = _html_fragment(reason or "сервис не смог обработать запрос", limit=700)
+    return (
+        f"Не удалось завершить генерацию {media_kind}.\n"
+        f"• Модель: <code>{_html_fragment(service_name or 'AI')}</code>\n"
+        f"• ID: <code>{_html_fragment(task_id)}</code>\n"
+        f"• Причина: <code>{safe_reason}</code>"
+        f"{refund_text}"
+    )
+
+
 def _build_single_result_caption(base_caption: str, task, reference_urls: list[str] | None = None, max_length: int = 980) -> str:
     return _sanitize_base_caption(base_caption)[:max_length]
 
@@ -742,10 +818,16 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     if not task or getattr(task, "type", None) != "image":
         return False
     model_name = str(getattr(task, "model", "") or "").strip()
-    if model_name not in {"banana_pro", "nanobanana", "banana_2"}:
+    if model_name not in {"banana_pro", "nanobanana", "banana_2", "seedream_edit"}:
         return False
     normalized = str(fail_msg or "").lower()
-    return str(fail_code) == "500" and ("timed out" in normalized or "no results were returned" in normalized)
+    retryable_markers = (
+        "timed out",
+        "timeout while downloading",
+        "timeout downloading",
+        "no results were returned",
+    )
+    return str(fail_code) == "500" and any(marker in normalized for marker in retryable_markers)
 
 
 def _is_retryable_wan_timeout_failure(task, fail_code, fail_msg) -> bool:
@@ -829,7 +911,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
-    if runtime_img_service not in {"banana_pro", "nanobanana", "banana_2"}:
+    if runtime_img_service not in {"banana_pro", "nanobanana", "banana_2", "seedream_edit"}:
         return None
 
     retry_attempt = int(request_data.get("auto_retry_attempt") or 0)
@@ -846,16 +928,27 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
 
     reference_images = request_data.get("reference_images") or []
     img_ratio = request_data.get("img_ratio") or getattr(task, "aspect_ratio", None) or "1:1"
-    img_quality = str(request_data.get("img_quality") or "2K").upper()
     callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
 
-    if runtime_img_service == "banana_2":
+    if runtime_img_service == "seedream_edit":
+        from bot.services.seedream_service import seedream_service
+
+        result = await seedream_service.generate_image(
+            prompt=effective_prompt,
+            model="seedream/4.5-edit",
+            aspect_ratio=img_ratio,
+            image_urls=reference_images,
+            quality=str(request_data.get("img_quality") or "basic"),
+            nsfw_checker=False,
+            callBackUrl=callback_url,
+        )
+    elif runtime_img_service == "banana_2":
         from bot.services.nano_banana_2_service import nano_banana_2_service
 
         result = await nano_banana_2_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
-            resolution=img_quality,
+            resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
             callback_url=callback_url,
         )
@@ -865,7 +958,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         result = await nano_banana_pro_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
-            resolution=img_quality,
+            resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
             callback_url=callback_url,
         )
@@ -954,6 +1047,20 @@ async def _cleanup_loop():
                 max_age_seconds=LOG_RETENTION_SECONDS,
                 skip_filenames=ACTIVE_LOG_FILENAMES,
             )
+            pruned_refs = await cleanup_saved_references()
+            orphaned_refs = await cleanup_orphaned_reference_files(
+                max_age_seconds=UPLOAD_RETENTION_SECONDS
+            )
+            stale_tasks = await cleanup_stale_local_generation_tasks()
+            if pruned_refs or orphaned_refs["removed_count"]:
+                logger.info(
+                    "Reference cleanup removed db_rows=%s orphan_files=%s orphan_bytes=%s",
+                    pruned_refs,
+                    orphaned_refs["removed_count"],
+                    orphaned_refs["removed_bytes"],
+                )
+            if stale_tasks["failed_count"]:
+                logger.info("Stale local generation cleanup stats: %s", stale_tasks)
         except Exception:
             logger.exception("Cleanup iteration failed")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
@@ -1008,6 +1115,12 @@ async def on_startup(bot: Bot):
         logger.info("Startup YooKassa reconcile stats: %s", reconcile_stats[:10])
     except Exception:
         logger.exception("Failed startup YooKassa reconciliation")
+
+    try:
+        stale_task_stats = await cleanup_stale_local_generation_tasks()
+        logger.info("Startup stale local generation cleanup stats: %s", stale_task_stats)
+    except Exception:
+        logger.exception("Failed startup cleanup for stale local generation tasks")
 
     # Запускаем фоновую очистку static/uploads и старых логов раз в 24 часа
     try:
@@ -1278,28 +1391,59 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            caption = f"✅ <b>Видео ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
+                            caption = f"✅ <b>Видео ({_html_fragment(model_display)}) готово!</b>\\n\\nID: <code>{_html_fragment(task_id)}</code>"
                             if task.duration:
-                                caption += f"\\n⏱ <code>{task.duration}с</code>"
+                                caption += f"\\n⏱ <code>{_html_fragment(task.duration)}с</code>"
                             if task.aspect_ratio:
-                                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
+                                caption += f"\\n📐 <code>{_html_fragment(task.aspect_ratio)}</code>"
                             if task.cost:
-                                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                                caption += f"\\n💰 <code>{_html_fragment(task.cost)}🍌</code>"
                             if task.preset_id == "no_preset" and task.prompt:
-                                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                                prompt_preview = _html_fragment(
+                                    f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
+                                )
+                                caption += f"\\n\\n🎯 Промпт: <code>{prompt_preview}</code>"
                             else:
-                                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                                caption += f"\\n\\n🎯 Пресет: {_html_fragment(task.preset_id)}"
+                            video_kb = get_video_result_keyboard(video_url)
 
-                            await bot_instance.send_video(
-                                chat_id=telegram_id,
-                                video=video_url,
-                                caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
-                                parse_mode="HTML",
-                                supports_streaming=True,
-                                reply_markup=get_video_result_keyboard(video_url),
-                            )
+                            delivered = False
+                            try:
+                                await bot_instance.send_video(
+                                    chat_id=telegram_id,
+                                    video=video_url,
+                                    caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
+                                    parse_mode="HTML",
+                                    supports_streaming=True,
+                                    reply_markup=video_kb,
+                                )
+                                delivered = True
+                            except Exception as send_e:
+                                logger.error(
+                                    f"Failed to send {model_display} video media to {telegram_id}: {send_e}"
+                                )
+                                try:
+                                    await _send_plain_result_link(
+                                        bot_instance,
+                                        telegram_id,
+                                        media_label="Видео",
+                                        model_label=model_display,
+                                        task_id=task_id,
+                                        result_url=video_url,
+                                        reply_markup=video_kb,
+                                    )
+                                    delivered = True
+                                except Exception as link_e:
+                                    logger.error(
+                                        f"Failed to send {model_display} video link to {telegram_id}: {link_e}"
+                                    )
                             await complete_video_task(task_id, video_url)
-                            logger.info(f"{model_display} video sent to {telegram_id}")
+                            if delivered:
+                                logger.info(f"{model_display} video sent to {telegram_id}")
+                            else:
+                                logger.warning(
+                                    f"{model_display} result stored but Telegram delivery failed for {telegram_id}"
+                                )
                         except Exception as e:
                             logger.error(
                                 f"Failed to notify {model_display} user {telegram_id}: {e}"
@@ -1354,24 +1498,27 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 )
                                 caption = (
                                     f"✅ <b>{'Видео' if task.type == 'video' else 'Изображение'} готово</b>\n"
-                                    f"• Модель: <code>{model_display}</code>\n"
-                                    f"• ID: <code>{task_id}</code>"
+                                    f"• Модель: <code>{_html_fragment(model_display)}</code>\n"
+                                    f"• ID: <code>{_html_fragment(task_id)}</code>"
                                 )
                                 if task.duration:
-                                    caption += f"\n• Длительность: <code>{task.duration}с</code>"
+                                    caption += f"\n• Длительность: <code>{_html_fragment(task.duration)}с</code>"
                                 if task.aspect_ratio:
-                                    caption += f"\n• Формат: <code>{task.aspect_ratio.replace(':', '∶')}</code>"
+                                    caption += f"\n• Формат: <code>{_html_fragment(str(task.aspect_ratio).replace(':', '∶'))}</code>"
                                 if task.cost:
                                     caption += (
-                                        f"\n• Стоимость: <code>{task.cost}🍌</code>"
+                                        f"\n• Стоимость: <code>{_html_fragment(task.cost)}🍌</code>"
                                     )
                                 if task.preset_id == "no_preset" and task.prompt:
+                                    prompt_preview = _html_fragment(
+                                        f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
+                                    )
                                     caption += (
                                         f"\n\n🎯 <b>Промпт</b>\n"
-                                        f"<code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                                        f"<code>{prompt_preview}</code>"
                                     )
                                 else:
-                                    caption += f"\n\n🎯 <b>Пресет</b>\n<code>{task.preset_id}</code>"
+                                    caption += f"\n\n🎯 <b>Пресет</b>\n<code>{_html_fragment(task.preset_id)}</code>"
                                 import os
 
                                 # Отправляем видео - всегда скачиваем для Kie.ai
@@ -1382,6 +1529,8 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                                 from bot.keyboards import get_video_result_keyboard
 
+                                video_kb = get_video_result_keyboard(video_url)
+                                delivered = False
                                 tmp_file = None
                                 try:
                                     async with aiohttp.ClientSession() as sess:
@@ -1417,10 +1566,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                                         parse_mode="HTML",
                                         supports_streaming=True,
-                                        reply_markup=get_video_result_keyboard(
-                                            video_url
-                                        ),
+                                        reply_markup=video_kb,
                                     )
+                                    delivered = True
                                     logger.info(
                                         f"Kie.ai video downloaded and sent to {telegram_id}"
                                     )
@@ -1429,27 +1577,58 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         f"Kie.ai video download failed: {dl_e}"
                                     )
                                     # Fallback to URL
-                                    await bot_instance.send_video(
-                                        chat_id=telegram_id,
-                                        video=video_url,
-                                        caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
-                                        parse_mode="HTML",
-                                        supports_streaming=True,
-                                        reply_markup=get_video_result_keyboard(
-                                            video_url
-                                        ),
-                                    )
-                                    logger.info(
-                                        f"Kie.ai video sent via URL to {telegram_id}"
-                                    )
+                                    try:
+                                        await bot_instance.send_video(
+                                            chat_id=telegram_id,
+                                            video=video_url,
+                                            caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
+                                            parse_mode="HTML",
+                                            supports_streaming=True,
+                                            reply_markup=video_kb,
+                                        )
+                                        delivered = True
+                                        logger.info(
+                                            f"Kie.ai video sent via URL to {telegram_id}"
+                                        )
+                                    except Exception as url_e:
+                                        logger.error(
+                                            f"Kie.ai video URL send failed: {url_e}"
+                                        )
+                                        try:
+                                            await _send_plain_result_link(
+                                                bot_instance,
+                                                telegram_id,
+                                                media_label="Видео",
+                                                model_label=model_display,
+                                                task_id=task_id,
+                                                result_url=video_url,
+                                                reply_markup=video_kb,
+                                                notice=(
+                                                    "Telegram не смог прикрепить видео файлом "
+                                                    "из-за ограничения размера."
+                                                ),
+                                            )
+                                            delivered = True
+                                            logger.info(
+                                                f"Kie.ai video link sent to {telegram_id}"
+                                            )
+                                        except Exception as link_e:
+                                            logger.error(
+                                                f"Kie.ai video link fallback failed: {link_e}"
+                                            )
                                 finally:
                                     if tmp_file and os.path.exists(tmp_file):
                                         try:
                                             os.remove(tmp_file)
-                                        except Exception as e:
+                                        except Exception:
                                             pass
                                 await complete_video_task(task_id, video_url)
-                                logger.info(f"Kie.ai result sent to {telegram_id}")
+                                if delivered:
+                                    logger.info(f"Kie.ai result sent to {telegram_id}")
+                                else:
+                                    logger.warning(
+                                        f"Kie.ai result stored but Telegram delivery failed for {telegram_id}"
+                                    )
                             else:
                                 # Fail case
                                 policy_violation = "Prohibited Use policy" in fail_msg
@@ -1459,12 +1638,20 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     else fail_msg[:100]
                                 )
                                 await add_credits(telegram_id, task.cost or 0)
+                                refund_text = "\n\nБананы за эту попытку уже возвращены."
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
-                                    text="Не получилось завершить генерацию.\n"
-                                    f"• ID: <code>{task_id}</code>\n"
-                                    f"• Причина: <code>{error_msg or 'сервис не смог обработать запрос'}</code>\n\n"
-                                    "Бананы за эту попытку уже возвращены.",
+                                    text=_build_failure_notification_text(
+                                        service_name=model_display,
+                                        task_id=task_id,
+                                        reason=error_msg,
+                                        media_kind=(
+                                            "видео"
+                                            if task.type == "video"
+                                            else "результата"
+                                        ),
+                                        refund_text=refund_text,
+                                    ),
                                     parse_mode="HTML",
                                 )
                                 await complete_video_task(task_id, None)
@@ -1550,31 +1737,37 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             model_display = task.model or task.preset_id or "Kling"
-            caption = f"✅ <b>Видео ({model_display}) готово!</b>\\n\\nID: <code>{task_id}</code>"
+            reference_preview_urls = _extract_reference_image_urls(task, webhook_data)
+            caption = f"✅ <b>Видео ({_html_fragment(model_display)}) готово!</b>\\n\\nID: <code>{_html_fragment(task_id)}</code>"
             if task.duration:
-                caption += f"\\n⏱ <code>{task.duration}с</code>"
+                caption += f"\\n⏱ <code>{_html_fragment(task.duration)}с</code>"
             if task.aspect_ratio:
-                caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
+                caption += f"\\n📐 <code>{_html_fragment(task.aspect_ratio)}</code>"
             if task.cost:
-                caption += f"\\n💰 <code>{task.cost}🍌</code>"
+                caption += f"\\n💰 <code>{_html_fragment(task.cost)}🍌</code>"
             if task.preset_id == "no_preset" and task.prompt:
-                caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
+                prompt_preview = _html_fragment(
+                    f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
+                )
+                caption += f"\\n\\n🎯 Промпт: <code>{prompt_preview}</code>"
             else:
-                caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
+                caption += f"\\n\\n🎯 Пресет: {_html_fragment(task.preset_id)}"
 
             # Отправляем видео пользователю
             bot_instance = Bot(token=config.BOT_TOKEN)
+            video_kb = None
 
             try:
                 from bot.keyboards import get_video_result_keyboard
 
+                video_kb = get_video_result_keyboard(video_url)
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
                     caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                     parse_mode="HTML",
                     supports_streaming=True,
-                    reply_markup=get_video_result_keyboard(video_url),
+                    reply_markup=video_kb,
                 )
 
                 await complete_video_task(task_id, video_url)
@@ -1618,8 +1811,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             # Send downloaded file
                             from aiogram.types import FSInputFile
 
-                            from bot.keyboards import get_video_result_keyboard
-
                             video_file = FSInputFile(tmp_file)
                             await bot_instance.send_video(
                                 chat_id=telegram_id,
@@ -1627,7 +1818,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                                 parse_mode="HTML",
                                 supports_streaming=True,
-                                reply_markup=get_video_result_keyboard(video_url),
+                                reply_markup=video_kb,
                             )
 
                             await complete_video_task(task_id, video_url)
@@ -1644,19 +1835,40 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     )
                     else:
                         # Fallback — отправляем как ссылка
-                        from bot.keyboards import get_video_result_keyboard
-
-                        await bot_instance.send_message(
-                            chat_id=telegram_id,
-                            text=f"🎬 Ваше видео готово!{video_url}",
-                            reply_markup=get_video_result_keyboard(video_url),
-                            parse_mode="HTML",
+                        await _send_plain_result_link(
+                            bot_instance,
+                            telegram_id,
+                            media_label="Видео",
+                            model_label=model_display,
+                            task_id=task_id,
+                            result_url=video_url,
+                            reply_markup=video_kb,
                         )
                 except Exception as fallback_error:
                     logger.error(
                         f"Failed to send fallback message or upload video: {fallback_error}"
                     )
+                    try:
+                        await _send_plain_result_link(
+                            bot_instance,
+                            telegram_id,
+                            media_label="Видео",
+                            model_label=model_display,
+                            task_id=task_id,
+                            result_url=video_url,
+                            reply_markup=video_kb,
+                            notice="Telegram не смог прикрепить видео автоматически.",
+                        )
+                        logger.info(f"Video link sent to user {telegram_id}")
+                    except Exception as link_error:
+                        logger.error(
+                            f"Failed to send fallback video link to {telegram_id}: {link_error}"
+                        )
             finally:
+                try:
+                    await complete_video_task(task_id, video_url)
+                except Exception as complete_error:
+                    logger.error(f"Failed to store completed video task {task_id}: {complete_error}")
                 await bot_instance.session.close()
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
@@ -1679,12 +1891,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             "msg", str(status) if status else "Unknown error"
                         )
                         await add_credits(telegram_id, task.cost)
+                        refund_text = "\n\nКредиты возвращены."
                         await bot_instance.send_message(
                             chat_id=telegram_id,
-                            text=f"❌ <b>Генерация Kling не удалась</b>\\n\\n"
-                            f"ID: <code>{task_id}</code>\\n\\n"
-                            f"<code>{fail_msg}</code>\\n\\n"
-                            f"🍌 Кредиты возвращены.",
+                            text=_build_failure_notification_text(
+                                service_name="Kling",
+                                task_id=task_id,
+                                reason=fail_msg,
+                                media_kind="видео",
+                                refund_text=refund_text,
+                            ),
                             parse_mode="HTML",
                         )
                         await complete_video_task(task_id, None)
@@ -2515,21 +2731,24 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             )
             full_caption = (
                 f"✅ <b>{'Видео' if is_video else 'Изображение'} готово</b>\n"
-                f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{task_id}</code>"
+                f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
+                f"• ID: <code>{_html_fragment(task_id)}</code>"
             )
             if task.cost:
-                full_caption += f"\n• Стоимость: <code>{task.cost}🍌</code>"
+                full_caption += f"\n• Стоимость: <code>{_html_fragment(task.cost)}🍌</code>"
             if task.duration:
-                full_caption += f"\n• Длительность: <code>{task.duration}с</code>"
+                full_caption += f"\n• Длительность: <code>{_html_fragment(task.duration)}с</code>"
             if task.aspect_ratio:
                 full_caption += (
-                    f"\n• Формат: <code>{task.aspect_ratio.replace(':', '∶')}</code>"
+                    f"\n• Формат: <code>{_html_fragment(str(task.aspect_ratio).replace(':', '∶'))}</code>"
                 )
             if is_video:
                 if source_links:
                     full_caption += source_links
-                full_caption += f"\n\n🔗 <a href='{result_url}'>Открыть оригинал</a>"
+                full_caption += (
+                    f"\n\n🔗 <a href='{html.escape(str(result_url), quote=True)}'>"
+                    "Открыть оригинал</a>"
+                )
             if len(full_caption) > 980:
                 full_caption = full_caption[:977] + "..."
 
@@ -2623,7 +2842,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     image_bytes = await _download_remote_bytes(result_url, timeout_seconds=30)
                     if not is_video:
                         if _should_send_prompt_followup(task):
-                            await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
+                            try:
+                                await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
+                            except Exception as prompt_e:
+                                logger.error(
+                                    f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
+                                )
                         await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
                     preview_sent = False
                     try:
@@ -2668,18 +2892,14 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if sent_media:
                     await complete_video_task(task_id, result_url)
                 else:
-                    # Fallback text with direct link
-                    fallback_caption = _build_single_result_caption(
-                        _with_original_link(full_caption, result_url),
-                        task,
-                        reference_preview_urls,
-                    )
-                    await bot_instance.send_message(
-                        chat_id=telegram_id,
-                        text=f"{fallback_caption}\n\nЕсли медиа не открылось, вот прямая ссылка:\n{html.escape(result_url)}",
+                    await _send_plain_result_link(
+                        bot_instance,
+                        telegram_id,
+                        media_label="Видео" if is_video else "Изображение",
+                        model_label=model_label,
+                        task_id=task_id,
+                        result_url=result_url,
                         reply_markup=kb_link,
-                        parse_mode="HTML",
-                        disable_web_page_preview=False,
                     )
                     await complete_video_task(task_id, result_url)
                     logger.info(
@@ -2689,6 +2909,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.error(
                     f"Failed to send {service_name} result to {telegram_id}: {send_e}"
                 )
+                try:
+                    await complete_video_task(task_id, result_url)
+                    logger.warning(
+                        f"{service_name} result stored but Telegram delivery failed for {telegram_id}"
+                    )
+                except Exception as complete_e:
+                    logger.error(
+                        f"Failed to store completed {service_name} task {task_id}: {complete_e}"
+                    )
             finally:
                 await bot_instance.session.close()
         else:
@@ -2767,12 +2996,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         if task and task.cost and task.cost > 0
                         else "\n\nПопробуйте упростить промпт или повторить попытку немного позже."
                     )
-                    error_msg = (
-                        f"Не удалось завершить генерацию {('видео' if task and task.type == 'video' else 'результата')}.\n"
-                        f"• Модель: <code>{service_name}</code>\n"
-                        f"• ID: <code>{task_id}</code>\n"
-                        f"• Причина: <code>{user_fail_msg or 'сервис не смог обработать запрос'}</code>"
-                        f"{refund_text}"
+                    error_msg = _build_failure_notification_text(
+                        service_name=service_name,
+                        task_id=task_id,
+                        reason=user_fail_msg,
+                        media_kind=(
+                            "видео"
+                            if task and task.type == "video"
+                            else "результата"
+                        ),
+                        refund_text=refund_text,
                     )
                     reply_markup = None
                     if task and task.type == "image":

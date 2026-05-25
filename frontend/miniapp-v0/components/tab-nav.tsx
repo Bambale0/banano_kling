@@ -2,7 +2,7 @@
 
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, BookOpen } from 'lucide-react'
+import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, BookOpen, UserRound } from 'lucide-react'
 
 const tabs = [
   { id: 0, label: 'Студия', icon: LayoutDashboard },
@@ -12,6 +12,7 @@ const tabs = [
   { id: 4, label: 'Лента', icon: Images },
   { id: 5, label: 'Промпты', icon: BookOpen },
   { id: 6, label: 'Сервисы', icon: Grid3X3 },
+  { id: 7, label: 'Профиль', icon: UserRound },
 ]
 
 export function TabNav() {

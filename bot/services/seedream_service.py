@@ -7,6 +7,7 @@ from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import (
     image_sources_to_provider_safe_png_urls,
     image_sources_to_supported_image_urls,
+    is_local_upload_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class SeedreamService(KlingService):
         "BASIC": "basic",
         "HIGH": "high",
     }
+    MAX_REFERENCE_IMAGES = 5
 
     async def generate_image(
         self,
@@ -77,17 +79,34 @@ class SeedreamService(KlingService):
             len(safe_prompt),
         )
 
-        supported_urls = image_sources_to_supported_image_urls(image_urls[:14])
+        limited_image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
+        supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
         uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
             supported_urls
         )
         effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
         if not effective_image_urls:
-            effective_image_urls = image_urls[:14]
+            fallback_image_urls = [
+                url
+                for url in limited_image_urls
+                if not (isinstance(url, str) and is_local_upload_source(url))
+            ]
+            if not fallback_image_urls:
+                logger.error(
+                    "Seedream aborted: all local reference files are missing"
+                )
+                return None
+            effective_image_urls = fallback_image_urls
+        transport = (
+            "kie_file_upload_urls"
+            if uploaded_urls != supported_urls
+            else "public_urls"
+        )
         logger.info(
-            "Seedream image upload: original=%d effective=%d",
+            "Seedream image refs: original=%d effective=%d transport=%s",
             len(image_urls),
             len(effective_image_urls),
+            transport,
         )
 
         payload = {
@@ -110,7 +129,10 @@ class SeedreamService(KlingService):
             and "file type not supported" in (response.get("message") or "").lower()
         ):
             normalized_image_urls = image_sources_to_provider_safe_png_urls(
-                image_urls[:14]
+                limited_image_urls
+            )
+            normalized_image_urls = await kie_file_upload_service.upload_local_image_sources(
+                normalized_image_urls
             )
             if normalized_image_urls != effective_image_urls:
                 logger.warning(
@@ -119,7 +141,7 @@ class SeedreamService(KlingService):
                 retry_payload = {
                     "model": model,
                     "input": {
-                        "prompt": prompt,
+                        "prompt": safe_prompt,
                         "image_urls": normalized_image_urls,
                         "aspect_ratio": aspect_ratio,
                         "quality": quality,

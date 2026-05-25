@@ -31,6 +31,7 @@ from bot.database import (
     get_partner_withdrawal_request,
     get_top_prompts,
     get_user_by_referral_code,
+    get_user_feed_generations,
     get_user_settings,
     get_user_stats,
     increment_feed_share,
@@ -131,28 +132,59 @@ async def _notify_admins_about_partner_withdrawal(
             )
 
 
+def _clean_telegram_username(username) -> str:
+    return str(username or "").strip().lstrip("@")
+
+
+def _profile_display_name(profile) -> str:
+    if not profile:
+        return ""
+
+    full_name = str(getattr(profile, "full_name", "") or "").strip()
+    if full_name:
+        return full_name
+
+    parts = [
+        str(value).strip()
+        for value in (
+            getattr(profile, "first_name", None),
+            getattr(profile, "last_name", None),
+        )
+        if value and str(value).strip()
+    ]
+    return " ".join(parts)
+
+
 async def _notify_partner_about_new_referral(
     bot: Bot,
     *,
     referrer_telegram_id: int,
     referred: types.User | None,
 ) -> None:
-    referred_name = html.escape(
-        getattr(referred, "full_name", None) or "Новый пользователь"
-    )
     referred_id = getattr(referred, "id", None)
-    referred_username = getattr(referred, "username", None)
-    referred_line = (
-        f"@{html.escape(referred_username)}"
-        if referred_username
-        else f"ID <code>{referred_id}</code>"
-        if referred_id
-        else "Telegram ID не получен"
+    referred_username = _clean_telegram_username(getattr(referred, "username", None))
+    referred_name = _profile_display_name(referred)
+
+    if referred_id and not referred_username:
+        try:
+            stored_referred = await get_or_create_user(int(referred_id))
+        except Exception:
+            logger.debug(
+                "Unable to load stored referral profile for %s",
+                referred_id,
+                exc_info=True,
+            )
+        else:
+            referred_username = _clean_telegram_username(stored_referred.username)
+            referred_name = referred_name or _profile_display_name(stored_referred)
+
+    referred_name = html.escape(referred_name or "Новый пользователь")
+    referred_username_line = (
+        f"\n@{html.escape(referred_username)}" if referred_username else ""
     )
     text = (
         "🎉 <b>Новый реферал</b>\n\n"
-        f"К вам присоединился: <b>{referred_name}</b>\n"
-        f"{referred_line}\n\n"
+        f"К вам присоединился: <b>{referred_name}</b>{referred_username_line}\n\n"
         f"Начислено: <code>{PARTNER_INVITER_BONUS}</code>🍌 за регистрацию. "
         "Партнёрские начисления с оплат появятся в вашей статистике."
     )
@@ -312,6 +344,7 @@ def _feed_source_label(source_code: str) -> str:
         "r": "Новые",
         "d": "Топ дня",
         "t": "Топ",
+        "m": "Профиль",
     }.get(source_code, "Новые")
 
 
@@ -565,6 +598,7 @@ async def _build_feed_keyboard(
     photo_index: int,
     photos_count: int,
     source_code: str,
+    profile_code: str | None = None,
 ) -> types.InlineKeyboardMarkup:
     gen_id = int(card.get("id") or 0)
     author_referral_code = str(card.get("author_referral_code") or "").strip()
@@ -573,11 +607,21 @@ async def _build_feed_keyboard(
     rows: list[list[types.InlineKeyboardButton]] = [
         [
             types.InlineKeyboardButton(
-                text="◀️", callback_data=f"bf:{source_code}:{prev_index}:0"
+                text="◀️",
+                callback_data=(
+                    f"bfp:{profile_code}:{prev_index}:0"
+                    if profile_code
+                    else f"bf:{source_code}:{prev_index}:0"
+                ),
             ),
             types.InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data="noop"),
             types.InlineKeyboardButton(
-                text="▶️", callback_data=f"bf:{source_code}:{next_index}:0"
+                text="▶️",
+                callback_data=(
+                    f"bfp:{profile_code}:{next_index}:0"
+                    if profile_code
+                    else f"bf:{source_code}:{next_index}:0"
+                ),
             ),
         ]
     ]
@@ -589,7 +633,11 @@ async def _build_feed_keyboard(
             [
                 types.InlineKeyboardButton(
                     text="◀️ Фото",
-                    callback_data=f"bf:{source_code}:{index}:{prev_photo}",
+                    callback_data=(
+                        f"bfp:{profile_code}:{index}:{prev_photo}"
+                        if profile_code
+                        else f"bf:{source_code}:{index}:{prev_photo}"
+                    ),
                 ),
                 types.InlineKeyboardButton(
                     text=f"{photo_index + 1}/{photos_count}",
@@ -597,7 +645,11 @@ async def _build_feed_keyboard(
                 ),
                 types.InlineKeyboardButton(
                     text="Фото ▶️",
-                    callback_data=f"bf:{source_code}:{index}:{next_photo}",
+                    callback_data=(
+                        f"bfp:{profile_code}:{index}:{next_photo}"
+                        if profile_code
+                        else f"bf:{source_code}:{index}:{next_photo}"
+                    ),
                 ),
             ]
         )
@@ -616,7 +668,11 @@ async def _build_feed_keyboard(
     action_row = [
         types.InlineKeyboardButton(
             text=f"❤️ {int(card.get('likes_count') or 0)}",
-            callback_data=f"bfl:{gen_id}:{source_code}:{index}:{photo_index}",
+            callback_data=(
+                f"bflp:{gen_id}:{profile_code}:{index}:{photo_index}"
+                if profile_code
+                else f"bfl:{gen_id}:{source_code}:{index}:{photo_index}"
+            ),
         )
     ]
     username = await _bot_username(bot)
@@ -675,6 +731,7 @@ async def _render_feed_carousel(
     photo_index: int = 0,
     source_code: str = "r",
     replace_message: bool = False,
+    profile_code: str | None = None,
 ) -> None:
     if not cards:
         await _safe_show_text(
@@ -717,6 +774,7 @@ async def _render_feed_carousel(
         photo_index=photo_index,
         photos_count=len(photos),
         source_code=source_code,
+        profile_code=profile_code,
     )
 
     if not replace_message and getattr(message, "photo", None):
@@ -733,9 +791,15 @@ async def _render_feed_carousel(
         except TelegramBadRequest as e:
             if "message is not modified" in str(e).lower():
                 return
-            logger.info("Cannot edit feed media, sending new photo: %s", e)
+            logger.debug(
+                "Cannot edit feed media via remote URL, trying downloaded preview: %s",
+                e,
+            )
         except Exception as e:
-            logger.info("Cannot edit feed media, sending new photo: %s", e)
+            logger.debug(
+                "Cannot edit feed media via remote URL, trying downloaded preview: %s",
+                e,
+            )
 
         try:
             downloaded_photo = await _download_preview_photo(photo_url)
@@ -845,6 +909,61 @@ async def _render_feed_deeplink(message: types.Message, user, gen_id: str) -> bo
         cards,
         index=index,
         source_code="r",
+    )
+    return True
+
+
+async def _fetch_profile_feed_cards(
+    referral_code: str,
+    *,
+    viewer_user_id: int | None = None,
+) -> tuple[object | None, list[dict]]:
+    code = str(referral_code or "").strip().upper()
+    if not code:
+        return None, []
+    author = await get_user_by_referral_code(code)
+    if not author:
+        return None, []
+    cards = await get_user_feed_generations(author.id, limit=FEED_PAGE_LIMIT)
+    for card in cards:
+        card["is_mine"] = bool(viewer_user_id and author.id == viewer_user_id)
+    return author, cards
+
+
+async def _render_profile_feed_deeplink(
+    message: types.Message,
+    viewer_user,
+    referral_code: str,
+    *,
+    index: int = 0,
+    photo_index: int = 0,
+) -> bool:
+    author, cards = await _fetch_profile_feed_cards(
+        referral_code,
+        viewer_user_id=getattr(viewer_user, "id", None),
+    )
+    if not author:
+        await message.answer(
+            "🖼 <b>Профиль</b>\n\nАвтор не найден.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return True
+    if not cards:
+        await message.answer(
+            "🖼 <b>Профиль</b>\n\nУ автора пока нет опубликованных работ.",
+            reply_markup=get_back_keyboard(),
+            parse_mode="HTML",
+        )
+        return True
+
+    await _render_feed_carousel(
+        message,
+        cards,
+        index=index,
+        photo_index=photo_index,
+        source_code="m",
+        profile_code=str(referral_code or "").strip().upper(),
     )
     return True
 
@@ -1178,6 +1297,23 @@ async def navigate_feed(callback: types.CallbackQuery):
     await _safe_callback_answer(callback)
 
 
+@router.callback_query(F.data.startswith("bfp:"))
+async def navigate_profile_feed(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    referral_code = parts[1] if len(parts) > 1 else ""
+    index = _parse_int(parts[2], 0) if len(parts) > 2 else 0
+    photo_index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    viewer = await get_or_create_user(callback.from_user.id)
+    await _render_profile_feed_deeplink(
+        callback.message,
+        viewer,
+        referral_code,
+        index=index,
+        photo_index=photo_index,
+    )
+    await _safe_callback_answer(callback)
+
+
 @router.callback_query(F.data.startswith("bfl:"))
 async def like_feed_card(callback: types.CallbackQuery):
     parts = (callback.data or "").split(":")
@@ -1202,6 +1338,29 @@ async def like_feed_card(callback: types.CallbackQuery):
         index=refreshed_index,
         photo_index=photo_index,
         source_code=source_code,
+    )
+    await _safe_callback_answer(callback, "❤️ Готово")
+
+
+@router.callback_query(F.data.startswith("bflp:"))
+async def like_profile_feed_card(callback: types.CallbackQuery):
+    parts = (callback.data or "").split(":")
+    gen_id = _parse_int(parts[1], 0) if len(parts) > 1 else 0
+    referral_code = parts[2] if len(parts) > 2 else ""
+    index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    photo_index = _parse_int(parts[4], 0) if len(parts) > 4 else 0
+    viewer = await get_or_create_user(callback.from_user.id)
+    liked = await like_feed_generation(gen_id, viewer.id)
+    if not liked:
+        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
+        return
+
+    await _render_profile_feed_deeplink(
+        callback.message,
+        viewer,
+        referral_code,
+        index=index,
+        photo_index=photo_index,
     )
     await _safe_callback_answer(callback, "❤️ Готово")
 
@@ -1396,6 +1555,24 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await _render_prompt_deeplink(
             message,
             args[0].replace("prompt_", "", 1),
+        )
+        return
+
+    elif args and args[0].startswith("posts_"):
+        profile_code, referral_code = _split_feed_deeplink(
+            args[0].replace("posts_", "", 1)
+        )
+        referral_bonus_text = await _activate_referral_code(
+            message.bot,
+            message.from_user,
+            referral_code,
+        )
+        if referral_bonus_text:
+            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        await _render_profile_feed_deeplink(
+            message,
+            user,
+            profile_code,
         )
         return
 

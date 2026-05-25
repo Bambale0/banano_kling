@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List, Optional
@@ -62,6 +63,7 @@ class User:
     prompt_repeat_balance_rub: float = 0.0
     prompt_repeat_total_rub: float = 0.0
     partner_tier: str = "basic"
+    channel_url: Optional[str] = None
 
 
 @dataclass
@@ -497,6 +499,7 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN username TEXT",
             "ALTER TABLE users ADD COLUMN first_name TEXT",
             "ALTER TABLE users ADD COLUMN last_name TEXT",
+            "ALTER TABLE users ADD COLUMN channel_url TEXT",
         ):
             try:
                 await db.execute(statement)
@@ -735,6 +738,21 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS feed_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                generation_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (generation_id) REFERENCES generation_tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feed_comments_generation_created ON feed_comments(generation_id, created_at DESC)"
+        )
+
         # Backfill missing referral codes for existing users later in get_or_create_user
 
         # Миграция: добавляем колонку image_service если её нет
@@ -863,6 +881,11 @@ async def get_or_create_user(telegram_id: int) -> User:
                     if "partner_tier" in row.keys() and row["partner_tier"]
                     else "basic"
                 ),
+                channel_url=(
+                    row["channel_url"]
+                    if "channel_url" in row.keys() and row["channel_url"]
+                    else None
+                ),
             )
 
         # Создаём нового пользователя с бонусными кредитами
@@ -935,10 +958,25 @@ async def get_or_create_user(telegram_id: int) -> User:
                 if "partner_withdrawn_rub" in row.keys()
                 else 0.0
             ),
+            prompt_repeat_balance_rub=(
+                float(row["prompt_repeat_balance_rub"] or 0)
+                if "prompt_repeat_balance_rub" in row.keys()
+                else 0.0
+            ),
+            prompt_repeat_total_rub=(
+                float(row["prompt_repeat_total_rub"] or 0)
+                if "prompt_repeat_total_rub" in row.keys()
+                else 0.0
+            ),
             partner_tier=(
                 row["partner_tier"]
                 if "partner_tier" in row.keys() and row["partner_tier"]
                 else "basic"
+            ),
+            channel_url=(
+                row["channel_url"]
+                if "channel_url" in row.keys() and row["channel_url"]
+                else None
             ),
         )
 
@@ -976,6 +1014,48 @@ async def update_user_profile(
         )
         await db.commit()
         return True
+
+
+def _normalize_channel_url(channel_url: str) -> str:
+    raw = " ".join(str(channel_url or "").split()).strip()
+    if not raw:
+        return ""
+    if len(raw) > 160:
+        raise ValueError("Ссылка на канал слишком длинная")
+
+    username_match = re.fullmatch(r"@?([A-Za-z0-9_]{5,32})", raw)
+    if username_match:
+        return f"https://t.me/{username_match.group(1)}"
+
+    if raw.startswith("t.me/") or raw.startswith("telegram.me/"):
+        raw = f"https://{raw}"
+
+    match = re.fullmatch(
+        r"https?://(?:www\.)?(?:t\.me|telegram\.me)/([A-Za-z0-9_+/-]{1,96})/?",
+        raw,
+    )
+    if not match:
+        raise ValueError("Укажите Telegram-канал: @channel или https://t.me/channel")
+
+    path = match.group(1).strip("/")
+    return f"https://t.me/{path}"
+
+
+async def save_user_channel_url(telegram_id: int, channel_url: str) -> str:
+    """Stores the author's public Telegram channel link."""
+    normalized = _normalize_channel_url(channel_url)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """
+            UPDATE users
+            SET channel_url = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            """,
+            (normalized or None, telegram_id),
+        )
+        await db.commit()
+    return normalized
 
 
 async def generate_referral_code(db: Optional[aiosqlite.Connection] = None) -> str:
@@ -1055,10 +1135,25 @@ async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
                 if "partner_withdrawn_rub" in row.keys()
                 else 0.0
             ),
+            prompt_repeat_balance_rub=(
+                float(row["prompt_repeat_balance_rub"] or 0)
+                if "prompt_repeat_balance_rub" in row.keys()
+                else 0.0
+            ),
+            prompt_repeat_total_rub=(
+                float(row["prompt_repeat_total_rub"] or 0)
+                if "prompt_repeat_total_rub" in row.keys()
+                else 0.0
+            ),
             partner_tier=(
                 row["partner_tier"]
                 if "partner_tier" in row.keys() and row["partner_tier"]
                 else "basic"
+            ),
+            channel_url=(
+                row["channel_url"]
+                if "channel_url" in row.keys() and row["channel_url"]
+                else None
             ),
         )
 
@@ -1072,6 +1167,35 @@ async def update_user_referral_code(telegram_id: int, referral_code: str) -> boo
         )
         await db.commit()
         return True
+
+
+async def _referral_chain_contains(
+    db: aiosqlite.Connection,
+    *,
+    start_user_id: int,
+    target_user_id: int,
+) -> bool:
+    """Returns True if target is already in start_user_id's referral ancestry."""
+    current_id = start_user_id
+    seen: set[int] = set()
+
+    for _ in range(100):
+        if current_id == target_user_id:
+            return True
+        if current_id in seen:
+            return True
+        seen.add(current_id)
+
+        cursor = await db.execute(
+            "SELECT referred_by FROM users WHERE id = ?",
+            (current_id,),
+        )
+        row = await cursor.fetchone()
+        if not row or not row["referred_by"]:
+            return False
+        current_id = int(row["referred_by"])
+
+    return True
 
 
 async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool:
@@ -1093,15 +1217,33 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
             return False
         if user_row["id"] == ref_row["id"]:
             return False
+        if await _referral_chain_contains(
+            db,
+            start_user_id=ref_row["id"],
+            target_user_id=user_row["id"],
+        ):
+            return False
 
-        await db.execute(
-            "UPDATE users SET referred_by = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (ref_row["id"], telegram_id),
+        update_cursor = await db.execute(
+            """
+            UPDATE users
+            SET referred_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+              AND referred_by IS NULL
+              AND id != ?
+            """,
+            (ref_row["id"], telegram_id, ref_row["id"]),
         )
-        await db.execute(
+        if update_cursor.rowcount != 1:
+            await db.rollback()
+            return False
+        insert_cursor = await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
             (ref_row["id"], user_row["id"]),
         )
+        if insert_cursor.rowcount != 1:
+            await db.rollback()
+            return False
         await db.commit()
         return True
 
@@ -1129,7 +1271,21 @@ async def process_referral(
             return False
 
         referred_cursor = await db.execute(
-            "SELECT id, referred_by FROM users WHERE telegram_id = ?",
+            """
+            SELECT
+                u.id,
+                u.referred_by,
+                COALESCE(u.has_paid, 0) AS has_paid,
+                EXISTS(
+                    SELECT 1
+                    FROM transactions t
+                    WHERE t.user_id = u.id
+                      AND t.status = 'completed'
+                    LIMIT 1
+                ) AS has_completed_payment
+            FROM users u
+            WHERE u.telegram_id = ?
+            """,
             (referred_telegram_id,),
         )
         referred = await referred_cursor.fetchone()
@@ -1137,15 +1293,43 @@ async def process_referral(
             return False
         if referred["id"] == referrer["id"]:
             return False
+        if referred["has_paid"] or referred["has_completed_payment"]:
+            return False
+        if await _referral_chain_contains(
+            db,
+            start_user_id=referrer["id"],
+            target_user_id=referred["id"],
+        ):
+            return False
 
-        await db.execute(
-            "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (referrer["id"], signup_bonus, referred_telegram_id),
+        update_cursor = await db.execute(
+            """
+            UPDATE users
+            SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+              AND referred_by IS NULL
+              AND id != ?
+              AND COALESCE(has_paid, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM transactions t
+                  WHERE t.user_id = users.id
+                    AND t.status = 'completed'
+                  LIMIT 1
+              )
+            """,
+            (referrer["id"], signup_bonus, referred_telegram_id, referrer["id"]),
         )
-        await db.execute(
+        if update_cursor.rowcount != 1:
+            await db.rollback()
+            return False
+        insert_cursor = await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, ?)",
             (referrer["id"], referred["id"], signup_bonus),
         )
+        if insert_cursor.rowcount != 1:
+            await db.rollback()
+            return False
         await db.execute(
             "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (inviter_bonus, inviter_bonus, referrer["id"]),
@@ -1180,7 +1364,15 @@ async def credit_referral_commission(
             (telegram_id,),
         )
         user = await cursor.fetchone()
-        if not user or not user["referred_by"]:
+        if not user:
+            return {"mode": "none", "value": 0, "percent": 0}
+        if not user["referred_by"]:
+            if not user["has_paid"]:
+                await db.execute(
+                    "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (user["id"],),
+                )
+                await db.commit()
             return {"mode": "none", "value": 0, "percent": 0}
 
         base_value = float(
@@ -1335,9 +1527,13 @@ async def get_partner_overview(telegram_id: int) -> dict:
                    COALESCE(SUM(CASE WHEN date(t.created_at) = date('now') THEN t.amount_rub ELSE 0 END), 0) as today_revenue,
                    COALESCE(SUM(CASE WHEN date(t.created_at) = date('now') THEN 1 ELSE 0 END), 0) as today_payments,
                    COALESCE(SUM(CASE WHEN date(t.created_at) >= date('now', '-7 day') THEN 1 ELSE 0 END), 0) as active_7d
-            FROM transactions t
-            JOIN users u ON u.id = t.user_id
-            WHERE u.referred_by = ? AND t.status = 'completed'
+            FROM referrals r
+            JOIN users u ON u.id = r.referred_id
+            JOIN transactions t ON t.user_id = u.id
+            WHERE r.referrer_id = ?
+              AND u.referred_by = r.referrer_id
+              AND t.status = 'completed'
+              AND datetime(t.created_at) >= datetime(r.created_at)
             """,
             (target_user_id,),
         )
@@ -1401,6 +1597,7 @@ async def get_partner_overview(telegram_id: int) -> dict:
             "monthly_revenue": round(pay_row["monthly_revenue"] or 0, 2),
             "today_payments": pay_row["today_payments"] or 0,
             "today_revenue": round(pay_row["today_revenue"] or 0, 2),
+            "channel_url": target_user.channel_url or "",
         }
 
 
@@ -1565,6 +1762,11 @@ async def get_admin_partner_details(
             if "prompt_repeat_total_rub" in user_row.keys()
             else 0.0,
             partner_tier=user_row["partner_tier"] or "basic",
+            channel_url=(
+                user_row["channel_url"]
+                if "channel_url" in user_row.keys() and user_row["channel_url"]
+                else None
+            ),
         )
 
         overview = await get_partner_overview(telegram_id)
@@ -1574,27 +1776,43 @@ async def get_admin_partner_details(
             SELECT
                 u.telegram_id,
                 u.credits,
-                u.has_paid,
+                CASE
+                    WHEN COALESCE(u.has_paid, 0) = 1
+                      OR EXISTS (
+                          SELECT 1
+                          FROM transactions paid_t
+                          WHERE paid_t.user_id = u.id
+                            AND paid_t.status = 'completed'
+                          LIMIT 1
+                      )
+                    THEN 1
+                    ELSE 0
+                END AS has_paid,
                 u.created_at,
+                r.created_at AS referral_created_at,
                 COALESCE((
                     SELECT SUM(t.amount_rub)
                     FROM transactions t
                     WHERE t.user_id = u.id
                       AND t.status = 'completed'
+                      AND datetime(t.created_at) >= datetime(r.created_at)
                 ), 0) AS spent_rub,
                 COALESCE((
                     SELECT COUNT(*)
                     FROM transactions t
                     WHERE t.user_id = u.id
                       AND t.status = 'completed'
+                      AND datetime(t.created_at) >= datetime(r.created_at)
                 ), 0) AS payments_count,
                 (
                     SELECT COUNT(*)
                     FROM users subref
                     WHERE subref.referred_by = u.id
                 ) AS subrefs_count
-            FROM users u
-            WHERE u.referred_by = ?
+            FROM referrals r
+            JOIN users u ON u.id = r.referred_id
+            WHERE r.referrer_id = ?
+              AND u.referred_by = r.referrer_id
             ORDER BY spent_rub DESC, u.created_at DESC
             LIMIT ?
             """,
@@ -2496,6 +2714,11 @@ async def _remove_saved_reference_file(file_url: str) -> None:
         logger.exception("Failed to remove saved reference file: %s", file_url)
 
 
+async def _remove_saved_reference_files(file_urls: list[str]) -> None:
+    for file_url in dict.fromkeys(url for url in file_urls if url):
+        await _remove_saved_reference_file(file_url)
+
+
 async def _prune_saved_references_for_user_id(
     db: aiosqlite.Connection,
     *,
@@ -2550,19 +2773,22 @@ async def prune_saved_references_for_user(
     user = await get_or_create_user(telegram_id)
     target_kinds = [kind] if kind in {"image", "video", "audio"} else ["image", "video", "audio"]
     removed_count = 0
+    removable_urls: list[str] = []
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         for target_kind in target_kinds:
-            deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+            deleted_count, deletable_urls = await _prune_saved_references_for_user_id(
                 db,
                 user_id=user.id,
                 kind=target_kind,
                 keep_latest=keep_latest,
             )
             removed_count += deleted_count
+            removable_urls.extend(deletable_urls)
         await db.commit()
 
     if removed_count:
+        await _remove_saved_reference_files(removable_urls)
         await _invalidate_saved_reference_cache(telegram_id)
     return removed_count
 
@@ -2570,6 +2796,7 @@ async def prune_saved_references_for_user(
 async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND) -> int:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
     removed_count = 0
+    removable_urls: list[str] = []
     telegram_ids: set[int] = set()
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -2587,22 +2814,137 @@ async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_K
         groups = await cursor.fetchall()
 
         for group in groups:
-            deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+            deleted_count, deletable_urls = await _prune_saved_references_for_user_id(
                 db,
                 user_id=int(group["user_id"]),
                 kind=str(group["kind"]),
                 keep_latest=safe_keep_latest,
             )
             removed_count += deleted_count
+            removable_urls.extend(deletable_urls)
             if group["telegram_id"]:
                 telegram_ids.add(int(group["telegram_id"]))
 
         await db.commit()
 
+    if removable_urls:
+        await _remove_saved_reference_files(removable_urls)
+
     for telegram_id in telegram_ids:
         await _invalidate_saved_reference_cache(telegram_id)
 
     return removed_count
+
+
+async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> dict[str, int]:
+    base_dir = os.path.join("static", "uploads", "refs")
+    if not os.path.exists(base_dir):
+        return {"removed_count": 0, "removed_bytes": 0}
+
+    from bot.services.media_input_utils import resolve_local_upload_path
+
+    referenced_paths: set[str] = set()
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
+        )
+        rows = await cursor.fetchall()
+
+    for row in rows:
+        local_path = resolve_local_upload_path(str(row[0] or ""))
+        if local_path:
+            referenced_paths.add(os.path.abspath(local_path))
+
+    now = time.time()
+    removed_count = 0
+    removed_bytes = 0
+
+    for root, dirs, files in os.walk(base_dir, topdown=False):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                if os.path.abspath(path) in referenced_paths:
+                    continue
+                if now - os.path.getmtime(path) <= max_age_seconds:
+                    continue
+                removed_bytes += os.path.getsize(path)
+                os.remove(path)
+                removed_count += 1
+            except FileNotFoundError:
+                continue
+            except Exception:
+                logger.exception("Failed to remove orphaned reference file: %s", path)
+
+        for dirname in dirs:
+            directory = os.path.join(root, dirname)
+            try:
+                if not os.listdir(directory):
+                    os.rmdir(directory)
+            except OSError:
+                pass
+
+    return {"removed_count": removed_count, "removed_bytes": removed_bytes}
+
+
+async def cleanup_stale_local_generation_tasks(
+    max_age_seconds: int = 60 * 60,
+) -> dict[str, float | int]:
+    """Fail old local image tasks that never received a provider task id."""
+    from bot.config import config
+
+    cutoff_modifier = f"-{max(60, int(max_age_seconds))} seconds"
+    refunded_credits = 0.0
+    failed_count = 0
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT id, user_id, telegram_id, task_id, COALESCE(cost, 0) AS cost
+            FROM generation_tasks
+            WHERE status = 'pending'
+              AND type = 'image'
+              AND task_id LIKE 'img_%'
+              AND datetime(created_at) < datetime('now', ?)
+            """,
+            (cutoff_modifier,),
+        )
+        rows = await cursor.fetchall()
+
+        for row in rows:
+            result = await db.execute(
+                """
+                UPDATE generation_tasks
+                SET status = 'failed',
+                    result_url = NULL,
+                    completed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'pending'
+                """,
+                (int(row["id"]),),
+            )
+            if result.rowcount <= 0:
+                continue
+
+            failed_count += 1
+            cost = float(row["cost"] or 0)
+            telegram_id = int(row["telegram_id"] or 0)
+            if cost > 0 and telegram_id and not config.is_admin(telegram_id):
+                await db.execute(
+                    "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (cost, int(row["user_id"])),
+                )
+                refunded_credits += cost
+
+        await db.commit()
+
+    if failed_count:
+        logger.info(
+            "Cleaned stale local generation tasks: failed=%s refunded_credits=%s",
+            failed_count,
+            refunded_credits,
+        )
+    return {"failed_count": failed_count, "refunded_credits": refunded_credits}
 
 
 async def get_saved_reference_by_hash(telegram_id: int, kind: str, file_hash: str) -> Optional[SavedReference]:
@@ -2681,6 +3023,7 @@ async def save_user_reference(
     source: str = "telegram",
 ) -> SavedReference:
     user = await get_or_create_user(telegram_id)
+    removable_urls: list[str] = []
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute(
@@ -2698,7 +3041,7 @@ async def save_user_reference(
             (user.id, kind, file_url, file_hash, original_filename, content_type, source),
         )
         await db.commit()
-        deleted_count, _deletable_urls = await _prune_saved_references_for_user_id(
+        _deleted_count, removable_urls = await _prune_saved_references_for_user_id(
             db,
             user_id=user.id,
             kind=kind,
@@ -2715,6 +3058,8 @@ async def save_user_reference(
             (user.id, kind, file_hash),
         )
         row = await cursor.fetchone()
+    if removable_urls:
+        await _remove_saved_reference_files(removable_urls)
     await _invalidate_saved_reference_cache(telegram_id)
     return _saved_reference_from_row(row)
 
@@ -3643,6 +3988,7 @@ def _generation_row_to_card(
     viewer_user_id: Optional[int] = None,
 ) -> dict[str, Any]:
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
+    comments_count = int(row["comments_count"] or 0) if "comments_count" in row.keys() else 0
     author = _author_display_name(row)
     return {
         "id": row["id"],
@@ -3654,6 +4000,7 @@ def _generation_row_to_card(
         "prompt": "" if generation_prompt_hidden(row) else str(row["prompt"] or ""),
         "likes_count": int(row["likes_count"] or 0),
         "shares_count": int(row["shares_count"] or 0),
+        "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "author": author,
         "author_referral_code": (
@@ -3702,7 +4049,12 @@ async def get_feed_generations(
                        FROM generation_tasks child
                        WHERE child.parent_generation_id = gt.id
                          AND child.status = 'completed'
-                   ) AS remix_count
+                   ) AS remix_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM feed_comments fc
+                       WHERE fc.generation_id = gt.id
+                   ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
@@ -3735,7 +4087,12 @@ async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict
                        FROM generation_tasks child
                        WHERE child.parent_generation_id = gt.id
                          AND child.status = 'completed'
-                   ) AS remix_count
+                   ) AS remix_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM feed_comments fc
+                       WHERE fc.generation_id = gt.id
+                   ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE gt.user_id = ? AND gt.is_public_feed = 1
@@ -3776,7 +4133,12 @@ async def get_feed_generation_card(
                        FROM generation_tasks child
                        WHERE child.parent_generation_id = gt.id
                          AND child.status = 'completed'
-                   ) AS remix_count
+                   ) AS remix_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM feed_comments fc
+                       WHERE fc.generation_id = gt.id
+                   ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {clause}
@@ -3794,6 +4156,121 @@ async def get_feed_generation_card(
 
 async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, Any]]:
     return await get_feed_generation_card(gen_id)
+
+
+def _feed_comment_row_to_payload(
+    row: aiosqlite.Row,
+    *,
+    viewer_user_id: Optional[int] = None,
+) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "gen_id": row["generation_id"],
+        "text": row["text"],
+        "author": _author_display_name(row),
+        "author_referral_code": (
+            row["author_referral_code"]
+            if "author_referral_code" in row.keys()
+            else None
+        ),
+        "is_mine": bool(viewer_user_id and row["user_id"] == viewer_user_id),
+        "created_at": row["created_at"],
+    }
+
+
+async def get_feed_comments(
+    gen_id: int | str,
+    *,
+    limit: int = 80,
+    viewer_user_id: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 80), 1), 150)
+    try:
+        internal_id = int(gen_id)
+    except (TypeError, ValueError):
+        return []
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT fc.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code
+            FROM feed_comments fc
+            LEFT JOIN users u ON u.id = fc.user_id
+            WHERE fc.generation_id = ?
+            ORDER BY fc.created_at DESC, fc.id DESC
+            LIMIT ?
+            """,
+            (internal_id, safe_limit),
+        )
+        rows = await cursor.fetchall()
+    return [
+        _feed_comment_row_to_payload(row, viewer_user_id=viewer_user_id)
+        for row in reversed(rows)
+    ]
+
+
+async def add_feed_comment(
+    gen_id: int | str,
+    user_id: int,
+    text: str,
+) -> Optional[dict[str, Any]]:
+    normalized = " ".join(str(text or "").split()).strip()
+    if not normalized:
+        return None
+    normalized = normalized[:500]
+    try:
+        internal_id = int(gen_id)
+    except (TypeError, ValueError):
+        return None
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        generation_cursor = await db.execute(
+            """
+            SELECT id
+            FROM generation_tasks
+            WHERE id = ?
+              AND type = 'image'
+              AND status = 'completed'
+              AND result_url IS NOT NULL
+              AND is_public_feed = 1
+            LIMIT 1
+            """,
+            (internal_id,),
+        )
+        generation = await generation_cursor.fetchone()
+        if not generation:
+            return None
+
+        cursor = await db.execute(
+            """
+            INSERT INTO feed_comments (generation_id, user_id, text)
+            VALUES (?, ?, ?)
+            """,
+            (internal_id, user_id, normalized),
+        )
+        comment_id = cursor.lastrowid
+        await db.commit()
+
+        row_cursor = await db.execute(
+            """
+            SELECT fc.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code
+            FROM feed_comments fc
+            LEFT JOIN users u ON u.id = fc.user_id
+            WHERE fc.id = ?
+            """,
+            (comment_id,),
+        )
+        row = await row_cursor.fetchone()
+    return _feed_comment_row_to_payload(row, viewer_user_id=user_id) if row else None
 
 
 async def get_generation_task_payload(

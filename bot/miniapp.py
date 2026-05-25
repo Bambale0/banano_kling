@@ -18,6 +18,7 @@ from bot.database import (
     MAX_ACTIVE_PROMPTS_PER_USER,
     SavedReference,
     add_credits,
+    add_feed_comment,
     add_generation_task,
     approve_prompt,
     check_can_afford,
@@ -31,6 +32,7 @@ from bot.database import (
     get_approved_prompts,
     get_and_clear_miniapp_notifications,
     get_author_prompts,
+    get_feed_comments,
     get_feed_generation_card,
     get_feed_generations,
     get_generation_task_payload,
@@ -40,6 +42,7 @@ from bot.database import (
     get_prompt_by_id,
     get_prompts_by_tag,
     get_top_prompts,
+    get_user_by_referral_code,
     get_user_feed_generations,
     get_user_stats,
     increment_feed_share,
@@ -49,6 +52,7 @@ from bot.database import (
     reject_prompt,
     remove_from_feed,
     remove_from_library,
+    save_user_channel_url,
     share_to_feed,
     share_to_library,
     touch_saved_references,
@@ -86,6 +90,7 @@ from bot.keyboards import (
 )
 from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
+from bot.services.media_input_utils import missing_local_upload_sources
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.preset_manager import preset_manager
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
@@ -1460,13 +1465,39 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         telegram_id, ctx = await _get_user_context(request.app, init_data)
         user = ctx["user"]
+        telegram_user = ctx["payload"]["user"]
         me = await request.app["bot"].get_me()
+        profile_link = (
+            f"https://t.me/{me.username}?start=posts_{user.referral_code}_ref_{user.referral_code}"
+            if me.username and user.referral_code
+            else config.mini_app_url
+        )
+        referral_link = (
+            f"https://t.me/{me.username}?start=ref_{user.referral_code}"
+            if me.username and user.referral_code
+            else config.mini_app_url
+        )
         recent_tasks = await _fetch_recent_tasks(telegram_id)
+        partner_stats = await get_partner_overview(telegram_id)
         data = {
             "ok": True,
             "telegram_id": telegram_id,
             "credits": user.credits,
-            "first_name": ctx["payload"]["user"].get("first_name", ""),
+            "first_name": telegram_user.get("first_name", ""),
+            "last_name": telegram_user.get("last_name", ""),
+            "telegram_username": telegram_user.get("username", ""),
+            "photo_url": telegram_user.get("photo_url", ""),
+            "referral_code": user.referral_code or "",
+            "profile_link": profile_link,
+            "referral_link": referral_link,
+            "channel_url": user.channel_url or "",
+            "prompt_repeat_balance_rub": float(
+                partner_stats.get("prompt_repeat_balance_rub", 0) or 0
+            ),
+            "prompt_repeat_total_rub": float(
+                partner_stats.get("prompt_repeat_total_rub", 0) or 0
+            ),
+            "bot_username": me.username,
             "username": me.username,
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
@@ -1724,6 +1755,10 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 "prompt_ru": result["prompt_ru"],
                 "negative_prompt": result["negative_prompt"],
                 "model_hint": result["model_hint"],
+                "gemini_omni_prompt": result.get("gemini_omni_prompt", ""),
+                "voice_transcript": result.get("voice_transcript", ""),
+                "voice_prompt_summary_ru": result.get("voice_prompt_summary_ru", ""),
+                "voice_description_ru": result.get("voice_description_ru", ""),
                 "key_details": result.get("key_details", []),
             }
         )
@@ -1952,6 +1987,85 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int | None = None) -> dict[str, Any]:
+    referral_code = str(getattr(author, "referral_code", "") or "").strip().upper()
+    username = str(getattr(author, "username", "") or "").strip().lstrip("@")
+    first_name = str(getattr(author, "first_name", "") or "").strip()
+    last_name = str(getattr(author, "last_name", "") or "").strip()
+    display_name = " ".join(part for part in (first_name, last_name) if part)
+    if not display_name:
+        display_name = username or f"user_{getattr(author, 'telegram_id', '') or getattr(author, 'id', '')}"
+
+    profile_link = (
+        f"https://t.me/{bot_username}?start=posts_{referral_code}_ref_{referral_code}"
+        if bot_username and referral_code
+        else config.mini_app_url
+    )
+    referral_link = (
+        f"https://t.me/{bot_username}?start=ref_{referral_code}"
+        if bot_username and referral_code
+        else config.mini_app_url
+    )
+    return {
+        "referral_code": referral_code,
+        "first_name": first_name,
+        "last_name": last_name,
+        "username": username,
+        "display_name": display_name,
+        "photo_url": "",
+        "profile_link": profile_link,
+        "referral_link": referral_link,
+        "channel_url": getattr(author, "channel_url", None) or "",
+        "is_me": bool(viewer_user_id and getattr(author, "id", None) == viewer_user_id),
+    }
+
+
+async def miniapp_profile_feed(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        referral_code = str(body.get("referral_code", "") or "").strip().upper()
+        limit = min(max(int(body.get("limit", 120) or 120), 1), 300)
+        if not referral_code:
+            return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
+
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        author = await get_user_by_referral_code(referral_code)
+        if not author:
+            return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
+
+        feed = await get_user_feed_generations(author.id, limit=limit)
+        is_mine = bool(author.id == ctx["user"].id)
+        for item in feed:
+            item["is_mine"] = is_mine
+
+        me = await request.app["bot"].get_me()
+        profile = _miniapp_profile_payload(
+            author,
+            me.username or "",
+            viewer_user_id=ctx["user"].id,
+        )
+        return web.json_response({"ok": True, "profile": profile, "feed": feed})
+    except Exception as e:
+        logger.exception("Mini App profile feed failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_profile_channel_save(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        channel_url = str(body.get("channel_url", "") or "")
+        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        normalized = await save_user_channel_url(telegram_id, channel_url)
+        return web.json_response({"ok": True, "channel_url": normalized})
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("Mini App profile channel save failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def miniapp_generation_share(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
@@ -2019,6 +2133,50 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "feed_item": card, "link": link})
     except Exception as e:
         logger.exception("Mini App feed share failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_comments(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        limit = min(max(int(body.get("limit", 80) or 80), 1), 150)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        comments = await get_feed_comments(
+            gen_id,
+            limit=limit,
+            viewer_user_id=ctx["user"].id,
+        )
+        return web.json_response({"ok": True, "comments": comments})
+    except Exception as e:
+        logger.exception("Mini App feed comments failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id")
+        text = str(body.get("text", "") or "")
+        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        comment = await add_feed_comment(gen_id, ctx["user"].id, text)
+        if not comment:
+            return web.json_response(
+                {"ok": False, "error": "Комментарий не удалось добавить"},
+                status=400,
+            )
+        card = await get_feed_generation_card(gen_id, viewer_user_id=ctx["user"].id)
+        return web.json_response(
+            {
+                "ok": True,
+                "comment": comment,
+                "comments_count": int((card or {}).get("comments_count") or 0),
+            }
+        )
+    except Exception as e:
+        logger.exception("Mini App feed comment add failed")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
@@ -2092,6 +2250,14 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if len(references) > model_meta["max_references"]:
             return web.json_response(
                 {"ok": False, "error": f"Слишком много референсов. Максимум: {model_meta['max_references']}"},
+                status=400,
+            )
+        if missing_local_upload_sources(references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Один или несколько старых референсов уже удалены. Загрузите фото заново.",
+                },
                 status=400,
             )
 
@@ -2263,6 +2429,14 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": f"Слишком много референсов. Максимум: {model_meta['max_references']}",
+                },
+                status=400,
+            )
+        if missing_local_upload_sources(references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Один или несколько старых референсов уже удалены. Загрузите фото заново.",
                 },
                 status=400,
             )
@@ -2872,6 +3046,7 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
                 "prompt_repeat_total_rub": float(
                     stats.get("prompt_repeat_total_rub", 0) or 0
                 ),
+                "channel_url": user.channel_url or "",
                 "referral_link": referral_link,
                 "status": "partner" if stats.get("is_partner") else "basic",
             }
@@ -3047,8 +3222,14 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/admin/prompts/moderate", miniapp_prompt_moderate)
     app.router.add_post(miniapp_root + "/api/feed", miniapp_feed)
     app.router.add_post(miniapp_root + "/api/feed/my", miniapp_my_feed)
+    app.router.add_get(miniapp_root + "/api/feed/profile", miniapp_profile_feed)
+    app.router.add_post(miniapp_root + "/api/feed/profile", miniapp_profile_feed)
+    app.router.add_post(miniapp_root + "/api/profile/channel", miniapp_profile_channel_save)
     app.router.add_post(miniapp_root + "/api/feed/like", miniapp_feed_like)
     app.router.add_post(miniapp_root + "/api/feed/share", miniapp_feed_share)
+    app.router.add_get(miniapp_root + "/api/feed/comments", miniapp_feed_comments)
+    app.router.add_post(miniapp_root + "/api/feed/comments", miniapp_feed_comments)
+    app.router.add_post(miniapp_root + "/api/feed/comment", miniapp_feed_comment_add)
     app.router.add_post(miniapp_root + "/api/feed/remove", miniapp_feed_remove)
     app.router.add_post(miniapp_root + "/api/feed/remix", miniapp_feed_remix)
     app.router.add_post(miniapp_root + "/api/generations/share", miniapp_generation_share)
@@ -3075,6 +3256,13 @@ def setup_miniapp_routes(app: web.Application):
     api_v1_root = "/api/v1"
     app.router.add_get(api_v1_root + "/feed", miniapp_feed)
     app.router.add_get(api_v1_root + "/me/feed", miniapp_my_feed)
+    app.router.add_get(api_v1_root + "/feed/profile", miniapp_profile_feed)
+    app.router.add_post(api_v1_root + "/feed/profile", miniapp_profile_feed)
+    app.router.add_get(api_v1_root + "/profiles/{referral_code}/feed", miniapp_profile_feed)
+    app.router.add_post(api_v1_root + "/profiles/{referral_code}/feed", miniapp_profile_feed)
+    app.router.add_post(api_v1_root + "/me/channel", miniapp_profile_channel_save)
+    app.router.add_get(api_v1_root + "/feed/{gen_id}/comments", miniapp_feed_comments)
+    app.router.add_post(api_v1_root + "/feed/{gen_id}/comments", miniapp_feed_comment_add)
     app.router.add_post(api_v1_root + "/generations/{gen_id}/share", miniapp_generation_share)
     app.router.add_post(api_v1_root + "/generations/{gen_id}/publish", miniapp_generation_share)
     app.router.add_post(

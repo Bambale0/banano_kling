@@ -1,6 +1,7 @@
-"""Photo to prompt service via Kie GPT 5.4 Responses API with Claude Haiku fallback."""
+"""Photo to prompt service via Kie GPT 5.5 Responses API with Claude Haiku fallback."""
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -11,25 +12,32 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
-GPT54_MAX_ATTEMPTS = 3
-GPT54_RETRYABLE_BODY_CODES = {429}
+GPT55_MAX_ATTEMPTS = 3
+GPT55_RETRYABLE_BODY_CODES = {429}
 CLAUDE_MAX_ATTEMPTS = 2
 
 
 SYSTEM_PROMPT = """
-You are a professional photo-to-prompt analyst for AI image generation.
+You are a professional prompt analyst for AI image generation.
 
 Your task:
-Analyze the reference image and create a precise generation prompt that can recreate a visually similar image.
+Analyze the attached reference image and/or voice prompt, then create a precise generation prompt.
+If both image and audio are attached, listen to the audio in the same analysis pass and combine it with the reference image.
+If only audio is attached, turn the spoken request into a strong standalone prompt.
 
 Strict rules:
 - Do not identify any person.
 - Do not guess names, age, ethnicity, nationality, or private attributes.
+- Do not identify the speaker in the audio.
+- Do not infer the speaker's private attributes from the audio.
 - Describe only visible visual features.
+- If no image is attached, do not invent image-specific details beyond the user's spoken request.
 - Preserve subject identity visually through neutral descriptions: face shape, hair, pose, clothing, proportions, accessories, but do not claim who the person is.
 - If the image contains a person, focus on: composition, pose, expression, hairstyle, clothing, lighting, background, camera angle, lens feel, color grading, mood.
 - If the image contains a product/object, focus on: object shape, material, colors, surface texture, lighting, camera angle, environment, composition.
+- If audio is attached, transcribe/summarize only the user's creative request and neutral voice qualities such as tone, pace and emotion.
 - The main prompt must be in English and optimized for image generation models.
+- Also create a Gemini Omni prompt when audio is attached or when it is useful for video/image workflows.
 - Return only valid JSON. No markdown. No explanation.
 
 JSON schema:
@@ -38,7 +46,11 @@ JSON schema:
   "prompt_ru": "Natural Russian version for the user",
   "negative_prompt": "Common defects to avoid",
   "model_hint": "Short Russian recommendation which model to use",
-  "key_details": ["detail 1", "detail 2", "detail 3"]
+  "key_details": ["detail 1", "detail 2", "detail 3"],
+  "voice_transcript": "Transcript of attached voice/audio prompt, or empty string",
+  "voice_prompt_summary_ru": "Short Russian summary of the attached voice/audio prompt, or empty string",
+  "voice_description_ru": "Neutral Russian description of voice/tone/pace/emotion, or empty string",
+  "gemini_omni_prompt": "Optional polished prompt for Gemini Omni video/image workflows when voice context asks for it"
 }
 """.strip()
 
@@ -120,6 +132,10 @@ def _build_result(parsed: Dict[str, Any], *, provider: str = "") -> Dict[str, An
     prompt_ru = str(parsed.get("prompt_ru") or "").strip()
     negative_prompt = str(parsed.get("negative_prompt") or "").strip()
     model_hint = str(parsed.get("model_hint") or "").strip()
+    gemini_omni_prompt = str(parsed.get("gemini_omni_prompt") or "").strip()
+    voice_transcript = str(parsed.get("voice_transcript") or "").strip()
+    voice_prompt_summary_ru = str(parsed.get("voice_prompt_summary_ru") or "").strip()
+    voice_description_ru = str(parsed.get("voice_description_ru") or "").strip()
     key_details = parsed.get("key_details") or []
 
     if not prompt_en:
@@ -143,26 +159,76 @@ def _build_result(parsed: Dict[str, Any], *, provider: str = "") -> Dict[str, An
         "prompt_ru": prompt_ru,
         "negative_prompt": negative_prompt,
         "model_hint": model_hint,
+        "gemini_omni_prompt": gemini_omni_prompt,
+        "voice_transcript": voice_transcript,
+        "voice_prompt_summary_ru": voice_prompt_summary_ru,
+        "voice_description_ru": voice_description_ru,
         "key_details": key_details if isinstance(key_details, list) else [],
         "provider": provider,
         "raw": parsed,
     }
 
 
-class PhotoPromptService:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or config.KIE_AI_API_KEY
-        self.base_url = "https://api.kie.ai"
+def _build_gpt_audio_content(
+    *,
+    audio_bytes: bytes,
+    audio_format: str,
+) -> Dict[str, Any]:
+    return {
+        "type": "input_audio",
+        "input_audio": {
+            "data": base64.b64encode(audio_bytes).decode("ascii"),
+            "format": audio_format,
+        },
+    }
 
-    async def _analyze_with_gpt54(
+
+def _build_gpt_user_content(
+    *,
+    user_instruction: str,
+    image_url: str = "",
+    audio_bytes: bytes | None = None,
+    audio_format: str = "",
+) -> list[Dict[str, Any]]:
+    content: list[Dict[str, Any]] = [
+        {"type": "input_text", "text": user_instruction},
+    ]
+
+    if image_url:
+        content.append({"type": "input_image", "image_url": image_url})
+
+    if audio_bytes:
+        content.append(
+            _build_gpt_audio_content(
+                audio_bytes=audio_bytes,
+                audio_format=audio_format or "ogg",
+            )
+        )
+
+    return content
+
+
+class PhotoPromptService:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        self.api_key = api_key or config.KIE_AI_API_KEY
+        self.model = model or config.PHOTO_PROMPT_MODEL
+        self.base_url = config.KIE_BASE_URL
+
+    async def _analyze_with_gpt55(
         self,
         *,
         image_url: str,
         user_instruction: str,
         headers: Dict[str, str],
+        audio_bytes: bytes | None = None,
+        audio_format: str = "",
     ) -> Dict[str, Any]:
         payload = {
-            "model": "gpt-5-4",
+            "model": self.model,
             "stream": False,
             "input": [
                 {
@@ -171,10 +237,12 @@ class PhotoPromptService:
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": user_instruction},
-                        {"type": "input_image", "image_url": image_url},
-                    ],
+                    "content": _build_gpt_user_content(
+                        user_instruction=user_instruction,
+                        image_url=image_url,
+                        audio_bytes=audio_bytes,
+                        audio_format=audio_format,
+                    ),
                 },
             ],
             "reasoning": {"effort": "high"},
@@ -183,7 +251,7 @@ class PhotoPromptService:
         timeout = aiohttp.ClientTimeout(total=120)
         data: Optional[Dict[str, Any]] = None
 
-        for attempt in range(GPT54_MAX_ATTEMPTS):
+        for attempt in range(GPT55_MAX_ATTEMPTS):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{self.base_url}/codex/v1/responses",
@@ -194,33 +262,36 @@ class PhotoPromptService:
 
                     if response.status >= 500:
                         logger.info(
-                            "GPT-5.4 HTTP 5xx, fast fallback: status=%s body=%s",
+                            "GPT-5.5 HTTP 5xx, fast fallback: status=%s body=%s",
                             response.status,
                             text[:500],
                         )
+                        if audio_bytes and attempt < GPT55_MAX_ATTEMPTS - 1:
+                            await asyncio.sleep(2**attempt)
+                            continue
                         raise RuntimeError(
-                            f"GPT-5.4 недоступен. Код: {response.status}"
+                            f"GPT-5.5 недоступен. Код: {response.status}"
                         )
 
                     if response.status == 429:
                         logger.warning(
-                            "GPT-5.4 rate limited: status=%s body=%s attempt=%d",
+                            "GPT-5.5 rate limited: status=%s body=%s attempt=%d",
                             response.status,
                             text[:500],
                             attempt,
                         )
-                        if attempt < GPT54_MAX_ATTEMPTS - 1:
+                        if attempt < GPT55_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             continue
-                        raise RuntimeError("GPT-5.4 временно ограничил запросы")
+                        raise RuntimeError("GPT-5.5 временно ограничил запросы")
 
                     if response.status >= 400:
-                        raise RuntimeError(f"GPT-5.4 ошибка. Код: {response.status}")
+                        raise RuntimeError(f"GPT-5.5 ошибка. Код: {response.status}")
 
                     try:
                         data = json.loads(text)
                     except Exception:
-                        raise RuntimeError("GPT-5.4 вернул некорректный JSON")
+                        raise RuntimeError("GPT-5.5 вернул некорректный JSON")
 
                     raw_body_code = data.get("code") if isinstance(data, dict) else None
                     try:
@@ -229,34 +300,43 @@ class PhotoPromptService:
                         body_code = 0
 
                     if _is_fast_fallback_application_error(data):
+                        if audio_bytes and attempt < GPT55_MAX_ATTEMPTS - 1:
+                            logger.warning(
+                                "GPT-5.5 application upstream error for audio, retrying: %s attempt=%d",
+                                data,
+                                attempt,
+                            )
+                            await asyncio.sleep(2**attempt)
+                            data = None
+                            continue
                         logger.info(
-                            "GPT-5.4 application upstream error, fast fallback: %s",
+                            "GPT-5.5 application upstream error, fast fallback: %s",
                             data,
                         )
-                        raise RuntimeError(f"GPT-5.4 upstream error: {body_code}")
+                        raise RuntimeError(f"GPT-5.5 upstream error: {body_code}")
 
                     if body_code >= 400:
                         logger.warning(
-                            "GPT-5.4 application error in body: %s attempt=%d",
+                            "GPT-5.5 application error in body: %s attempt=%d",
                             data,
                             attempt,
                         )
                         if (
-                            body_code in GPT54_RETRYABLE_BODY_CODES
-                            and attempt < GPT54_MAX_ATTEMPTS - 1
+                            body_code in GPT55_RETRYABLE_BODY_CODES
+                            and attempt < GPT55_MAX_ATTEMPTS - 1
                         ):
                             await asyncio.sleep(2**attempt)
                             data = None
                             continue
-                        raise RuntimeError(f"GPT-5.4 вернул ошибку: {body_code}")
+                        raise RuntimeError(f"GPT-5.5 вернул ошибку: {body_code}")
             break
 
         if data is None:
-            raise RuntimeError("GPT-5.4 не вернул данных после всех попыток")
+            raise RuntimeError("GPT-5.5 не вернул данных после всех попыток")
 
         raw_output = _extract_output_text(data)
         parsed = _parse_json_object(raw_output)
-        return _build_result(parsed, provider="gpt-5.4")
+        return _build_result(parsed, provider="gpt-5.5")
 
     async def _analyze_with_claude(
         self,
@@ -344,16 +424,71 @@ class PhotoPromptService:
         image_url: str,
         preserve: str = "",
         goal: str = "",
+        user_note: str = "",
+        audio_bytes: bytes | None = None,
+        audio_format: str = "",
     ) -> Dict[str, Any]:
         if not self.api_key:
             raise RuntimeError("KIE_AI_API_KEY is not configured")
-        if not image_url:
-            raise ValueError("image_url is required")
+
+        image_url = (image_url or "").strip()
+        has_image = bool(image_url)
+        has_audio = bool(audio_bytes)
+        if not has_image and not has_audio:
+            raise ValueError("image_url or audio_bytes is required")
+
+        extra_blocks: list[str] = []
+        if user_note:
+            extra_blocks.append(f"Additional text instruction from user:\n{user_note}")
+        if audio_bytes:
+            if has_image:
+                audio_instruction = (
+                    "Listen to the audio prompt directly in this same GPT-5.5 request. "
+                    "Use it as the user's creative direction, include its transcript/summary "
+                    "in the JSON fields, and combine it with the reference photo."
+                )
+            else:
+                audio_instruction = (
+                    "Listen to the audio prompt directly in this GPT-5.5 request. "
+                    "Turn the spoken idea into a polished standalone generation prompt, "
+                    "include its transcript/summary in the JSON fields, and create a useful "
+                    "Gemini Omni prompt from the voice context."
+                )
+            extra_blocks.append(
+                "Attached audio prompt:\n"
+                f"{audio_instruction}"
+            )
+        extra_instruction = "\n\n".join(extra_blocks)
+
+        if has_image:
+            task = (
+                "Analyze this image and create a precise prompt for generating a "
+                "visually similar image."
+            )
+            default_goal = "Generate a visually similar image based on the reference."
+            default_preserve = (
+                "Subject appearance, composition, lighting, style, colors, pose, "
+                "background, and camera feel."
+            )
+        else:
+            task = (
+                "Listen to the attached audio prompt and create a precise prompt for "
+                "generating the image or scene requested by the user."
+            )
+            default_goal = (
+                "Create a polished image/video generation prompt from the user's "
+                "spoken idea."
+            )
+            default_preserve = (
+                "The user's requested subject, mood, style, action, camera movement, "
+                "setting, and constraints."
+            )
 
         user_instruction = (
-            f"Analyze this image and create a precise prompt for generating a visually similar image.\n\n"
-            f"User goal:\n{goal or 'Generate a visually similar image based on the reference.'}\n\n"
-            f"Important details to preserve:\n{preserve or 'Subject appearance, composition, lighting, style, colors, pose, background, and camera feel.'}\n\n"
+            f"{task}\n\n"
+            f"User goal:\n{goal or default_goal}\n\n"
+            f"Important details to preserve:\n{preserve or default_preserve}\n\n"
+            f"{extra_instruction + chr(10) + chr(10) if extra_instruction else ''}"
             f"Return valid JSON only according to the required schema."
         )
 
@@ -364,13 +499,20 @@ class PhotoPromptService:
 
         gpt_error: Optional[Exception] = None
         try:
-            return await self._analyze_with_gpt54(
+            return await self._analyze_with_gpt55(
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
             )
         except Exception as exc:
             gpt_error = exc
+            if audio_bytes:
+                failure_target = "фото и голос" if has_image else "голос"
+                raise RuntimeError(
+                    f"Не удалось разобрать {failure_target} через GPT-5.5: {exc}"
+                ) from exc
 
         try:
             result = await self._analyze_with_claude(
@@ -379,13 +521,13 @@ class PhotoPromptService:
                 headers=headers,
             )
             logger.info(
-                "GPT-5.4 failed (%s); Claude Haiku fallback succeeded",
+                "GPT-5.5 failed (%s); Claude Haiku fallback succeeded",
                 gpt_error,
             )
             return result
         except Exception as fallback_exc:
             logger.error(
-                "Claude Haiku fallback failed after GPT-5.4 failure (%s): %s",
+                "Claude Haiku fallback failed after GPT-5.5 failure (%s): %s",
                 gpt_error,
                 fallback_exc,
             )

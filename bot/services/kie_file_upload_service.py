@@ -31,8 +31,11 @@ class KieFileUploadService:
         local_path = resolve_local_upload_path(source)
         if not local_path:
             if is_local_upload_source(source):
-                logger.warning("Local upload reference is missing on disk; falling back to original source URL: %s", source)
-                return source
+                logger.warning(
+                    "Local upload reference is missing on disk; dropping source before KIE upload: %s",
+                    source,
+                )
+                return ""
             return source
         if not self.api_key:
             return source

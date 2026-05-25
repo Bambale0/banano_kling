@@ -1,11 +1,13 @@
 import base64
+from datetime import datetime
 import io
 import mimetypes
 import os
+import uuid
 from typing import Iterable
 from urllib.parse import urlparse
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from bot.config import config
 
@@ -41,6 +43,45 @@ def _local_upload_candidate(source: str) -> str | None:
 def is_local_upload_source(source: str) -> bool:
     """Return True when source points to this app's static/uploads storage."""
     return _local_upload_candidate(source) is not None
+
+
+def missing_local_upload_sources(
+    sources: Iterable[str | bytes | bytearray] | None,
+) -> list[str]:
+    """Return own /uploads sources whose backing file is no longer available."""
+    if not sources:
+        return []
+
+    missing: list[str] = []
+    for source in sources:
+        if (
+            isinstance(source, str)
+            and source
+            and is_local_upload_source(source)
+            and not _resolve_local_upload_path(source)
+        ):
+            missing.append(source)
+    return missing
+
+
+def filter_available_image_sources(
+    sources: Iterable[str | bytes | bytearray] | None,
+) -> list[str | bytes | bytearray]:
+    """Drop own /uploads sources that would be fetched as 404 by providers."""
+    if not sources:
+        return []
+
+    available: list[str | bytes | bytearray] = []
+    for source in sources:
+        if (
+            isinstance(source, str)
+            and source
+            and is_local_upload_source(source)
+            and not _resolve_local_upload_path(source)
+        ):
+            continue
+        available.append(source)
+    return available
 
 
 def _resolve_existing_upload_variant(candidate: str | None) -> str | None:
@@ -187,3 +228,70 @@ def image_sources_to_provider_safe_png_urls(
     if not sources:
         return []
     return [image_source_to_provider_safe_png_url(source) for source in sources]
+
+
+def reference_sources_to_contact_sheet_url(
+    sources: Iterable[str | bytes | bytearray] | None,
+    *,
+    max_sources: int = 4,
+) -> str | None:
+    """Build a local public contact sheet so multi-reference models see all refs.
+
+    The board is only created from this app's local upload URLs. External URLs are
+    left untouched because we should not fetch arbitrary remote media here.
+    """
+    if not sources:
+        return None
+
+    local_paths: list[str] = []
+    for source in list(sources)[:max_sources]:
+        if not isinstance(source, str):
+            return None
+        local_path = _resolve_local_upload_path(source)
+        if not local_path or not os.path.exists(local_path):
+            return None
+        local_paths.append(local_path)
+
+    if len(local_paths) < 2:
+        return None
+
+    cell_size = 512
+    padding = 24
+    columns = 2 if len(local_paths) > 1 else 1
+    rows = (len(local_paths) + columns - 1) // columns
+    width = columns * cell_size + (columns + 1) * padding
+    height = rows * cell_size + (rows + 1) * padding
+
+    board = Image.new("RGB", (width, height), "#f7f7f7")
+    for idx, local_path in enumerate(local_paths):
+        try:
+            with Image.open(local_path) as image:
+                normalized = ImageOps.exif_transpose(image).convert("RGB")
+                normalized.thumbnail((cell_size, cell_size), Image.Resampling.LANCZOS)
+                col = idx % columns
+                row = idx // columns
+                x = padding + col * (cell_size + padding)
+                y = padding + row * (cell_size + padding)
+                px = x + (cell_size - normalized.width) // 2
+                py = y + (cell_size - normalized.height) // 2
+                board.paste(normalized, (px, py))
+        except Exception:
+            return None
+
+    period = datetime.utcnow().strftime("%Y%m")
+    rel_dir = os.path.join("reference_boards", period)
+    out_dir = os.path.join("static", "uploads", rel_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    filename = f"ref_board_{uuid.uuid4().hex[:16]}.jpg"
+    out_path = os.path.join(out_dir, filename)
+    try:
+        board.save(out_path, format="JPEG", quality=92, optimize=True)
+    except Exception:
+        return None
+
+    rel_url = f"{rel_dir.replace(os.sep, '/')}/{filename}"
+    return f"{config.static_base_url.rstrip('/')}/uploads/{rel_url}"
+
+
+def is_reference_contact_sheet_url(source: str | None) -> bool:
+    return isinstance(source, str) and "/uploads/reference_boards/" in source

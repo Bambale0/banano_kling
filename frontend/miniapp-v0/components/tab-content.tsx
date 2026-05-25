@@ -8,13 +8,14 @@ import { MotionTab } from './tabs/motion-tab'
 import { FeedTab } from './tabs/feed-tab'
 import { PromptsTab } from './tabs/prompts-tab'
 import { ServicesTab } from './tabs/services-tab'
+import { ProfileTab } from './tabs/profile-tab'
 import { AnimatePresence, motion } from 'framer-motion'
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, PromptsTab, ServicesTab]
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, PromptsTab, ServicesTab, ProfileTab]
 
 export function TabContent() {
   const { activeTab } = useApp()
-  const ActiveComponent = tabComponents[activeTab]
+  const ActiveComponent = tabComponents[activeTab] || StudioTab
 
   return (
     <div className="relative">
