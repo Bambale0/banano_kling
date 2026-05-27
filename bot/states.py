@@ -5,6 +5,7 @@ class GenerationStates(StatesGroup):
     """Состояния для процесса генерации"""
 
     waiting_for_input = State()  # Ожидание пользовательского ввода
+    waiting_for_repeat_prompt = State()  # Ожидание нового prompt для повтора
     waiting_for_image = State()  # Ожидание загрузки фото
     waiting_for_video = State()  # Ожидание загрузки видео
     waiting_for_video_prompt = State()  # Ожидание ввода промпта для видео
@@ -56,6 +57,7 @@ class PaymentStates(StatesGroup):
     """Состояния для процесса оплаты"""
 
     selecting_package = State()  # Выбор пакета
+    waiting_promo_code = State()  # Ввод промокода на пополнение
     confirming_payment = State()  # Подтверждение оплаты
     waiting_payment = State()  # Ожидание оплаты
     waiting_partner_withdraw_requisites = State()  # Реквизиты для вывода партнёру
@@ -71,6 +73,9 @@ class AdminStates(StatesGroup):
     waiting_partner_user_id = State()  # Ввод ID партнёра для статистики
     waiting_credits_amount = State()  # Ввод количества кредитов
     waiting_price_value = State()  # Ввод нового значения цены
+    waiting_prompt_id = State()  # Ввод ID промпта для модерации
+    waiting_prompt_reject_reason = State()  # Причина отклонения промпта
+    waiting_promo_code_value = State()  # Создание/поиск промокода
 
 
 class BatchGenerationStates(StatesGroup):

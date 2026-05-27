@@ -224,6 +224,42 @@ class AIAssistantStates(StatesGroup):
 # user_id -> "main_menu" | "settings" | None
 _user_last_menu = {}
 
+AI_ASSISTANT_AUDIO_MIME_TYPES = (
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/aac",
+    "audio/aiff",
+    "audio/x-aiff",
+    "audio/ogg",
+    "audio/oga",
+    "audio/flac",
+    "audio/x-flac",
+    "audio/webm",
+    "audio/mp4",
+    "audio/x-m4a",
+)
+
+AI_ASSISTANT_AUDIO_FORMATS = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/wave": "wav",
+    "audio/aac": "aac",
+    "audio/aiff": "aiff",
+    "audio/x-aiff": "aiff",
+    "audio/ogg": "ogg",
+    "audio/oga": "ogg",
+    "audio/flac": "flac",
+    "audio/x-flac": "flac",
+    "audio/webm": "webm",
+    "audio/mp4": "m4a",
+    "audio/x-m4a": "m4a",
+}
+
 
 def _set_user_menu(user_id: int, menu: str):
     """Устанавливает последнее посещённое меню пользователя"""
@@ -361,8 +397,167 @@ def _message_has_media(message: types.Message) -> bool:
         getattr(message, "photo", None)
         or getattr(message, "video", None)
         or getattr(message, "animation", None)
+        or getattr(message, "voice", None)
+        or getattr(message, "audio", None)
         or getattr(message, "document", None)
     )
+
+
+def _ai_assistant_message_text(message: types.Message) -> str:
+    return str(
+        getattr(message, "text", None)
+        or getattr(message, "caption", None)
+        or ""
+    ).strip()
+
+
+def _ai_assistant_audio_media(message: types.Message):
+    if getattr(message, "voice", None):
+        return message.voice
+    if getattr(message, "audio", None):
+        return message.audio
+    document = getattr(message, "document", None)
+    if document and getattr(document, "mime_type", None) in AI_ASSISTANT_AUDIO_MIME_TYPES:
+        return document
+    return None
+
+
+def _ai_assistant_audio_mime_type(message: types.Message) -> str:
+    if getattr(message, "voice", None):
+        return "audio/ogg"
+    if getattr(message, "audio", None):
+        return message.audio.mime_type or "audio/mpeg"
+    document = getattr(message, "document", None)
+    if document:
+        mime_type = document.mime_type or ""
+        if not mime_type:
+            mime_type = mimetypes.guess_type(getattr(document, "file_name", "") or "")[0] or ""
+        return mime_type or "audio/mpeg"
+    return "audio/ogg"
+
+
+def _ai_assistant_audio_format(mime_type: str) -> str:
+    value = (mime_type or "").split(";", 1)[0].strip().lower()
+    return AI_ASSISTANT_AUDIO_FORMATS.get(value, "")
+
+
+async def _download_ai_assistant_audio(message: types.Message) -> tuple[bytes, str, str]:
+    media = _ai_assistant_audio_media(message)
+    if not media:
+        raise ValueError("assistant audio media is required")
+
+    file_size = getattr(media, "file_size", 0) or 0
+    if file_size and file_size > config.PHOTO_PROMPT_MAX_AUDIO_BYTES:
+        raise ValueError("assistant audio is too large")
+
+    file = await message.bot.get_file(media.file_id)
+    audio_io = await message.bot.download_file(file.file_path)
+    audio_bytes = audio_io.read()
+    if len(audio_bytes) > config.PHOTO_PROMPT_MAX_AUDIO_BYTES:
+        raise ValueError("assistant audio is too large")
+
+    mime_type = _ai_assistant_audio_mime_type(message)
+    audio_format = _ai_assistant_audio_format(mime_type)
+    if not audio_format:
+        raise ValueError("assistant audio mime type is not supported")
+
+    return audio_bytes, mime_type, audio_format
+
+
+def _ai_assistant_audio_error_text(error: Exception) -> str:
+    message = str(error).lower()
+    if "too large" in message:
+        max_mb = max(1, config.PHOTO_PROMPT_MAX_AUDIO_BYTES // (1024 * 1024))
+        return f"⚠️ Аудио слишком большое. Отправьте файл до {max_mb}MB."
+    if "not supported" in message:
+        return "⚠️ Этот аудиоформат не поддерживается. Лучше отправьте голосовое Telegram или mp3/ogg/wav."
+    return "⚠️ Не удалось прочитать аудио. Попробуйте отправить голосовое ещё раз."
+
+
+async def _build_ai_assistant_context(user_id: int, ai_mode: str) -> dict:
+    user = await get_or_create_user(user_id)
+    db_settings = await get_user_settings(user_id)
+
+    return {
+        "user_credits": user.credits,
+        "preferred_model": db_settings["preferred_model"],
+        "preferred_video_model": db_settings["preferred_video_model"],
+        "image_service": db_settings.get("image_service", "nanobanana"),
+        "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки",
+    }
+
+
+async def _answer_ai_assistant_message(
+    message: types.Message,
+    *,
+    ai_mode: str,
+) -> None:
+    from bot.services.ai_assistant_service import ai_assistant_service
+
+    user_id = message.from_user.id
+    user_message = _ai_assistant_message_text(message)
+    audio_bytes = None
+    audio_format = ""
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    if _ai_assistant_audio_media(message):
+        try:
+            audio_bytes, _mime_type, audio_format = await _download_ai_assistant_audio(
+                message
+            )
+        except ValueError as e:
+            await message.answer(
+                _ai_assistant_audio_error_text(e),
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+
+    if not user_message and not audio_bytes:
+        await message.answer(
+            "Напишите вопрос текстом или отправьте голосовое/аудио для BotAI.",
+            reply_markup=get_ai_assistant_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    context = await _build_ai_assistant_context(user_id, ai_mode)
+
+    try:
+        if audio_bytes:
+            response = await ai_assistant_service.get_assistant_response_with_audio(
+                user_message=user_message,
+                context=context,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+            )
+        else:
+            response = await ai_assistant_service.get_assistant_response(
+                user_message=user_message,
+                context=context,
+            )
+
+        if response:
+            await message.answer(
+                f"🤖 <b>BotAI:</b>{response}",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
+                reply_markup=get_ai_assistant_keyboard(),
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
+        logger.exception(f"AI Assistant error: {e}")
+        await message.answer(
+            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
+            reply_markup=get_ai_assistant_keyboard(),
+            parse_mode="HTML",
+        )
 
 
 async def _safe_show_text(
@@ -583,8 +778,8 @@ def _build_feed_caption(
         f"<code>{index + 1}/{total}</code>\n"
         f"<b>{model}</b>{ratio_line}{photo_line}\n"
         f"Автор: <code>{author}</code>\n\n"
-        f"❤️ <code>{likes}</code> · 🔁 <code>{remixes}</code> · "
-        f"🔗 <code>{shares}</code>\n"
+        f"❤️ Лайки: <code>{likes}</code> · 🔁 Повторы: <code>{remixes}</code> · "
+        f"🔗 Ссылки: <code>{shares}</code>\n"
         "Листайте работы кнопками ниже."
     )
 
@@ -659,7 +854,7 @@ async def _build_feed_keyboard(
         rows.append(
             [
                 types.InlineKeyboardButton(
-                    text="🔁 Повторить prompt",
+                    text="🔁 Повторить",
                     callback_data=f"repeat_image_{task_id}",
                 )
             ]
@@ -2555,9 +2750,6 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 @router.message(StateFilter(None), F.text)
 async def handle_message_in_menu(message: types.Message, state: FSMContext):
     """Обработка текстовых сообщений в главном меню или настройках - перенаправление к ИИ"""
-    from bot.keyboards import get_ai_assistant_keyboard, get_back_keyboard
-    from bot.services.ai_assistant_service import ai_assistant_service
-
     user_id = message.from_user.id
     last_menu = _get_user_menu(user_id)
 
@@ -2570,49 +2762,27 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
     await state.set_state(AIAssistantStates.waiting_for_message)
     await state.update_data(ai_mode=last_menu)
 
-    # Загружаем контекст пользователя
-    user = await get_or_create_user(message.from_user.id)
-    db_settings = await get_user_settings(message.from_user.id)
+    await _answer_ai_assistant_message(message, ai_mode=last_menu)
 
-    context = {
-        "user_credits": user.credits,
-        "preferred_model": db_settings["preferred_model"],
-        "preferred_video_model": db_settings["preferred_video_model"],
-        "image_service": db_settings.get("image_service", "nanobanana"),
-        "menu_location": "главное меню" if last_menu == "main_menu" else "настройки",
-    }
 
-    # Отправляем "печатает" статус
-    await message.bot.send_chat_action(message.chat.id, "typing")
+@router.message(
+    StateFilter(None),
+    F.voice
+    | F.audio
+    | (F.document & F.document.mime_type.in_(AI_ASSISTANT_AUDIO_MIME_TYPES)),
+)
+async def handle_audio_in_menu(message: types.Message, state: FSMContext):
+    """Перенаправление голосовых/аудио из главного меню или настроек к ИИ."""
+    user_id = message.from_user.id
+    last_menu = _get_user_menu(user_id)
 
-    try:
-        # Получаем ответ от ИИ
-        response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text, context=context
-        )
+    if last_menu not in ("main_menu", "settings"):
+        return
 
-        if response:
-            # Отправляем ответ пользователю с клавиатурой ИИ
-            await message.answer(
-                f"🤖 <b>BotAI:</b>{response}",
-                reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML",
-            )
-        else:
-            # Fallback если ИИ не ответил
-            await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
-                reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML",
-            )
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode=last_menu)
 
-    except Exception as e:
-        logger.exception(f"AI Assistant error: {e}")
-        await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
-            reply_markup=get_ai_assistant_keyboard(),
-            parse_mode="HTML",
-        )
+    await _answer_ai_assistant_message(message, ai_mode=last_menu)
 
 
 # =============================================================================
@@ -2849,54 +3019,8 @@ async def invalid_motion_video_upload(message: types.Message, state: FSMContext)
 @router.message(StateFilter(AIAssistantStates.waiting_for_message))
 async def handle_ai_assistant_message(message: types.Message, state: FSMContext):
     """Обработка сообщения пользователя ИИ-ассистентом"""
-    from bot.database import get_user_credits, get_user_settings
-    from bot.keyboards import get_ai_assistant_keyboard
-    from bot.services.ai_assistant_service import ai_assistant_service
-
     # Получаем текущий режим
     data = await state.get_data()
     ai_mode = data.get("ai_mode", "main_menu")
 
-    # Загружаем контекст пользователя
-    user = await get_or_create_user(message.from_user.id)
-    db_settings = await get_user_settings(message.from_user.id)
-
-    context = {
-        "user_credits": user.credits,
-        "preferred_model": db_settings["preferred_model"],
-        "preferred_video_model": db_settings["preferred_video_model"],
-        "image_service": db_settings.get("image_service", "nanobanana"),
-        "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки",
-    }
-
-    # Отправляем "печатает" статус
-    await message.bot.send_chat_action(message.chat.id, "typing")
-
-    try:
-        # Получаем ответ от ИИ
-        response = await ai_assistant_service.get_assistant_response(
-            user_message=message.text, context=context
-        )
-
-        if response:
-            # Отправляем ответ пользователю
-            await message.answer(
-                f"🤖 <b>BotAI:</b>{response}",
-                reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML",
-            )
-        else:
-            # Fallback если ИИ не ответил
-            await message.answer(
-                "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
-                reply_markup=get_ai_assistant_keyboard(),
-                parse_mode="HTML",
-            )
-
-    except Exception as e:
-        logger.exception(f"AI Assistant error: {e}")
-        await message.answer(
-            "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
-            reply_markup=get_ai_assistant_keyboard(),
-            parse_mode="HTML",
-        )
+    await _answer_ai_assistant_message(message, ai_mode=ai_mode)

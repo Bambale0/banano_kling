@@ -15,12 +15,14 @@ from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
                            get_topup_keyboard, get_video_media_step_keyboard,
                            get_video_model_label,
-                           get_video_model_selection_keyboard, load_prices)
+                           get_video_model_selection_keyboard,
+                           get_video_result_keyboard, load_prices)
 from bot.handlers.image_analyzer import (
     _audio_prompt_format,
     _clear_photo_prompt_audio_if_current,
     _format_photo_prompt_result_text,
 )
+from bot.handlers.generation import _repeat_image_keyboard
 import bot.services.photo_prompt_service as photo_prompt_module
 from bot.services.gemini_omni_service import GeminiOmniService
 from bot.services.photo_prompt_service import (
@@ -88,6 +90,9 @@ def test_get_admin_keyboard():
     )
     assert any(
         "admin_finance" in btn.callback_data for row in kb.inline_keyboard for btn in row
+    )
+    assert any(
+        "admin_prompts" in btn.callback_data for row in kb.inline_keyboard for btn in row
     )
 
 
@@ -406,6 +411,41 @@ def test_get_image_result_keyboard_allows_author_removal_from_public_surfaces():
     assert "🗑 Убрать из промптов" in button_texts
     assert "feedrm_img_123" in callback_ids
     assert "promptrm_img_123" in callback_ids
+
+
+def test_repeat_image_keyboard_edits_prompt_inside_repeat_flow():
+    kb = _repeat_image_keyboard("img_123")
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "repeat_prompt_img_123" in callback_ids
+    assert "retry_prompt_image_img_123" not in callback_ids
+
+
+def test_get_video_result_keyboard_contains_feed_button_when_task_is_known():
+    kb = get_video_result_keyboard("https://example.com/video.mp4", task_id="vid_123")
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "🎞 В ленту" in button_texts
+    assert "feedpub_vid_123" in callback_ids
+    assert "back_main" in callback_ids
+
+
+def test_get_video_result_keyboard_allows_author_removal_from_feed():
+    kb = get_video_result_keyboard(
+        "https://example.com/video.mp4",
+        task_id="vid_123",
+        is_public_feed=True,
+    )
+    button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "🗑 Убрать из ленты" in button_texts
+    assert "feedrm_vid_123" in callback_ids
 
 
 def test_photo_prompt_service_detects_fast_fallback_body_500():

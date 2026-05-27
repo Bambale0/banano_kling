@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
-import type { FeedComment, FeedItem, ProfileSummary } from '@/lib/types'
+import type { FeedComment, FeedItem, ProfileSummary, ScenarioType } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -25,12 +25,15 @@ import {
   Link2,
   Loader2,
   MessageCircle,
+  Play,
   Radio,
+  Repeat2,
   Save,
   Send,
   Share2,
   Sparkles,
   UserRound,
+  Video,
   Wallet,
   X,
 } from 'lucide-react'
@@ -47,13 +50,19 @@ function formatRub(value?: number) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(Number(value || 0))
 }
 
+const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
+
+function normalizeVideoScenario(value?: string | null): ScenarioType {
+  return videoScenarios.has(value as ScenarioType) ? (value as ScenarioType) : 'text'
+}
+
 function profileInitials(firstName?: string, lastName?: string, username?: string) {
   const value = `${firstName?.[0] || ''}${lastName?.[0] || ''}` || username?.[0] || 'U'
   return value.toUpperCase()
 }
 
 export function ProfileTab() {
-  const { state, viewedProfileCode, setActiveTab, setPromptPreset } = useApp()
+  const { state, viewedProfileCode, setActiveTab, setPromptPreset, setVideoPromptPreset } = useApp()
   const { user } = state
   const [items, setItems] = useState<FeedItem[]>([])
   const [profile, setProfile] = useState<ProfileSummary | null>(null)
@@ -98,12 +107,13 @@ export function ProfileTab() {
     isOwnProfile ? user.lastName : profile?.last_name,
     isOwnProfile ? user.username : profile?.username
   )
-  const profileShareCode = isOwnProfile ? ownReferralCode : profile?.referral_code
   const profileShareLink =
-    (isOwnProfile ? user.profileLink : profile?.profile_link) ||
-    (user.botUsername && profileShareCode
-      ? `https://t.me/${user.botUsername}?start=posts_${profileShareCode}_ref_${profileShareCode}`
-      : '')
+    isOwnProfile
+      ? user.profileLink ||
+        (user.botUsername && ownReferralCode
+          ? `https://t.me/${user.botUsername}?start=posts_${ownReferralCode}_ref_${ownReferralCode}`
+          : '')
+      : ''
   const displayChannelUrl = isOwnProfile ? ownChannelUrl : profile?.channel_url || ''
   const repeatBalance =
     partnerStats?.prompt_repeat_balance_rub ?? user.promptRepeatBalanceRub ?? 0
@@ -113,7 +123,7 @@ export function ProfileTab() {
   const demoItems = useMemo(() => {
     return state.recentTasks.reduce<FeedItem[]>((acc, task, index) => {
       const url = task.result_url || ''
-      if (task.type !== 'image' || task.status !== 'completed' || !isHttpUrl(url)) {
+      if (!['image', 'video'].includes(task.type) || task.status !== 'completed' || !isHttpUrl(url)) {
         return acc
       }
       const urls = (task.result_urls || []).filter(isHttpUrl)
@@ -124,13 +134,15 @@ export function ProfileTab() {
         id: task.feed_id || index + 1,
         task_id: task.task_id,
         model: task.model_label || task.model,
-        gen_type: 'image',
+        gen_type: task.type === 'video' ? 'video' : 'image',
         result_url: url,
         result_urls: urls,
         prompt: task.prompt_preview,
         likes_count: Math.max(2, 18 - index * 3),
         shares_count: Math.max(0, 5 - index),
         aspect_ratio: task.aspect_ratio || '1:1',
+        duration: task.duration || null,
+        scenario: task.type === 'video' ? 'text' : null,
         author: displayName,
         author_referral_code: ownReferralCode || null,
         author_photo_url: user.photoUrl || null,
@@ -267,7 +279,7 @@ export function ProfileTab() {
   }
 
   async function handleCopyProfileLink() {
-    if (!profileShareLink) return
+    if (!isOwnProfile || !profileShareLink) return
     try {
       await copyText(profileShareLink, 'profile')
     } catch (e) {
@@ -329,6 +341,21 @@ export function ProfileTab() {
   }
 
   function handleRemix(item: FeedItem) {
+    if (item.gen_type === 'video') {
+      const modelExists = state.videoModels.some((model) => model.id === item.model)
+      setVideoPromptPreset({
+        title: 'Повторить видео из ленты',
+        prompt: item.prompt || '',
+        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
+        scenario: normalizeVideoScenario(item.scenario),
+        ratio: item.aspect_ratio || '16:9',
+        duration: item.duration || 5,
+        sourceFeedGenId: isLive ? item.id : null,
+        promptHidden: item.prompt_hidden,
+      })
+      setActiveTab(2)
+      return
+    }
     const modelExists = state.imageModels.some((model) => model.id === item.model)
     setPromptPreset({
       promptId: null,
@@ -460,29 +487,31 @@ export function ProfileTab() {
           </Button>
         ) : null}
 
-        <div className="grid grid-cols-[1fr_auto] gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            className="h-10 min-w-0 rounded-lg px-3"
-            disabled={!profileShareLink}
-            onClick={handleCopyProfileLink}
-          >
-            {copied === 'profile' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            <span className="truncate">{copied === 'profile' ? 'Скопировано' : 'Ссылка на профиль'}</span>
-          </Button>
-          {profileShareLink ? (
-            <Button asChild type="button" variant="secondary" size="icon" className="h-10 w-10 rounded-lg">
-              <a href={profileShareLink} target="_blank" rel="noreferrer" aria-label="Открыть профиль">
+        {isOwnProfile ? (
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 min-w-0 rounded-lg px-3"
+              disabled={!profileShareLink}
+              onClick={handleCopyProfileLink}
+            >
+              {copied === 'profile' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              <span className="truncate">{copied === 'profile' ? 'Скопировано' : 'Ссылка на профиль'}</span>
+            </Button>
+            {profileShareLink ? (
+              <Button asChild type="button" variant="secondary" size="icon" className="h-10 w-10 rounded-lg">
+                <a href={profileShareLink} target="_blank" rel="noreferrer" aria-label="Открыть профиль">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+            ) : (
+              <Button type="button" variant="secondary" size="icon" className="h-10 w-10 rounded-lg" disabled>
                 <ExternalLink className="h-4 w-4" />
-              </a>
-            </Button>
-          ) : (
-            <Button type="button" variant="secondary" size="icon" className="h-10 w-10 rounded-lg" disabled>
-              <ExternalLink className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+              </Button>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <div className="mt-6 flex items-center justify-center border-t border-border/60 py-3 text-gold">
@@ -510,20 +539,44 @@ export function ProfileTab() {
                 aria-label="Открыть публикацию"
               >
                 {isHttpUrl(item.result_url) ? (
-                  <img
-                    src={item.result_url}
-                    alt=""
-                    loading="lazy"
-                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-                  />
+                  item.gen_type === 'video' ? (
+                    <video
+                      src={item.result_url}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                    />
+                  ) : (
+                    <img
+                      src={item.result_url}
+                      alt=""
+                      loading="lazy"
+                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                    />
+                  )
                 ) : (
                   <span className="flex h-full w-full items-center justify-center text-muted-foreground">
                     <ImageOff className="h-5 w-5" />
                   </span>
                 )}
+                {item.gen_type === 'video' ? (
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-background/75 text-foreground backdrop-blur">
+                      <Play className="h-4 w-4 fill-current" />
+                    </span>
+                  </span>
+                ) : null}
                 <span className="pointer-events-none absolute inset-0 bg-background/0 transition-colors group-hover:bg-background/35" />
                 <span className="pointer-events-none absolute left-1 top-1 hidden rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 min-[420px]:block">
-                  {item.aspect_ratio || '1:1'}
+                  {item.gen_type === 'video' ? (
+                    <span className="inline-flex items-center gap-0.5">
+                      <Video className="h-3 w-3" />
+                      {item.duration ? `${item.duration}с` : item.aspect_ratio || 'video'}
+                    </span>
+                  ) : (
+                    item.aspect_ratio || '1:1'
+                  )}
                 </span>
                 <span className="pointer-events-none absolute bottom-1 left-1 hidden items-center gap-0.5 rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 min-[420px]:flex">
                   <Heart className="h-3 w-3" />
@@ -536,16 +589,8 @@ export function ProfileTab() {
               </button>
               <button
                 type="button"
-                className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-gold text-primary-foreground"
-                onClick={() => handleRemix(item)}
-                aria-label="Повторить"
-              >
-                <Sparkles className="h-3 w-3" />
-              </button>
-              <button
-                type="button"
                 className={cn(
-                  'absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full',
+                  'absolute bottom-1 left-1 flex h-6 w-6 items-center justify-center rounded-full',
                   'bg-background/80 text-foreground backdrop-blur transition-colors hover:bg-background',
                   (!isLive || busyId === item.id) && 'opacity-60'
                 )}
@@ -580,7 +625,7 @@ export function ProfileTab() {
             <Grid3X3 className="h-6 w-6" />
           </div>
           <p className="mt-3 text-sm font-medium text-foreground">Публикаций пока нет</p>
-          <p className="mt-1 text-sm text-muted-foreground">В профиле появятся изображения, опубликованные в ленте.</p>
+          <p className="mt-1 text-sm text-muted-foreground">В профиле появятся фото и видео, опубликованные в ленте.</p>
           <Button
             type="button"
             variant="secondary"
@@ -603,11 +648,21 @@ export function ProfileTab() {
             <X className="h-5 w-5" />
           </button>
           {isHttpUrl(previewItem.result_url) ? (
-            <img
-              src={previewItem.result_url}
-              alt=""
-              className="max-h-full w-auto max-w-full object-contain"
-            />
+            previewItem.gen_type === 'video' ? (
+              <video
+                src={previewItem.result_url}
+                className="max-h-full w-auto max-w-full object-contain"
+                controls
+                autoPlay
+                playsInline
+              />
+            ) : (
+              <img
+                src={previewItem.result_url}
+                alt=""
+                className="max-h-full w-auto max-w-full object-contain"
+              />
+            )
           ) : (
             <div className="flex h-48 w-full items-center justify-center text-muted-foreground">
               <ImageOff className="h-8 w-8" />
@@ -629,7 +684,8 @@ export function ProfileTab() {
               className="h-10 rounded-full px-4"
               onClick={() => handleRemix(previewItem)}
             >
-              <Sparkles className="h-4 w-4" />
+              <Repeat2 className="h-4 w-4" />
+              <span>Повторить</span>
             </Button>
           </div>
         </div>

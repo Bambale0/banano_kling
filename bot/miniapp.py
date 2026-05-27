@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlparse
 
 import aiosqlite
 from aiohttp import web
@@ -38,6 +38,8 @@ from bot.database import (
     get_generation_task_payload,
     get_or_create_user,
     get_partner_overview,
+    get_promo_bonus_for_credits,
+    get_promo_code_by_code,
     get_popular_prompts,
     get_prompt_by_id,
     get_prompts_by_tag,
@@ -49,6 +51,7 @@ from bot.database import (
     like_feed_generation,
     like_prompt,
     list_saved_references,
+    process_referral,
     reject_prompt,
     remove_from_feed,
     remove_from_library,
@@ -61,9 +64,11 @@ from bot.database import (
 )
 from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
+    AI_ASSISTANT_AUDIO_FORMATS,
     AIAssistantStates,
     _build_balance_text,
     _build_main_menu_text,
+    _notify_partner_about_new_referral,
 )
 from bot.handlers.generation import (
     _init_default_video_state,
@@ -90,7 +95,10 @@ from bot.keyboards import (
 )
 from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
-from bot.services.media_input_utils import missing_local_upload_sources
+from bot.services.media_input_utils import (
+    missing_local_upload_sources,
+    resolve_local_upload_path,
+)
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.preset_manager import preset_manager
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
@@ -444,7 +452,67 @@ FILE_KIND_MAP = {
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
     "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
+    "assistant_audio": {"prefix": "audio/", "fallback_ext": "webm", "group": "audio"},
 }
+
+MINIAPP_ASSISTANT_AUDIO_EXT_FORMATS = {
+    "mp3": "mp3",
+    "wav": "wav",
+    "aac": "aac",
+    "aiff": "aiff",
+    "aif": "aiff",
+    "ogg": "ogg",
+    "oga": "ogg",
+    "flac": "flac",
+    "webm": "webm",
+    "m4a": "m4a",
+    "mp4": "m4a",
+}
+
+
+def _miniapp_assistant_audio_format(
+    audio_url: str,
+    content_type: str = "",
+) -> tuple[str, str]:
+    mime_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if not mime_type:
+        mime_type = (mimetypes.guess_type(audio_url)[0] or "").strip().lower()
+
+    audio_format = AI_ASSISTANT_AUDIO_FORMATS.get(mime_type, "")
+    if audio_format:
+        return mime_type, audio_format
+
+    ext = Path(urlparse(audio_url).path or audio_url).suffix.lstrip(".").lower()
+    audio_format = MINIAPP_ASSISTANT_AUDIO_EXT_FORMATS.get(ext, "")
+    return mime_type, audio_format
+
+
+def _load_miniapp_assistant_audio(
+    audio_url: str,
+    content_type: str = "",
+) -> tuple[bytes, str, str]:
+    local_path = resolve_local_upload_path(audio_url)
+    if not local_path:
+        raise ValueError("Аудио не найдено. Запишите или загрузите его ещё раз.")
+
+    path = Path(local_path)
+    if path.stat().st_size > config.PHOTO_PROMPT_MAX_AUDIO_BYTES:
+        max_mb = max(1, config.PHOTO_PROMPT_MAX_AUDIO_BYTES // (1024 * 1024))
+        raise ValueError(f"Аудио слишком большое. Максимум {max_mb}MB.")
+
+    audio_bytes = path.read_bytes()
+    if len(audio_bytes) > config.PHOTO_PROMPT_MAX_AUDIO_BYTES:
+        max_mb = max(1, config.PHOTO_PROMPT_MAX_AUDIO_BYTES // (1024 * 1024))
+        raise ValueError(f"Аудио слишком большое. Максимум {max_mb}MB.")
+
+    mime_type, audio_format = _miniapp_assistant_audio_format(
+        audio_url,
+        content_type=content_type,
+    )
+    if not audio_format:
+        raise ValueError("Этот аудиоформат не поддерживается. Попробуйте ogg, mp3, wav или webm.")
+
+    return audio_bytes, mime_type, audio_format
 
 
 def _resolve_miniapp_static_root() -> Path:
@@ -511,18 +579,87 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
     return parsed
 
 
+def _referral_code_from_start_param(start_param: Any) -> str:
+    raw = str(start_param or "").strip()
+    if not raw:
+        return ""
+
+    if raw.startswith("ref_"):
+        return raw.replace("ref_", "", 1).strip().upper()
+
+    if raw.startswith("feed_"):
+        _, sep, referral_code = raw.replace("feed_", "", 1).partition("_ref_")
+        return referral_code.strip().upper() if sep else ""
+
+    if raw.startswith("posts_"):
+        _, sep, referral_code = raw.replace("posts_", "", 1).partition("_ref_")
+        return referral_code.strip().upper() if sep else ""
+
+    return ""
+
+
+async def _activate_start_param_referral(
+    app: web.Application,
+    *,
+    telegram_id: int,
+    telegram_user: dict[str, Any],
+    start_param: Any,
+) -> None:
+    referral_code = _referral_code_from_start_param(start_param)
+    if not referral_code:
+        return
+
+    try:
+        referrer = await get_user_by_referral_code(referral_code)
+        processed = await process_referral(telegram_id, referral_code)
+    except Exception:
+        logger.exception(
+            "Failed to activate Mini App referral for user_id=%s start_param=%s",
+            telegram_id,
+            start_param,
+        )
+        return
+
+    if processed and referrer:
+        referred = SimpleNamespace(
+            id=telegram_id,
+            username=telegram_user.get("username"),
+            first_name=telegram_user.get("first_name"),
+            last_name=telegram_user.get("last_name"),
+            full_name=" ".join(
+                str(telegram_user.get(key) or "").strip()
+                for key in ("first_name", "last_name")
+                if str(telegram_user.get(key) or "").strip()
+            ),
+        )
+        await _notify_partner_about_new_referral(
+            app["bot"],
+            referrer_telegram_id=referrer.telegram_id,
+            referred=referred,
+        )
+
+
 async def _get_user_context(app: web.Application, init_data: str) -> tuple[int, dict]:
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
-    await get_or_create_user(telegram_id)
-    await update_user_profile(
-        telegram_id,
-        username=telegram_user.get("username"),
-        first_name=telegram_user.get("first_name"),
-        last_name=telegram_user.get("last_name"),
-    )
     user = await get_or_create_user(telegram_id)
+    try:
+        await update_user_profile(
+            telegram_id,
+            username=telegram_user.get("username"),
+            first_name=telegram_user.get("first_name"),
+            last_name=telegram_user.get("last_name"),
+        )
+    except Exception:
+        logger.exception("Unable to sync Mini App profile for %s", telegram_id)
+
+    await _activate_start_param_referral(
+        app,
+        telegram_id=telegram_id,
+        telegram_user=telegram_user,
+        start_param=payload.get("start_param"),
+    )
     return telegram_id, {"payload": payload, "user": user}
 
 
@@ -624,7 +761,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT id, task_id, type, model, aspect_ratio, prompt, cost, status,
+            SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                    source_feed_gen_id, created_at
             FROM generation_tasks
@@ -651,6 +788,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "type": task_type,
                 "model": model,
                 "model_label": label,
+                "duration": row["duration"],
                 "aspect_ratio": row["aspect_ratio"] or "",
                 "status": row["status"] or "pending",
                 "result_url": row["result_url"],
@@ -772,6 +910,9 @@ async def _launch_video_generation_task(
     omni_example_dialogue: str | None = None,
     omni_character_name: str | None = None,
     omni_character_audio_ids: list[str] | None = None,
+    source_feed_gen_id: int | None = None,
+    parent_generation_id: int | None = None,
+    action_type: str | None = None,
 ) -> dict[str, Any]:
     from bot.services.gemini_omni_service import gemini_omni_service
     from bot.services.grok_service import grok_service
@@ -998,7 +1139,13 @@ async def _launch_video_generation_task(
                 "omni_example_dialogue": omni_example_dialogue,
                 "omni_character_name": omni_character_name,
                 "omni_character_audio_ids": omni_character_audio_ids or [],
+                "source_feed_gen_id": source_feed_gen_id,
+                "parent_generation_id": parent_generation_id,
+                "action_type": action_type,
             },
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=parent_generation_id,
+            action_type=action_type,
         )
         return {
             "status": "queued",
@@ -1039,7 +1186,13 @@ async def _launch_video_generation_task(
                 "omni_example_dialogue": omni_example_dialogue,
                 "omni_character_name": omni_character_name,
                 "omni_character_audio_ids": omni_character_audio_ids or [],
+                "source_feed_gen_id": source_feed_gen_id,
+                "parent_generation_id": parent_generation_id,
+                "action_type": action_type,
             },
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=parent_generation_id,
+            action_type=action_type,
         )
         await complete_video_task(asset_id, asset_id)
         return {
@@ -1062,7 +1215,33 @@ async def _launch_video_generation_task(
         aspect_ratio=normalized_ratio,
         prompt=prompt,
         cost=cost,
-        request_data={"source": "miniapp", "v_type": generation_type},
+        request_data={
+            "source": "miniapp",
+            "v_type": generation_type,
+            "v_model": model,
+            "v_image_url": image_url,
+            "reference_images": image_references,
+            "v_reference_videos": video_references,
+            "audio_url": audio_url,
+            "grok_mode": grok_mode,
+            "veo_generation_type": veo_generation_type,
+            "veo_translation": veo_translation,
+            "veo_resolution": veo_resolution,
+            "veo_seed": veo_seed,
+            "veo_watermark": veo_watermark,
+            "kling_negative_prompt": kling_negative_prompt,
+            "kling_cfg_scale": kling_cfg_scale,
+            "omni_resolution": omni_resolution,
+            "omni_seed": omni_seed,
+            "omni_audio_ids": omni_audio_ids or [],
+            "omni_character_ids": omni_character_ids or [],
+            "source_feed_gen_id": source_feed_gen_id,
+            "parent_generation_id": parent_generation_id,
+            "action_type": action_type,
+        },
+        source_feed_gen_id=source_feed_gen_id,
+        parent_generation_id=parent_generation_id,
+        action_type=action_type,
     )
 
     if result_status == "done":
@@ -1657,6 +1836,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         body = await request.json()
         init_data = body.get("init_data", "")
         package_id = body.get("package_id")
+        promo_code = body.get("promo_code")
 
         if not package_id:
             return web.json_response(
@@ -1673,7 +1853,17 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             )
 
         order_id = f"{telegram_id}_{int(time.time())}_{package_id}"
-        total_credits = package["credits"] + package.get("bonus_credits", 0)
+        promo = (
+            await get_promo_code_by_code(promo_code, active_only=True)
+            if promo_code
+            else None
+        )
+        promo_bonus = (
+            get_promo_bonus_for_credits(package["credits"]) if promo else 0
+        )
+        total_credits = (
+            package["credits"] + package.get("bonus_credits", 0) + promo_bonus
+        )
         description = f"Покупка {total_credits} бананов ({package['name']})"
 
         # Create YooKassa payment (use service directly)
@@ -1707,6 +1897,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             credits=total_credits,
             amount_rub=float(package["price_rub"]),
             status="pending",
+            promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+            promo_code=promo.code if promo and promo_bonus > 0 else None,
+            promo_bonus_credits=promo_bonus,
         )
 
         return web.json_response(
@@ -1715,6 +1908,9 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                 "order_id": order_id,
                 "payment_id": payment_id,
                 "payment_url": payment_url,
+                "credits": total_credits,
+                "promo_bonus_credits": promo_bonus,
+                "promo_code": promo.code if promo and promo_bonus > 0 else "",
             }
         )
 
@@ -1978,7 +2174,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = min(max(int(body.get("limit", 200) or 200), 1), 300)
+        limit = min(max(int(body.get("limit", 200) or 200), 1), 400)
         _telegram_id, ctx = await _get_user_context(request.app, init_data)
         feed = await get_user_feed_generations(ctx["user"].id, limit=limit)
         return web.json_response({"ok": True, "feed": feed})
@@ -2025,7 +2221,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = min(max(int(body.get("limit", 120) or 120), 1), 300)
+        limit = min(max(int(body.get("limit", 120) or 120), 1), 400)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
@@ -2534,10 +2730,58 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "")).strip()
-        model = str(body.get("v_model", "v3_pro"))
-        generation_type = str(body.get("v_type", "text"))
-        duration = int(body.get("v_duration", 5))
-        aspect_ratio = str(body.get("v_ratio", "16:9"))
+        source_feed_gen_id_raw = body.get("source_feed_gen_id") or body.get("sourceFeedGenId")
+        source_feed_gen_id = (
+            int(source_feed_gen_id_raw)
+            if str(source_feed_gen_id_raw or "").isdigit()
+            else None
+        )
+        source_feed_task = None
+        source_request_data: dict[str, Any] = {}
+        if source_feed_gen_id:
+            source_feed_task = await get_generation_task_payload(source_feed_gen_id)
+            if not source_feed_task or not (
+                source_feed_task.get("type") == "video"
+                and source_feed_task.get("status") == "completed"
+                and source_feed_task.get("result_url")
+                and bool(source_feed_task.get("is_public_feed"))
+            ):
+                return web.json_response(
+                    {"ok": False, "error": "Видео из ленты не найдено"},
+                    status=404,
+                )
+            source_prompt = str(source_feed_task.get("prompt") or "").strip()
+            if not source_prompt:
+                return web.json_response(
+                    {"ok": False, "error": "У исходного видео нет prompt"},
+                    status=400,
+                )
+            if not prompt:
+                prompt = source_prompt
+            source_request_data = source_feed_task.get("request_data") or {}
+            if not isinstance(source_request_data, dict):
+                source_request_data = {}
+
+        model = str(
+            body.get("v_model")
+            or (source_feed_task or {}).get("model")
+            or "v3_pro"
+        )
+        generation_type = str(
+            body.get("v_type")
+            or source_request_data.get("v_type")
+            or "text"
+        )
+        duration = int(
+            body.get("v_duration")
+            or (source_feed_task or {}).get("duration")
+            or 5
+        )
+        aspect_ratio = str(
+            body.get("v_ratio")
+            or (source_feed_task or {}).get("aspect_ratio")
+            or "16:9"
+        )
         image_url = str(body.get("v_image_url", "") or "") or None
         image_references = list(body.get("reference_images", []) or [])
         video_references = list(body.get("v_reference_videos", []) or [])
@@ -2741,6 +2985,18 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        missing_video_images = missing_local_upload_sources(
+            _clean_unique_values([image_url, *image_references])
+        )
+        if missing_video_images:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Один или несколько старых фото-референсов уже удалены. Загрузите фото заново.",
+                },
+                status=400,
+            )
+
         if image_url:
             await touch_saved_references(telegram_id, [image_url], kind="image")
         if image_references:
@@ -2799,6 +3055,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             omni_example_dialogue=omni_example_dialogue,
             omni_character_name=omni_character_name,
             omni_character_audio_ids=omni_character_audio_ids,
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=source_feed_gen_id,
+            action_type=("repeat" if source_feed_gen_id else None),
         )
 
         if launch_result["status"] == "failed":
@@ -2812,6 +3071,14 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 status=500,
             )
 
+        if source_feed_gen_id:
+            await credit_feed_prompt_repeat(
+                source_feed_gen_id,
+                user.id,
+                repeat_task_id=str(launch_result.get("task_id") or ""),
+                credits_spent=cost,
+            )
+
         fresh_user = await get_or_create_user(telegram_id)
         return web.json_response(
             {
@@ -2823,6 +3090,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 "credits": fresh_user.credits,
                 "cost": cost,
                 "model_label": get_video_model_label(effective_model),
+                "prompt_hidden": False,
+                "prompt_actions_allowed": not bool(source_feed_gen_id),
+                "source_feed_gen_id": source_feed_gen_id,
             }
         )
     except Exception as e:
@@ -3085,25 +3355,49 @@ async def miniapp_ai_assistant(request: web.Request) -> web.Response:
         body = await request.json()
         init_data = body.get("init_data", "")
         user_message = str(body.get("message", "")).strip()
+        audio_url = str(body.get("audio_url", "") or "").strip()
+        audio_content_type = str(body.get("audio_content_type", "") or "").strip()
         history = list(body.get("history", []) or [])
 
-        if not user_message:
+        if not user_message and not audio_url:
             return web.json_response(
                 {"ok": False, "error": "Сообщение не может быть пустым"}, status=400
             )
 
         telegram_id, ctx = await _get_user_context(request.app, init_data)
         user = ctx["user"]
+        audio_bytes = None
+        audio_format = ""
+
+        if audio_url:
+            try:
+                audio_bytes, _mime_type, audio_format = _load_miniapp_assistant_audio(
+                    audio_url,
+                    content_type=audio_content_type,
+                )
+            except ValueError as e:
+                return web.json_response(
+                    {"ok": False, "error": str(e)},
+                    status=400,
+                )
 
         context = {
             "user_credits": user.credits,
             "menu_location": "mini_app_assistant",
         }
 
-        response_text = await ai_assistant_service.get_assistant_response(
-            user_message=user_message,
-            context=context,
-        )
+        if audio_bytes:
+            response_text = await ai_assistant_service.get_assistant_response_with_audio(
+                user_message=user_message,
+                context=context,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+            )
+        else:
+            response_text = await ai_assistant_service.get_assistant_response(
+                user_message=user_message,
+                context=context,
+            )
 
         if response_text is None:
             return web.json_response(

@@ -88,6 +88,50 @@ async def test_save_user_channel_url_normalizes_and_rejects_non_telegram_links(
     assert updated.channel_url is None
 
 
+@pytest.mark.asyncio
+async def test_promo_code_redemption_tracks_repeatable_topup_bonus():
+    user = await database.get_or_create_user(555001)
+    promo = await database.create_promo_code(
+        "maria",
+        partner_name="Мария",
+        created_by_telegram_id=123456,
+    )
+
+    assert promo is not None
+    assert promo.code == "MARIA"
+    assert database.get_promo_bonus_for_credits(25) == 5
+    assert database.get_promo_bonus_for_credits(15) == 0
+
+    created = await database.create_transaction(
+        order_id="promo-order-1",
+        user_id=user.id,
+        payment_id="pay-1",
+        provider="yookassa",
+        credits=30,
+        amount_rub=250,
+        status="completed",
+        promo_code_id=promo.id,
+        promo_code=promo.code,
+        promo_bonus_credits=5,
+    )
+    assert created is True
+
+    transaction = await database.get_transaction_by_order("promo-order-1")
+    assert transaction.promo_code == "MARIA"
+    assert transaction.promo_bonus_credits == 5
+
+    first_record = await database.record_promo_redemption(transaction)
+    second_record = await database.record_promo_redemption(transaction)
+
+    assert first_record["inserted"] is True
+    assert second_record["inserted"] is False
+
+    details = await database.get_promo_code_details(promo.id)
+    assert details["promo"]["usage_count"] == 1
+    assert details["promo"]["total_bonus_credits"] == 5
+    assert details["redemptions"][0]["telegram_id"] == user.telegram_id
+
+
 def test_video_quality_costs_scale_with_selected_resolution(tmp_path):
     price_path = tmp_path / "price.json"
     price_path.write_text(
@@ -122,7 +166,79 @@ def test_video_quality_costs_scale_with_selected_resolution(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_saved_reference_file_is_removed(tmp_path, monkeypatch):
+async def test_admin_prompt_listing_includes_status_counts_author_and_pages():
+    user = await database.get_or_create_user(100012)
+    await database.update_user_profile(
+        user.telegram_id,
+        username="prompt_author",
+        first_name="Prompt",
+        last_name="Author",
+    )
+
+    created_ids = []
+    for index in range(12):
+        prompt = await database.create_prompt(
+            author_id=user.id,
+            prompt_text=f"Prompt text {index}",
+            title=f"Prompt {index}",
+        )
+        created_ids.append(prompt["id"])
+
+    approved = await database.approve_prompt(created_ids[0])
+
+    stats = await database.get_admin_prompt_stats()
+    first_page = await database.get_admin_prompts("pending", limit=10, offset=0)
+    second_page = await database.get_admin_prompts("pending", limit=10, offset=10)
+    details = await database.get_admin_prompt_details(created_ids[-1])
+
+    pending_ids = created_ids[1:]
+    assert approved["status"] == "approved"
+    assert stats["total"] == 12
+    assert stats["pending"] == 11
+    assert stats["approved"] == 1
+    assert [item["id"] for item in first_page] == list(reversed(pending_ids[1:]))
+    assert [item["id"] for item in second_page] == [pending_ids[0]]
+    assert details["author_telegram_id"] == user.telegram_id
+    assert details["author_username"] == "prompt_author"
+
+
+@pytest.mark.asyncio
+async def test_admin_prompt_moderation_syncs_source_generation_flag():
+    user = await database.get_or_create_user(10007)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "library-sync-image",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Studio portrait with clean light",
+        cost=2,
+    )
+    await database.complete_video_task(
+        "library-sync-image", "https://example.com/library-sync.png"
+    )
+    await database.share_to_library("library-sync-image", user.id)
+    prompt = (await database.get_author_prompts(user.id))[0]
+
+    rejected = await database.reject_prompt(prompt["id"], "Needs cleanup")
+    rejected_payload = await database.get_generation_task_payload(
+        "library-sync-image", user_id=user.id
+    )
+    restored = await database.approve_prompt(prompt["id"])
+    restored_payload = await database.get_generation_task_payload(
+        "library-sync-image", user_id=user.id
+    )
+
+    assert rejected["status"] == "rejected"
+    assert bool(rejected_payload["is_prompt_library"]) is False
+    assert restored["status"] == "approved"
+    assert bool(restored_payload["is_prompt_library"]) is True
+
+
+@pytest.mark.asyncio
+async def test_pruned_saved_reference_file_is_deferred_to_orphan_cleanup(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "refs.db"))
     monkeypatch.setattr(database, "SAVED_REFERENCES_MAX_PER_KIND", 2)
@@ -162,6 +278,16 @@ async def test_pruned_saved_reference_file_is_removed(tmp_path, monkeypatch):
         refs_count = (await cursor.fetchone())[0]
 
     assert refs_count == 2
+    assert reference_paths[0].exists()
+    assert reference_paths[1].exists()
+    assert reference_paths[2].exists()
+
+    old_mtime = 1_700_000_000
+    os.utime(reference_paths[0], (old_mtime, old_mtime))
+
+    stats = await database.cleanup_orphaned_reference_files(max_age_seconds=1)
+
+    assert stats["removed_count"] == 1
     assert not reference_paths[0].exists()
     assert reference_paths[1].exists()
     assert reference_paths[2].exists()

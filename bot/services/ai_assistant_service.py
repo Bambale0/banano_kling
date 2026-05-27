@@ -1,9 +1,10 @@
 """Сервис AI-ассистента для пользовательских подсказок внутри бота."""
 
+import base64
 import json
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 
@@ -48,6 +49,42 @@ IMAGE_SERVICE_LABELS = {
 }
 
 
+def _extract_responses_output_text(data: dict[str, Any]) -> str:
+    parts: list[str] = []
+
+    for item in data.get("output", []) or []:
+        if isinstance(item, dict) and item.get("type") == "message":
+            for content in item.get("content", []) or []:
+                if isinstance(content, dict):
+                    text = content.get("text")
+                    if text:
+                        parts.append(str(text))
+
+    if parts:
+        return "\n".join(parts).strip()
+
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"].strip()
+    if isinstance(data.get("text"), str):
+        return data["text"].strip()
+
+    return ""
+
+
+def _build_assistant_audio_content(
+    *,
+    audio_bytes: bytes,
+    audio_format: str,
+) -> dict[str, Any]:
+    return {
+        "type": "input_audio",
+        "input_audio": {
+            "data": base64.b64encode(audio_bytes).decode("ascii"),
+            "format": audio_format or "ogg",
+        },
+    }
+
+
 def _load_json(path: str) -> dict:
     """Загрузить JSON-файл. При ошибке вернуть пустой словарь."""
     try:
@@ -61,6 +98,7 @@ class AIAssistantService:
     """Сервис AI-ассистента для помощи с моделями, промптами и настройками."""
 
     ENDPOINT = "/gpt-5-2/v1/chat/completions"
+    AUDIO_ENDPOINT = "/codex/v1/responses"
 
     def __init__(self):
         self._session = None
@@ -80,6 +118,11 @@ class AIAssistantService:
         """Получить ответ от AI-ассистента."""
         if not config.KIE_AI_API_KEY:
             logger.error("Kie.ai API key not configured for AI Assistant")
+            return None
+
+        user_message = str(user_message or "").strip()
+        if not user_message:
+            logger.warning("AI Assistant text request is empty")
             return None
 
         system_prompt = self._get_system_prompt()
@@ -153,6 +196,126 @@ class AIAssistantService:
 
         except Exception as e:
             logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
+            return None
+
+    async def get_assistant_response_with_audio(
+        self,
+        *,
+        user_message: str = "",
+        context: dict = None,
+        audio_bytes: bytes | None = None,
+        audio_format: str = "ogg",
+    ) -> Optional[str]:
+        """Получить ответ от ассистента, передав аудио напрямую в модель."""
+        if not config.KIE_AI_API_KEY:
+            logger.error("Kie.ai API key not configured for AI Assistant audio")
+            return None
+        if not audio_bytes:
+            return await self.get_assistant_response(
+                user_message=user_message,
+                context=context,
+            )
+
+        system_prompt = self._get_system_prompt()
+        context_info = self._format_context(context or {})
+        pricing_info = self.get_pricing_info()
+        user_text = str(user_message or "").strip()
+
+        audio_rules = """
+Ты умеешь слушать прикреплённые голосовые и аудиосообщения напрямую.
+Если в аудио есть вопрос или инструкция пользователя, считай это основным сообщением и ответь на него.
+Если пользователь просит описать голос, описывай только слышимые свойства записи: тембр, высоту, темп, громкость, дикцию, интонацию, эмоцию/энергию и качество записи.
+Не определяй личность, возраст, пол, здоровье, национальность, происхождение и другие чувствительные или частные признаки по голосу.
+Не пересказывай аудио полностью, если пользователь об этом не просил.
+""".strip()
+
+        full_message = f"""Контекст пользователя:
+{context_info}
+
+{pricing_info}
+
+Текст пользователя или подпись к аудио: {user_text or '—'}
+
+Пользователь прикрепил аудио. Прослушай его напрямую и ответь по смыслу аудио."""
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": config.PHOTO_PROMPT_MODEL,
+                "stream": False,
+                "input": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": f"{system_prompt}\n\n{audio_rules}",
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": full_message},
+                            _build_assistant_audio_content(
+                                audio_bytes=audio_bytes,
+                                audio_format=audio_format or "ogg",
+                            ),
+                        ],
+                    },
+                ],
+                "reasoning": {"effort": "medium"},
+            }
+
+            timeout = aiohttp.ClientTimeout(total=120)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{config.KIE_BASE_URL}{self.AUDIO_ENDPOINT}",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    response_text = await response.text()
+                    logger.info(
+                        "Kie.ai Assistant audio response status: %s, content-type: %s",
+                        response.status,
+                        response.headers.get("content-type", "none"),
+                    )
+                    logger.info("Assistant audio response preview: %s...", response_text[:500])
+
+                    if response.status != 200:
+                        logger.error(
+                            "Kie.ai Assistant audio error %s: %s",
+                            response.status,
+                            response_text[:1000],
+                        )
+                        return None
+
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError as json_err:
+                        logger.error(
+                            "Assistant audio JSON decode error: %s. Raw response: %s",
+                            json_err,
+                            response_text[:1000],
+                        )
+                        return None
+
+                    try:
+                        body_code = int(data.get("code", 0) or 0)
+                    except (TypeError, ValueError):
+                        body_code = 0
+                    if body_code >= 400:
+                        logger.error("Kie.ai Assistant audio body error: %s", data)
+                        return None
+
+                    output_text = _extract_responses_output_text(data)
+                    return output_text or None
+
+        except Exception as e:
+            logger.exception(f"Kie.ai Assistant audio call failed: {e}")
             return None
 
     def _get_system_prompt(self) -> str:

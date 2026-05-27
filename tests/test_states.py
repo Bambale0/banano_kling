@@ -9,6 +9,7 @@ from bot.states import (AdminStates, BatchGenerationStates, GenerationStates,
 def test_generation_states():
     """Test GenerationStates enum"""
     assert GenerationStates.waiting_for_input
+    assert GenerationStates.waiting_for_repeat_prompt
     assert GenerationStates.waiting_for_image
     assert GenerationStates.waiting_for_video
     assert GenerationStates.waiting_for_video_prompt
@@ -42,6 +43,8 @@ def test_admin_states():
     assert AdminStates.confirming_broadcast
     assert AdminStates.waiting_user_id
     assert AdminStates.waiting_credits_amount
+    assert AdminStates.waiting_prompt_id
+    assert AdminStates.waiting_prompt_reject_reason
 
 
 def test_batch_generation_states():

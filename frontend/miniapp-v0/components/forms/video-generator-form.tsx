@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import type { VideoModel, UploadedFile, ScenarioType } from '@/lib/types'
+import type { VideoModel, UploadedFile, ScenarioType, VideoPromptPreset } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -55,6 +55,7 @@ interface VideoGeneratorFormProps {
     scenario: ScenarioType
     ratio: string
     duration: number
+    sourceFeedGenId?: number | null
     grokMode: string
     veoGenerationType: string
     veoTranslation: boolean
@@ -85,6 +86,8 @@ interface VideoGeneratorFormProps {
   savedImageReferences?: UploadedFile[]
   savedVideoReferences?: UploadedFile[]
   savedAudioReferences?: UploadedFile[]
+  promptPreset?: VideoPromptPreset | null
+  onPromptPresetConsumed?: () => void
   isSubmitting: boolean
   credits: number
 }
@@ -98,6 +101,8 @@ export function VideoGeneratorForm({
   savedImageReferences = [],
   savedVideoReferences = [],
   savedAudioReferences = [],
+  promptPreset,
+  onPromptPresetConsumed,
   isSubmitting,
   credits,
 }: VideoGeneratorFormProps) {
@@ -125,6 +130,8 @@ export function VideoGeneratorForm({
   const [omniCharacterName, setOmniCharacterName] = useState('')
   const [omniCharacterAudioIds, setOmniCharacterAudioIds] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
+  const [repeatTitle, setRepeatTitle] = useState('')
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
@@ -256,6 +263,30 @@ export function VideoGeneratorForm({
     }
   }, [models])
 
+  useEffect(() => {
+    if (!promptPreset) return
+    setPrompt(promptPreset.prompt)
+    setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
+    setRepeatTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
+    if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
+      setSelectedModel(promptPreset.model)
+    }
+    if (promptPreset.scenario) {
+      setSelectedScenario(promptPreset.scenario)
+    }
+    if (promptPreset.ratio) {
+      setSelectedRatio(promptPreset.ratio)
+    }
+    if (promptPreset.duration) {
+      setSelectedDuration(promptPreset.duration)
+    }
+    setStartImage([])
+    setPhotoReferences([])
+    setVideoReferences([])
+    setAudioReference([])
+    onPromptPresetConsumed?.()
+  }, [models, onPromptPresetConsumed, promptPreset])
+
   // selected model is hidden motion: switch to first visible video model
   useEffect(() => {
     if (HIDDEN_FROM_COMMON_VIDEO_LIST.has(selectedModel)) {
@@ -320,6 +351,7 @@ export function VideoGeneratorForm({
       scenario: selectedScenario,
       ratio: selectedRatio,
       duration: submitDuration,
+      sourceFeedGenId,
       grokMode,
       veoGenerationType,
       veoTranslation,
@@ -345,6 +377,8 @@ export function VideoGeneratorForm({
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
     setPrompt('')
+    setSourceFeedGenId(null)
+    setRepeatTitle('')
     setStartImage([])
     setPhotoReferences([])
     setVideoReferences([])
@@ -879,6 +913,16 @@ export function VideoGeneratorForm({
         ) : null}
 
         <div className="space-y-2">
+          {sourceFeedGenId ? (
+            <div className="rounded-2xl border border-cyan/25 bg-cyan/10 p-4">
+              <p className="text-sm font-medium text-foreground">
+                {repeatTitle || 'Повторить видео из ленты'}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Настройки и промпт подставлены. Можно поменять длительность, формат или добавить свои референсы.
+              </p>
+            </div>
+          ) : null}
           <label className="text-sm font-medium text-foreground">
             {isOmniAudio ? 'Описание голоса' : isOmniCharacter ? 'Описание персонажа' : 'Промпт'}
           </label>
@@ -901,7 +945,11 @@ export function VideoGeneratorForm({
           />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {scenarioSupported
+              {sourceFeedGenId
+                ? prompt.trim().length > 0
+                  ? 'Промпт из ленты готов к запуску'
+                  : 'Добавьте текст промпта'
+                : scenarioSupported
                 ? 'Сценарий поддерживается выбранной моделью'
                 : 'Выбранный сценарий для модели недоступен'}
             </span>

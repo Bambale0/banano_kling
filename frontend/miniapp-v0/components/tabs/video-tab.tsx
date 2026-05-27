@@ -21,7 +21,7 @@ function getVideoModelCost(model: VideoModel | undefined, duration: number, qual
 }
 
 export function VideoTab() {
-  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference } = useApp()
+  const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, videoPromptPreset, setVideoPromptPreset } = useApp()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +31,7 @@ export function VideoTab() {
     scenario: ScenarioType
     ratio: string
     duration: number
+    sourceFeedGenId?: number | null
     grokMode: string
     veoGenerationType: string
     veoTranslation: boolean
@@ -96,6 +97,8 @@ export function VideoTab() {
           prompt_preview: data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
           cost,
           duration: data.duration,
+          prompt_hidden: false,
+          prompt_actions_allowed: !data.sourceFeedGenId,
         }
         addTask(newTask)
         setCredits(Math.max(state.user.credits - cost, 0))
@@ -176,6 +179,8 @@ export function VideoTab() {
           savedImageReferences={state.savedReferences.filter((item) => item.type === 'image')}
           savedVideoReferences={state.savedReferences.filter((item) => item.type === 'video')}
           savedAudioReferences={state.savedReferences.filter((item) => item.type === 'audio')}
+          promptPreset={videoPromptPreset}
+          onPromptPresetConsumed={() => setVideoPromptPreset(null)}
           isSubmitting={isSubmitting}
           credits={state.user.credits}
         />

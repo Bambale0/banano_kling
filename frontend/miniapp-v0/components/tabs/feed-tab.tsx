@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
-import type { FeedComment, FeedItem } from '@/lib/types'
+import type { FeedComment, FeedItem, ScenarioType } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,11 +18,13 @@ import {
   ImageOff,
   Loader2,
   MessageCircle,
+  Play,
+  Repeat2,
   Send,
   Share2,
-  Sparkles,
   Trash2,
   UserRound,
+  Video,
   X,
 } from 'lucide-react'
 
@@ -32,30 +34,39 @@ const sources = [
   { id: 'top', label: 'Лучшие' },
 ] as const
 
+const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
+
+function normalizeVideoScenario(value?: string | null): ScenarioType {
+  return videoScenarios.has(value as ScenarioType) ? (value as ScenarioType) : 'text'
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
-function getPinAspectRatio(value?: string | null): CSSProperties['aspectRatio'] {
+function getPinAspectRatio(
+  value?: string | null,
+  genType: FeedItem['gen_type'] = 'image'
+): CSSProperties['aspectRatio'] {
   const match = String(value || '').match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
-  if (!match) return '4 / 5'
+  if (!match) return genType === 'video' ? '16 / 9' : '4 / 5'
   const width = Number(match[1])
   const height = Number(match[2])
-  if (!width || !height) return '4 / 5'
+  if (!width || !height) return genType === 'video' ? '16 / 9' : '4 / 5'
   return `${width} / ${height}`
 }
 
-function getPinHeightWeight(value?: string | null) {
+function getPinHeightWeight(value?: string | null, genType: FeedItem['gen_type'] = 'image') {
   const match = String(value || '').match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
-  if (!match) return 1.25
+  if (!match) return genType === 'video' ? 0.56 : 1.25
   const width = Number(match[1])
   const height = Number(match[2])
-  if (!width || !height) return 1.25
+  if (!width || !height) return genType === 'video' ? 0.56 : 1.25
   return height / width
 }
 
 export function FeedTab() {
-  const { state, setActiveTab, setPromptPreset, openProfile } = useApp()
+  const { state, setActiveTab, setPromptPreset, setVideoPromptPreset, openProfile } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [items, setItems] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -75,7 +86,7 @@ export function FeedTab() {
     items.forEach((item) => {
       const columnIndex = heights[0] <= heights[1] ? 0 : 1
       columns[columnIndex].push(item)
-      heights[columnIndex] += getPinHeightWeight(item.aspect_ratio) + 0.4
+      heights[columnIndex] += getPinHeightWeight(item.aspect_ratio, item.gen_type) + 0.4
     })
 
     return columns
@@ -157,6 +168,21 @@ export function FeedTab() {
 
   const handleRemix = async (item: FeedItem) => {
     if (!isLive) return
+    if (item.gen_type === 'video') {
+      const modelExists = state.videoModels.some((model) => model.id === item.model)
+      setVideoPromptPreset({
+        title: 'Повторить видео из ленты',
+        prompt: item.prompt || '',
+        model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
+        scenario: normalizeVideoScenario(item.scenario),
+        ratio: item.aspect_ratio || '16:9',
+        duration: item.duration || 5,
+        sourceFeedGenId: item.id,
+        promptHidden: item.prompt_hidden,
+      })
+      setActiveTab(2)
+      return
+    }
     const modelExists = state.imageModels.some((model) => model.id === item.model)
     setPromptPreset({
       promptId: null,
@@ -216,7 +242,7 @@ export function FeedTab() {
     <div className="px-4 space-y-5">
       <div>
         <h2 className="font-serif text-xl font-semibold text-foreground">Лента работ</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Публичные изображения, которые можно лайкнуть или повторить со своим фото.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Публичные фото и видео, которые можно лайкнуть, открыть или повторить.</p>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -264,37 +290,54 @@ export function FeedTab() {
                       type="button"
                       onClick={() => setPreviewItem(item)}
                       className="group block w-full text-left"
-                      aria-label="Открыть фото"
+                      aria-label={item.gen_type === 'video' ? 'Открыть видео' : 'Открыть фото'}
                     >
                       {isHttpUrl(item.result_url) ? (
-                        <img
-                          src={item.result_url}
-                          alt=""
-                          loading="lazy"
-                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
-                          className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                        />
+                        item.gen_type === 'video' ? (
+                          <video
+                            src={item.result_url}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
+                            className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          />
+                        ) : (
+                          <img
+                            src={item.result_url}
+                            alt=""
+                            loading="lazy"
+                            style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
+                            className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          />
+                        )
                       ) : (
                         <div
-                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio) }}
+                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
                           className="flex w-full items-center justify-center text-muted-foreground"
                         >
                           <ImageOff className="h-8 w-8" />
                         </div>
                       )}
                       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                      {item.gen_type === 'video' ? (
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-background/75 text-foreground backdrop-blur">
+                            <Play className="h-5 w-5 fill-current" />
+                          </span>
+                        </span>
+                      ) : null}
                     </button>
                     <div className="absolute left-2 top-2 rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium text-foreground backdrop-blur">
-                      {item.aspect_ratio || 'image'}
+                      {item.gen_type === 'video' ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Video className="h-3 w-3" />
+                          {item.duration ? `${item.duration}с` : item.aspect_ratio || 'video'}
+                        </span>
+                      ) : (
+                        item.aspect_ratio || 'image'
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemix(item)}
-                      className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-gold text-primary-foreground opacity-95 shadow-lg shadow-background/30"
-                      aria-label="Повторить"
-                    >
-                      <Sparkles className="h-4 w-4" />
-                    </button>
                   </div>
                   <div className="space-y-2.5 px-2.5 pb-3 pt-2.5">
                     <div className="flex items-start justify-between gap-2">
@@ -390,16 +433,47 @@ export function FeedTab() {
             <X className="h-5 w-5" />
           </button>
           {isHttpUrl(previewItem.result_url) ? (
-            <img
-              src={previewItem.result_url}
-              alt=""
-              className="max-h-full w-auto max-w-full object-contain"
-            />
+            previewItem.gen_type === 'video' ? (
+              <video
+                src={previewItem.result_url}
+                className="max-h-full w-auto max-w-full object-contain"
+                controls
+                autoPlay
+                playsInline
+              />
+            ) : (
+              <img
+                src={previewItem.result_url}
+                alt=""
+                className="max-h-full w-auto max-w-full object-contain"
+              />
+            )
           ) : (
             <div className="flex h-48 w-full items-center justify-center text-muted-foreground">
               <ImageOff className="h-8 w-8" />
             </div>
           )}
+          <div className="absolute bottom-4 left-3 right-3 flex justify-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 rounded-full bg-secondary/90 px-4"
+              disabled={!isLive}
+              onClick={() => setCommentsItem(previewItem)}
+            >
+              <MessageCircle className="h-4 w-4" />
+              {previewItem.comments_count || 0}
+            </Button>
+            <Button
+              type="button"
+              className="h-10 rounded-full px-4"
+              disabled={!isLive}
+              onClick={() => handleRemix(previewItem)}
+            >
+              <Repeat2 className="h-4 w-4" />
+              <span>Повторить</span>
+            </Button>
+          </div>
         </div>
       ) : null}
 

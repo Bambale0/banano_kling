@@ -34,7 +34,13 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+backups/
 tests/
+!tests/
+tests/*
+!tests/live/
+tests/live/*
+!tests/live/test_kie_live_smoke.py
 # Logs
 logs/
 *.log

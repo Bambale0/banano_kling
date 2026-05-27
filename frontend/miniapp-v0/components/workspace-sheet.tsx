@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, PanelTopOpen, Send, Sparkles, Wand2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, Mic, PanelTopOpen, Send, Sparkles, Square, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -118,6 +118,10 @@ function AssistantChat({ starters }: { starters: string[] }) {
   const { state, setActiveTab, closeWorkspace } = useApp()
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const inputRef = useRef('')
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'assistant-1',
@@ -126,22 +130,44 @@ function AssistantChat({ starters }: { starters: string[] }) {
     },
   ])
 
-  const sendMessage = async (text: string) => {
+  const updateInput = (value: string) => {
+    inputRef.current = value
+    setInput(value)
+  }
+
+  const sendMessage = async (text: string, audioFile?: File | null) => {
     const content = text.trim()
-    if (!content || isLoading) return
+    if ((!content && !audioFile) || isLoading) return
+
+    if (audioFile) {
+      if (audioFile.size > 10 * 1024 * 1024) {
+        toast.error('Аудио слишком большое', { description: 'Максимум 10MB.' })
+        return
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      text: content,
+      text: audioFile
+        ? content
+          ? `${content}\n🎙 Голосовое сообщение`
+          : '🎙 Голосовое сообщение'
+        : content,
     }
 
     const nextHistory = [...messages, userMessage].slice(-6)
     setMessages(nextHistory)
-    setInput('')
+    updateInput('')
     setIsLoading(true)
 
     try {
+      let audioUrl = ''
+      if (audioFile) {
+        const uploaded = await uploadFile('assistant_audio', audioFile)
+        audioUrl = uploaded.url
+      }
+
       const historyForApi = nextHistory.map((m) => ({
         role: m.role,
         text: m.text,
@@ -150,6 +176,8 @@ function AssistantChat({ starters }: { starters: string[] }) {
       const { reply } = await askAIAssistant({
         message: content,
         history: historyForApi,
+        audioUrl,
+        audioContentType: audioFile?.type || null,
       })
 
       const assistantMessage: ChatMessage = {
@@ -164,7 +192,9 @@ function AssistantChat({ starters }: { starters: string[] }) {
       toast.error('Помощник недоступен', { description: errorMessage })
 
       // Показываем готовый ответ, если помощник временно недоступен.
-      const fallbackReply = buildFallbackReply(content, state.user.credits)
+      const fallbackReply = content
+        ? buildFallbackReply(content, state.user.credits)
+        : 'Не удалось обработать голосовое. Попробуйте записать короче или отправить текстом.'
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -173,6 +203,78 @@ function AssistantChat({ starters }: { starters: string[] }) {
       setMessages((prev) => [...prev, assistantMessage].slice(-6))
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const recordingExtension = (mimeType: string) => {
+    const normalized = mimeType.split(';', 1)[0].toLowerCase()
+    if (normalized.includes('ogg')) return 'ogg'
+    if (normalized.includes('mp4')) return 'm4a'
+    if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'mp3'
+    if (normalized.includes('wav')) return 'wav'
+    return 'webm'
+  }
+
+  const startRecording = async () => {
+    if (isLoading || isRecording) return
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      toast.error('Запись недоступна', { description: 'Браузер не дал доступ к микрофону.' })
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = [
+        'audio/ogg;codecs=opus',
+        'audio/webm;codecs=opus',
+        'audio/mp4',
+      ].find((type) => MediaRecorder.isTypeSupported(type)) || ''
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+
+      chunksRef.current = []
+      recorderRef.current = recorder
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data)
+      }
+      recorder.onerror = () => {
+        stream.getTracks().forEach((track) => track.stop())
+        recorderRef.current = null
+        setIsRecording(false)
+        toast.error('Не удалось записать аудио')
+      }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop())
+        recorderRef.current = null
+        setIsRecording(false)
+
+        const chunks = chunksRef.current
+        chunksRef.current = []
+        if (!chunks.length) {
+          toast.error('Запись пустая')
+          return
+        }
+
+        const type = recorder.mimeType || mimeType || 'audio/webm'
+        const blob = new Blob(chunks, { type })
+        const file = new File(
+          [blob],
+          `assistant-voice-${Date.now()}.${recordingExtension(type)}`,
+          { type }
+        )
+        await sendMessage(inputRef.current, file)
+      }
+
+      recorder.start()
+      setIsRecording(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Разрешите доступ к микрофону'
+      toast.error('Микрофон недоступен', { description: message })
+    }
+  }
+
+  const stopRecording = () => {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop()
     }
   }
 
@@ -217,17 +319,34 @@ function AssistantChat({ starters }: { starters: string[] }) {
       <div className="rounded-2xl border border-border/50 bg-secondary/20 p-3">
         <textarea
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => updateInput(event.target.value)}
           rows={3}
           disabled={isLoading}
           placeholder="Например: нужен ролик для карточки товара, вертикальный формат, спокойное движение камеры"
           className="w-full resize-none rounded-2xl border border-border/50 bg-background/60 px-4 py-3 text-sm text-foreground outline-none disabled:opacity-50"
         />
-        <div className="mt-3 flex gap-3">
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={isRecording ? 'destructive' : 'outline'}
+            size="icon"
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isLoading}
+            title={isRecording ? 'Остановить и отправить' : 'Записать голос'}
+            className={cn(
+              'h-10 w-10 border-border/50',
+              !isRecording && 'bg-background/40 hover:bg-background/60'
+            )}
+          >
+            {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            <span className="sr-only">
+              {isRecording ? 'Остановить и отправить' : 'Записать голос'}
+            </span>
+          </Button>
           <Button
             onClick={() => sendMessage(input)}
-            disabled={isLoading || !input.trim()}
-            className="flex-1 bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
+            disabled={isLoading || isRecording || !input.trim()}
+            className="min-w-[150px] flex-1 bg-gold text-primary-foreground hover:bg-gold/90 disabled:opacity-50"
           >
             {isLoading ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -242,7 +361,7 @@ function AssistantChat({ starters }: { starters: string[] }) {
               closeWorkspace()
               setActiveTab(1)
             }}
-            className="border-border/50 bg-background/40 hover:bg-background/60"
+            className="flex-1 border-border/50 bg-background/40 hover:bg-background/60 sm:flex-none"
           >
             Открыть Фото
           </Button>
@@ -252,7 +371,7 @@ function AssistantChat({ starters }: { starters: string[] }) {
               closeWorkspace()
               setActiveTab(2)
             }}
-            className="border-border/50 bg-background/40 hover:bg-background/60"
+            className="flex-1 border-border/50 bg-background/40 hover:bg-background/60 sm:flex-none"
           >
             Открыть Видео
           </Button>

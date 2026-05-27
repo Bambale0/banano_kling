@@ -329,6 +329,23 @@ pytest
 pytest tests/test_keyboards.py tests/test_database.py tests/test_kling_service.py tests/test_generation_helpers.py
 ```
 
+Боевые smoke-тесты внешних Kie.ai вызовов по умолчанию пропускаются, потому что
+создают реальные задачи у провайдера и могут тратить кредиты.
+
+```bash
+# Без флага: только проверка, что live-smoke тесты не стартуют случайно
+pytest tests/live/test_kie_live_smoke.py -q
+
+# Дефолтный боевой набор: Kling 3 Std + Nano Banana 2
+BANANO_LIVE_SMOKE=1 pytest tests/live/test_kie_live_smoke.py -q
+
+# Абсолютно все live-smoke кейсы
+BANANO_LIVE_SMOKE=1 BANANO_LIVE_SMOKE_CASES=all pytest tests/live/test_kie_live_smoke.py -q
+
+# Один или несколько конкретных кейсов
+BANANO_LIVE_SMOKE=1 BANANO_LIVE_SMOKE_CASES=kling_3_std,nano_banana_2 pytest tests/live/test_kie_live_smoke.py -q
+```
+
 Если нужен отдельный набор зависимостей для тестов, смотрите [tests/requirements.txt](/root/banano_kling/tests/requirements.txt).
 
 ## Что стоит проверять после изменений

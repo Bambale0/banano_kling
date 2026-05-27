@@ -92,6 +92,19 @@ export function TaskDetailPanel() {
     }
   }
 
+  const canPublishToFeed = Boolean(
+    taskDetail &&
+      (taskDetail.type === 'image' || taskDetail.type === 'video') &&
+      taskDetail.prompt_actions_allowed !== false &&
+      !taskDetail.prompt_hidden
+  )
+  const canSavePrompt = Boolean(
+    taskDetail &&
+      taskDetail.type === 'image' &&
+      taskDetail.prompt_actions_allowed !== false &&
+      !taskDetail.prompt_hidden
+  )
+
   return (
     <AnimatePresence>
       {isTaskDetailOpen && taskDetail && (
@@ -311,8 +324,9 @@ export function TaskDetailPanel() {
               {/* Actions */}
               {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
                 <div className="space-y-2">
-                  {taskDetail.type === 'image' && taskDetail.prompt_actions_allowed !== false && !taskDetail.prompt_hidden && (
-                    <div className="grid grid-cols-2 gap-2">
+                  {(canPublishToFeed || canSavePrompt) && (
+                    <div className={cn('grid gap-2', canSavePrompt ? 'grid-cols-2' : 'grid-cols-1')}>
+                      {canPublishToFeed ? (
                       <Button
                         type="button"
                         variant="secondary"
@@ -322,6 +336,8 @@ export function TaskDetailPanel() {
                         {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
                         {taskDetail.is_public_feed ? 'Убрать из ленты' : 'В ленту'}
                       </Button>
+                      ) : null}
+                      {canSavePrompt ? (
                       <Button
                         type="button"
                         variant="secondary"
@@ -331,6 +347,7 @@ export function TaskDetailPanel() {
                         {libraryBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
                         {taskDetail.is_prompt_library ? 'Убрать из промптов' : 'В промпты'}
                       </Button>
+                      ) : null}
                     </div>
                   )}
                   <Button

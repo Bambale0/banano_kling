@@ -13,14 +13,27 @@ from aiogram.types import BufferedInputFile
 from bot.config import config
 from bot.database import (
     add_credits,
+    approve_prompt,
+    create_promo_code,
+    deactivate_prompt,
     deduct_credits,
     get_admin_finance_report,
     get_admin_partner_details,
     get_admin_partner_stats,
+    get_admin_promo_stats,
+    get_admin_prompt_details,
+    get_admin_prompt_stats,
+    get_admin_prompts,
     get_admin_stats,
     get_partner_withdrawal_request,
     get_pending_partner_withdrawals,
+    get_promo_code_by_code,
+    get_promo_code_details,
+    get_promo_code_by_id,
     get_user_stats,
+    normalize_promo_code,
+    reject_prompt,
+    set_promo_code_active,
 )
 from bot.keyboards import (
     get_admin_keyboard,
@@ -39,6 +52,21 @@ ADMIN_FINANCE_PREVIEW_LIMIT = 25
 ADMIN_FINANCE_XLS_LIMIT = 5000
 ADMIN_FINANCE_XLS_FALLBACK_LIMIT = 1000
 ADMIN_FINANCE_TELEGRAM_MAX_BYTES = 45 * 1024 * 1024
+ADMIN_PROMPTS_PREVIEW_LIMIT = 10
+ADMIN_PROMPT_TEXT_LIMIT = 1400
+ADMIN_PROMPT_STATUS_TITLES = {
+    "all": "Все промпты",
+    "pending": "На проверке",
+    "approved": "Опубликованные",
+    "rejected": "Отклонённые",
+    "deactivated": "Скрытые",
+}
+ADMIN_PROMPT_STATUS_BADGES = {
+    "pending": "🕒",
+    "approved": "✅",
+    "rejected": "🚫",
+    "deactivated": "🗄",
+}
 ADMIN_FINANCE_LONG_CELL_LIMITS = {
     "prompt": 1200,
     "request_data": 1500,
@@ -69,6 +97,10 @@ ADMIN_FINANCE_COLUMNS = {
         ("telegram_id", "Telegram ID"),
         ("user_db_id", "User DB ID"),
         ("credits", "Бананы"),
+        ("promo_bonus_credits", "Промо бонус, 🍌"),
+        ("promo_code", "Промокод"),
+        ("promo_partner_name", "Промо партнёр"),
+        ("promo_partner_telegram_id", "Промо партнёр Telegram ID"),
         ("amount_rub", "Сумма, ₽"),
         ("status", "Статус"),
         ("provider", "Провайдер"),
@@ -221,6 +253,77 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
     )
 
 
+def _promo_rules_lines(bonus_by_credits: dict | None = None) -> list[str]:
+    items = bonus_by_credits or {25: 5, 50: 10, 100: 15, 200: 20, 500: 50}
+    return [
+        f"• <code>{credits}</code>🍌 → +<code>{bonus}</code>🍌"
+        for credits, bonus in sorted(
+            ((int(credits), int(bonus)) for credits, bonus in items.items()),
+            key=lambda item: item[0],
+        )
+    ]
+
+
+def _admin_promocodes_keyboard(promocodes: list[dict]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = [
+        [
+            types.InlineKeyboardButton(
+                text="➕ Создать промокод", callback_data="admin_promo_create"
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
+                text="🔎 Найти по коду", callback_data="admin_promo_lookup"
+            ),
+            types.InlineKeyboardButton(
+                text="🔄 Обновить", callback_data="admin_promocodes"
+            ),
+        ],
+    ]
+
+    for promo in promocodes[:10]:
+        status = "✅" if promo.get("is_active") else "⏸"
+        code = str(promo.get("code") or "")
+        usage = int(promo.get("usage_count") or 0)
+        bonus = int(promo.get("total_bonus_credits") or 0)
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"{status} {code} • {usage} оплат • +{bonus}🍌",
+                    callback_data=f"admin_promo_view_{promo['id']}",
+                )
+            ]
+        )
+
+    rows.append([types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_promo_detail_keyboard(promo: dict) -> types.InlineKeyboardMarkup:
+    promo_id = int(promo["id"])
+    is_active = bool(promo.get("is_active"))
+    toggle_text = "⏸ Выключить" if is_active else "▶️ Включить"
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=toggle_text, callback_data=f"admin_promo_toggle_{promo_id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Обновить", callback_data=f"admin_promo_view_{promo_id}"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К промокодам", callback_data="admin_promocodes"
+                )
+            ],
+        ]
+    )
+
+
 def _admin_finance_keyboard() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -278,6 +381,154 @@ def _admin_finance_section_keyboard(section: str) -> types.InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def _admin_prompts_menu_keyboard(stats: dict) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=f"🕒 На проверке ({stats.get('pending', 0)})",
+                    callback_data="admin_prompts_status_pending",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"✅ Опубликованные ({stats.get('approved', 0)})",
+                    callback_data="admin_prompts_status_approved",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text=f"🚫 Отклонённые ({stats.get('rejected', 0)})",
+                    callback_data="admin_prompts_status_rejected",
+                ),
+                types.InlineKeyboardButton(
+                    text=f"🗄 Скрытые ({stats.get('deactivated', 0)})",
+                    callback_data="admin_prompts_status_deactivated",
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text=f"📚 Все ({stats.get('total', 0)})",
+                    callback_data="admin_prompts_status_all",
+                ),
+                types.InlineKeyboardButton(
+                    text="🔎 Открыть по ID", callback_data="admin_prompt_lookup"
+                ),
+            ],
+            [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
+        ]
+    )
+
+
+def _admin_prompts_list_keyboard(
+    status: str, prompts: list[dict], page: int, total: int
+) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    for prompt in prompts[:ADMIN_PROMPTS_PREVIEW_LIMIT]:
+        prompt_id = prompt.get("id")
+        badge = ADMIN_PROMPT_STATUS_BADGES.get(str(prompt.get("status")), "•")
+        title = _short(prompt.get("title") or prompt.get("prompt_text"), 34)
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f"{badge} #{prompt_id} • {title}",
+                    callback_data=f"admin_prompt_view_{prompt_id}",
+                )
+            ]
+        )
+
+    nav_row: list[types.InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            types.InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"admin_prompts_status_{status}_{page - 1}",
+            )
+        )
+    if page * ADMIN_PROMPTS_PREVIEW_LIMIT < total:
+        nav_row.append(
+            types.InlineKeyboardButton(
+                text="Вперёд ▶️",
+                callback_data=f"admin_prompts_status_{status}_{page + 1}",
+            )
+        )
+    if nav_row:
+        rows.append(nav_row)
+
+    rows.extend(
+        [
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=f"admin_prompts_status_{status}_{page}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К промптам", callback_data="admin_prompts"
+                ),
+                types.InlineKeyboardButton(
+                    text="🏠 Админка", callback_data="admin_back"
+                ),
+            ],
+        ]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_prompt_detail_keyboard(prompt: dict) -> types.InlineKeyboardMarkup:
+    prompt_id = int(prompt["id"])
+    status = str(prompt.get("status") or "pending")
+    rows: list[list[types.InlineKeyboardButton]] = []
+
+    moderation_row: list[types.InlineKeyboardButton] = []
+    if status != "approved":
+        moderation_row.append(
+            types.InlineKeyboardButton(
+                text="✅ Опубликовать",
+                callback_data=f"admin_prompt_approve_{prompt_id}",
+            )
+        )
+    if status != "rejected":
+        moderation_row.append(
+            types.InlineKeyboardButton(
+                text="🚫 Отклонить",
+                callback_data=f"admin_prompt_reject_{prompt_id}",
+            )
+        )
+    if moderation_row:
+        rows.append(moderation_row)
+
+    if status != "deactivated":
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🗄 Скрыть",
+                    callback_data=f"admin_prompt_deactivate_{prompt_id}",
+                )
+            ]
+        )
+
+    rows.extend(
+        [
+            [
+                types.InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=f"admin_prompt_view_{prompt_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 К списку",
+                    callback_data=f"admin_prompts_status_{status}",
+                ),
+                types.InlineKeyboardButton(
+                    text="📚 Промпты", callback_data="admin_prompts"
+                ),
+            ],
+        ]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMarkup:
@@ -601,6 +852,27 @@ def _parse_price_value(raw_value: str, current_value):
     return value
 
 
+def _parse_promo_create_payload(raw_value: str) -> tuple[str, str | None, int | None]:
+    parts = [
+        part.strip()
+        for part in str(raw_value or "").replace("\n", "|").split("|")
+        if part.strip()
+    ]
+    if not parts:
+        raise ValueError("empty")
+
+    code = normalize_promo_code(parts[0])
+    if len(code) < 2:
+        raise ValueError("invalid_code")
+
+    partner_name = parts[1] if len(parts) >= 2 else parts[0].strip()
+    partner_telegram_id = None
+    if len(parts) >= 3 and parts[2] not in {"-", "—"}:
+        partner_telegram_id = int(parts[2])
+
+    return code, partner_name, partner_telegram_id
+
+
 def _update_price_value(target: str, key: str, field: str, value):
     price_config = _read_price_config()
 
@@ -801,6 +1073,219 @@ def _short(value, limit: int = 72) -> str:
     return f"{text[: limit - 1]}…"
 
 
+def _format_admin_promocodes_text(stats: dict) -> str:
+    total_amount = f"{float(stats.get('total_amount_rub') or 0):.2f}"
+    lines = [
+        "🎟 <b>Промокоды</b>",
+        "",
+        f"• Всего кодов: {_code(stats.get('total_codes', 0))}",
+        f"• Активных: {_code(stats.get('active_codes', 0))}",
+        f"• Использований: {_code(stats.get('usage_count', 0))}",
+        f"• Начислено бонусов: {_code(stats.get('total_bonus_credits', 0))}🍌",
+        f"• Оборот по промокодам: {_code(total_amount)} ₽",
+        "",
+        "<b>Бонусная сетка:</b>",
+        *_promo_rules_lines(stats.get("bonus_by_credits")),
+        "",
+        "Код можно использовать много раз. Бонус считается автоматически по количеству бананов в пакете.",
+    ]
+    return "\n".join(lines)
+
+
+def _format_admin_promo_details_text(details: dict) -> str:
+    promo = details["promo"]
+    status = "активен" if promo.get("is_active") else "выключен"
+    partner_name = promo.get("partner_name") or "—"
+    partner_tg = promo.get("partner_telegram_id") or promo.get(
+        "linked_partner_telegram_id"
+    )
+    total_amount = f"{float(promo.get('total_amount_rub') or 0):.2f}"
+
+    lines = [
+        "🎟 <b>Промокод</b>",
+        "",
+        f"Код: {_code(promo.get('code'))}",
+        f"Статус: {_code(status)}",
+        f"Партнёр: {_code(partner_name)}",
+        f"Telegram ID партнёра: {_code(partner_tg or '—')}",
+        f"Использований: {_code(promo.get('usage_count', 0))}",
+        f"Начислено бонусов: {_code(promo.get('total_bonus_credits', 0))}🍌",
+        f"Оборот: {_code(total_amount)} ₽",
+        f"Создан: {_code(_short(promo.get('created_at'), 19))}",
+        "",
+        "<b>Бонусная сетка:</b>",
+        *_promo_rules_lines(details.get("bonus_by_credits")),
+        "",
+        "<b>Последние оплаты:</b>",
+    ]
+
+    redemptions = details.get("redemptions") or []
+    if not redemptions:
+        lines.append("• Пока нет использований")
+    else:
+        for row in redemptions:
+            row_amount = f"{float(row.get('amount_rub') or 0):.2f}"
+            lines.append(
+                f"• ID {_code(row.get('telegram_id'))} "
+                f"• {_code(row_amount)} ₽ "
+                f"• +{_code(row.get('bonus_credits'))}🍌 "
+                f"• {_code(_short(row.get('created_at'), 19))}"
+            )
+
+    return "\n".join(lines)
+
+
+def _clip_multiline(value, limit: int = 1000) -> str:
+    if value is None or value == "":
+        return "—"
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}…"
+
+
+def _prompt_author_label(prompt: dict) -> str:
+    username = str(prompt.get("author_username") or "").strip()
+    if username:
+        return f"@{username}"
+
+    name = " ".join(
+        part
+        for part in (
+            str(prompt.get("author_first_name") or "").strip(),
+            str(prompt.get("author_last_name") or "").strip(),
+        )
+        if part
+    )
+    if name:
+        return name
+
+    telegram_id = prompt.get("author_telegram_id")
+    return f"ID {telegram_id}" if telegram_id else f"DB ID {prompt.get('author_id')}"
+
+
+def _format_admin_prompts_overview(stats: dict) -> str:
+    return "\n".join(
+        [
+            "📚 <b>Управление промптами</b>",
+            "",
+            f"• Всего: {_code(stats.get('total', 0))}",
+            f"• На проверке: {_code(stats.get('pending', 0))}",
+            f"• Опубликовано: {_code(stats.get('approved', 0))}",
+            f"• Отклонено: {_code(stats.get('rejected', 0))}",
+            f"• Скрыто: {_code(stats.get('deactivated', 0))}",
+            f"• Публичных сейчас: {_code(stats.get('public', 0))}",
+            "",
+            "Выберите статус или откройте карточку по ID.",
+        ]
+    )
+
+
+def _format_admin_prompts_list_text(
+    status: str, prompts: list[dict], stats: dict, page: int
+) -> str:
+    title = ADMIN_PROMPT_STATUS_TITLES.get(status, status)
+    total = stats.get("total" if status == "all" else status, 0)
+    shown_from = ((page - 1) * ADMIN_PROMPTS_PREVIEW_LIMIT + 1) if prompts else 0
+    shown_to = (page - 1) * ADMIN_PROMPTS_PREVIEW_LIMIT + len(prompts)
+    lines = [
+        f"📚 <b>{_html(title)}</b>",
+        "",
+        f"• Всего в разделе: {_code(total)}",
+        f"• Страница: {_code(page)}",
+        f"• Показано: {_code(f'{shown_from}-{shown_to}' if prompts else 0)}",
+        "",
+    ]
+
+    if not prompts:
+        lines.append("Промптов в этом разделе пока нет.")
+    else:
+        for prompt in prompts:
+            badge = ADMIN_PROMPT_STATUS_BADGES.get(str(prompt.get("status")), "•")
+            author = _prompt_author_label(prompt)
+            lines.append(
+                f"{badge} <code>#{prompt['id']}</code> "
+                f"{_html(_short(prompt.get('title'), 44))}\n"
+                f"   Автор: {_html(author)} • "
+                f"категория {_code(prompt.get('category'))} • "
+                f"👍 {_code(prompt.get('likes', 0))} • "
+                f"исп. {_code(prompt.get('uses_count', 0))}"
+            )
+
+    return "\n".join(lines)
+
+
+def _format_admin_prompt_detail_text(prompt: dict) -> str:
+    status = str(prompt.get("status") or "pending")
+    tags = ", ".join(str(tag) for tag in prompt.get("tags") or []) or "—"
+    author = _prompt_author_label(prompt)
+    preview_lines: list[str] = []
+    if prompt.get("preview_url"):
+        preview_lines.extend(["", f"Preview: {_code(prompt.get('preview_url'))}"])
+    ai_lines: list[str] = []
+    if prompt.get("ai_moderation_decision") or prompt.get("ai_moderation_reason"):
+        ai_lines.extend(
+            [
+                "",
+                "<b>AI-модерация:</b>",
+                f"• Решение: {_code(prompt.get('ai_moderation_decision'))}",
+                f"• Риск: {_code(prompt.get('ai_moderation_risk'))}",
+                f"• Причина: {_html(_clip_multiline(prompt.get('ai_moderation_reason'), 400))}",
+            ]
+        )
+
+    reject_lines: list[str] = []
+    if prompt.get("reject_reason"):
+        reject_lines.extend(
+            [
+                "",
+                "<b>Причина отклонения:</b>",
+                _html(_clip_multiline(prompt.get("reject_reason"), 400)),
+            ]
+        )
+
+    lines = [
+        "📚 <b>Карточка промпта</b>",
+        "",
+        f"ID: {_code(prompt.get('id'))}",
+        f"Статус: {_code(status)}",
+        f"Публичный: {_code('да' if prompt.get('is_public') else 'нет')}",
+        f"Автор: {_html(author)}",
+        f"Telegram ID: {_code(prompt.get('author_telegram_id'))}",
+        f"Refcode: {_code(prompt.get('author_referral_code'))}",
+        f"Создан: {_code(_short(prompt.get('created_at'), 19))}",
+        "",
+        f"<b>{_html(prompt.get('title') or 'Без названия')}</b>",
+        _html(_clip_multiline(prompt.get("description"), 500)),
+        "",
+        f"Категория: {_code(prompt.get('category'))}",
+        f"Модель: {_code(prompt.get('model'))}",
+        f"Теги: {_html(tags)}",
+        f"👍 {_code(prompt.get('likes', 0))} • использований {_code(prompt.get('uses_count', 0))}",
+        *preview_lines,
+        *reject_lines,
+        *ai_lines,
+        "",
+        "<b>Prompt:</b>",
+        _html(_clip_multiline(prompt.get("prompt_text"), ADMIN_PROMPT_TEXT_LIMIT)),
+    ]
+    return "\n".join(lines)
+
+
+async def _notify_prompt_author(bot: Bot, prompt: dict, text: str) -> None:
+    telegram_id = prompt.get("author_telegram_id")
+    if not telegram_id:
+        return
+    try:
+        await bot.send_message(int(telegram_id), text, parse_mode="HTML")
+    except TelegramAPIError:
+        logger.exception(
+            "Failed to notify prompt author: prompt_id=%s telegram_id=%s",
+            prompt.get("id"),
+            telegram_id,
+        )
+
+
 def _as_float(value) -> float:
     try:
         return float(value or 0)
@@ -826,6 +1311,12 @@ def _admin_finance_total_for_section(section: str, summary: dict) -> int:
 
 def _format_admin_finance_overview(report: dict) -> str:
     summary = report.get("summary") or {}
+    promo_line = ""
+    if int(summary.get("completed_promo_count", 0) or 0) > 0:
+        promo_line = (
+            f"• Промокоды: {_code(summary.get('completed_promo_count', 0))} оплат "
+            f"на +{_code(summary.get('completed_promo_bonus_credits', 0))}🍌"
+        )
     lines = [
         "📒 <b>Финансы и рефералы</b>",
         "",
@@ -853,11 +1344,19 @@ def _format_admin_finance_overview(report: dict) -> str:
         "",
         "Откройте нужный раздел для последних строк или скачайте XLS целиком.",
     ]
+    if promo_line:
+        lines.insert(7, promo_line)
     return "\n".join(lines)
 
 
 def _format_admin_finance_preview_row(section: str, row: dict) -> str:
     if section == "topups":
+        promo = ""
+        if row.get("promo_code"):
+            promo = (
+                f" • 🎟 {_code(row.get('promo_code'))}"
+                f" +{_code(row.get('promo_bonus_credits') or 0)}🍌"
+            )
         return (
             f"• #{_html(row.get('id'))} "
             f"ID {_code(row.get('telegram_id'))} "
@@ -865,6 +1364,7 @@ def _format_admin_finance_preview_row(section: str, row: dict) -> str:
             f"• {_code(row.get('credits'))}🍌 "
             f"• {_code(row.get('status'))} "
             f"• {_code(_short(row.get('created_at'), 19))}"
+            f"{promo}"
         )
     if section == "deductions":
         model = row.get("model") or row.get("preset_id") or row.get("type") or row.get("source")
@@ -1408,6 +1908,179 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@router.callback_query(F.data == "admin_promocodes")
+async def admin_promocodes_menu(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    stats = await get_admin_promo_stats()
+    await callback.message.edit_text(
+        _format_admin_promocodes_text(stats),
+        reply_markup=_admin_promocodes_keyboard(stats.get("promocodes", [])),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_promo_create")
+async def admin_promo_create_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_promo_code_value)
+    await state.update_data(promo_admin_action="create")
+    await callback.message.edit_text(
+        "➕ <b>Создание промокода</b>\n\n"
+        "Отправьте данные в формате:\n"
+        "<code>CODE | Имя партнёра | Telegram ID</code>\n\n"
+        "Telegram ID можно не указывать:\n"
+        "<code>MARIA | Мария</code>\n\n"
+        "Код будет многоразовым, а бонусы начислятся по количеству бананов в пакете автоматически.",
+        reply_markup=get_back_keyboard("admin_promocodes"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_promo_lookup")
+async def admin_promo_lookup_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_promo_code_value)
+    await state.update_data(promo_admin_action="lookup")
+    await callback.message.edit_text(
+        "🔎 <b>Поиск промокода</b>\n\nОтправьте код одним сообщением.",
+        reply_markup=get_back_keyboard("admin_promocodes"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_promo_code_value)
+async def admin_process_promo_code_value(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    action = data.get("promo_admin_action")
+
+    if action == "lookup":
+        promo = await get_promo_code_by_code(message.text or "", active_only=False)
+        if not promo:
+            await message.answer(
+                "❌ Промокод не найден.",
+                reply_markup=get_back_keyboard("admin_promocodes"),
+            )
+            return
+        details = await get_promo_code_details(promo.id)
+        await message.answer(
+            _format_admin_promo_details_text(details),
+            reply_markup=_admin_promo_detail_keyboard(details["promo"]),
+            parse_mode="HTML",
+        )
+        await state.clear()
+        return
+
+    try:
+        code, partner_name, partner_telegram_id = _parse_promo_create_payload(
+            message.text or ""
+        )
+    except (TypeError, ValueError):
+        await message.answer(
+            "❌ Не получилось разобрать данные.\n\n"
+            "Используйте формат: <code>CODE | Имя партнёра | Telegram ID</code>",
+            reply_markup=get_back_keyboard("admin_promocodes"),
+            parse_mode="HTML",
+        )
+        return
+
+    existing = await get_promo_code_by_code(code, active_only=False)
+    if existing:
+        await message.answer(
+            f"❌ Промокод <code>{existing.code}</code> уже существует.",
+            reply_markup=get_back_keyboard("admin_promocodes"),
+            parse_mode="HTML",
+        )
+        await state.clear()
+        return
+
+    promo = await create_promo_code(
+        code,
+        partner_name=partner_name,
+        partner_telegram_id=partner_telegram_id,
+        created_by_telegram_id=message.from_user.id,
+    )
+    if not promo:
+        await message.answer(
+            "❌ Не удалось создать промокод.",
+            reply_markup=get_back_keyboard("admin_promocodes"),
+        )
+        await state.clear()
+        return
+
+    details = await get_promo_code_details(promo.id)
+    await message.answer(
+        "✅ <b>Промокод создан</b>\n\n"
+        + _format_admin_promo_details_text(details),
+        reply_markup=_admin_promo_detail_keyboard(details["promo"]),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_promo_view_"))
+async def admin_promo_view(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    promo_id = int(callback.data.replace("admin_promo_view_", ""))
+    details = await get_promo_code_details(promo_id)
+    if not details:
+        await callback.answer("Промокод не найден", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        _format_admin_promo_details_text(details),
+        reply_markup=_admin_promo_detail_keyboard(details["promo"]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_promo_toggle_"))
+async def admin_promo_toggle(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    promo_id = int(callback.data.replace("admin_promo_toggle_", ""))
+    promo = await get_promo_code_by_id(promo_id)
+    if not promo:
+        await callback.answer("Промокод не найден", show_alert=True)
+        return
+
+    updated = await set_promo_code_active(promo_id, not promo.is_active)
+    if not updated:
+        await callback.answer("Не удалось обновить промокод", show_alert=True)
+        return
+
+    details = await get_promo_code_details(promo_id)
+    await callback.message.edit_text(
+        _format_admin_promo_details_text(details),
+        reply_markup=_admin_promo_detail_keyboard(details["promo"]),
+        parse_mode="HTML",
+    )
+    await callback.answer("Готово")
+
+
 @router.callback_query(F.data == "admin_stats")
 async def admin_show_stats(callback: types.CallbackQuery):
     """Показывает детальную статистику"""
@@ -1533,6 +2206,264 @@ async def admin_finance_section(callback: types.CallbackQuery, state: FSMContext
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_prompts")
+async def admin_prompts_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Меню управления пользовательскими промптами."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    stats = await get_admin_prompt_stats()
+    await callback.message.edit_text(
+        _format_admin_prompts_overview(stats),
+        reply_markup=_admin_prompts_menu_keyboard(stats),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_prompts_status_"))
+async def admin_prompts_status(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает список промптов по выбранному статусу."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    payload = callback.data.replace("admin_prompts_status_", "", 1)
+    status = payload
+    page = 1
+    maybe_status, separator, maybe_page = payload.rpartition("_")
+    if separator and maybe_page.isdigit() and maybe_status in ADMIN_PROMPT_STATUS_TITLES:
+        status = maybe_status
+        page = max(int(maybe_page), 1)
+    if status not in ADMIN_PROMPT_STATUS_TITLES:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+
+    await state.clear()
+    stats = await get_admin_prompt_stats()
+    total = int(stats.get("total" if status == "all" else status, 0) or 0)
+    max_page = max((total - 1) // ADMIN_PROMPTS_PREVIEW_LIMIT + 1, 1)
+    if page > max_page:
+        page = max_page
+    prompts = await get_admin_prompts(
+        status,
+        limit=ADMIN_PROMPTS_PREVIEW_LIMIT,
+        offset=(page - 1) * ADMIN_PROMPTS_PREVIEW_LIMIT,
+    )
+    await callback.message.edit_text(
+        _format_admin_prompts_list_text(status, prompts, stats, page),
+        reply_markup=_admin_prompts_list_keyboard(status, prompts, page, total),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_prompt_lookup")
+async def admin_prompt_lookup(callback: types.CallbackQuery, state: FSMContext):
+    """Запрашивает ID промпта для открытия карточки."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_prompt_id)
+    await callback.message.edit_text(
+        "🔎 <b>Поиск промпта</b>\n\nВведите ID промпта из библиотеки.",
+        reply_markup=get_back_keyboard("admin_prompts"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_prompt_id)
+async def admin_process_prompt_id(message: types.Message, state: FSMContext):
+    """Открывает карточку промпта по введённому ID."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        await state.clear()
+        return
+
+    try:
+        prompt_id = int((message.text or "").strip())
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат ID. Введите число.",
+            reply_markup=get_back_keyboard("admin_prompts"),
+        )
+        return
+
+    prompt = await get_admin_prompt_details(prompt_id)
+    if not prompt:
+        await message.answer(
+            f"❌ Промпт #{prompt_id} не найден.",
+            reply_markup=get_back_keyboard("admin_prompts"),
+        )
+        return
+
+    await message.answer(
+        _format_admin_prompt_detail_text(prompt),
+        reply_markup=_admin_prompt_detail_keyboard(prompt),
+        parse_mode="HTML",
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_prompt_view_"))
+async def admin_prompt_view(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает детальную карточку промпта."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    prompt_id = int(callback.data.replace("admin_prompt_view_", "", 1))
+    prompt = await get_admin_prompt_details(prompt_id)
+    if not prompt:
+        await callback.answer("Промпт не найден", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        _format_admin_prompt_detail_text(prompt),
+        reply_markup=_admin_prompt_detail_keyboard(prompt),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_prompt_approve_"))
+async def admin_prompt_approve(
+    callback: types.CallbackQuery, state: FSMContext, bot: Bot
+):
+    """Публикует или восстанавливает промпт."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    prompt_id = int(callback.data.replace("admin_prompt_approve_", "", 1))
+    prompt = await approve_prompt(prompt_id)
+    if not prompt:
+        await callback.answer("Промпт не найден", show_alert=True)
+        return
+
+    prompt = await get_admin_prompt_details(prompt_id)
+    await _notify_prompt_author(
+        bot,
+        prompt,
+        "✅ <b>Ваш промпт опубликован</b>\n\n"
+        f"Промпт <code>#{prompt_id}</code> теперь доступен в библиотеке.",
+    )
+    await state.clear()
+    await callback.message.edit_text(
+        _format_admin_prompt_detail_text(prompt),
+        reply_markup=_admin_prompt_detail_keyboard(prompt),
+        parse_mode="HTML",
+    )
+    await callback.answer("✅ Промпт опубликован")
+
+
+@router.callback_query(F.data.startswith("admin_prompt_deactivate_"))
+async def admin_prompt_deactivate(
+    callback: types.CallbackQuery, state: FSMContext, bot: Bot
+):
+    """Скрывает промпт из публичной библиотеки."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    prompt_id = int(callback.data.replace("admin_prompt_deactivate_", "", 1))
+    prompt = await deactivate_prompt(prompt_id)
+    if not prompt:
+        await callback.answer("Промпт не найден", show_alert=True)
+        return
+
+    prompt = await get_admin_prompt_details(prompt_id)
+    await _notify_prompt_author(
+        bot,
+        prompt,
+        "🗄 <b>Промпт скрыт</b>\n\n"
+        f"Промпт <code>#{prompt_id}</code> больше не показывается в библиотеке.",
+    )
+    await state.clear()
+    await callback.message.edit_text(
+        _format_admin_prompt_detail_text(prompt),
+        reply_markup=_admin_prompt_detail_keyboard(prompt),
+        parse_mode="HTML",
+    )
+    await callback.answer("🗄 Промпт скрыт")
+
+
+@router.callback_query(F.data.startswith("admin_prompt_reject_"))
+async def admin_prompt_reject_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Запрашивает причину отклонения промпта."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    prompt_id = int(callback.data.replace("admin_prompt_reject_", "", 1))
+    prompt = await get_admin_prompt_details(prompt_id)
+    if not prompt:
+        await callback.answer("Промпт не найден", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_prompt_reject_reason)
+    await state.update_data(admin_prompt_id=prompt_id)
+    await callback.message.edit_text(
+        "🚫 <b>Отклонение промпта</b>\n\n"
+        f"Промпт: <code>#{prompt_id}</code> — {_html(_short(prompt.get('title'), 80))}\n\n"
+        "Отправьте причину отклонения одним сообщением. "
+        "Если причина не нужна, отправьте <code>-</code>.",
+        reply_markup=get_back_keyboard(f"admin_prompt_view_{prompt_id}"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_prompt_reject_reason)
+async def admin_process_prompt_reject_reason(
+    message: types.Message, state: FSMContext, bot: Bot
+):
+    """Отклоняет промпт с причиной от администратора."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    prompt_id = int(data.get("admin_prompt_id") or 0)
+    reason = (message.text or "").strip()
+    if reason == "-":
+        reason = ""
+
+    prompt = await reject_prompt(prompt_id, reason)
+    if not prompt:
+        await message.answer(
+            "❌ Промпт не найден.",
+            reply_markup=get_back_keyboard("admin_prompts"),
+        )
+        await state.clear()
+        return
+
+    prompt = await get_admin_prompt_details(prompt_id)
+    reason_text = (
+        f"\n\nПричина: {_html(reason)}"
+        if reason
+        else ""
+    )
+    await _notify_prompt_author(
+        bot,
+        prompt,
+        "🚫 <b>Промпт отклонён</b>\n\n"
+        f"Промпт <code>#{prompt_id}</code> не был опубликован.{reason_text}",
+    )
+    await message.answer(
+        _format_admin_prompt_detail_text(prompt),
+        reply_markup=_admin_prompt_detail_keyboard(prompt),
+        parse_mode="HTML",
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "admin_partners")

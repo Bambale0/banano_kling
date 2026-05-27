@@ -13,6 +13,8 @@ const telegramSdkPreloadPattern =
   /<link\b(?=[^>]*\brel=(["'])preload\1)(?=[^>]*\bhref=(["'])https:\/\/telegram\.org\/js\/telegram-web-app\.js\2)[^>]*\/?>/gi
 const scriptTagPattern = /<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi
 const charsetPattern = /<head><meta\b[^>]*(?:charset|charSet)=(["'])utf-8\1[^>]*\/?>/i
+const stylesheetPattern =
+  /<link\b(?=[^>]*\brel=(["'])stylesheet\1)(?=[^>]*\bhref=(["'])(\/mini-app\/_next\/static\/css\/[^"']+\.css)\2)[^>]*\/?>/i
 
 function htmlFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
@@ -35,6 +37,26 @@ function removeQueuedTelegramScripts(html) {
 
     return tag.includes(telegramSrc) || tag.includes('telegram-early-ready') ? '' : tag
   })
+}
+
+function inlineMiniappStyles(html) {
+  const stylesheetMatch = html.match(stylesheetPattern)
+  const stylesheetTag = stylesheetMatch?.[0]
+  const stylesheetHref = stylesheetMatch?.[3]
+
+  if (!stylesheetTag || !stylesheetHref) {
+    return html
+  }
+
+  const cssPath = join(outDir, stylesheetHref.replace(/^\/mini-app\//, ''))
+  const css = readFileSync(cssPath, 'utf8').replace(/<\/style/gi, '<\\/style')
+  const inlineStyle = `<style data-miniapp-inline-css="${stylesheetHref}">${css}</style>`
+
+  if (html.includes(inlineStyle)) {
+    return html
+  }
+
+  return html.replace(stylesheetTag, `${stylesheetTag}${inlineStyle}`)
 }
 
 let patched = 0
@@ -62,9 +84,10 @@ for (const file of htmlFiles(outDir)) {
 
   const telegramHeadScripts = `${telegramScript}${earlyScript}`
   const charsetMatch = stripped.match(charsetPattern)
-  const nextHtml = charsetMatch
+  const nextHtmlWithTelegram = charsetMatch
     ? stripped.replace(charsetMatch[0], `${charsetMatch[0]}${telegramHeadScripts}`)
     : stripped.replace('<head>', `<head>${telegramHeadScripts}`)
+  const nextHtml = inlineMiniappStyles(nextHtmlWithTelegram)
 
   if (nextHtml !== html) {
     writeFileSync(file, nextHtml)

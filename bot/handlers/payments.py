@@ -7,17 +7,23 @@ from datetime import datetime, timedelta
 from typing import Any
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
 from aiohttp import web
 
 from bot.config import config
 from bot.database import (
+    PROMO_BONUS_BY_CREDITS,
     add_credits,
     create_miniapp_notification,
     create_transaction,
     credit_first_payment_referral_bonus,
+    get_promo_bonus_for_credits,
+    get_promo_code_by_code,
     get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
+    normalize_promo_code,
+    record_promo_redemption,
     update_transaction_status,
 )
 from bot.keyboards import (
@@ -31,6 +37,7 @@ from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
 from bot.services.yookassa_service import yookassa_service
+from bot.states import PaymentStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -63,6 +70,54 @@ def _build_bonus_text(referral_bonus: dict[str, Any]) -> str:
     if referral_bonus.get("mode") == "banana":
         return f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
     return ""
+
+
+def _build_promo_rules_text() -> str:
+    return "\n".join(
+        f"• {credits}🍌 → +<code>{bonus}</code>🍌"
+        for credits, bonus in PROMO_BONUS_BY_CREDITS.items()
+    )
+
+
+def _build_promo_bonus_text(promo_bonus: dict[str, Any] | None) -> str:
+    if not promo_bonus or int(promo_bonus.get("bonus_credits") or 0) <= 0:
+        return ""
+    code = normalize_promo_code(promo_bonus.get("code"))
+    code_part = f" <code>{code}</code>" if code else ""
+    return (
+        f"\n🎟 Промокод{code_part}: +<code>{promo_bonus['bonus_credits']}</code> бананов"
+    )
+
+
+def _transaction_promo_text(transaction) -> str:
+    if int(getattr(transaction, "promo_bonus_credits", 0) or 0) <= 0:
+        return ""
+    return _build_promo_bonus_text(
+        {
+            "code": getattr(transaction, "promo_code", "") or "",
+            "bonus_credits": getattr(transaction, "promo_bonus_credits", 0),
+        }
+    )
+
+
+async def _get_selected_promo(state: FSMContext | None):
+    if state is None:
+        return None
+    data = await state.get_data()
+    code = data.get("promo_code")
+    if not code:
+        return None
+    promo = await get_promo_code_by_code(str(code), active_only=True)
+    if not promo:
+        await state.update_data(promo_code=None, promo_code_id=None)
+        return None
+    return promo
+
+
+def _promo_bonus_for_package(promo, package: dict[str, Any]) -> int:
+    if not promo:
+        return 0
+    return get_promo_bonus_for_credits(package.get("credits"))
 
 
 def _extract_first(obj: Any, keys: list[str] | tuple[str, ...]) -> Any:
@@ -239,48 +294,113 @@ async def _complete_transaction(order_id: str) -> dict[str, Any]:
             "transaction": transaction,
             "telegram_id": telegram_id,
             "referral_bonus": {},
+            "promo_bonus": {},
         }
 
     await add_credits(telegram_id, transaction.credits)
     referral_bonus = await credit_first_payment_referral_bonus(
         telegram_id, transaction.credits, transaction.amount_rub
     )
+    promo_bonus = await record_promo_redemption(transaction)
     return {
         "ok": True,
         "already_completed": False,
         "transaction": transaction,
         "telegram_id": telegram_id,
         "referral_bonus": referral_bonus,
+        "promo_bonus": promo_bonus,
     }
 
-async def _render_topup_menu(message: types.Message):
+async def _render_topup_menu(message: types.Message, state: FSMContext | None = None):
     packages = preset_manager.get_packages()
+    promo = await _get_selected_promo(state)
+    promo_text = ""
+    if promo:
+        promo_text = (
+            f"\n\n🎟 Активный промокод: <code>{promo.code}</code>\n"
+            "Бонус будет начислен автоматически по количеству бананов в пакете."
+        )
     text = (
         "🍌 <b>Пополнение баланса</b>\n\n"
         "Оплата выполняется через выбранного платёжного провайдера.\n"
         "Выберите пакет бананов ниже.\n\n"
+        "<b>Бонусы по промокоду:</b>\n"
+        f"{_build_promo_rules_text()}\n\n"
         "<i>Чем больше пакет, тем выгоднее цена за банан.</i>"
+        f"{promo_text}"
     )
 
     await message.edit_text(
         text,
-        reply_markup=get_payment_packages_keyboard(packages),
+        reply_markup=get_payment_packages_keyboard(packages, promo_active=bool(promo)),
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data == "menu_topup")
-async def show_topup_menu(callback: types.CallbackQuery):
-    await _render_topup_menu(callback.message)
+async def show_topup_menu(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == PaymentStates.waiting_promo_code.state:
+        await state.set_state(None)
+    await _render_topup_menu(callback.message, state)
 
 
 @router.callback_query(F.data == "menu_buy_credits")
-async def show_packages(callback: types.CallbackQuery):
-    await _render_topup_menu(callback.message)
+async def show_packages(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == PaymentStates.waiting_promo_code.state:
+        await state.set_state(None)
+    await _render_topup_menu(callback.message, state)
+
+
+@router.callback_query(F.data == "topup_enter_promo")
+async def topup_enter_promo(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(PaymentStates.waiting_promo_code)
+    await callback.message.edit_text(
+        "🎟 <b>Промокод</b>\n\n"
+        "Отправьте промокод одним сообщением. Он многоразовый: после ввода можно "
+        "пополнять баланс с этим кодом снова.\n\n"
+        "<b>Бонусы:</b>\n"
+        f"{_build_promo_rules_text()}",
+        reply_markup=get_back_keyboard("menu_topup"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "topup_remove_promo")
+async def topup_remove_promo(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(promo_code=None, promo_code_id=None)
+    await state.set_state(None)
+    await callback.answer("Промокод убран")
+    await _render_topup_menu(callback.message, state)
+
+
+@router.message(PaymentStates.waiting_promo_code)
+async def topup_process_promo(message: types.Message, state: FSMContext):
+    code = normalize_promo_code(message.text)
+    promo = await get_promo_code_by_code(code, active_only=True)
+    if not promo:
+        await message.answer(
+            "❌ Промокод не найден или выключен. Проверьте написание и отправьте код ещё раз.",
+            reply_markup=get_back_keyboard("menu_topup"),
+        )
+        return
+
+    await state.update_data(promo_code=promo.code, promo_code_id=promo.id)
+    await state.set_state(None)
+
+    packages = preset_manager.get_packages()
+    await message.answer(
+        "✅ <b>Промокод применён</b>\n\n"
+        f"Код: <code>{promo.code}</code>\n"
+        "Теперь выберите пакет. Бонус добавится автоматически по количеству бананов.\n\n"
+        f"{_build_promo_rules_text()}",
+        reply_markup=get_payment_packages_keyboard(packages, promo_active=True),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("choose_pay_"))
-async def choose_payment_method(callback: types.CallbackQuery):
+async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext):
     """Показывает доступные способы оплаты для выбранного пакета."""
     package_id = callback.data.replace("choose_pay_", "", 1)
     package = preset_manager.get_package(package_id)
@@ -304,19 +424,32 @@ async def choose_payment_method(callback: types.CallbackQuery):
             callback.id, text="Перенаправляем на оплату…"
         )
         fake = callback.model_copy(update={"data": f"buy_yookassa_{package_id}"})
-        return await initiate_payment(fake)
+        return await initiate_payment(fake, state)
 
     if has_crypto and not has_yookassa:
         await callback.answer()
         fake = callback.model_copy(update={"data": f"buy_crypto_{package_id}"})
-        return await initiate_payment(fake)
+        return await initiate_payment(fake, state)
 
-    total_credits = package["credits"] + package.get("bonus_credits", 0)
+    promo = await _get_selected_promo(state)
+    package_bonus = int(package.get("bonus_credits", 0) or 0)
+    promo_bonus = _promo_bonus_for_package(promo, package)
+    total_credits = package["credits"] + package_bonus + promo_bonus
+    bonus_lines = []
+    if package_bonus > 0:
+        bonus_lines.append(f"Бонус пакета: <code>{package_bonus}</code>🍌")
+    if promo_bonus > 0 and promo:
+        bonus_lines.append(
+            f"Промокод <code>{promo.code}</code>: +<code>{promo_bonus}</code>🍌"
+        )
+    bonus_text = "\n".join(bonus_lines)
+    bonus_text = f"\n{bonus_text}" if bonus_text else ""
     await callback.message.edit_text(
         f"💳 <b>Выберите способ оплаты</b>\n\n"
         f"Пакет: <b>{package['name']}</b>\n"
         f"Бананы: <code>{total_credits}</code>🍌\n"
-        f"Сумма: <code>{package['price_rub']}</code>₽",
+        f"Сумма: <code>{package['price_rub']}</code>₽"
+        f"{bonus_text}",
         reply_markup=get_payment_method_keyboard(package_id, has_yookassa, has_crypto),
         parse_mode="HTML",
     )
@@ -324,7 +457,7 @@ async def choose_payment_method(callback: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("buy_"))
-async def initiate_payment(callback: types.CallbackQuery):
+async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
     """Создаёт инвойс у выбранного платёжного провайдера."""
     payload = callback.data.replace("buy_", "", 1)
     if payload.startswith("yookassa_"):
@@ -378,7 +511,10 @@ async def initiate_payment(callback: types.CallbackQuery):
     bot_info = await callback.bot.get_me()
     success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
 
-    total_credits = package["credits"] + package.get("bonus_credits", 0)
+    promo = await _get_selected_promo(state)
+    package_bonus = int(package.get("bonus_credits", 0) or 0)
+    promo_bonus = _promo_bonus_for_package(promo, package)
+    total_credits = package["credits"] + package_bonus + promo_bonus
     description = f"Покупка {total_credits} бананов ({package['name']})"
 
     if provider == "lava":
@@ -489,11 +625,20 @@ async def initiate_payment(callback: types.CallbackQuery):
         credits=total_credits,
         amount_rub=float(package["price_rub"]),
         status="pending",
+        promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+        promo_code=promo.code if promo and promo_bonus > 0 else None,
+        promo_bonus_credits=promo_bonus,
     )
 
     bonus_text = ""
-    if package.get("bonus_credits", 0) > 0:
-        bonus_text = f"\n• Бонус: <code>{package['bonus_credits']}</code> бананов"
+    if package_bonus > 0:
+        bonus_text += f"\n• Бонус пакета: <code>{package_bonus}</code> бананов"
+    if promo and promo_bonus > 0:
+        bonus_text += (
+            f"\n• Промокод <code>{promo.code}</code>: +<code>{promo_bonus}</code> бананов"
+        )
+    elif promo:
+        bonus_text += "\n• Промокод применён, но для этой суммы бонуса нет"
 
     provider_label = {
         "lava": "Lava",
@@ -523,10 +668,11 @@ async def check_payment_status(callback: types.CallbackQuery):
         return
 
     if transaction.status == "completed":
+        promo_text = _transaction_promo_text(transaction)
         await callback.message.edit_text(
             "✅ <b>Оплата подтверждена</b>\n"
             f"• Начислено: <code>{transaction.credits}</code> бананов\n"
-            f"• Сумма: <code>{transaction.amount_rub}</code> ₽",
+            f"• Сумма: <code>{transaction.amount_rub}</code> ₽{promo_text}",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
@@ -551,7 +697,10 @@ async def check_payment_status(callback: types.CallbackQuery):
         await callback.answer("Оплата уже была зачислена ранее", show_alert=True)
         return
 
-    bonus_text = _build_bonus_text(result.get("referral_bonus") or {})
+    bonus_text = (
+        _build_promo_bonus_text(result.get("promo_bonus") or {})
+        + _build_bonus_text(result.get("referral_bonus") or {})
+    )
     transaction = result["transaction"]
     await callback.message.edit_text(
         "✅ <b>Оплата подтверждена</b>\n"
@@ -622,14 +771,11 @@ async def handle_cryptobot_webhook(request: web.Request):
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )
+        promo_bonus = await record_promo_redemption(transaction)
 
-        bonus_text = ""
-        if referral_bonus.get("mode") == "partner":
-            bonus_text = (
-                f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
-            )
-        elif referral_bonus.get("mode") == "banana":
-            bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+        bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
+            referral_bonus
+        )
 
         try:
             await _notify_user(
@@ -650,7 +796,12 @@ async def handle_cryptobot_webhook(request: web.Request):
 
         # Создаём уведомление для мини‑аппа (чтобы UI показал результат при следующем bootstrap)
         try:
-            note = f"✅ Оплата успешно обработана — {transaction.credits} бананов за {transaction.amount_rub} ₽"
+            note = (
+                f"✅ Оплата успешно обработана — {transaction.credits} бананов "
+                f"за {transaction.amount_rub} ₽"
+            )
+            if promo_bonus:
+                note += f" (промокод +{promo_bonus['bonus_credits']}🍌)"
             await create_miniapp_notification(transaction.user_id, note)
         except Exception:
             logger.exception(
@@ -724,14 +875,11 @@ async def handle_lava_webhook(request: web.Request):
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )
+        promo_bonus = await record_promo_redemption(transaction)
 
-        bonus_text = ""
-        if referral_bonus.get("mode") == "partner":
-            bonus_text = (
-                f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
-            )
-        elif referral_bonus.get("mode") == "banana":
-            bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+        bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
+            referral_bonus
+        )
 
         try:
             await _notify_user(
@@ -889,14 +1037,11 @@ async def handle_yookassa_webhook(request: web.Request):
         referral_bonus = await credit_first_payment_referral_bonus(
             telegram_id, transaction.credits, transaction.amount_rub
         )
+        promo_bonus = await record_promo_redemption(transaction)
 
-        bonus_text = ""
-        if referral_bonus.get("mode") == "partner":
-            bonus_text = (
-                f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
-            )
-        elif referral_bonus.get("mode") == "banana":
-            bonus_text = f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
+        bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
+            referral_bonus
+        )
 
         try:
             await _notify_user(

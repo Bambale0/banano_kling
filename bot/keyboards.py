@@ -149,9 +149,11 @@ def get_admin_keyboard():
     builder.button(text="🤝 Партнёры", callback_data="admin_partners")
     builder.button(text="📒 Финансы/рефы", callback_data="admin_finance")
     builder.button(text="💸 Цены", callback_data="admin_prices")
+    builder.button(text="🎟 Промокоды", callback_data="admin_promocodes")
+    builder.button(text="📚 Промпты", callback_data="admin_prompts")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 1, 1)
+    builder.adjust(2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -988,7 +990,7 @@ def get_topup_keyboard():
     return get_payment_packages_keyboard(preset_manager.get_packages())
 
 
-def get_payment_packages_keyboard(packages: list):
+def get_payment_packages_keyboard(packages: list, promo_active: bool = False):
     """Клавиатура выбора пакета бананов — ведёт на выбор способа оплаты."""
     builder = InlineKeyboardBuilder()
 
@@ -999,6 +1001,12 @@ def get_payment_packages_keyboard(packages: list):
             callback_data=f"choose_pay_{pkg['id']}",
         )
 
+    builder.button(
+        text="🎟 Ввести промокод" if not promo_active else "🎟 Изменить промокод",
+        callback_data="topup_enter_promo",
+    )
+    if promo_active:
+        builder.button(text="❌ Убрать промокод", callback_data="topup_remove_promo")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -1136,18 +1144,27 @@ def get_confirm_keyboard(confirm_data: str, cancel_data: str):
 
 
 def get_video_result_keyboard(
-    video_url: str, user_credits: int = 0, task_id: str = None, model: str = None
+    video_url: str,
+    user_credits: int = 0,
+    task_id: str = None,
+    model: str = None,
+    is_public_feed: bool = False,
 ):
     """Клавиатура для готового видео"""
     builder = InlineKeyboardBuilder()
     builder.button(text="📥 Скачать видео", url=video_url)
+    if task_id:
+        builder.button(
+            text="🗑 Убрать из ленты" if is_public_feed else "🎞 В ленту",
+            callback_data=f"feedrm_{task_id}" if is_public_feed else f"feedpub_{task_id}",
+        )
     if task_id and model and model.startswith("veo3"):
         builder.button(text="✨ Получить 1080p", callback_data=f"veo1080_{task_id}")
         builder.button(text="🖥 Получить 4K", callback_data=f"veo4k_{task_id}")
         builder.button(text="➕ Продлить", callback_data=f"veoextend_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     if task_id and model and model.startswith("veo3"):
-        builder.adjust(1, 2, 1, 1)
+        builder.adjust(1, 1, 2, 1, 1)
     else:
         builder.adjust(1)
     return builder.as_markup()

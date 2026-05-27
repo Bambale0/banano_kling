@@ -17,8 +17,12 @@ MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795
 SAVED_REFERENCES_MAX_PER_KIND = int(os.getenv("SAVED_REFERENCES_MAX_PER_KIND", "3"))
 MAX_ACTIVE_PROMPTS_PER_USER = 5
 TOP_PROMPTS_LIMIT = 10
+FEED_PUBLIC_IMAGE_MAX_ITEMS = 300
+FEED_PUBLIC_VIDEO_MAX_ITEMS = 100
+FEED_PUBLIC_TYPES = {"image", "video"}
 
 PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "other"}
+PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
 
 # Партнёрская программа — единственный источник констант
 PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
@@ -26,6 +30,13 @@ PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-г
 PARTNER_NEW_USER_BONUS: int = 15   # бананы новому пользователю при регистрации
 PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему за каждую регистрацию
 PROMPT_REPEAT_REWARD_RUB: float = float(os.getenv("PROMPT_REPEAT_REWARD_RUB", "10"))
+PROMO_BONUS_BY_CREDITS: dict[int, int] = {
+    25: 5,
+    50: 10,
+    100: 15,
+    200: 20,
+    500: 50,
+}
 
 
 class Credits(float):
@@ -77,6 +88,25 @@ class Transaction:
     amount_rub: float
     status: str
     created_at: datetime
+    promo_code_id: Optional[int] = None
+    promo_code: Optional[str] = None
+    promo_bonus_credits: int = 0
+
+
+@dataclass
+class PromoCode:
+    id: int
+    code: str
+    partner_name: Optional[str]
+    partner_telegram_id: Optional[int]
+    partner_user_id: Optional[int]
+    is_active: bool
+    usage_count: int
+    total_bonus_credits: int
+    total_amount_rub: float
+    created_by_telegram_id: Optional[int]
+    created_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 @dataclass
@@ -129,6 +159,67 @@ def _parse_json_list(value: Any) -> list[Any]:
     except (TypeError, json.JSONDecodeError):
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _parse_json_dict(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_promo_code(value: str | None) -> str:
+    code = re.sub(r"\s+", "", str(value or "").strip().upper())
+    return re.sub(r"[^0-9A-ZА-ЯЁ_-]+", "", code)[:32]
+
+
+def get_promo_bonus_for_credits(credits: float | int | str) -> int:
+    try:
+        amount = int(round(float(credits)))
+    except (TypeError, ValueError):
+        return 0
+    return int(PROMO_BONUS_BY_CREDITS.get(amount, 0))
+
+
+def _row_to_promo_code(row: aiosqlite.Row | None) -> Optional[PromoCode]:
+    if not row:
+        return None
+    return PromoCode(
+        id=int(row["id"]),
+        code=row["code"],
+        partner_name=row["partner_name"],
+        partner_telegram_id=(
+            int(row["partner_telegram_id"]) if row["partner_telegram_id"] else None
+        ),
+        partner_user_id=int(row["partner_user_id"]) if row["partner_user_id"] else None,
+        is_active=bool(row["is_active"]),
+        usage_count=int(row["usage_count"] or 0),
+        total_bonus_credits=int(row["total_bonus_credits"] or 0),
+        total_amount_rub=float(row["total_amount_rub"] or 0),
+        created_by_telegram_id=(
+            int(row["created_by_telegram_id"])
+            if row["created_by_telegram_id"]
+            else None
+        ),
+        created_at=_parse_datetime(row["created_at"]) or datetime.utcnow(),
+        updated_at=_parse_datetime(row["updated_at"]),
+    )
 
 
 def _row_to_user_prompt(row: aiosqlite.Row | None) -> Optional[UserPrompt]:
@@ -198,6 +289,37 @@ def _prompt_to_dict(prompt: UserPrompt | None) -> Optional[dict[str, Any]]:
         "ai_moderation_recommendation": prompt.ai_moderation_recommendation,
         "created_at": prompt.created_at.isoformat() if prompt.created_at else None,
     }
+
+
+def _prompt_admin_dict(row: aiosqlite.Row | None) -> Optional[dict[str, Any]]:
+    prompt = _prompt_to_dict(_row_to_user_prompt(row))
+    if not prompt or row is None:
+        return prompt
+
+    prompt.update(
+        {
+            "author_telegram_id": (
+                int(row["author_telegram_id"])
+                if "author_telegram_id" in row.keys() and row["author_telegram_id"]
+                else None
+            ),
+            "author_username": (
+                row["author_username"] if "author_username" in row.keys() else None
+            ),
+            "author_first_name": (
+                row["author_first_name"] if "author_first_name" in row.keys() else None
+            ),
+            "author_last_name": (
+                row["author_last_name"] if "author_last_name" in row.keys() else None
+            ),
+            "author_referral_code": (
+                row["author_referral_code"]
+                if "author_referral_code" in row.keys()
+                else None
+            ),
+        }
+    )
+    return prompt
 
 
 def normalize_prompt_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -570,10 +692,64 @@ async def init_db():
                 provider TEXT DEFAULT 'cryptobot',
                 credits INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
+                promo_code_id INTEGER,
+                promo_code TEXT,
+                promo_bonus_credits INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
+        """)
+
+        for statement in (
+            "ALTER TABLE transactions ADD COLUMN promo_code_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN promo_code TEXT",
+            "ALTER TABLE transactions ADD COLUMN promo_bonus_credits INTEGER DEFAULT 0",
+        ):
+            try:
+                await db.execute(statement)
+            except aiosqlite.OperationalError:
+                pass
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS promo_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                partner_name TEXT,
+                partner_telegram_id INTEGER,
+                partner_user_id INTEGER,
+                is_active BOOLEAN DEFAULT 1,
+                usage_count INTEGER DEFAULT 0,
+                total_bonus_credits INTEGER DEFAULT 0,
+                total_amount_rub REAL DEFAULT 0,
+                created_by_telegram_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (partner_user_id) REFERENCES users (id)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_promo_codes_code
+            ON promo_codes(code)
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS promo_redemptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                promo_code_id INTEGER NOT NULL,
+                transaction_id INTEGER UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL,
+                amount_rub REAL NOT NULL,
+                bonus_credits INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (promo_code_id) REFERENCES promo_codes (id),
+                FOREIGN KEY (transaction_id) REFERENCES transactions (id),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_promo_redemptions_promo
+            ON promo_redemptions(promo_code_id, created_at)
         """)
 
         # Таблица задач генерации
@@ -995,8 +1171,29 @@ async def update_user_profile(
     last_name: Optional[str] = None,
 ) -> bool:
     """Stores lightweight Telegram profile fields for public author labels."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute(
+    clean_username = (username or "").lstrip("@") or None
+    clean_first_name = (first_name or "").strip() or None
+    clean_last_name = (last_name or "").strip() or None
+
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT username, first_name, last_name
+            FROM users
+            WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+        current = await cursor.fetchone()
+        if current and (
+            current["username"],
+            current["first_name"],
+            current["last_name"],
+        ) == (clean_username, clean_first_name, clean_last_name):
+            return True
+
+        cursor = await db.execute(
             """
             UPDATE users
             SET username = ?,
@@ -1005,15 +1202,10 @@ async def update_user_profile(
                 updated_at = CURRENT_TIMESTAMP
             WHERE telegram_id = ?
             """,
-            (
-                (username or "").lstrip("@") or None,
-                (first_name or "").strip() or None,
-                (last_name or "").strip() or None,
-                telegram_id,
-            ),
+            (clean_username, clean_first_name, clean_last_name, telegram_id),
         )
         await db.commit()
-        return True
+        return cursor.rowcount > 0
 
 
 def _normalize_channel_url(channel_url: str) -> str:
@@ -1872,6 +2064,8 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
                 COUNT(*) AS total_topups,
                 COALESCE(SUM(CASE WHEN status = 'completed' THEN amount_rub ELSE 0 END), 0) AS completed_revenue_rub,
                 COALESCE(SUM(CASE WHEN status = 'completed' THEN credits ELSE 0 END), 0) AS completed_credits,
+                COALESCE(SUM(CASE WHEN status = 'completed' THEN promo_bonus_credits ELSE 0 END), 0) AS completed_promo_bonus_credits,
+                COALESCE(SUM(CASE WHEN status = 'completed' AND promo_bonus_credits > 0 THEN 1 ELSE 0 END), 0) AS completed_promo_count,
                 COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
                 COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,
                 COALESCE(SUM(CASE WHEN status NOT IN ('completed', 'pending') THEN 1 ELSE 0 END), 0) AS failed_count
@@ -1889,6 +2083,8 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
                 t.provider,
                 t.credits,
                 t.amount_rub,
+                t.promo_code,
+                t.promo_bonus_credits,
                 t.status,
                 t.created_at,
                 u.id AS user_db_id,
@@ -1896,10 +2092,13 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
                 u.credits AS user_balance,
                 u.referral_code,
                 ref.telegram_id AS referrer_telegram_id,
-                ref.referral_code AS referrer_code
+                ref.referral_code AS referrer_code,
+                pc.partner_name AS promo_partner_name,
+                pc.partner_telegram_id AS promo_partner_telegram_id
             FROM transactions t
             JOIN users u ON u.id = t.user_id
             LEFT JOIN users ref ON ref.id = u.referred_by
+            LEFT JOIN promo_codes pc ON pc.id = t.promo_code_id
             ORDER BY datetime(t.created_at) DESC, t.id DESC
             LIMIT ?
             """,
@@ -2283,6 +2482,10 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
                     float(topups_summary["completed_revenue_rub"] or 0), 2
                 ),
                 "completed_credits": topups_summary["completed_credits"] or 0,
+                "completed_promo_bonus_credits": (
+                    topups_summary["completed_promo_bonus_credits"] or 0
+                ),
+                "completed_promo_count": topups_summary["completed_promo_count"] or 0,
                 "deductions_count": deductions_total_count,
                 "deductions_cost": round(deductions_total_cost, 2),
                 "referrals_l1_count": referrals_l1_summary["referrals_l1_count"] or 0,
@@ -2828,7 +3031,10 @@ async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_K
         await db.commit()
 
     if removable_urls:
-        await _remove_saved_reference_files(removable_urls)
+        logger.info(
+            "Pruned %s saved reference rows; files are left for orphan cleanup",
+            len(removable_urls),
+        )
 
     for telegram_id in telegram_ids:
         await _invalidate_saved_reference_cache(telegram_id)
@@ -3023,7 +3229,6 @@ async def save_user_reference(
     source: str = "telegram",
 ) -> SavedReference:
     user = await get_or_create_user(telegram_id)
-    removable_urls: list[str] = []
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute(
@@ -3041,7 +3246,7 @@ async def save_user_reference(
             (user.id, kind, file_url, file_hash, original_filename, content_type, source),
         )
         await db.commit()
-        _deleted_count, removable_urls = await _prune_saved_references_for_user_id(
+        await _prune_saved_references_for_user_id(
             db,
             user_id=user.id,
             kind=kind,
@@ -3058,8 +3263,6 @@ async def save_user_reference(
             (user.id, kind, file_hash),
         )
         row = await cursor.fetchone()
-    if removable_urls:
-        await _remove_saved_reference_files(removable_urls)
     await _invalidate_saved_reference_cache(telegram_id)
     return _saved_reference_from_row(row)
 
@@ -3152,6 +3355,251 @@ async def get_referral_stats(telegram_id: int) -> dict:
         }
 
 
+async def create_promo_code(
+    code: str,
+    *,
+    partner_name: str | None = None,
+    partner_telegram_id: int | None = None,
+    created_by_telegram_id: int | None = None,
+    is_active: bool = True,
+) -> Optional[PromoCode]:
+    """Создаёт многоразовый промокод для бонусов на пополнение."""
+    normalized_code = normalize_promo_code(code)
+    if len(normalized_code) < 2:
+        raise ValueError("promo_code_too_short")
+
+    clean_partner_name = str(partner_name or "").strip()[:80] or None
+    partner_user_id = None
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        if partner_telegram_id:
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE telegram_id = ? LIMIT 1",
+                (int(partner_telegram_id),),
+            )
+            partner_row = await cursor.fetchone()
+            if partner_row:
+                partner_user_id = int(partner_row["id"])
+
+        try:
+            cursor = await db.execute(
+                """
+                INSERT INTO promo_codes (
+                    code, partner_name, partner_telegram_id, partner_user_id,
+                    is_active, created_by_telegram_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_code,
+                    clean_partner_name,
+                    int(partner_telegram_id) if partner_telegram_id else None,
+                    partner_user_id,
+                    1 if is_active else 0,
+                    int(created_by_telegram_id) if created_by_telegram_id else None,
+                ),
+            )
+            promo_id = cursor.lastrowid
+            cursor = await db.execute(
+                "SELECT * FROM promo_codes WHERE id = ?", (promo_id,)
+            )
+            row = await cursor.fetchone()
+            await db.commit()
+            return _row_to_promo_code(row)
+        except aiosqlite.IntegrityError:
+            await db.rollback()
+            return None
+
+
+async def get_promo_code_by_code(
+    code: str, *, active_only: bool = True
+) -> Optional[PromoCode]:
+    normalized_code = normalize_promo_code(code)
+    if not normalized_code:
+        return None
+
+    query = "SELECT * FROM promo_codes WHERE code = ?"
+    params: tuple[Any, ...] = (normalized_code,)
+    if active_only:
+        query += " AND is_active = 1"
+    query += " LIMIT 1"
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(query, params)
+        return _row_to_promo_code(await cursor.fetchone())
+
+
+async def get_promo_code_by_id(promo_code_id: int) -> Optional[PromoCode]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM promo_codes WHERE id = ? LIMIT 1", (int(promo_code_id),)
+        )
+        return _row_to_promo_code(await cursor.fetchone())
+
+
+async def list_promo_codes(limit: int = 20) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit or 20), 100))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                pc.*,
+                u.telegram_id AS linked_partner_telegram_id
+            FROM promo_codes pc
+            LEFT JOIN users u ON u.id = pc.partner_user_id
+            ORDER BY pc.is_active DESC, pc.usage_count DESC, datetime(pc.created_at) DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        return _sqlite_rows_to_dicts(await cursor.fetchall())
+
+
+async def get_admin_promo_stats(limit: int = 12) -> dict[str, Any]:
+    safe_limit = max(1, min(int(limit or 12), 50))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_codes,
+                COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0) AS active_codes,
+                COALESCE(SUM(usage_count), 0) AS usage_count,
+                COALESCE(SUM(total_bonus_credits), 0) AS total_bonus_credits,
+                COALESCE(SUM(total_amount_rub), 0) AS total_amount_rub
+            FROM promo_codes
+            """
+        )
+        summary = await cursor.fetchone()
+        promocodes = await list_promo_codes(safe_limit)
+        return {
+            "total_codes": summary["total_codes"] or 0,
+            "active_codes": summary["active_codes"] or 0,
+            "usage_count": summary["usage_count"] or 0,
+            "total_bonus_credits": summary["total_bonus_credits"] or 0,
+            "total_amount_rub": round(float(summary["total_amount_rub"] or 0), 2),
+            "promocodes": promocodes,
+            "bonus_by_credits": dict(PROMO_BONUS_BY_CREDITS),
+        }
+
+
+async def get_promo_code_details(
+    promo_code_id: int, redemptions_limit: int = 10
+) -> Optional[dict[str, Any]]:
+    safe_limit = max(1, min(int(redemptions_limit or 10), 50))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                pc.*,
+                u.telegram_id AS linked_partner_telegram_id
+            FROM promo_codes pc
+            LEFT JOIN users u ON u.id = pc.partner_user_id
+            WHERE pc.id = ?
+            LIMIT 1
+            """,
+            (int(promo_code_id),),
+        )
+        promo = await cursor.fetchone()
+        if not promo:
+            return None
+
+        cursor = await db.execute(
+            """
+            SELECT
+                pr.id,
+                pr.amount_rub,
+                pr.bonus_credits,
+                pr.created_at,
+                t.order_id,
+                t.provider,
+                u.telegram_id
+            FROM promo_redemptions pr
+            JOIN transactions t ON t.id = pr.transaction_id
+            JOIN users u ON u.id = pr.user_id
+            WHERE pr.promo_code_id = ?
+            ORDER BY datetime(pr.created_at) DESC, pr.id DESC
+            LIMIT ?
+            """,
+            (int(promo_code_id), safe_limit),
+        )
+        return {
+            "promo": dict(promo),
+            "redemptions": _sqlite_rows_to_dicts(await cursor.fetchall()),
+            "bonus_by_credits": dict(PROMO_BONUS_BY_CREDITS),
+        }
+
+
+async def set_promo_code_active(promo_code_id: int, is_active: bool) -> Optional[PromoCode]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            UPDATE promo_codes
+            SET is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (1 if is_active else 0, int(promo_code_id)),
+        )
+        cursor = await db.execute(
+            "SELECT * FROM promo_codes WHERE id = ? LIMIT 1", (int(promo_code_id),)
+        )
+        row = await cursor.fetchone()
+        await db.commit()
+        return _row_to_promo_code(row)
+
+
+async def record_promo_redemption(transaction: Transaction) -> dict[str, Any]:
+    """Фиксирует статистику промокода после успешного платежа."""
+    promo_code_id = getattr(transaction, "promo_code_id", None)
+    bonus_credits = int(getattr(transaction, "promo_bonus_credits", 0) or 0)
+    if not promo_code_id or bonus_credits <= 0:
+        return {}
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            INSERT OR IGNORE INTO promo_redemptions (
+                promo_code_id, transaction_id, user_id, amount_rub, bonus_credits
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                int(promo_code_id),
+                int(transaction.id),
+                int(transaction.user_id),
+                float(transaction.amount_rub),
+                bonus_credits,
+            ),
+        )
+        inserted = cursor.rowcount > 0
+        if inserted:
+            await db.execute(
+                """
+                UPDATE promo_codes
+                SET usage_count = usage_count + 1,
+                    total_bonus_credits = total_bonus_credits + ?,
+                    total_amount_rub = total_amount_rub + ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (bonus_credits, float(transaction.amount_rub), int(promo_code_id)),
+            )
+        await db.commit()
+
+    return {
+        "code": getattr(transaction, "promo_code", None) or "",
+        "bonus_credits": bonus_credits,
+        "inserted": inserted,
+    }
+
+
 async def get_user_credits(telegram_id: int) -> float:
     """Получает баланс кредитов пользователя"""
     user = await get_or_create_user(telegram_id)
@@ -3223,15 +3671,30 @@ async def create_transaction(
     credits: int,
     amount_rub: float,
     status: str = "pending",
+    promo_code_id: Optional[int] = None,
+    promo_code: Optional[str] = None,
+    promo_bonus_credits: int = 0,
 ) -> bool:
     """Создаёт транзакцию платежа"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO transactions 
-                   (order_id, user_id, payment_id, provider, credits, amount_rub, status) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (order_id, user_id, payment_id, provider, credits, amount_rub, status),
+                   (order_id, user_id, payment_id, provider, credits, amount_rub, status,
+                    promo_code_id, promo_code, promo_bonus_credits) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    order_id,
+                    user_id,
+                    payment_id,
+                    provider,
+                    credits,
+                    amount_rub,
+                    status,
+                    promo_code_id,
+                    normalize_promo_code(promo_code) if promo_code else None,
+                    int(promo_bonus_credits or 0),
+                ),
             )
             await db.commit()
             return True
@@ -3306,6 +3769,21 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
             amount_rub=row["amount_rub"],
             status=row["status"],
             created_at=datetime.fromisoformat(row["created_at"]),
+            promo_code_id=(
+                row["promo_code_id"]
+                if "promo_code_id" in row.keys() and row["promo_code_id"]
+                else None
+            ),
+            promo_code=(
+                row["promo_code"]
+                if "promo_code" in row.keys() and row["promo_code"]
+                else None
+            ),
+            promo_bonus_credits=(
+                int(row["promo_bonus_credits"] or 0)
+                if "promo_bonus_credits" in row.keys()
+                else 0
+            ),
         )
 
 
@@ -3624,6 +4102,97 @@ async def count_approved_prompts(category: Optional[str] = None) -> int:
         return int((row or [0])[0] or 0)
 
 
+async def get_admin_prompt_stats() -> dict[str, int]:
+    stats = {status: 0 for status in PROMPT_STATUSES}
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT COALESCE(status, 'pending') AS status, COUNT(*) AS count
+            FROM user_prompts
+            GROUP BY COALESCE(status, 'pending')
+            """
+        )
+        rows = await cursor.fetchall()
+        for status, count in rows:
+            stats[str(status or "pending")] = int(count or 0)
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM user_prompts WHERE is_public = 1"
+        )
+        public_row = await cursor.fetchone()
+
+    stats["total"] = sum(
+        count for status, count in stats.items() if status != "total"
+    )
+    stats["public"] = int((public_row or [0])[0] or 0)
+    return stats
+
+
+async def get_admin_prompts(
+    status: Optional[str] = "pending",
+    *,
+    limit: int = 10,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    safe_limit = min(max(int(limit or 10), 1), 50)
+    safe_offset = max(int(offset or 0), 0)
+    params: list[Any] = []
+    where = "1 = 1"
+    if status and status != "all":
+        if status not in PROMPT_STATUSES:
+            return []
+        where = "up.status = ?"
+        params.append(status)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"""
+            SELECT up.*,
+                   u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code
+            FROM user_prompts up
+            LEFT JOIN users u ON u.id = up.author_id
+            WHERE {where}
+            ORDER BY up.created_at DESC, up.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_limit, safe_offset),
+        )
+        rows = await cursor.fetchall()
+
+    return [
+        item
+        for item in (_prompt_admin_dict(row) for row in rows)
+        if item is not None
+    ]
+
+
+async def get_admin_prompt_details(prompt_id: int) -> Optional[dict[str, Any]]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT up.*,
+                   u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code
+            FROM user_prompts up
+            LEFT JOIN users u ON u.id = up.author_id
+            WHERE up.id = ?
+            LIMIT 1
+            """,
+            (prompt_id,),
+        )
+        row = await cursor.fetchone()
+    return _prompt_admin_dict(row)
+
+
 async def like_prompt(prompt_id: int, user_id: int) -> Optional[dict[str, Any]]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -3712,7 +4281,7 @@ async def credit_feed_prompt_repeat(
             SELECT id, user_id
             FROM generation_tasks
             WHERE id = ?
-              AND type = 'image'
+              AND type IN ('image', 'video')
               AND status = 'completed'
               AND is_public_feed = 1
             LIMIT 1
@@ -3769,6 +4338,12 @@ async def use_prompt(
 
 async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT source_generation_id, author_id FROM user_prompts WHERE id = ? LIMIT 1",
+            (prompt_id,),
+        )
+        row = await cursor.fetchone()
         await db.execute(
             """
             UPDATE user_prompts
@@ -3778,12 +4353,28 @@ async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
             """,
             (prompt_id,),
         )
+        if row and row["source_generation_id"]:
+            await db.execute(
+                """
+                UPDATE generation_tasks
+                SET is_prompt_library = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+                """,
+                (row["source_generation_id"], row["author_id"]),
+            )
         await db.commit()
     return await get_prompt_by_id(prompt_id)
 
 
 async def reject_prompt(prompt_id: int, reject_reason: str = "") -> Optional[dict[str, Any]]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT source_generation_id, author_id FROM user_prompts WHERE id = ? LIMIT 1",
+            (prompt_id,),
+        )
+        row = await cursor.fetchone()
         await db.execute(
             """
             UPDATE user_prompts
@@ -3793,6 +4384,16 @@ async def reject_prompt(prompt_id: int, reject_reason: str = "") -> Optional[dic
             """,
             (reject_reason[:500], prompt_id),
         )
+        if row and row["source_generation_id"]:
+            await db.execute(
+                """
+                UPDATE generation_tasks
+                SET is_prompt_library = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+                """,
+                (row["source_generation_id"], row["author_id"]),
+            )
         await db.commit()
     return await get_prompt_by_id(prompt_id)
 
@@ -3921,7 +4522,7 @@ async def _fetch_generation_row(
     if public_only:
         where.extend(
             [
-                "type = 'image'",
+                "type IN ('image', 'video')",
                 "status = 'completed'",
                 "result_url IS NOT NULL",
                 "is_public_feed = 1",
@@ -3962,6 +4563,79 @@ def _calculate_feed_score(row: aiosqlite.Row) -> float:
     return float(score)
 
 
+def _feed_created_at_for_sort(row: aiosqlite.Row) -> datetime:
+    try:
+        return datetime.fromisoformat(str(row["created_at"]))
+    except (TypeError, ValueError):
+        return datetime.min
+
+
+def _feed_public_limit_for_type(generation_type: str) -> int:
+    if generation_type == "video":
+        return FEED_PUBLIC_VIDEO_MAX_ITEMS
+    return FEED_PUBLIC_IMAGE_MAX_ITEMS
+
+
+async def cleanup_public_feed_limits() -> dict[str, int]:
+    """Keep the public feed bounded by media type, pruning low-score old posts."""
+    stats = {"image": 0, "video": 0}
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT gt.*,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count
+            FROM generation_tasks gt
+            WHERE gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND gt.is_public_feed = 1
+            """
+        )
+        rows = await cursor.fetchall()
+
+        ids_to_prune: list[int] = []
+        for generation_type in ("image", "video"):
+            type_rows = [row for row in rows if row["type"] == generation_type]
+            limit = _feed_public_limit_for_type(generation_type)
+            if len(type_rows) <= limit:
+                continue
+            ranked_rows = sorted(
+                type_rows,
+                key=lambda row: (
+                    _calculate_feed_score(row),
+                    _feed_created_at_for_sort(row),
+                    int(row["id"] or 0),
+                ),
+                reverse=True,
+            )
+            prune_rows = ranked_rows[limit:]
+            stats[generation_type] = len(prune_rows)
+            ids_to_prune.extend(int(row["id"]) for row in prune_rows)
+
+        if ids_to_prune:
+            for index in range(0, len(ids_to_prune), 200):
+                chunk = ids_to_prune[index : index + 200]
+                placeholders = ",".join("?" for _ in chunk)
+                await db.execute(
+                    f"""
+                    UPDATE generation_tasks
+                    SET is_public_feed = 0,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({placeholders})
+                    """,
+                    chunk,
+                )
+            await db.commit()
+
+    return stats
+
+
 def _author_display_name(row: aiosqlite.Row) -> str:
     username = ""
     if "author_username" in row.keys() and row["author_username"]:
@@ -3990,6 +4664,7 @@ def _generation_row_to_card(
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
     comments_count = int(row["comments_count"] or 0) if "comments_count" in row.keys() else 0
     author = _author_display_name(row)
+    request_data = _parse_json_dict(row["request_data"] if "request_data" in row.keys() else None)
     return {
         "id": row["id"],
         "task_id": row["task_id"],
@@ -4002,6 +4677,8 @@ def _generation_row_to_card(
         "shares_count": int(row["shares_count"] or 0),
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
+        "duration": row["duration"] if "duration" in row.keys() else None,
+        "scenario": request_data.get("v_type") or request_data.get("generation_type"),
         "author": author,
         "author_referral_code": (
             row["author_referral_code"]
@@ -4027,13 +4704,15 @@ async def get_feed_generations(
     safe_limit = min(max(int(limit or 40), 1), 100)
     source = source if source in {"recent", "top_day", "top"} else "recent"
     where = [
-        "gt.type = 'image'",
+        "gt.type IN ('image', 'video')",
         "gt.status = 'completed'",
         "gt.result_url IS NOT NULL",
         "gt.is_public_feed = 1",
     ]
     if source == "top_day":
         where.append("gt.created_at >= datetime('now', '-1 day')")
+
+    await cleanup_public_feed_limits()
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -4072,7 +4751,8 @@ async def get_feed_generations(
 
 
 async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 200), 1), 300)
+    safe_limit = min(max(int(limit or 200), 1), 400)
+    await cleanup_public_feed_limits()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -4095,7 +4775,11 @@ async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
-            WHERE gt.user_id = ? AND gt.is_public_feed = 1
+            WHERE gt.user_id = ?
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND gt.is_public_feed = 1
             ORDER BY gt.created_at DESC
             LIMIT ?
             """,
@@ -4142,7 +4826,7 @@ async def get_feed_generation_card(
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {clause}
-              AND gt.type = 'image'
+              AND gt.type IN ('image', 'video')
               AND gt.status = 'completed'
               AND gt.result_url IS NOT NULL
               AND gt.is_public_feed = 1
@@ -4234,7 +4918,7 @@ async def add_feed_comment(
             SELECT id
             FROM generation_tasks
             WHERE id = ?
-              AND type = 'image'
+              AND type IN ('image', 'video')
               AND status = 'completed'
               AND result_url IS NOT NULL
               AND is_public_feed = 1
@@ -4285,10 +4969,7 @@ async def get_generation_task_payload(
             return None
         payload = dict(row)
         payload["result_urls"] = _generation_result_urls(row)
-        try:
-            payload["request_data"] = json.loads(row["request_data"]) if row["request_data"] else {}
-        except (TypeError, json.JSONDecodeError):
-            payload["request_data"] = {}
+        payload["request_data"] = _parse_json_dict(row["request_data"])
         return payload
 
 
@@ -4298,7 +4979,7 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
             not row
-            or row["type"] != "image"
+            or row["type"] not in FEED_PUBLIC_TYPES
             or row["status"] != "completed"
             or not row["result_url"]
             or row["source_feed_gen_id"] is not None
@@ -4310,6 +4991,7 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
         )
         await db.commit()
         gen_id = row["id"]
+    await cleanup_public_feed_limits()
     return await get_feed_generation_card(gen_id, viewer_user_id=user_id)
 
 

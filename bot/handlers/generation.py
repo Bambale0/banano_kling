@@ -61,6 +61,7 @@ from bot.keyboards import (
     get_video_model_label,
     get_video_model_selection_keyboard,
     get_video_options_no_preset_keyboard,
+    get_video_result_keyboard,
     get_video_type_label,
 )
 from bot.services.gemini_service import gemini_service
@@ -384,6 +385,11 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
         )
     if normalized.lower().startswith("safe, non-explicit editorial image"):
         return f"{selfie_instruction}{normalized}"
+    if normalized.startswith("EDIT REQUEST (highest priority):"):
+        safety_suffix = safety_prefix.strip()
+        selfie_suffix = selfie_instruction.strip()
+        suffix = " ".join(part for part in [safety_suffix, selfie_suffix] if part)
+        return f"{normalized}\n\n{suffix}"
     return f"{safety_prefix}{selfie_instruction}{normalized}"
 
 
@@ -409,7 +415,7 @@ def _prompt_requests_selfie_without_visible_device(prompt: str) -> bool:
 def _apply_reference_detail_preservation(
     img_service: str, prompt: str, reference_images: list[str]
 ) -> str:
-    """For reference-based generation, strongly lock identity and outfit details."""
+    """For reference-based generation, preserve identity without suppressing edits."""
     prompt = (prompt or "").strip()
     if not reference_images or img_service not in {
         "banana_pro",
@@ -445,7 +451,8 @@ def _apply_reference_detail_preservation(
             "MANDATORY MULTI-REFERENCE COMPOSITION:\n"
             f"{board_instruction}"
             "The uploaded image order is meaningful and every uploaded image must influence the result.\n"
-            f"{primary_source} for the main subject: face, body proportions, age appearance, hair, skin, and distinctive marks.\n"
+            f"{primary_source} for the main subject's recognizable identity: face, age appearance, body proportions, skin tone, and distinctive marks.\n"
+            "Hair, makeup, skin finish, outfit, pose, lighting, camera angle, and scene are editable when the prompt or secondary references ask for changes.\n"
             f"{secondary_source} for clothing, dress, accessories, pose, product, style, color palette, or scene details.\n"
             "If the user request is brief or does not name a specific secondary element, still transfer the most salient non-identity element from each secondary reference onto the primary subject.\n"
             "When a secondary reference shows clothing, outfit, or a dress, transfer that garment design onto the primary person while preserving the primary person's identity.\n"
@@ -494,13 +501,16 @@ def _apply_reference_detail_preservation(
     if reference_role_instruction:
         identity_transfer_instruction = """
 IDENTITY LOCK:
-Preserve only the main subject identity from reference image 1: face geometry, age appearance, skin tone and texture, hair, body proportions, tattoos, marks, and other distinctive identity details. Do not beautify, stylize, average, morph, or replace the face.
+Use the primary reference only to keep the same recognizable person: face geometry, age appearance, skin tone, body proportions, tattoos, marks, and other distinctive identity details. Do not replace the person with a lookalike.
+
+PROMPT-LED EDITING:
+The edit request is the highest priority for editable attributes: pose, head tilt, expression, hair length, hair volume, hairstyle, hair texture, hair color, makeup, skin finish, beauty retouching, outfit, accessories, lighting, camera angle, crop, background, style, and mood. When the prompt asks for a glamorous, editorial, polished, glowing, or retouched look, apply that finish while keeping the person recognizable. Do not copy the primary reference's original pose, hairstyle, makeup, raw skin texture, outfit, lighting, or composition when the edit request or material references ask for changes. If the prompt does not mention an editable attribute, keep it close to the primary reference unless a secondary reference specifies it.
 
 SECONDARY MATERIAL LOCK:
 Reference images 2 and later are mandatory material sources. Transfer their visible requested or salient non-identity details onto the primary subject, especially dress, outfit, accessories, colors, fabrics, product details, pose, style, and scene cues. Do not copy secondary faces or create extra people unless explicitly requested.
 
 CONFLICT RULE:
-If the first reference conflicts with a secondary reference, keep identity from the first reference and take non-identity materials from the secondary reference. Never resolve the conflict by ignoring the secondary reference.
+If the first reference conflicts with the prompt or a secondary reference, keep identity from the first reference and take editable details from the prompt or secondary reference. Never resolve the conflict by ignoring the edit request or secondary reference.
 
 The uploaded images are visual references, not text content. Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
 """.strip()
@@ -512,58 +522,28 @@ The uploaded images are visual references, not text content. Never render file n
             )
         return f"{reference_role_instruction}\n\n{identity_transfer_instruction}"
     instruction = """
-STRICT IDENTITY AND DETAIL PRESERVATION. HIGHEST PRIORITY.
+REFERENCE IDENTITY GUIDANCE.
 
-Treat the reference image(s) as the exact source of truth.
-Recreate the same person or people with no identity drift and no redesign.
+Use the uploaded image as an identity reference, not as a locked pose, hairstyle, makeup, outfit, lighting, camera angle, crop, or skin-texture reference.
 
-Preserve exactly and do not alter unless the user explicitly requests it:
-- face identity
-- head shape, facial proportions, bone structure
-- eyes, eyelids, iris color, eyebrows, eyelashes
-- nose, lips, teeth, smile line, ears
-- skin tone, undertone, texture, freckles, moles, scars, wrinkles, pores
-- age appearance and body proportions
-- hairstyle, hairline, hair density, hair texture, hair color
+Follow the edit request as the highest priority for editable attributes:
+- pose, body posture, head tilt, gaze, and expression
+- hair length, hair volume, waves/curls, hairstyle, texture, and color
 - makeup style and intensity
-- outfit, fabric, folds, fit, seams, logos, prints, labels
-- accessories, jewelry, piercings, tattoos, glasses, headwear
-- pose, hand shape, fingers, nails, silhouette
-- colors, materials, textures, lighting logic, camera perspective
+- skin finish, glowing skin, beauty retouching, smoother editorial skin, and color grading
+- outfit, accessories, nails, styling, background, lighting, camera angle, crop, and mood
 
-STRICT FACE LOCK - ABSOLUTE PRIORITY:
-The face must match the reference exactly. Preserve every facial detail with no simplification and no beautification:
-- exact face oval, skull shape, forehead, cheekbones, jawline, chin
-- exact eye shape, eyelids, eye spacing, iris color, gaze character, eyelashes, eyebrows
-- exact nose bridge, nostrils, tip, width, length, profile
-- exact lips, mouth shape, cupid's bow, lip fullness, teeth, smile lines
-- exact ears, temples, hairline, sideburns
-- exact skin tone, undertone, pores, texture, freckles, moles, scars, wrinkles, nasolabial folds, dimples
-- exact facial asymmetry, age signs, expression style, makeup placement
+For people, keep the same recognizable identity from the reference: face geometry, age appearance, skin tone, body proportions, tattoos, moles, scars, and other distinctive identity marks. A requested beauty/glamour retouch should polish skin, light, hair, and makeup without changing the person's identity into a different face.
 
-OUTFIT LOCK - ABSOLUTE PRIORITY:
-Keep the exact same clothing and wearable details from the reference unless the user explicitly asks to change them:
-- same garments, layers, sleeves, neckline, length, fit, silhouette
-- same fabric type, texture, folds, seams, stitching, buttons, zippers
-- same colors, color blocking, patterns, logos, prints, labels, trims
-- same shoes, bags, jewelry, glasses, hats, belts, gloves, watches and other accessories
+For objects or products, keep the core object identity, logos, shape, and important materials, while following the edit request for scene, style, lighting, color, and composition changes.
 
-Do not make the face prettier, younger, older, smoother, slimmer, wider, more symmetrical, more generic, or more model-like. Do not replace the face with a similar-looking person. If the requested edit conflicts with face preservation, keep the face from the reference and apply the edit only outside the face.
+Do not copy the original reference pose, composition, hairstyle, makeup, raw skin texture, outfit, or background when the edit request asks for something different. If an attribute is not mentioned, keep it close to the reference.
 
-APPEARANCE LOCK:
-The person's appearance is locked to the reference images. Every generated output must keep the same recognizable person with the same facial geometry, age, skin, hair, body proportions, outfit, accessories, makeup, tattoos, marks, and all visible distinctive details. Treat these visual details as immutable unless the user explicitly names a change.
-
-For batch or multiple-output requests, produce multiple camera/composition variants of the exact same referenced person/object. Do not create different people, alternate identities, redesigned faces, changed hairstyles, changed clothing, changed accessories, changed body shape, or generic lookalikes across the variants.
-
-Do not beautify, stylize, reinterpret, average out, morph, or substitute the person.
-Do not generate a similar person. Generate the exact same person from the reference.
-Do not change ethnicity, gender presentation, age, weight, body shape, facial expression style, or facial asymmetry.
-Do not add distortions, warping, extra fingers, altered eyes, altered teeth, blurred skin, or fabric redesign.
-If something is not explicitly requested, keep it identical to the reference.
-Apply only the minimum necessary change requested by the user while preserving everything else exactly.
-The uploaded images are visual references, not text content. Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
+Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
 """.strip()
-    return f"{instruction}\n\nUser request: {prompt}" if prompt else instruction
+    if prompt:
+        return f"EDIT REQUEST (highest priority): {prompt}\n\n{instruction}"
+    return instruction
 
 
 def _build_image_variant_prompt(
@@ -1164,6 +1144,18 @@ async def _owned_completed_image_task(
     return task, None
 
 
+async def _owned_completed_feed_task(
+    callback: types.CallbackQuery, task_id: str
+):
+    user = await get_or_create_user(callback.from_user.id)
+    task = await get_task_by_id(task_id)
+    if not task or task.user_id != user.id:
+        return None, "Не удалось найти эту генерацию."
+    if task.type not in {"image", "video"} or task.status != "completed" or not task.result_url:
+        return None, "Действие доступно только для готового фото или видео."
+    return task, None
+
+
 async def _refresh_image_result_reply_markup(
     callback: types.CallbackQuery,
     task_id: str,
@@ -1185,6 +1177,36 @@ async def _refresh_image_result_reply_markup(
             logger.debug("Unable to refresh image result keyboard: %s", e)
     except Exception:
         logger.exception("Unable to refresh image result keyboard")
+
+
+async def _refresh_feed_result_reply_markup(
+    callback: types.CallbackQuery,
+    task_id: str,
+) -> None:
+    task = await get_task_by_id(task_id)
+    if not task or not task.result_url or not callback.message:
+        return
+    if task.type == "video":
+        reply_markup = get_video_result_keyboard(
+            task.result_url,
+            task_id=task.task_id,
+            model=task.model,
+            is_public_feed=task.is_public_feed,
+        )
+    else:
+        reply_markup = get_image_result_keyboard(
+            task.result_url,
+            task_id=task.task_id,
+            is_public_feed=task.is_public_feed,
+            is_prompt_library=task.is_prompt_library,
+        )
+    try:
+        await callback.message.edit_reply_markup(reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.debug("Unable to refresh feed result keyboard: %s", e)
+    except Exception:
+        logger.exception("Unable to refresh feed result keyboard")
 
 
 @router.callback_query(F.data.startswith("grokvid_"))
@@ -1223,9 +1245,9 @@ async def animate_image_result_with_grok(
 async def publish_image_result_to_feed(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Показывает предупреждение перед публикацией готовой фото-генерации."""
+    """Показывает предупреждение перед публикацией готовой генерации."""
     task_id = callback.data.replace("feedpub_", "", 1)
-    task, error_message = await _owned_completed_image_task(callback, task_id)
+    task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
         await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
         return
@@ -1242,9 +1264,9 @@ async def publish_image_result_to_feed(
 async def confirm_publish_image_result_to_feed(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Публикует готовую фото-генерацию в miniapp-ленту после подтверждения."""
+    """Публикует готовую генерацию в miniapp-ленту после подтверждения."""
     task_id = callback.data.replace("feedpubok_", "", 1)
-    task, error_message = await _owned_completed_image_task(callback, task_id)
+    task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
         await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
         return
@@ -1254,7 +1276,7 @@ async def confirm_publish_image_result_to_feed(
         await callback.answer("Эту генерацию нельзя опубликовать в ленту.", show_alert=True)
         return
 
-    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await _refresh_feed_result_reply_markup(callback, task.task_id)
     await callback.answer("Готово — появится в Mini App > Лента.")
 
 
@@ -1262,9 +1284,9 @@ async def confirm_publish_image_result_to_feed(
 async def remove_image_result_from_feed(
     callback: types.CallbackQuery, state: FSMContext
 ):
-    """Убирает готовую фото-генерацию автора из miniapp-ленты."""
+    """Убирает готовую генерацию автора из miniapp-ленты."""
     task_id = callback.data.replace("feedrm_", "", 1)
-    task, error_message = await _owned_completed_image_task(callback, task_id)
+    task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
         await callback.answer(error_message or "Нельзя убрать из ленты.", show_alert=True)
         return
@@ -1274,7 +1296,7 @@ async def remove_image_result_from_feed(
         await callback.answer("Не удалось убрать из ленты.", show_alert=True)
         return
 
-    await _refresh_image_result_reply_markup(callback, task.task_id)
+    await _refresh_feed_result_reply_markup(callback, task.task_id)
     await callback.answer("Убрано из ленты.")
 
 
@@ -1347,7 +1369,7 @@ def _repeat_image_keyboard(task_id: str, reference_count: int = 0) -> types.Inli
         text="🚀 Запустить с фото" if reference_count else "🚀 Повторить без фото",
         callback_data=f"repeat_run_{task_id}",
     )
-    builder.button(text="✏️ Изменить prompt", callback_data=f"retry_prompt_image_{task_id}")
+    builder.button(text="✏️ Изменить prompt", callback_data=f"repeat_prompt_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1, 1)
     return builder.as_markup()
@@ -1425,6 +1447,25 @@ async def _show_repeat_image_screen(
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
+async def _ensure_repeat_image_state(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+    task_id: str,
+) -> tuple[bool, str | None]:
+    data = await state.get_data()
+    if data.get("repeat_source_task_id") == task_id:
+        return True, None
+
+    task = await get_task_by_id(task_id)
+    user = await get_or_create_user(callback.from_user.id)
+    return await _restore_image_task_to_state(
+        task,
+        state,
+        include_references=bool(task and task.user_id == user.id),
+        repeat_source_task_id=task_id,
+    )
+
+
 @router.callback_query(F.data.startswith("repeat_image_"))
 async def repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
     """Opens a safe repeat flow instead of launching generation immediately."""
@@ -1450,22 +1491,59 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("repeat_refs_"))
 async def repeat_image_wait_for_references(callback: types.CallbackQuery, state: FSMContext):
     task_id = callback.data.replace("repeat_refs_", "", 1)
-    data = await state.get_data()
-    if data.get("repeat_source_task_id") != task_id:
-        task = await get_task_by_id(task_id)
-        user = await get_or_create_user(callback.from_user.id)
-        restored, error_message = await _restore_image_task_to_state(
-            task,
-            state,
-            include_references=bool(task and task.user_id == user.id),
-            repeat_source_task_id=task_id,
-        )
-        if not restored:
-            await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
-            return
+    restored, error_message = await _ensure_repeat_image_state(callback, state, task_id)
+    if not restored:
+        await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
+        return
 
     await state.set_state(GenerationStates.uploading_reference_images)
     await callback.answer("Отправьте фото прямо в чат")
+
+
+@router.callback_query(F.data.startswith("repeat_prompt_"))
+async def repeat_image_wait_for_prompt(callback: types.CallbackQuery, state: FSMContext):
+    task_id = callback.data.replace("repeat_prompt_", "", 1)
+    restored, error_message = await _ensure_repeat_image_state(callback, state, task_id)
+    if not restored:
+        await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    current_prompt = " ".join(str(data.get("repeat_prompt") or "").split())
+    prompt_preview = html.escape(
+        current_prompt[:700] + ("..." if len(current_prompt) > 700 else "")
+    )
+    await state.set_state(GenerationStates.waiting_for_repeat_prompt)
+    await callback.message.answer(
+        "✏️ <b>Новый prompt для повтора</b>\n\n"
+        "Отправьте одним сообщением новый текст. Фото и настройки останутся как на экране повтора.\n\n"
+        "<b>Сейчас</b>\n"
+        f"<pre>{prompt_preview or html.escape(task_id)}</pre>",
+        parse_mode="HTML",
+    )
+    await callback.answer("Жду новый prompt")
+
+
+@router.message(GenerationStates.waiting_for_repeat_prompt, F.text)
+async def handle_repeat_image_prompt_text(message: types.Message, state: FSMContext):
+    prompt = message.text.strip()
+    if not prompt:
+        await message.answer("Нужен текстовый prompt для повтора.")
+        return
+
+    data = await state.get_data()
+    task_id = str(data.get("repeat_source_task_id") or "")
+    if not task_id:
+        await state.clear()
+        await message.answer(
+            "Не нашёл исходную задачу для повтора. Откройте повтор заново.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    await state.update_data(repeat_prompt=prompt)
+    await message.answer("✅ Prompt обновлён.")
+    await _show_repeat_image_screen(message, state)
 
 
 @router.callback_query(F.data.startswith("repeat_run_"))
@@ -5509,6 +5587,22 @@ async def run_no_preset_video_from_message(
             data.get("reference_images", []),
             max_count=get_max_video_image_references(v_model),
         )
+
+    video_image_sources = _clean_unique_urls([image_url, *image_refs])
+    missing_video_image_sources = missing_local_upload_sources(video_image_sources)
+    if missing_video_image_sources:
+        missing_set = set(missing_video_image_sources)
+        await state.update_data(
+            v_image_url=None if image_url in missing_set else image_url,
+            reference_images=[ref for ref in image_refs if ref not in missing_set],
+            repeat_missing_ref_count=len(missing_video_image_sources),
+        )
+        await message.answer(
+            "Часть старых фото для видео уже очищена, поэтому я не запускаю задачу с битыми ссылками.\n"
+            "Загрузите эти фото заново и отправьте prompt ещё раз.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
 
     elements_list = None
     if v_type == "imgtxt" and len(image_refs) >= 2:

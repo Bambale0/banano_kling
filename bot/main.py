@@ -1405,7 +1405,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption += f"\\n\\n🎯 Промпт: <code>{prompt_preview}</code>"
                             else:
                                 caption += f"\\n\\n🎯 Пресет: {_html_fragment(task.preset_id)}"
-                            video_kb = get_video_result_keyboard(video_url)
+                            video_kb = get_video_result_keyboard(
+                                video_url,
+                                task_id=task_id,
+                                model=task.model if task else model_display,
+                                is_public_feed=task.is_public_feed if task else False,
+                            )
 
                             delivered = False
                             try:
@@ -1529,7 +1534,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                                 from bot.keyboards import get_video_result_keyboard
 
-                                video_kb = get_video_result_keyboard(video_url)
+                                video_kb = get_video_result_keyboard(
+                                    video_url,
+                                    task_id=task_id,
+                                    model=task.model if task else model_display,
+                                    is_public_feed=task.is_public_feed if task else False,
+                                )
                                 delivered = False
                                 tmp_file = None
                                 try:
@@ -1760,7 +1770,12 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             try:
                 from bot.keyboards import get_video_result_keyboard
 
-                video_kb = get_video_result_keyboard(video_url)
+                video_kb = get_video_result_keyboard(
+                    video_url,
+                    task_id=task_id,
+                    model=task.model if task else model_display,
+                    is_public_feed=task.is_public_feed if task else False,
+                )
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
@@ -2445,7 +2460,12 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                     caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
                     parse_mode="HTML",
                     supports_streaming=True,
-                    reply_markup=get_video_result_keyboard(video_url),
+                    reply_markup=get_video_result_keyboard(
+                        video_url,
+                        task_id=task_id,
+                        model=task.model if task else None,
+                        is_public_feed=task.is_public_feed if task else False,
+                    ),
                 )
                 await complete_video_task(task_id, video_url)
                 logger.info(f"WanX video sent to user {telegram_id}")
@@ -2457,7 +2477,12 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=f"🎬 Ваше видео WanX готово!{video_url}",
-                        reply_markup=get_video_result_keyboard(video_url),
+                        reply_markup=get_video_result_keyboard(
+                            video_url,
+                            task_id=task_id,
+                            model=task.model if task else None,
+                            is_public_feed=task.is_public_feed if task else False,
+                        ),
                         parse_mode="HTML",
                     )
                 except Exception as fallback_error:
@@ -2759,6 +2784,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     result_url,
                     task_id=task_id,
                     model=task.model if task else None,
+                    is_public_feed=task.is_public_feed if task else False,
                 )
                 if is_video
                 else get_image_result_keyboard(result_url, task_id=task_id)
@@ -2772,6 +2798,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         result_url,
                         task_id=task_id,
                         model=task.model if task else None,
+                        is_public_feed=task.is_public_feed if task else False,
                     )
                     # Try URL first
                     try:
