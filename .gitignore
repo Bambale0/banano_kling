@@ -32,6 +32,7 @@ logs
 venv/
 # Database
 *.db
+*.db.backup*
 *.sqlite
 *.sqlite3
 tests/

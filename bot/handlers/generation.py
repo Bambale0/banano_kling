@@ -24,7 +24,9 @@ from bot.database import (
     add_generation_task,
     check_can_afford,
     complete_video_task,
+    consume_free_generation,
     deduct_credits,
+    refund_free_generation,
     get_or_create_user,
     get_task_by_id,
     get_user_credits,
@@ -42,8 +44,11 @@ from bot.keyboards import (
     get_create_image_keyboard,
     get_create_video_keyboard,
     get_animate_photo_keyboard,
+    get_face_preservation_keyboard,
+    get_gemini_omni_keyboard,
     get_image_result_keyboard,
     get_main_menu_keyboard,
+    get_prompt_safety_keyboard,
     get_reference_images_upload_keyboard,
     get_reference_videos_upload_keyboard,
 )
@@ -53,6 +58,14 @@ from bot.services.generation_guard import generation_lock_guard
 from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
+from bot.services.gemini_omni_service import (
+    GEMINI_OMNI_BASE_VOICES,
+    GEMINI_OMNI_MAX_AUDIO_IDS,
+    GEMINI_OMNI_MAX_CHARACTER_IDS,
+    GEMINI_OMNI_MAX_IMAGES,
+    GEMINI_OMNI_MAX_INPUT_UNITS,
+    gemini_omni_service,
+)
 from bot.services.hailuo_service import hailuo_service
 from bot.services.happyhorse_service import happyhorse_service
 from bot.services.ideogram_service import ideogram_service
@@ -86,7 +99,7 @@ from bot.video_models import (
 logger = logging.getLogger(__name__)
 router = Router()
 
-MIX_PHOTO_MODELS = ("banana_2", "seedream_edit", "grok_i2i")
+MIX_PHOTO_MODELS = ("banana_2", "grok_i2i", "gpt_image_2")
 
 ANIMATE_PHOTO_PROMPTS = {
     "smile": "The person gently smiles, subtle natural facial motion, soft cinematic camera movement, realistic motion, keep identity and photo style.",
@@ -192,7 +205,8 @@ def _build_mix_photo_prompt_text(ref_count: int) -> str:
     return (
         "🧬 <b>Микс фото</b>\n\n"
         f"{ref_line}"
-        "Один промпт уйдёт сразу в 3 нейросети: Banana 2, Seedream 4.5 и Grok.\n\n"
+        "Один промпт уйдёт сразу в 3 нейросети: Banana 2, Grok и GPT Image 2.\n"
+        "Перед запуском бот аккуратно улучшит промпт, чтобы снизить шанс ошибок.\n\n"
         "Напишите, какой результат нужен.\n"
         "Например: «сделай кинематографичный постер, реализм, мягкий свет»."
     )
@@ -219,6 +233,194 @@ def _build_image_waiting_text(*, mix_mode: bool, count: int) -> str:
         "Как только будет готово, пришлю результат сюда.\n\n"
         "<i>Обычно это занимает 1-3 минуты.</i>"
     )
+
+
+def _clean_improved_prompt(raw_prompt: str) -> str:
+    prompt = (raw_prompt or "").strip()
+    if not prompt:
+        return ""
+    prompt = re.sub(r"^```(?:\w+)?\s*", "", prompt)
+    prompt = re.sub(r"\s*```$", "", prompt).strip()
+    return prompt.strip("\"' \n\t")
+
+
+async def _improve_image_prompt(
+    prompt: str,
+    *,
+    ref_count: int = 0,
+    mix_mode: bool = False,
+) -> str:
+    """Improve weak image prompts without blocking generation on failures."""
+    if len(prompt.strip()) < 3:
+        return prompt
+
+    mode_text = (
+        "для функции AI image-to-image 'микс фото'"
+        if mix_mode
+        else "для AI-генерации изображения"
+    )
+    refs_text = (
+        "Учитывай, что будет передано "
+        f"{ref_count} фото-референсов: нужно явно попросить использовать их как "
+        "основу для объекта, лица, стиля, композиции или деталей, если это следует "
+        "из запроса. "
+        if ref_count
+        else ""
+    )
+    quality_text = (
+        "качество, сохранение идентичности/важных деталей референсов."
+        if ref_count
+        else "качество, аккуратная композиция и понятный визуальный результат."
+    )
+    task = (
+        f"Сделай пользовательский запрос безопаснее и понятнее {mode_text}. "
+        "Нужно вернуть только финальный промпт, без вступления, markdown, кавычек и "
+        "негативного промпта. Сохрани исходный смысл пользователя, не добавляй новые "
+        "важные объекты без причины. Убери рискованные, двусмысленные или спорные "
+        "формулировки, замени их нейтральными словами так, чтобы нейросеть с меньшей "
+        f"вероятностью отклонила запрос. {refs_text}"
+        "Если это не искажает замысел, сделай промпт конкретнее: сцена, действие, стиль, свет, камера, "
+        f"{quality_text} "
+        f"\n\nЗапрос пользователя: {prompt}"
+    )
+    try:
+        from bot.services.gpt55_service import gpt55_service
+
+        improved = await asyncio.wait_for(
+            gpt55_service.ask(
+                user_content=[{"type": "input_text", "text": task}],
+                history=[],
+                reasoning_effort="medium",
+                web_search=False,
+            ),
+            timeout=45,
+        )
+    except Exception:
+        logger.exception("Image prompt improvement failed")
+        return prompt
+
+    improved = _clean_improved_prompt(improved or "")
+    if len(improved) < 3 or len(improved) > 6000:
+        return prompt
+    return improved
+
+
+def _apply_face_preservation_prompt(prompt: str, face_mode: str, ref_count: int) -> str:
+    """Add lightweight identity instructions selected by the user."""
+    if not ref_count or face_mode == "none":
+        return prompt
+
+    if face_mode == "enhance":
+        instruction = (
+            "Use the reference photo(s) as identity guidance. Keep the person recognizable: "
+            "preserve facial structure, age, eye color, face shape and distinctive features, "
+            "but allow subtle flattering improvements to lighting, skin texture and photo quality."
+        )
+    else:
+        instruction = (
+            "Use the reference photo(s) as strict identity guidance. Preserve the exact person: "
+            "facial structure, age, eye color, face shape, proportions, hairline and distinctive "
+            "features must remain unchanged. Change only the requested style, background, outfit "
+            "or scene."
+        )
+    return f"{prompt}\n\n{instruction}"
+
+
+def _build_face_preservation_text(ref_count: int) -> str:
+    return (
+        "🔒 <b>Сохранить лицо</b>\n\n"
+        "Бот не «обучает» нейросеть заново и не создаёт отдельную модель лица. "
+        "Он передаёт загруженные референсы в генерацию и добавляет к запросу "
+        "специальные инструкции, насколько строго сохранять внешность.\n\n"
+        "Это помогает удержать:\n"
+        "• черты лица\n"
+        "• возраст\n"
+        "• цвет глаз\n"
+        "• форму лица\n"
+        "• узнаваемость\n\n"
+        f"Референсов загружено: <code>{ref_count}</code>\n\n"
+        "<b>Выберите режим:</b>"
+    )
+
+
+def _build_prompt_safety_text(prompt: str) -> str:
+    preview = html.escape(prompt[:700])
+    if len(prompt) > 700:
+        preview += "..."
+    return (
+        "🛡 <b>Сделать безопасный промпт?</b>\n\n"
+        "Если выбрать «Сделать безопасным», бот перепишет запрос так, чтобы снизить "
+        "риск отказа нейросети: уберёт рискованные формулировки, заменит спорные слова, "
+        "сохранит смысл и сделает запрос более нейтральным.\n\n"
+        "Если выбрать «Оставить как есть», генерация пойдёт с вашим текстом без изменений.\n\n"
+        "<b>Ваш промпт:</b>\n"
+        f"<code>{preview}</code>"
+    )
+
+
+async def _send_long_text(
+    message: types.Message,
+    header: str,
+    text: str,
+    *,
+    chunk_size: int = 3200,
+) -> None:
+    chunks = [
+        text[i : i + chunk_size]
+        for i in range(0, len(text), chunk_size)
+    ] or [""]
+    for index, chunk in enumerate(chunks, start=1):
+        title = header
+        if len(chunks) > 1:
+            title = f"{header} ({index}/{len(chunks)})"
+        await message.answer(
+            f"{title}\n\n<code>{html.escape(chunk)}</code>",
+            parse_mode="HTML",
+        )
+
+
+async def _charge_generation_or_free_token(
+    telegram_id: int,
+    amount: int,
+    *,
+    reason: str,
+    external_id: str,
+    metadata: dict | None = None,
+) -> tuple[bool, bool]:
+    """Charge bananas or consume one free-generation token."""
+    if await consume_free_generation(telegram_id):
+        logger.info("Consumed free generation token for user %s", telegram_id)
+        return True, True
+    charged = await deduct_credits(
+        telegram_id,
+        amount,
+        reason=reason,
+        external_id=external_id,
+        metadata=metadata,
+    )
+    return charged, False
+
+
+async def _refund_generation_charge(
+    telegram_id: int,
+    amount: int,
+    *,
+    used_free_generation: bool,
+    reason: str,
+    external_id: str,
+    metadata: dict | None = None,
+) -> None:
+    if used_free_generation:
+        await refund_free_generation(telegram_id)
+        return
+    if not config.is_admin(telegram_id):
+        await add_credits_once(
+            telegram_id,
+            amount,
+            reason=reason,
+            external_id=external_id,
+            metadata=metadata,
+        )
 
 
 def _build_image_task_started_text(
@@ -351,6 +553,7 @@ async def _simulate_generation_progress(
 
 
 _MODELS_TEXT = {
+    "gemini_omni",
     "v3_std",
     "v3_pro",
     "runway",
@@ -363,6 +566,7 @@ _MODELS_TEXT = {
     "wan_27_t2v",
 }
 _MODELS_IMGTXT = {
+    "gemini_omni",
     "v3_std",
     "v3_pro",
     "seedance2",
@@ -378,6 +582,7 @@ _MODELS_IMGTXT = {
     "wan_27_i2v",
 }
 _MODELS_VIDEO = {
+    "gemini_omni",
     "aleph",
     "glow",
     "happyhorse_edit",
@@ -438,8 +643,168 @@ def _format_video_settings(data: dict) -> str:
         lines.append(
             f"• {label}: <code>{get_video_option_label(option_name, value)}</code>"
         )
+    if ui["current_model"] == "gemini_omni":
+        seed = ui["current_video_options"].get("seed")
+        lines.append(f"• Seed: <code>{seed if seed is not None else 'auto'}</code>")
+        audio_count = len(data.get("omni_audio_ids", []))
+        character_count = len(data.get("omni_character_ids", []))
+        if audio_count or character_count:
+            lines.append(
+                f"• Omni ID: <code>{audio_count} audio / {character_count} character</code>"
+            )
 
     return "\n".join(lines)
+
+
+def _format_omni_context(data: dict) -> str:
+    audio_ids = data.get("omni_audio_ids", [])
+    character_ids = data.get("omni_character_ids", [])
+    user_images_count = (1 if data.get("v_image_url") else 0) + len(
+        data.get("reference_images", [])
+    )
+    effective_images = _get_gemini_omni_effective_image_urls(data)
+    images_count = len(effective_images)
+    videos_count = len(data.get("v_reference_videos", []))
+    video_options = normalize_video_options("gemini_omni", data.get("video_options"))
+    duration = data.get("v_duration", 4)
+    ratio = data.get("v_ratio", "16:9")
+    resolution = video_options.get("resolution", "720p")
+    seed = video_options.get("seed")
+    input_units = images_count + videos_count * 2 + len(character_ids)
+    remaining_units = max(0, GEMINI_OMNI_MAX_INPUT_UNITS - input_units)
+    source_images = data.get("omni_character_source_images", [])
+    visual_hint = (
+        "\n🖼 Фото персонажа будет добавлено в видео автоматически."
+        if source_images or data.get("omni_character_image_url")
+        else ""
+    )
+    return (
+        "🔷 <b>Gemini Omni</b>\n\n"
+        f"🎙 Голоса: <code>{len(audio_ids)}</code>/{GEMINI_OMNI_MAX_AUDIO_IDS}\n"
+        f"🧍 Персонажи: <code>{len(character_ids)}</code>/{GEMINI_OMNI_MAX_CHARACTER_IDS}\n"
+        f"🖼 Фото: <code>{images_count}</code>/{GEMINI_OMNI_MAX_IMAGES}"
+        f" (ваших <code>{user_images_count}</code>)\n"
+        f"📹 Видео: <code>{videos_count}</code>/1\n"
+        f"⏱ Время: <code>{duration} сек"
+        f"{' (не влияет при видео-рефе)' if videos_count else ''}</code>\n"
+        f"💎 Качество: <code>{resolution}</code>\n"
+        f"📐 Формат: <code>{ratio}</code>\n"
+        f"🌱 Seed: <code>{seed if seed is not None else 'auto'}</code>\n"
+        f"📦 Входы: <code>{input_units}/{GEMINI_OMNI_MAX_INPUT_UNITS}</code> "
+        f"(свободно <code>{remaining_units}</code>)"
+        f"{visual_hint}\n\n"
+        "<b>Как пользоваться:</b>\n"
+        "1. Лучший multimodal режим: <b>Фото + видео</b> — фото задаёт объект/сцену, видео задаёт движение.\n"
+        "2. Быстрый запуск: нажмите <b>Запустить видео</b>, затем напишите промпт обычным сообщением.\n"
+        "3. Фото-рефы: <b>Добавить фото</b> — стиль, сцена, объект или первый кадр.\n"
+        "4. Видео-реф: <b>Добавить видео</b> — движение, камера или атмосфера.\n"
+        "5. Голос: <b>Голос</b> — просто опишите голос, ID добавится автоматически.\n"
+        "6. Персонаж: <b>Персонаж</b> — отправьте фото и описание, ID добавится автоматически.\n\n"
+        "<b>Важно:</b> голос и персонаж не обязательны. Можно генерировать только по тексту "
+        "или по фото + тексту. Если добавлено видео, настройка секунд не влияет."
+    )
+
+
+def _gemini_omni_keyboard_from_data(data: dict):
+    video_options = normalize_video_options("gemini_omni", data.get("video_options"))
+    return get_gemini_omni_keyboard(
+        len(data.get("omni_audio_ids", [])),
+        len(data.get("omni_character_ids", [])),
+        duration=int(data.get("v_duration", 4)),
+        resolution=video_options.get("resolution", "720p"),
+        ratio=data.get("v_ratio", "16:9"),
+    )
+
+
+def _parse_key_value_lines(text: str) -> dict:
+    result = {}
+    positional = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+        elif ":" in line:
+            key, value = line.split(":", 1)
+        else:
+            positional.append(line)
+            continue
+        result[key.strip().lower()] = value.strip()
+    if positional:
+        result["_positional"] = positional
+    return result
+
+
+def _unique_urls(urls: list[str]) -> list[str]:
+    result = []
+    for url in urls:
+        if url and url not in result:
+            result.append(url)
+    return result
+
+
+def _get_gemini_omni_effective_image_urls(data: dict) -> list[str]:
+    images = []
+    if data.get("v_image_url"):
+        images.append(data["v_image_url"])
+    images.extend(data.get("reference_images", []))
+    character_images = data.get("omni_character_source_images", [])
+    last_character_image = data.get("omni_character_image_url")
+    if last_character_image:
+        character_images = [last_character_image, *character_images]
+    images.extend(character_images)
+    return _unique_urls(images)
+
+
+def _pick_gemini_omni_base_voice(description: str) -> str:
+    """Select a reasonable Gemini Omni base voice from a free-form prompt."""
+    lowered = description.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "писк",
+            "мил",
+            "нежн",
+            "cute",
+            "sweet",
+            "high",
+            "soft",
+            "girl",
+            "жен",
+            "дет",
+        )
+    ):
+        return "aoede"
+    if any(
+        marker in lowered
+        for marker in ("низ", "глуб", "бас", "муж", "deep", "low", "male")
+    ):
+        return "charon"
+    if any(marker in lowered for marker in ("энерг", "быстр", "puck", "playful")):
+        return "puck"
+    return "achernar"
+
+
+def _make_gemini_omni_voice_name(description: str) -> str:
+    cleaned = re.sub(r"\s+", " ", description).strip()
+    if cleaned:
+        return cleaned[:40]
+    return f"Omni voice {int(time.time())}"
+
+
+def _make_gemini_omni_character_name(description: str) -> str:
+    cleaned = re.sub(r"\s+", " ", description).strip()
+    if cleaned:
+        return cleaned[:40]
+    return f"Omni character {int(time.time())}"
+
+
+def _looks_like_voice_description(text: str) -> bool:
+    cleaned = text.strip()
+    if len(cleaned) < 3:
+        return False
+    return bool(re.search(r"[A-Za-zА-Яа-яЁё]", cleaned))
 
 
 # =============================================================================
@@ -662,7 +1027,7 @@ async def quick_mix_photo(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "🧬 <b>Микс фото</b>\n\n"
         "Загрузите хотя бы 1 фото-референс и нажмите «Продолжить».\n"
-        "После промпта бот отправит один запрос в 3 нейросети: Banana 2, Seedream 4.5 и Grok.",
+        "После промпта бот улучшит запрос и отправит его в 3 нейросети: Banana 2, Grok и GPT Image 2.",
         reply_markup=get_reference_images_upload_keyboard(0, 14, "new"),
         parse_mode="HTML",
     )
@@ -675,11 +1040,17 @@ async def start_motion_control(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
     """Запуск Motion Control Kling 2.6"""
     from bot.database import get_user_credits
+    from bot.services.preset_manager import preset_manager
 
     user_credits = await get_user_credits(callback.from_user.id)
+    video_model = "v26_motion_pro"
+    price_per_second = preset_manager.get_video_cost(video_model, 1)
 
     await state.update_data(
         generation_type="motion_control",
+        video_model=video_model,
+        mode="pro",
+        price_per_second=price_per_second,
         motion_mode="720p",
         motion_orientation="video",
         motion_image_url=None,
@@ -690,6 +1061,8 @@ async def start_motion_control(callback: types.CallbackQuery, state: FSMContext)
     text = (
         "🎯 <b>Kling 2.6 Motion Control</b>\n\n"
         f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        f"Цена: <code>{price_per_second}</code>🍌/сек "
+        "по длительности видео движения.\n\n"
         "<b>Шаг 1: Reference Image</b>\n"
         "Загрузите чёткое фото субъекта:\n"
         "• голова, плечи, торс\n"
@@ -788,10 +1161,16 @@ async def _show_video_creation_screen(
         start_count = 1 if v_image_url else 0
         ref_count = len(reference_images)
         total = start_count + ref_count
+        max_photos = GEMINI_OMNI_MAX_IMAGES if current_model == "gemini_omni" else 9
         if total > 0:
-            media_status = f"✅ <b>Фото загружено: {total}/9</b> (старт + рефы)\n"
+            media_status = f"✅ <b>Фото загружено: {total}/{max_photos}</b> (старт + рефы)\n"
         else:
             media_status = "📷 <b>Загрузите стартовое изображение</b>\n"
+        if current_model == "gemini_omni":
+            media_status += (
+                "🔷 Gemini Omni может работать с текстом, фото и 1 видео-референсом; "
+                "голос и персонаж можно не добавлять.\n"
+            )
     elif current_v_type == "video":
         if v_reference_videos:
             media_status = f"✅ <b>{len(v_reference_videos)} реф. видео загружено!</b>\n"
@@ -881,7 +1260,7 @@ async def handle_img_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
         return
 
     # Очищаем референсы
-    await state.update_data(reference_images=[])
+    await state.update_data(reference_images=[], face_preservation_mode="none")
 
     if generation_type == "video":
         # Для видео - показываем параметры видео и промпт
@@ -955,6 +1334,15 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
     else:
         # Для фото - показываем параметры фото
         current_service, current_options, current_refs = await _sync_image_state(state)
+        if current_refs:
+            await callback.message.edit_text(
+                _build_face_preservation_text(len(current_refs)),
+                reply_markup=get_face_preservation_keyboard(),
+                parse_mode="HTML",
+            )
+            await callback.answer()
+            await state.set_state(GenerationStates.selecting_face_preservation)
+            return
 
         await callback.message.edit_text(
             _build_image_creation_text(
@@ -1030,6 +1418,44 @@ async def handle_ref_confirm_new(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(GenerationStates.waiting_for_input)
 
 
+@router.callback_query(F.data.startswith("face_mode_"))
+async def handle_face_preservation_mode(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Сохраняет режим лица и переводит пользователя к выбору модели/формата."""
+    mode = callback.data.replace("face_mode_", "", 1)
+    if mode not in {"strict", "enhance", "none"}:
+        await callback.answer("Неизвестный режим", show_alert=True)
+        return
+
+    await state.update_data(face_preservation_mode=mode)
+    data = await state.get_data()
+    current_service, current_options, current_refs = await _sync_image_state(state)
+    await callback.message.edit_text(
+        _build_image_creation_text(
+            current_service,
+            current_options,
+            current_refs,
+            data.get("img_count", 1),
+        ),
+        reply_markup=get_create_image_keyboard(
+            current_service=current_service,
+            current_ratio=current_options["aspect_ratio"],
+            num_refs=len(current_refs),
+            current_options=current_options,
+            img_count=data.get("img_count", 1),
+        ),
+        parse_mode="HTML",
+    )
+    labels = {
+        "strict": "максимально сохранить",
+        "enhance": "немного улучшить",
+        "none": "без дополнительных инструкций",
+    }
+    await callback.answer(f"Режим: {labels[mode]}")
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
 # Обработчики для меню создания видео
 @router.callback_query(F.data == "v_type_text")
 async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
@@ -1068,12 +1494,19 @@ async def handle_v_type_imgtxt(callback: types.CallbackQuery, state: FSMContext)
     image_status = ""
     if v_image_url:
         image_status = "\n✅ <b>Изображение загружено!</b>\n"
+    gemini_hint = ""
+    if clamped_model == "gemini_omni":
+        gemini_hint = (
+            "\n🔷 <b>Gemini Omni:</b> Audio ID и Character ID не обязательны. "
+            "Можно просто загрузить фото-рефы и отправить промпт.\n"
+        )
 
     preview_data = {**data, "v_type": "imgtxt", "v_model": clamped_model}
     text = (
         "🎬 <b>Создание видео</b>\n\n"
         f"{_format_video_settings(preview_data)}\n"
         f"{image_status}\n"
+        f"{gemini_hint}"
         "<b>Загрузите стартовое изображение</b>\n"
         "Отправьте фото, которое станет первым кадром видео,\n"
         "а затем введите промпт для генерации.\n"
@@ -1110,6 +1543,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     ui = _get_video_ui_state(data)
     clamped_model = _clamp_model_for_type(ui["current_model"], "video")
     await state.update_data(v_type="video", v_model=clamped_model)
+    max_refs = 1 if clamped_model == "gemini_omni" else 5
 
     text = (
         "🎬 <b>Видео + Текст → Видео</b>\n\n"
@@ -1118,7 +1552,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
         + (
             "Для HappyHorse Edit нужно загрузить минимум одно видео.\n\n"
             if clamped_model == "happyhorse_edit"
-            else "Это опционально, можно добавить до 5 коротких видео.\n\n"
+            else f"Это опционально, можно добавить до {max_refs} коротких видео.\n\n"
         )
         + "Они помогут передать:\n"
         + "• стиль движения\n"
@@ -1128,7 +1562,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     )
     await callback.message.edit_text(
         text,
-        reply_markup=get_reference_videos_upload_keyboard(0, 5, "video_new"),
+        reply_markup=get_reference_videos_upload_keyboard(0, max_refs, "video_new"),
         parse_mode="HTML",
     )
     await state.set_state(GenerationStates.uploading_reference_videos)
@@ -1139,6 +1573,11 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
 async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMContext):
     """Пропускает загрузку видео референсов для video+text"""
     await state.update_data(v_reference_videos=[])
+    data = await state.get_data()
+    if data.get("v_model") == "gemini_omni":
+        await _show_gemini_omni_prompt_screen(callback.message, state)
+        await callback.answer()
+        return
     await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
@@ -1146,6 +1585,11 @@ async def handle_vid_ref_skip_new(callback: types.CallbackQuery, state: FSMConte
 @router.callback_query(F.data == "vid_ref_continue_new")
 async def handle_vid_ref_continue_new(callback: types.CallbackQuery, state: FSMContext):
     """Продолжает после загрузки видео референсов"""
+    data = await state.get_data()
+    if data.get("v_model") == "gemini_omni":
+        await _show_gemini_omni_prompt_screen(callback.message, state)
+        await callback.answer()
+        return
     await _show_video_creation_screen(callback.message, state)
     await callback.answer()
 
@@ -1338,6 +1782,833 @@ async def handle_dynamic_video_duration(
     await _show_video_creation_screen(callback, state)
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data == "gemini_omni_menu")
+async def show_gemini_omni_menu(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await _prepare_gemini_omni_context(state, data)
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.answer()
+
+
+async def _prepare_gemini_omni_context(state: FSMContext, data: dict | None = None):
+    data = data or await state.get_data()
+    ui = _get_video_ui_state(data)
+    model_config = get_video_model_config("gemini_omni")
+    duration = ui["current_duration"]
+    if duration not in model_config["durations"]:
+        duration = model_config["durations"][0]
+    ratio = ui["current_ratio"]
+    if ratio not in model_config["aspect_ratios"]:
+        ratio = model_config["aspect_ratios"][0]
+    await state.update_data(
+        generation_type="video",
+        v_model="gemini_omni",
+        v_type=ui["current_v_type"],
+        v_duration=duration,
+        v_ratio=ratio,
+        video_options=normalize_video_options("gemini_omni", data.get("video_options")),
+    )
+
+
+async def _edit_or_send_gemini_omni_screen(
+    message: types.Message,
+    text: str,
+    reply_markup=None,
+):
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        logger.warning("Cannot edit Gemini Omni message: %s", e)
+        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+    except Exception as e:
+        logger.warning("Cannot edit Gemini Omni message: %s", e)
+        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+
+
+async def _show_gemini_omni_prompt_screen(
+    message: types.Message,
+    state: FSMContext,
+    prompt: str | None = None,
+):
+    data = await state.get_data()
+    await _prepare_gemini_omni_context(state, data)
+    data = await state.get_data()
+    video_options = normalize_video_options("gemini_omni", data.get("video_options"))
+    effective_images = _get_gemini_omni_effective_image_urls(data)
+    videos_count = len(data.get("v_reference_videos", []))
+    text = prompt or (
+        "🎬 <b>Gemini Omni: запуск видео</b>\n\n"
+        "Напишите промпт следующим сообщением — это и запустит генерацию.\n\n"
+        "<b>Пример:</b>\n"
+        "<code>Милое 4-секундное видео: синяя бабочка летит над цветами, "
+        "мягкий солнечный свет, плавное приближение камеры, без текста на экране.</code>\n\n"
+        f"🎙 Голоса: <code>{len(data.get('omni_audio_ids', []))}</code>/{GEMINI_OMNI_MAX_AUDIO_IDS}\n"
+        f"🧍 Персонажи: <code>{len(data.get('omni_character_ids', []))}</code>/{GEMINI_OMNI_MAX_CHARACTER_IDS}\n"
+        f"🖼 Фото: <code>{len(effective_images)}</code>/{GEMINI_OMNI_MAX_IMAGES}\n"
+        f"📹 Видео: <code>{videos_count}</code>/1\n"
+        f"⏱ Время: <code>{data.get('v_duration', 4)} сек"
+        f"{' (не влияет при видео-рефе)' if videos_count else ''}</code>\n"
+        f"💎 Качество: <code>{video_options.get('resolution', '720p')}</code>\n"
+        f"📐 Формат: <code>{data.get('v_ratio', '16:9')}</code>\n\n"
+        "Голос, персонаж, фото и видео-рефы будут использованы автоматически, если вы их добавили."
+    )
+    await _edit_or_send_gemini_omni_screen(
+        message,
+        text,
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.callback_query(F.data == "omni_start_video")
+async def start_gemini_omni_video(callback: types.CallbackQuery, state: FSMContext):
+    await _show_gemini_omni_prompt_screen(callback.message, state)
+    await callback.answer("Отправьте промпт")
+
+
+@router.callback_query(F.data == "omni_add_photo_video")
+async def show_gemini_omni_photo_video_flow(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    data = await state.get_data()
+    await _prepare_gemini_omni_context(state, data)
+    await state.update_data(v_type="imgtxt", v_model="gemini_omni")
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🖼+📹 <b>Gemini Omni: фото + видео</b>\n\n"
+        "Лучший порядок:\n"
+        "1. Добавьте фото: объект, персонаж, продукт, стиль или первый кадр.\n"
+        "2. Добавьте одно видео: движение, камера, жесты или атмосфера.\n"
+        "3. Нажмите <b>Запустить видео</b> и напишите промпт.\n\n"
+        "Kie считает входы так: фото=1, видео=2, Character ID=1. Всего до "
+        f"<code>{GEMINI_OMNI_MAX_INPUT_UNITS}</code> единиц.\n\n"
+        f"{_format_omni_context(data)}",
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_add_photo")
+async def ask_gemini_omni_photo(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await _prepare_gemini_omni_context(state, data)
+    await state.update_data(
+        generation_type="video",
+        v_type="imgtxt",
+        v_model="gemini_omni",
+    )
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.message.answer(
+        "🖼 <b>Добавить фото в Gemini Omni</b>\n\n"
+        "Отправьте одно или несколько фото. Первое станет основным кадром, остальные референсами.\n"
+        "Можно затем добавить видео-референс: Gemini Omni отправит фото и видео вместе.\n"
+        "Когда медиа добавлены, отправьте промпт текстом.",
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_photo_reference)
+    await callback.answer()
+
+
+@router.message(
+    GenerationStates.waiting_for_omni_photo_reference,
+    F.photo
+    | (
+        F.document & F.document.mime_type.in_(["image/jpeg", "image/png", "image/webp"])
+    ),
+)
+async def save_gemini_omni_photo_reference(
+    message: types.Message, state: FSMContext
+):
+    """Save photos from the standalone Gemini Omni menu into Omni video context."""
+    data = await state.get_data()
+    effective_images = _get_gemini_omni_effective_image_urls(data)
+    if len(effective_images) >= GEMINI_OMNI_MAX_IMAGES:
+        await message.answer(
+            f"❌ Gemini Omni принимает до {GEMINI_OMNI_MAX_IMAGES} фото. "
+            "Отправьте промпт или очистите референсы.",
+            reply_markup=_gemini_omni_keyboard_from_data(data),
+            parse_mode="HTML",
+        )
+        return
+
+    if message.photo:
+        image_obj = message.photo[-1]
+        file_ext = "jpg"
+    else:
+        image_obj = message.document
+        mime_type = message.document.mime_type
+        file_ext = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+        }.get(mime_type, "png")
+
+    file = await message.bot.get_file(image_obj.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+    image_data = image_bytes.read()
+
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_data))
+        width, height = img.size
+        if width < 300 or height < 300:
+            await message.answer(
+                f"❌ Изображение слишком маленькое: {width}×{height}\n"
+                "Загрузите фото не менее 300×300 px.",
+                parse_mode="HTML",
+            )
+            return
+    except Exception as e:
+        logger.error("Gemini Omni image validation failed: %s", e)
+        await message.answer("❌ Не удалось обработать изображение. Попробуйте другое.")
+        return
+
+    image_url = save_uploaded_file(image_data, file_ext, is_reference=True)
+    if not image_url:
+        await message.answer("❌ Не удалось сохранить фото. Попробуйте ещё раз.")
+        return
+
+    reference_images = data.get("reference_images", [])
+    if data.get("v_image_url"):
+        reference_images.append(image_url)
+        await state.update_data(reference_images=reference_images)
+        added_as = "референс"
+    else:
+        await state.update_data(v_image_url=image_url)
+        added_as = "основное фото"
+
+    await state.update_data(
+        generation_type="video",
+        v_type="imgtxt",
+        v_model="gemini_omni",
+    )
+    data = await state.get_data()
+    current_count = len(_get_gemini_omni_effective_image_urls(data))
+    await message.answer(
+        f"✅ Фото добавлено как {added_as}: "
+        f"<code>{current_count}/{GEMINI_OMNI_MAX_IMAGES}</code>\n\n"
+        "Отправьте ещё фото или напишите промпт для запуска.",
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_photo_reference)
+
+
+@router.message(GenerationStates.waiting_for_omni_photo_reference, F.text)
+async def handle_gemini_omni_photo_reference_prompt(
+    message: types.Message, state: FSMContext
+):
+    await handle_video_prompt_text(message, state)
+
+
+@router.callback_query(F.data == "omni_add_video")
+async def ask_gemini_omni_video_reference(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    data = await state.get_data()
+    await _prepare_gemini_omni_context(state, data)
+    await state.update_data(v_type="video", v_model="gemini_omni")
+    current_count = len(data.get("v_reference_videos", []))
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "📹 <b>Добавить видео-референс Gemini Omni</b>\n\n"
+        "Отправьте короткое видео до 20MB. Gemini Omni использует максимум 1 видео-референс.\n"
+        "Можно также добавить фото: Gemini Omni отправит фото и видео вместе.\n"
+        "После загрузки нажмите <b>Продолжить</b> или отправьте промпт после возврата.",
+        reply_markup=get_reference_videos_upload_keyboard(current_count, 1, "video_new"),
+    )
+    await state.set_state(GenerationStates.uploading_reference_videos)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "omni_use_video")
+async def use_gemini_omni_video(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    ui = _get_video_ui_state(data)
+    model_config = get_video_model_config("gemini_omni")
+    duration = ui["current_duration"]
+    if duration not in model_config["durations"]:
+        duration = model_config["durations"][0]
+    ratio = ui["current_ratio"]
+    if ratio not in model_config["aspect_ratios"]:
+        ratio = model_config["aspect_ratios"][0]
+    await state.update_data(
+        generation_type="video",
+        v_model="gemini_omni",
+        v_type=ui["current_v_type"],
+        v_duration=duration,
+        v_ratio=ratio,
+        video_options=normalize_video_options("gemini_omni", data.get("video_options")),
+    )
+    await _show_gemini_omni_prompt_screen(callback.message, state)
+    await callback.answer("Отправьте промпт")
+
+
+@router.callback_query(F.data == "omni_clear_refs")
+async def clear_gemini_omni_refs(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(
+        omni_audio_ids=[],
+        omni_character_ids=[],
+        omni_character_source_images=[],
+        omni_character_image_url=None,
+        v_image_url=None,
+        reference_images=[],
+        v_reference_videos=[],
+    )
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.answer("Omni ID очищены")
+
+
+@router.callback_query(F.data == "omni_add_audio_id")
+async def ask_gemini_omni_audio_id(callback: types.CallbackQuery, state: FSMContext):
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🎙 <b>Добавить Audio ID</b>\n\n"
+        "Отправьте ID, полученный из Gemini Omni Audio.\n"
+        f"Для видео можно добавить до {GEMINI_OMNI_MAX_AUDIO_IDS} Audio ID.\n\n"
+        "Если ID ещё нет, нажмите <b>Назад → Создать голос</b> и просто опишите голос.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_omni_audio_id)
+
+
+@router.callback_query(F.data == "omni_add_character_id")
+async def ask_gemini_omni_character_id(callback: types.CallbackQuery, state: FSMContext):
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🧍 <b>Добавить Character ID</b>\n\n"
+        "Отправьте ID персонажа, полученный из Gemini Omni Character.\n"
+        f"Для видео можно использовать до {GEMINI_OMNI_MAX_CHARACTER_IDS} Character ID.\n\n"
+        "Если создаёте персонажа здесь, я сохраню исходное фото и добавлю его в видео автоматически.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_omni_character_id)
+
+
+@router.callback_query(F.data == "omni_set_seed")
+async def ask_gemini_omni_seed(callback: types.CallbackQuery, state: FSMContext):
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🌱 <b>Seed видео Gemini Omni</b>\n\n"
+        "Отправьте число от <code>0</code> до <code>2147483647</code> "
+        "или <code>auto</code>, чтобы убрать фиксированный seed.\n\n"
+        "Если вы отправите описание голоса, я пойму это и создам Omni Audio.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_omni_seed)
+
+
+def _build_omni_choice_keyboard(prefix: str, values: list, current_value):
+    keyboard = []
+    row = []
+    for value in values:
+        check = "✅ " if value == current_value else ""
+        row.append(
+            types.InlineKeyboardButton(
+                text=f"{check}{value}",
+                callback_data=f"{prefix}_{str(value).replace(':', '_')}",
+            )
+        )
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append(
+        [types.InlineKeyboardButton(text="🔙 Назад", callback_data="gemini_omni_menu")]
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+@router.callback_query(F.data == "omni_choose_duration")
+async def choose_gemini_omni_duration(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current_duration = int(data.get("v_duration", 4))
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "⏱ <b>Время Gemini Omni</b>\n\n"
+        "Выберите длительность видео. Доступно по Kie docs: 4, 6, 8 или 10 секунд.\n"
+        "Если добавлен видео-референс, модель может сама определить длительность результата.",
+        reply_markup=_build_omni_choice_keyboard(
+            "omni_duration", [4, 6, 8, 10], current_duration
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("omni_duration_"))
+async def set_gemini_omni_duration(callback: types.CallbackQuery, state: FSMContext):
+    duration = int(callback.data.replace("omni_duration_", "", 1))
+    await state.update_data(v_duration=duration)
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.answer(f"Время: {duration} сек")
+
+
+@router.callback_query(F.data == "omni_choose_resolution")
+async def choose_gemini_omni_resolution(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    data = await state.get_data()
+    video_options = normalize_video_options("gemini_omni", data.get("video_options"))
+    current_resolution = video_options.get("resolution", "720p")
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "💎 <b>Качество Gemini Omni</b>\n\n"
+        "Выберите разрешение результата. Чем выше качество, тем дольше может идти генерация.",
+        reply_markup=_build_omni_choice_keyboard(
+            "omni_resolution", ["720p", "1080p", "4k"], current_resolution
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("omni_resolution_"))
+async def set_gemini_omni_resolution(callback: types.CallbackQuery, state: FSMContext):
+    resolution = callback.data.replace("omni_resolution_", "", 1)
+    video_options = (await state.get_data()).get("video_options", {})
+    video_options["resolution"] = resolution
+    await state.update_data(
+        video_options=normalize_video_options("gemini_omni", video_options)
+    )
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.answer(f"Качество: {resolution}")
+
+
+@router.callback_query(F.data == "omni_choose_ratio")
+async def choose_gemini_omni_ratio(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    current_ratio = data.get("v_ratio", "16:9")
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "📐 <b>Формат Gemini Omni</b>\n\n"
+        "Выберите соотношение сторон видео.",
+        reply_markup=_build_omni_choice_keyboard(
+            "omni_ratio", ["16:9", "9:16"], current_ratio
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("omni_ratio_"))
+async def set_gemini_omni_ratio(callback: types.CallbackQuery, state: FSMContext):
+    ratio = callback.data.replace("omni_ratio_", "", 1).replace("_", ":")
+    await state.update_data(v_ratio=ratio)
+    data = await state.get_data()
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        _format_omni_context(data),
+        reply_markup=_gemini_omni_keyboard_from_data(data),
+    )
+    await callback.answer(f"Формат: {ratio}")
+
+
+@router.callback_query(F.data == "omni_create_audio")
+async def ask_gemini_omni_audio(callback: types.CallbackQuery, state: FSMContext):
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🎙 <b>Создание Gemini Omni Audio</b>\n\n"
+        "Просто опишите голос одним сообщением, например:\n"
+        "<code>писклявый милый голос</code>\n\n"
+        "Для точной настройки можно отправить параметры:\n"
+        "<code>audio_id=achernar\n"
+        "name=Calm narrator\n"
+        "voice_description=calm, clear, friendly male voice\n"
+        "example_dialogue=Hello, I am your narrator</code>\n\n"
+        "Базовые голоса: achernar, achird, algenib, algieba, alnilam, aoede, "
+        "autonoe, callirrhoe, charon, despina, enceladus, erinome, fenrir, "
+        "gacrux, iapetus, kore, laomedeia, leda, orus, puck, zephyr.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_omni_audio_details)
+
+
+@router.callback_query(F.data == "omni_create_character")
+async def ask_gemini_omni_character_image(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    await _edit_or_send_gemini_omni_screen(
+        callback.message,
+        "🧍 <b>Создание Gemini Omni Character</b>\n\n"
+        "Отправьте одно фото персонажа.\n"
+        "Можно сразу с подписью, например: <code>синяя бабочка в тропическом лесу</code>.\n\n"
+        "Если подписи нет, я попрошу описание следующим сообщением.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_omni_character_image)
+
+
+@router.message(GenerationStates.waiting_for_omni_audio_id, F.text)
+async def save_gemini_omni_audio_id(message: types.Message, state: FSMContext):
+    audio_id = message.text.strip()
+    if not audio_id:
+        await message.answer("Отправьте непустой Audio ID.")
+        return
+    if audio_id.lower() in GEMINI_OMNI_BASE_VOICES:
+        await message.answer(
+            "❌ Это базовый голос Gemini Omni, а не готовый Audio ID.\n\n"
+            "Сначала нажмите <b>«Создать голос»</b>, выберите этот базовый голос "
+            "как <code>audio_id=...</code>, и используйте ID из ответа.",
+            reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+            parse_mode="HTML",
+        )
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        return
+    data = await state.get_data()
+    audio_ids = data.get("omni_audio_ids", [])
+    if audio_id not in audio_ids:
+        audio_ids.append(audio_id)
+    audio_ids = audio_ids[-GEMINI_OMNI_MAX_AUDIO_IDS:]
+    await state.update_data(omni_audio_ids=audio_ids)
+    await message.answer(
+        f"✅ Audio ID добавлен: <code>{html.escape(audio_id)}</code>\n"
+        f"Всего голосов: <code>{len(audio_ids)}</code>/{GEMINI_OMNI_MAX_AUDIO_IDS}",
+        reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.message(GenerationStates.waiting_for_omni_character_id, F.text)
+async def save_gemini_omni_character_id(message: types.Message, state: FSMContext):
+    character_id = message.text.strip()
+    if not character_id:
+        await message.answer("Отправьте непустой Character ID.")
+        return
+    data = await state.get_data()
+    character_ids = data.get("omni_character_ids", [])
+    if character_id not in character_ids:
+        character_ids.append(character_id)
+    character_ids = character_ids[-GEMINI_OMNI_MAX_CHARACTER_IDS:]
+    await state.update_data(omni_character_ids=character_ids)
+    await message.answer(
+        f"✅ Character ID добавлен: <code>{html.escape(character_id)}</code>\n"
+        f"Всего персонажей: <code>{len(character_ids)}</code>/{GEMINI_OMNI_MAX_CHARACTER_IDS}",
+        reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+@router.message(GenerationStates.waiting_for_omni_seed, F.text)
+async def save_gemini_omni_seed(message: types.Message, state: FSMContext):
+    raw_text = message.text.strip()
+    raw_seed = raw_text.lower()
+    data = await state.get_data()
+    video_options = data.get("video_options", {})
+    if raw_seed in {"auto", "none", "нет", "авто", "-"}:
+        video_options["seed"] = None
+        text = "✅ Seed сброшен: <code>auto</code>"
+    else:
+        try:
+            seed = int(raw_seed)
+        except ValueError:
+            if _looks_like_voice_description(raw_text):
+                await _create_gemini_omni_audio_from_text(
+                    message,
+                    state,
+                    raw_text,
+                    intro_text="Похоже, это описание голоса. Создаю Omni Audio...",
+                )
+                return
+            await message.answer(
+                "❌ Seed должен быть числом или <code>auto</code>.",
+                parse_mode="HTML",
+            )
+            return
+        if seed < 0 or seed > 2147483647:
+            await message.answer("❌ Seed должен быть от 0 до 2147483647.")
+            return
+        video_options["seed"] = seed
+        text = f"✅ Seed установлен: <code>{seed}</code>"
+    await state.update_data(
+        video_options=normalize_video_options("gemini_omni", video_options)
+    )
+    await message.answer(
+        text,
+        reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
+async def _create_and_store_gemini_omni_audio(
+    message: types.Message,
+    state: FSMContext,
+    audio_id: str,
+    name: str,
+    voice_description: str,
+    example_dialogue: str = "",
+    intro_text: str = "🎙 Создаю Omni Audio...",
+) -> bool:
+    audio_id = audio_id.lower().strip()
+    name = name.strip()
+    voice_description = voice_description.strip()
+    example_dialogue = example_dialogue.strip()
+
+    if audio_id not in GEMINI_OMNI_BASE_VOICES:
+        await message.answer(
+            "❌ Неизвестный базовый audio_id. Например: <code>achernar</code>.",
+            parse_mode="HTML",
+        )
+        return False
+    if not name:
+        await message.answer("❌ Укажите <code>name=...</code>", parse_mode="HTML")
+        return False
+
+    wait_msg = await message.answer(intro_text)
+    result = await gemini_omni_service.create_audio(
+        audio_id=audio_id,
+        name=name,
+        voice_description=voice_description,
+        example_dialogue=example_dialogue,
+    )
+    try:
+        await wait_msg.delete()
+    except TelegramBadRequest:
+        pass
+    if not result:
+        await message.answer("❌ Не удалось создать Omni Audio.")
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        return False
+
+    data = await state.get_data()
+    audio_ids = data.get("omni_audio_ids", [])
+    if result["audio_id"] not in audio_ids:
+        audio_ids.append(result["audio_id"])
+    audio_ids = audio_ids[-GEMINI_OMNI_MAX_AUDIO_IDS:]
+    await state.update_data(omni_audio_ids=audio_ids)
+    logger.info(
+        "Stored Gemini Omni audio id for user %s: %s",
+        message.from_user.id,
+        result["audio_id"],
+    )
+    await message.answer(
+        "✅ <b>Omni Audio создан</b>\n\n"
+        f"Audio ID: <code>{html.escape(result['audio_id'])}</code>\n"
+        f"Название: <code>{html.escape(str(result.get('name') or name))}</code>\n"
+        f"База: <code>{html.escape(audio_id)}</code>\n\n"
+        f"Я добавил этот Audio ID в текущую Omni-видеозадачу "
+        f"(<code>{len(audio_ids)}</code>/{GEMINI_OMNI_MAX_AUDIO_IDS}).",
+        reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    return True
+
+
+async def _create_gemini_omni_audio_from_text(
+    message: types.Message,
+    state: FSMContext,
+    description: str,
+    intro_text: str = "🎙 Создаю Omni Audio...",
+) -> bool:
+    return await _create_and_store_gemini_omni_audio(
+        message=message,
+        state=state,
+        audio_id=_pick_gemini_omni_base_voice(description),
+        name=_make_gemini_omni_voice_name(description),
+        voice_description=description,
+        example_dialogue="",
+        intro_text=intro_text,
+    )
+
+
+@router.message(GenerationStates.waiting_for_omni_audio_details, F.text)
+async def create_gemini_omni_audio(message: types.Message, state: FSMContext):
+    fields = _parse_key_value_lines(message.text)
+    positional = fields.get("_positional", [])
+    named_fields = {
+        "audio_id",
+        "name",
+        "voice_description",
+        "description",
+        "example_dialogue",
+        "dialogue",
+    }
+    has_named_fields = any(key in fields for key in named_fields)
+    if not has_named_fields and not (
+        positional and positional[0].lower() in GEMINI_OMNI_BASE_VOICES
+    ):
+        await _create_gemini_omni_audio_from_text(message, state, message.text)
+        return
+
+    audio_id = (fields.get("audio_id") or (positional[0] if positional else "")).lower()
+    name = fields.get("name") or (positional[1] if len(positional) > 1 else "")
+    voice_description = (
+        fields.get("voice_description") or fields.get("description") or ""
+    )
+    example_dialogue = fields.get("example_dialogue") or fields.get("dialogue") or ""
+
+    if not voice_description and positional and audio_id in GEMINI_OMNI_BASE_VOICES:
+        voice_description = " ".join(positional[2:])
+    if not audio_id and voice_description:
+        audio_id = _pick_gemini_omni_base_voice(voice_description)
+    if not name:
+        name = _make_gemini_omni_voice_name(voice_description or message.text)
+
+    await _create_and_store_gemini_omni_audio(
+        message=message,
+        state=state,
+        audio_id=audio_id,
+        name=name,
+        voice_description=voice_description,
+        example_dialogue=example_dialogue,
+    )
+
+
+@router.message(GenerationStates.waiting_for_omni_character_image, F.photo)
+async def save_gemini_omni_character_image(message: types.Message, state: FSMContext):
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+    image_url = save_uploaded_file(image_bytes.read(), "png", is_reference=True)
+    if not image_url:
+        await message.answer("❌ Не удалось сохранить фото персонажа.")
+        return
+    await state.update_data(omni_character_image_url=image_url)
+    if message.caption and message.caption.strip():
+        await _create_and_store_gemini_omni_character(
+            message=message,
+            state=state,
+            image_url=image_url,
+            description=message.caption,
+            character_name=_make_gemini_omni_character_name(message.caption),
+        )
+        return
+    await message.answer(
+        "✅ Фото персонажа загружено.\n\n"
+        "Теперь просто опишите персонажа одним сообщением, например:\n"
+        "<code>синяя бабочка в тропическом лесу</code>\n\n"
+        "Можно подробнее: внешний вид, стиль, настроение, одежда или роль.",
+        reply_markup=get_back_keyboard("gemini_omni_menu"),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_omni_character_details)
+
+
+async def _create_and_store_gemini_omni_character(
+    message: types.Message,
+    state: FSMContext,
+    image_url: str,
+    description: str,
+    character_name: str = "",
+) -> bool:
+    description = description.strip()
+    character_name = character_name.strip() or _make_gemini_omni_character_name(
+        description
+    )
+    if not description:
+        await message.answer("❌ Опишите персонажа одним сообщением.")
+        return False
+
+    data = await state.get_data()
+    wait_msg = await message.answer("🧍 Создаю Omni Character...")
+    result = await gemini_omni_service.create_character(
+        description=description,
+        image_url=image_url,
+        character_name=character_name,
+        audio_ids=data.get("omni_audio_ids", []),
+    )
+    try:
+        await wait_msg.delete()
+    except TelegramBadRequest:
+        pass
+    if not result:
+        await message.answer("❌ Не удалось создать Omni Character.")
+        await state.set_state(GenerationStates.waiting_for_video_prompt)
+        return False
+
+    character_ids = data.get("omni_character_ids", [])
+    character_ids.append(result["character_id"])
+    character_ids = character_ids[-GEMINI_OMNI_MAX_CHARACTER_IDS:]
+    source_images = data.get("omni_character_source_images", [])
+    if image_url not in source_images:
+        source_images.append(image_url)
+    source_images = source_images[-GEMINI_OMNI_MAX_CHARACTER_IDS:]
+    await state.update_data(
+        omni_character_ids=character_ids,
+        omni_character_source_images=source_images,
+    )
+    await message.answer(
+        "✅ <b>Omni Character создан</b>\n\n"
+        f"Character ID: <code>{html.escape(result['character_id'])}</code>\n"
+        f"Имя: <code>{html.escape(str(result.get('name') or character_name))}</code>\n\n"
+        "Я добавил этого персонажа в текущую Omni-видеозадачу.",
+        reply_markup=_gemini_omni_keyboard_from_data(await state.get_data()),
+        parse_mode="HTML",
+    )
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+    return True
+
+
+@router.message(GenerationStates.waiting_for_omni_character_details, F.text)
+async def create_gemini_omni_character(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    image_url = data.get("omni_character_image_url")
+    if not image_url:
+        await message.answer("❌ Сначала отправьте фото персонажа.")
+        await state.set_state(GenerationStates.waiting_for_omni_character_image)
+        return
+
+    fields = _parse_key_value_lines(message.text)
+    positional = fields.get("_positional", [])
+    has_named_fields = any(
+        key in fields for key in {"character_name", "name", "description", "descriptions"}
+    )
+    if has_named_fields:
+        character_name = fields.get("character_name") or fields.get("name") or ""
+        description = fields.get("description") or fields.get("descriptions") or (
+            " ".join(positional) if positional else ""
+        )
+    else:
+        description = message.text.strip()
+        character_name = _make_gemini_omni_character_name(description)
+
+    await _create_and_store_gemini_omni_character(
+        message=message,
+        state=state,
+        image_url=image_url,
+        description=description,
+        character_name=character_name,
+    )
 
 
 # =============================================================================
@@ -2828,7 +4099,7 @@ async def process_photo_for_video_prompt_state(
 ):
     """
     Обрабатывает фото для imgtxt видео в состоянии waiting_for_video_prompt.
-    Первое фото - v_image_url (старт кадр), остальные - reference_images (до 8 рефов, total 9).
+    Первое фото - v_image_url (старт кадр), остальные - reference_images.
     """
     data = await state.get_data()
     v_type = data.get("v_type")
@@ -2840,7 +4111,7 @@ async def process_photo_for_video_prompt_state(
                 "❌ Для HappyHorse Edit можно добавить до 5 фото-референсов. Введите промпт."
             )
             return
-    elif v_type != "imgtxt":
+    elif v_type != "imgtxt" and v_model != "gemini_omni":
         await message.answer("Пожалуйста, отправьте текстовое описание.")
         return
 
@@ -2896,15 +4167,18 @@ async def process_photo_for_video_prompt_state(
     start_count = 1 if v_image_url else 0
     current_refs = len(reference_images)
     total = start_count + current_refs + 1  # +1 for this photo
-    if total > 9:
-        await message.answer("❌ Максимум 9 фото (1 старт + 8 рефов). Введите промпт.")
+    max_photos = GEMINI_OMNI_MAX_IMAGES if v_model == "gemini_omni" else 9
+    if total > max_photos:
+        await message.answer(
+            f"❌ Максимум {max_photos} фото для этой модели. Введите промпт."
+        )
         return
 
     if not v_image_url:
         # Первое фото - стартовый кадр
         await state.update_data(v_image_url=image_url)
         logger.info(f"Saved start image for video (1st photo): {image_url}")
-        status = "✅ Старт фото установлено! (1/9)"
+        status = f"✅ Старт фото установлено! (1/{max_photos})"
     else:
         # Последующие - референсы
         reference_images.append(image_url)
@@ -2912,7 +4186,7 @@ async def process_photo_for_video_prompt_state(
         logger.info(
             f"Saved reference image for video (ref #{current_refs + 1}): {image_url}"
         )
-        status = f"✅ Реф. фото добавлено! (total {total}/9)"
+        status = f"✅ Реф. фото добавлено! (total {total}/{max_photos})"
 
     # Update UI with current count
     data = await state.get_data()
@@ -2925,21 +4199,28 @@ async def process_photo_for_video_prompt_state(
     total_photos = start_count + ref_count
 
     text = (
-        f"🎬 <b>Фото + Текст → Видео</b>"
-        f"📎 Фото: <code>{total_photos}/9</code> (старт + рефы)"
+        f"🎬 <b>{'Gemini Omni' if current_model == 'gemini_omni' else 'Фото + Текст → Видео'}</b>\n"
+        f"📎 Фото: <code>{total_photos}/{max_photos}</code> (старт + рефы)"
         f"{status}"
         f"⚙️ Модель: <code>{current_model}</code> | {current_duration}с | {current_ratio}\n"
         f"<b>Отправьте ещё фото или промпт:</b>"
     )
-
-    await message.answer(
-        text,
-        reply_markup=get_create_video_keyboard(
+    if current_model == "gemini_omni":
+        reply_markup = get_gemini_omni_keyboard(
+            len(data.get("omni_audio_ids", [])),
+            len(data.get("omni_character_ids", [])),
+        )
+    else:
+        reply_markup = get_create_video_keyboard(
             current_v_type="imgtxt",
             current_model=current_model,
             current_duration=current_duration,
             current_ratio=current_ratio,
-        ),
+        )
+
+    await message.answer(
+        text,
+        reply_markup=reply_markup,
         parse_mode="HTML",
     )
 
@@ -2955,6 +4236,7 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
     data = await state.get_data()
     generation_type = data.get("generation_type")
     v_type = data.get("v_type")
+    v_model = data.get("v_model")
     v_reference_videos = data.get("v_reference_videos", [])
 
     if generation_type == "video" and v_type == "video":
@@ -2973,9 +4255,10 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             await message.answer("❌ Видео слишком большое (макс 20MB).")
             return
 
-        if len(v_reference_videos) >= 5:
+        max_refs = 1 if v_model == "gemini_omni" else 5
+        if len(v_reference_videos) >= max_refs:
             await message.answer(
-                "❌ Максимум 5 видео референсов. Нажмите 'Продолжить'.",
+                f"❌ Максимум {max_refs} видео референсов. Нажмите 'Продолжить'.",
                 parse_mode="HTML",
             )
             return
@@ -2992,7 +4275,6 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
             logger.info(f"Added reference video {len(v_reference_videos)}: {video_url}")
 
             current_count = len(v_reference_videos)
-            max_refs = 5
             text = (
                 f"📹 <b>Загрузка видео референсов</b>"
                 f"Загружено: <code>{current_count}/{max_refs}</code>"
@@ -3119,14 +4401,77 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         await message.answer("❌ Не удалось сохранить фото. Попробуйте ещё раз.")
 
 
+@router.callback_query(
+    GenerationStates.confirming_prompt_improvement,
+    F.data.in_({"image_prompt_safe", "image_prompt_original"}),
+)
+async def handle_image_prompt_improvement_choice(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Runs image generation after the user chooses prompt improvement mode."""
+    data = await state.get_data()
+    prompt = (data.get("pending_image_prompt") or "").strip()
+    if not prompt:
+        await callback.answer("Промпт не найден, введите его ещё раз", show_alert=True)
+        await state.set_state(GenerationStates.waiting_for_input)
+        return
+
+    improve = callback.data == "image_prompt_safe"
+    await callback.answer("Готовлю генерацию...")
+    await handle_image_prompt_text(
+        callback.message,
+        state,
+        prompt_override=prompt,
+        improve_prompt=improve,
+        telegram_id_override=callback.from_user.id,
+    )
+
+
+@router.callback_query(
+    GenerationStates.confirming_prompt_improvement,
+    F.data == "image_prompt_back",
+)
+async def handle_image_prompt_back(callback: types.CallbackQuery, state: FSMContext):
+    """Returns from prompt confirmation to image settings."""
+    data = await state.get_data()
+    current_service, current_options, reference_images = await _sync_image_state(state)
+    await callback.message.edit_text(
+        _build_image_creation_text(
+            current_service,
+            current_options,
+            reference_images,
+            data.get("img_count", 1),
+        ),
+        reply_markup=get_create_image_keyboard(
+            current_service=current_service,
+            current_ratio=current_options["aspect_ratio"],
+            num_refs=len(reference_images),
+            current_options=current_options,
+            img_count=data.get("img_count", 1),
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_input)
+
+
 @router.message(GenerationStates.waiting_for_input, F.text)
-async def handle_image_prompt_text(message: types.Message, state: FSMContext):
+async def handle_image_prompt_text(
+    message: types.Message,
+    state: FSMContext,
+    *,
+    prompt_override: str | None = None,
+    improve_prompt: bool | None = None,
+    telegram_id_override: int | None = None,
+):
     """Handles text prompt for image generation in waiting_for_input state"""
     data = await state.get_data()
     if data.get("generation_type") != "image":
         return  # Not for images, let other handlers catch
 
-    prompt = message.text.strip()
+    telegram_id = telegram_id_override or message.from_user.id
+    submit_message_id = getattr(message, "message_id", 0)
+    prompt = (prompt_override if prompt_override is not None else message.text).strip()
     if not prompt:
         await message.answer("⚠️ Введите промпт для генерации изображения.")
         return
@@ -3164,6 +4509,40 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     img_service, img_options, reference_images = _get_image_state(data)
     mix_mode = bool(data.get("mix_mode"))
 
+    if improve_prompt is None:
+        await state.update_data(
+            pending_image_prompt=prompt,
+            pending_prompt_owner_id=telegram_id,
+            pending_prompt_message_id=submit_message_id,
+        )
+        await message.answer(
+            _build_prompt_safety_text(prompt),
+            reply_markup=get_prompt_safety_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.set_state(GenerationStates.confirming_prompt_improvement)
+        return
+
+    if improve_prompt:
+        original_prompt = prompt
+        prompt = await _improve_image_prompt(
+            prompt,
+            ref_count=len(reference_images),
+            mix_mode=mix_mode,
+        )
+        if prompt != original_prompt:
+            await _send_long_text(
+                message,
+                "🪄 <b>Безопасный промпт готов</b>",
+                prompt,
+            )
+
+    prompt = _apply_face_preservation_prompt(
+        prompt,
+        data.get("face_preservation_mode", "strict" if reference_images else "none"),
+        len(reference_images),
+    )
+
     if mix_mode:
         generation_jobs = []
         for model_id in MIX_PHOTO_MODELS:
@@ -3189,11 +4568,12 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             for _ in range(img_count)
         ]
 
-    user = await get_or_create_user(message.from_user.id)
+    user = await get_or_create_user(telegram_id)
     total_cost = sum(job["cost"] for job in generation_jobs)
     img_count = len(generation_jobs)
 
-    if user.credits < total_cost:
+    use_free_generation = user.free_generations > 0
+    if not use_free_generation and user.credits < total_cost:
         if mix_mode:
             models_text = ", ".join(
                 get_image_model_config(job["model"])["label"] for job in generation_jobs
@@ -3209,18 +4589,18 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         )
         return
 
-    generation_lock = await generation_lock_guard.acquire(message.from_user.id)
+    generation_lock = await generation_lock_guard.acquire(telegram_id)
     if not generation_lock:
         await message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
         return
 
     processing_msg = None
     try:
-        charged = await deduct_credits(
-            message.from_user.id,
+        charged, used_free_generation = await _charge_generation_or_free_token(
+            telegram_id,
             total_cost,
             reason="image_generation_charge",
-            external_id=f"image_submit:{message.from_user.id}:{message.message_id}",
+            external_id=f"image_submit:{telegram_id}:{submit_message_id}",
             metadata={
                 "model": "mix_photo" if mix_mode else img_service,
                 "models": [job["model"] for job in generation_jobs],
@@ -3232,6 +4612,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             await state.clear()
             await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
             return
+        billing_cost = 0 if used_free_generation else total_cost
 
         if mix_mode:
             processing_msg = await message.answer(
@@ -3265,14 +4646,14 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             )
     except Exception:
         logger.exception("Image generation setup failed")
-        if not config.is_admin(message.from_user.id):
-            await add_credits_once(
-                message.from_user.id,
-                total_cost,
-                reason="generation_refund",
-                external_id=f"image_setup:{message.from_user.id}:{message.message_id}",
-                metadata={"handler": "image_setup"},
-            )
+        await _refund_generation_charge(
+            telegram_id,
+            total_cost,
+            used_free_generation=locals().get("used_free_generation", False),
+            reason="generation_refund",
+            external_id=f"image_setup:{telegram_id}:{submit_message_id}",
+            metadata={"handler": "image_setup"},
+        )
         await generation_lock_guard.release(generation_lock)
         await state.clear()
         await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
@@ -3285,7 +4666,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         local_tid = f"img_{uuid.uuid4().hex[:12]}"
         await add_generation_task(
             user.id,
-            message.from_user.id,
+            telegram_id,
             local_tid,
             "image",
             job_model,
@@ -3436,15 +4817,15 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 )
                 await complete_video_task(local_tid, saved_url)
             else:
-                if not config.is_admin(message.from_user.id):
-                    await add_credits_once(message.from_user.id, job_cost, reason="generation_refund", external_id=local_tid)
+                if not locals().get("used_free_generation", False) and not config.is_admin(telegram_id):
+                    await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
                 await complete_video_task(local_tid, None)
                 await message.answer(f"❌ {prefix}{model_label}: ошибка генерации. Бананы возвращены.")
 
         except Exception as e:
             logger.exception(f"Image generation error (idx={idx}): {e}")
-            if not config.is_admin(message.from_user.id):
-                await add_credits_once(message.from_user.id, job_cost, reason="generation_refund", external_id=local_tid)
+            if not locals().get("used_free_generation", False) and not config.is_admin(telegram_id):
+                await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
             await complete_video_task(local_tid, None)
             await message.answer(f"❌ Ошибка генерации #{idx}.")
 
@@ -3480,6 +4861,9 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
     reference_images = _deserialize_reference_images(task.reference_images)
     if not reference_images:
         reference_images = _extract_reference_images_from_message(callback.message)
+    source_feed_task_id = task.source_feed_task_id
+    if task.is_public_feed and task.telegram_id != callback.from_user.id:
+        source_feed_task_id = task.task_id
 
     model_config = get_image_model_config(img_service)
     if model_config.get("requires_refs") and not reference_images:
@@ -3523,6 +4907,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             prompt=prompt,
             cost=cost,
             reference_images=_serialize_reference_images(reference_images),
+            source_feed_task_id=source_feed_task_id,
         )
 
         processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
@@ -3747,7 +5132,7 @@ async def run_no_preset_video_from_message(
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
     video_urls = data.get("v_reference_videos", [])
-    if video_urls and v_model not in {"happyhorse_edit", "glow"}:
+    if video_urls and v_model not in {"happyhorse_edit", "glow", "gemini_omni"}:
         v_model = "aleph"
     if v_type == "video" and v_model not in _MODELS_VIDEO:
         v_model = "aleph"
@@ -3772,6 +5157,7 @@ async def run_no_preset_video_from_message(
         "happyhorse_edit",
         "wan_27_t2v",
         "wan_27_i2v",
+        "gemini_omni",
     )
     if v_type == "imgtxt" and v_model not in _no_cap_models:
         v_duration = min(v_duration, 10)
@@ -3780,17 +5166,25 @@ async def run_no_preset_video_from_message(
     v_video_url = data.get("v_video_url")
 
     image_url = data.get("v_image_url")
-    video_urls = data.get("v_reference_videos", []) if v_type == "video" else None
+    video_urls = (
+        data.get("v_reference_videos", [])
+        if v_model == "gemini_omni" or v_type == "video"
+        else None
+    )
     image_refs = data.get("reference_images", [])
+    if v_model == "gemini_omni" and video_urls:
+        v_duration = 4
 
     elements_list = None
+    kling_image_input = image_refs if v_type != "imgtxt" else None
     if v_type == "imgtxt" and image_refs:
+        element_refs = image_refs[:12]
+        if len(element_refs) == 1:
+            element_refs = [element_refs[0], element_refs[0]]
         elements_list = [
             {
                 "description": "reference photos for video generation consistency and style",
-                "reference_image_urls": image_refs[
-                    :12
-                ],  # Kling elements support up to 3x4=12 refs
+                "reference_image_urls": element_refs,
             }
         ]
 
@@ -3807,7 +5201,7 @@ async def run_no_preset_video_from_message(
             f"Admin {telegram_id} - free access (skipped {cost} credits)"
         )
     else:
-        if not await check_can_afford(telegram_id, cost):
+        if user.free_generations <= 0 and not await check_can_afford(telegram_id, cost):
             await target_message.answer(
                 f"❌ Недостаточно бананов!\nНужно: <code>{cost}</code>🍌\nПополните баланс.",
                 reply_markup=get_main_menu_keyboard(
@@ -3822,7 +5216,7 @@ async def run_no_preset_video_from_message(
             await target_message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
             await state.clear()
             return
-        charged = await deduct_credits(
+        charged, used_free_generation = await _charge_generation_or_free_token(
             telegram_id,
             cost,
             reason="video_generation_charge",
@@ -3855,9 +5249,10 @@ async def run_no_preset_video_from_message(
     except Exception:
         logger.exception("Video generation setup failed")
         if not is_admin:
-            await add_credits_once(
+            await _refund_generation_charge(
                 telegram_id,
                 cost,
+                used_free_generation=locals().get("used_free_generation", False),
                 reason="generation_refund",
                 external_id=refund_external_id,
                 metadata={"handler": "video_setup"},
@@ -3875,7 +5270,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -3903,7 +5298,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Aleph Video требует референсное видео (видео+текст режим)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -3925,7 +5320,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Runway не поддерживает видео референсы. Используйте текст или фото+текст."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -3957,6 +5352,93 @@ async def run_no_preset_video_from_message(
                     config.veo_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
+        elif v_model == "gemini_omni":
+            omni_images = _get_gemini_omni_effective_image_urls(data)
+            omni_audio_ids = data.get("omni_audio_ids", [])
+            omni_character_ids = data.get("omni_character_ids", [])
+            invalid_base_voice_ids = [
+                audio_id
+                for audio_id in omni_audio_ids
+                if str(audio_id).lower() in GEMINI_OMNI_BASE_VOICES
+            ]
+            if invalid_base_voice_ids:
+                await target_message.answer(
+                    "❌ В Gemini Omni выбран базовый голос, а нужен созданный Audio ID.\n\n"
+                    "Откройте <b>Gemini Omni → Создать голос</b>, создайте голос "
+                    "на базе этого preset и повторите запуск.",
+                    parse_mode="HTML",
+                )
+                if not is_admin and not locals().get("used_free_generation", False):
+                    await add_credits_once(
+                        telegram_id,
+                        cost,
+                        reason="generation_refund",
+                        external_id=refund_external_id,
+                    )
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            if omni_character_ids and not omni_images and not video_urls:
+                await target_message.answer(
+                    "❌ Для Gemini Omni Character нужен визуальный вход.\n\n"
+                    "Если Character ID добавлен вручную, загрузите фото персонажа/сцены "
+                    "или создайте персонажа через <b>Gemini Omni → Создать персонажа</b>, "
+                    "тогда я автоматически добавлю исходное фото в видеозадачу.",
+                    parse_mode="HTML",
+                )
+                if not is_admin and not locals().get("used_free_generation", False):
+                    await add_credits_once(
+                        telegram_id,
+                        cost,
+                        reason="generation_refund",
+                        external_id=refund_external_id,
+                    )
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            logger.info(
+                "Starting Gemini Omni video for user %s with audio_ids=%s character_ids=%s image_count=%s video_count=%s",
+                telegram_id,
+                omni_audio_ids,
+                omni_character_ids,
+                len(omni_images),
+                len(video_urls or []),
+            )
+            quota_used = len(omni_images[:GEMINI_OMNI_MAX_IMAGES]) + (
+                2 if video_urls else 0
+            ) + len(omni_character_ids[:GEMINI_OMNI_MAX_CHARACTER_IDS])
+            if quota_used > GEMINI_OMNI_MAX_INPUT_UNITS:
+                await target_message.answer(
+                    f"❌ Gemini Omni принимает до {GEMINI_OMNI_MAX_INPUT_UNITS} единиц входов: фото=1, видео=2, персонаж=1. "
+                    "Уменьшите количество фото или Character ID."
+                )
+                if not is_admin and not locals().get("used_free_generation", False):
+                    await add_credits_once(
+                        telegram_id,
+                        cost,
+                        reason="generation_refund",
+                        external_id=refund_external_id,
+                    )
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            result = await gemini_omni_service.generate_video(
+                prompt=prompt,
+                image_urls=omni_images,
+                video_urls=video_urls or None,
+                audio_ids=omni_audio_ids,
+                character_ids=omni_character_ids,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                resolution=video_options.get("resolution", "720p"),
+                seed=video_options.get("seed"),
+                callback_url=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
         elif v_model in (
             "hailuo_23_pro",
             "hailuo_23_std",
@@ -3971,7 +5453,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     f"❌ {v_model} требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -4011,7 +5493,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     f"❌ {v_model} требует минимум одно изображение (фото+текст режим)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -4021,7 +5503,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ HappyHorse Edit требует видео-референс (режим видео+текст)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -4047,7 +5529,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Wan 2.7 I2V требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin:
+                if not is_admin and not locals().get("used_free_generation", False):
                     await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
@@ -4075,7 +5557,7 @@ async def run_no_preset_video_from_message(
                 aspect_ratio=v_ratio,
                 image_url=image_url,
                 video_urls=video_urls,
-                image_input=image_refs if v_type != "imgtxt" else None,
+                image_input=kling_image_input,
                 elements=elements_list,
                 generate_audio=video_options.get("sound", True),
                 seedance_resolution=video_options.get("resolution"),
@@ -4146,12 +5628,31 @@ async def run_no_preset_video_from_message(
                 )
             )
         else:
-            if not is_admin:
+            if not is_admin and not locals().get("used_free_generation", False):
                 await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
-            await target_message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
+            error_text = result.get("error") if isinstance(result, dict) else None
+            error_code = result.get("code") if isinstance(result, dict) else None
+            if v_model == "gemini_omni" and error_text:
+                if "audio_id not found" in str(error_text).lower():
+                    await target_message.answer(
+                        "❌ Gemini Omni не принял Audio ID: он не найден или создан в другом Kie аккаунте.\n\n"
+                        "Создайте голос через <b>Gemini Omni → Создать голос</b> "
+                        "и повторите запуск. Бананы возвращены.",
+                        parse_mode="HTML",
+                    )
+                else:
+                    await target_message.answer(
+                        f"❌ Gemini Omni отклонил задачу"
+                        f"{f' (код {error_code})' if error_code else ''}:\n"
+                        f"<code>{html.escape(str(error_text))}</code>\n\n"
+                        "Бананы возвращены.",
+                        parse_mode="HTML",
+                    )
+            else:
+                await target_message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
-        if not is_admin:
+        if not is_admin and not locals().get("used_free_generation", False):
             await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
         await target_message.answer("❌ Ошибка генерации. Бананы возвращены.")
 
@@ -4530,7 +6031,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
-            await state.update_data(v_video_url=video_url)
+            v_reference_videos = data.get("v_reference_videos", [])
+            if video_url not in v_reference_videos:
+                v_reference_videos = [video_url, *v_reference_videos][:1]
+            await state.update_data(
+                v_video_url=video_url,
+                v_reference_videos=v_reference_videos,
+            )
             logger.info(f"Saved reference video for video mode: {video_url}")
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
@@ -5095,7 +6602,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
-            await state.update_data(v_video_url=video_url)
+            v_reference_videos = data.get("v_reference_videos", [])
+            if video_url not in v_reference_videos:
+                v_reference_videos = [video_url, *v_reference_videos][:1]
+            await state.update_data(
+                v_video_url=video_url,
+                v_reference_videos=v_reference_videos,
+            )
             logger.info(f"Saved reference video for video mode: {video_url}")
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
@@ -5558,7 +7071,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
-            await state.update_data(v_video_url=video_url)
+            v_reference_videos = data.get("v_reference_videos", [])
+            if video_url not in v_reference_videos:
+                v_reference_videos = [video_url, *v_reference_videos][:1]
+            await state.update_data(
+                v_video_url=video_url,
+                v_reference_videos=v_reference_videos,
+            )
             logger.info(f"Saved reference video for video mode: {video_url}")
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")
@@ -6021,7 +7540,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
         video_url = save_uploaded_file(video_data, "mp4", is_reference=True)
 
         if video_url:
-            await state.update_data(v_video_url=video_url)
+            v_reference_videos = data.get("v_reference_videos", [])
+            if video_url not in v_reference_videos:
+                v_reference_videos = [video_url, *v_reference_videos][:1]
+            await state.update_data(
+                v_video_url=video_url,
+                v_reference_videos=v_reference_videos,
+            )
             logger.info(f"Saved reference video for video mode: {video_url}")
         else:
             await message.answer("❌ Не удалось сохранить видео. Попробуйте ещё раз.")

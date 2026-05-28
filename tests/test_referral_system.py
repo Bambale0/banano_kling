@@ -170,6 +170,62 @@ def test_partner_withdrawal_creates_request(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_partner_balance_converts_to_credits(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "partner_convert.db")
+
+        await db.init_db()
+
+        master = await db.get_master_partner_user()
+        await db.accept_partner_agreement(master.telegram_id)
+
+        import aiosqlite
+
+        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+            await conn.execute(
+                "UPDATE users SET partner_balance_rub = ? WHERE id = ?",
+                (125.0, master.id),
+            )
+            await conn.commit()
+
+        result = await db.convert_partner_balance_to_credits(
+            master.telegram_id,
+            credits=12,
+            rub_per_credit=10,
+        )
+        overview = await db.get_partner_overview(master.telegram_id)
+        updated_master = await db.get_master_partner_user()
+
+        assert result == {"credits": 12, "amount_rub": 120.0}
+        assert updated_master.credits == 22
+        assert overview["balance_rub"] == 5.0
+
+    asyncio.run(run())
+
+
+def test_partner_balance_conversion_rejects_insufficient_balance(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "partner_convert_fail.db")
+
+        await db.init_db()
+
+        master = await db.get_master_partner_user()
+        await db.accept_partner_agreement(master.telegram_id)
+
+        result = await db.convert_partner_balance_to_credits(
+            master.telegram_id,
+            credits=1,
+            rub_per_credit=10,
+        )
+        updated_master = await db.get_master_partner_user()
+
+        assert result is None
+        assert updated_master.credits == 10
+        assert updated_master.partner_balance_rub == 0
+
+    asyncio.run(run())
+
+
 def test_stats_include_referrals(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")

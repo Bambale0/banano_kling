@@ -7,6 +7,7 @@ import pytest
 
 from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_create_video_keyboard, get_help_keyboard,
+                           get_image_result_keyboard,
                            get_main_menu_keyboard,
                            get_payment_packages_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
@@ -41,6 +42,21 @@ def test_get_main_menu_keyboard():
         "create_video_new" in btn.callback_data
         for row in kb.inline_keyboard
         for btn in row
+    )
+    assert any(
+        "menu_feed" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+
+
+def test_get_image_result_keyboard_has_feed_publish():
+    kb = get_image_result_keyboard("task1", "http://image.url")
+    assert any(
+        "feed_publish_task1" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+        if btn.callback_data
     )
 
 

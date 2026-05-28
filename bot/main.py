@@ -29,9 +29,11 @@ from bot.handlers import (
     admin_router,
     batch_generation_router,
     common_router,
+    feed_router,
     generation_router,
     image_analyzer_router,
     payments_router,
+    start_router,
 )
 from bot.handlers.payments import handle_cryptobot_webhook, handle_tbank_webhook
 from bot.services.preset_manager import preset_manager
@@ -50,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_SUCCESS_STATUSES = {"success", "completed", "succeeded", "finished"}
 TERMINAL_FAILURE_STATUSES = {
+    "fail",
     "failed",
     "failure",
     "error",
@@ -342,14 +345,17 @@ def setup_dispatcher() -> Dispatcher:
     # тем, у кого более специфичный фильтр (например, StateFilter)
     #
     # Правильный порядок:
+    # 0. start_router (/start must reset any active FSM state)
     # 1. generation_router (FSM состояния - самые специфичные)
     # 2. admin_router (админ команды)
     # 3. payments_router (платежи)
     # 4. batch_generation_router (пакетная генерация)
-    # 5. common_router (общие команды /start /help - самые общие)
+    # 5. common_router (общие команды /help - самые общие)
 
+    dp.include_router(start_router)  # /start работает из любого состояния
     dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
     dp.include_router(image_analyzer_router)  # Анализ фото в промпт
+    dp.include_router(feed_router)  # Bot-side лента публичных фото
     dp.include_router(admin_router)  # Админ-команды
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация
@@ -749,7 +755,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             telegram_id = await get_telegram_id_by_user_id(task.user_id)
 
             if not task:
-                logger.warning(f"{service_name} task {task_id} not found in database")
+                logger.info(
+                    "%s webhook task %s is not tracked locally; ignoring external/manual task",
+                    service_name,
+                    task_id,
+                )
                 return web.Response(status=200)
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
@@ -1201,6 +1211,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         from bot.database import (
             add_credits,
             complete_video_task,
+            fail_generation_task,
             get_task_by_id,
             get_telegram_id_by_user_id,
         )
@@ -1343,7 +1354,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 return web.Response(status=200)
 
             if not task:
-                logger.warning(f"{service_name} task {task_id} not found in database")
+                logger.info(
+                    "%s webhook task %s is not tracked locally; ignoring external/manual task",
+                    service_name,
+                    task_id,
+                )
                 return web.Response(status=200)
             if not telegram_id:
                 logger.error(f"Cannot find telegram_id for user_id {task.user_id}")
@@ -1587,6 +1602,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             # Enhanced failure logging and user notification
             fail_code = webhook_data.get("failCode", "unknown")
             fail_msg = webhook_data.get("failMsg", "No details")
+            if not task:
+                logger.info(
+                    "%s webhook task %s failed but is not tracked locally; ignoring external/manual task. failCode=%s failMsg=%s",
+                    service_name,
+                    task_id,
+                    fail_code,
+                    fail_msg,
+                )
+                return web.Response(status=200)
+
             logger.error(
                 f"{service_name} task {task_id} FAILED: failCode={fail_code}, failMsg={fail_msg}, full data: {webhook_data}"
             )
@@ -1622,10 +1647,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     await bot_instance.session.close()
             else:
                 logger.warning(
-                    f"No telegram_id for failed task {task_id} (user_id: {task.user_id if task else 'unknown'})"
+                    f"No telegram_id for failed task {task_id} (user_id: {task.user_id})"
                 )
 
-            await complete_video_task(task_id, None)
+            await fail_generation_task(task_id)
         else:
             logger.info(
                 "Ignoring non-terminal %s webhook task_id=%s status=%s",

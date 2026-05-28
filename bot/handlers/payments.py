@@ -10,11 +10,13 @@ from bot.config import config
 from bot.database import (
     add_credits,
     add_credits_once,
+    add_free_generations,
     create_transaction,
     credit_first_payment_referral_bonus,
     get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
+    get_user_credits,
     mark_promo_code_used,
     validate_promo_code,
     update_transaction_status,
@@ -164,7 +166,7 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
         )
     if transaction.promo_code:
         promo_marked, promo_reason = await mark_promo_code_used(
-            telegram_id, transaction.promo_code
+            telegram_id, transaction.promo_code, order_id=order_id
         )
         if not promo_marked:
             logger.warning(
@@ -218,6 +220,62 @@ async def process_promo_code(message: types.Message, state: FSMContext):
     success, reason, promo = await validate_promo_code(message.from_user.id, code)
 
     if success:
+        if promo.get("promo_type") in {"bananas", "generation"}:
+            marked, mark_reason = await mark_promo_code_used(
+                message.from_user.id,
+                promo["code"],
+                order_id=(
+                    f"{promo['promo_type']}:{promo['code']}:"
+                    f"{message.from_user.id}:{message.message_id}"
+                ),
+            )
+            if not marked:
+                reason_text = {
+                    "used_up": "Лимит активаций промокода уже закончился.",
+                    "already_used": "Эта активация уже обработана.",
+                }.get(mark_reason, "Не удалось активировать промокод.")
+                await message.answer(
+                    f"❌ <b>Промокод не сработал</b>\n\n{reason_text}",
+                    reply_markup=get_back_keyboard("menu_topup"),
+                    parse_mode="HTML",
+                )
+                return
+
+            reward_credits = int(promo.get("reward_credits") or 0)
+            if promo["promo_type"] == "generation":
+                credited = await add_free_generations(message.from_user.id, reward_credits)
+                reward_text = f"Бесплатных генераций: <code>{reward_credits}</code>"
+                success_text = "Бесплатные генерации уже доступны."
+            else:
+                credited = await add_credits_once(
+                    message.from_user.id,
+                    reward_credits,
+                    reason="promo_bonus",
+                    external_id=(
+                        f"promo_bonus:{promo['code']}:"
+                        f"{message.from_user.id}:{message.message_id}"
+                    ),
+                    metadata={"promo_code": promo["code"]},
+                )
+                reward_text = f"Начислено: <code>{reward_credits}</code> 🍌"
+                success_text = (
+                    "Бананы уже на балансе."
+                    if credited
+                    else "Эта активация уже была начислена ранее."
+                )
+            await state.clear()
+            await message.answer(
+                "✅ <b>Промокод активирован</b>\n\n"
+                f"Код: <code>{promo['code']}</code>\n"
+                f"{reward_text}\n\n"
+                f"{success_text if credited else 'Промокод уже был применён ранее.'}",
+                reply_markup=get_main_menu_keyboard(
+                    await get_user_credits(message.from_user.id)
+                ),
+                parse_mode="HTML",
+            )
+            return
+
         await state.update_data(active_promo=promo)
         await state.set_state(None)
         await message.answer(

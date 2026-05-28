@@ -27,6 +27,8 @@ class GenerationStates(StatesGroup):
         State()
     )  # Загрузка референсных видео для video+text (до 5 шт)
     confirming_reference_images = State()  # Подтверждение референсов перед генерацией
+    selecting_face_preservation = State()  # Выбор режима сохранения лица после референсов
+    confirming_prompt_improvement = State()  # Ручной выбор улучшения/безопасности промпта
 
     # Состояния для пакетного редактирования
     waiting_for_batch_image = State()  # Ожидание загрузки фото
@@ -37,6 +39,15 @@ class GenerationStates(StatesGroup):
     selecting_duration = State()  # Выбор длительности видео
     selecting_aspect_ratio = State()  # Выбор формата видео
     selecting_quality = State()  # Выбор качества видео
+
+    # Gemini Omni helper flows
+    waiting_for_omni_audio_details = State()
+    waiting_for_omni_photo_reference = State()
+    waiting_for_omni_character_image = State()
+    waiting_for_omni_character_details = State()
+    waiting_for_omni_audio_id = State()
+    waiting_for_omni_character_id = State()
+    waiting_for_omni_seed = State()
 
 
 class PaymentStates(StatesGroup):
@@ -55,6 +66,7 @@ class PartnerWithdrawalStates(StatesGroup):
     waiting_full_name = State()
     waiting_phone = State()
     waiting_card = State()
+    waiting_convert_credits = State()
 
 
 class AdminStates(StatesGroup):

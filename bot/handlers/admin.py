@@ -648,8 +648,10 @@ async def admin_promos_menu(callback: types.CallbackQuery, state: FSMContext):
     lines = [
         "🎟 <b>Промокоды</b>",
         "",
-        "Создание: <code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>",
-        "Пример: <code>START20 20 50 2026-06-01</code>",
+        "Скидка: <code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>",
+        "Бананы: <code>КОД bananas КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
+        "Генерации: <code>КОД generation КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
+        "Старый формат тоже работает: <code>START20 20 50</code>",
         "",
         "<b>Последние коды:</b>",
     ]
@@ -657,9 +659,15 @@ async def admin_promos_menu(callback: types.CallbackQuery, state: FSMContext):
         for promo in promos:
             status = "✅" if promo["is_active"] else "⛔"
             expires = promo["expires_at"] or "без срока"
+            if promo.get("promo_type") == "bananas":
+                promo_value = f"+{promo['reward_credits']}🍌"
+            elif promo.get("promo_type") == "generation":
+                promo_value = f"{promo['reward_credits']} free gen"
+            else:
+                promo_value = f"−{promo['discount_percent']}%"
             lines.append(
                 f"{status} <code>{promo['code']}</code> — "
-                f"−{promo['discount_percent']}%, {promo['used_count']}/{promo['max_uses']}, до {expires}"
+                f"{promo_value}, {promo['used_count']}/{promo['max_uses']}, до {expires}"
             )
     else:
         lines.append("Пока промокодов нет.")
@@ -699,10 +707,14 @@ async def admin_promo_create_prompt(callback: types.CallbackQuery, state: FSMCon
     await callback.message.edit_text(
         "➕ <b>Создание промокода</b>\n\n"
         "Отправьте одной строкой:\n"
-        "<code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>\n\n"
+        "<code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>\n"
+        "<code>КОД bananas КОЛ-ВО_БАНАНОВ ЛИМИТ [YYYY-MM-DD]</code>\n\n"
+        "<code>КОД generation КОЛ-ВО_ГЕНЕРАЦИЙ ЛИМИТ [YYYY-MM-DD]</code>\n\n"
         "Пример:\n"
-        "<code>START20 20 50 2026-06-01</code>\n\n"
-        "Если срок не нужен:\n"
+        "<code>START20 discount 20 50 2026-06-01</code>\n"
+        "<code>PARTNER50 bananas 50 200</code>\n"
+        "<code>FREEGEN generation 1 100</code>\n\n"
+        "Старый формат для скидки тоже работает:\n"
         "<code>VIP15 15 10</code>",
         reply_markup=_admin_nav_keyboard("admin_promos"),
         parse_mode="HTML",
@@ -731,46 +743,74 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
         return
 
     parts = message.text.strip().split()
-    if len(parts) not in {3, 4}:
+    if len(parts) not in {3, 4, 5}:
         await message.answer(
             "❌ Неверный формат.\n\n"
-            "Нужно: <code>КОД СКИДКА_% ЛИМИТ [YYYY-MM-DD]</code>",
+            "Нужно: <code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>\n"
+            "или <code>КОД bananas КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>\n"
+            "или <code>КОД generation КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
             parse_mode="HTML",
         )
         return
 
     code = re.sub(r"[^A-Za-z0-9_-]", "", parts[0]).upper()
+    promo_type = "discount"
+    value_index = 1
+    if len(parts) >= 4 and parts[1].lower() in {"discount", "sale", "скидка"}:
+        promo_type = "discount"
+        value_index = 2
+    elif len(parts) >= 4 and parts[1].lower() in {"bananas", "banana", "credits", "free", "бананы"}:
+        promo_type = "bananas"
+        value_index = 2
+    elif len(parts) >= 4 and parts[1].lower() in {"generation", "generations", "gen", "free_generation", "генерация", "генерации"}:
+        promo_type = "generation"
+        value_index = 2
+
     try:
-        discount_percent = int(parts[1])
-        max_uses = int(parts[2])
-        if discount_percent <= 0 or discount_percent >= 100 or max_uses <= 0:
+        value = int(parts[value_index])
+        max_uses = int(parts[value_index + 1])
+        if max_uses <= 0:
             raise ValueError
-    except ValueError:
-        await message.answer("❌ Скидка должна быть от 1 до 99%, лимит — положительным числом.")
+        if promo_type == "discount" and (value <= 0 or value >= 100):
+            raise ValueError
+        if promo_type == "bananas" and value <= 0:
+            raise ValueError
+        if promo_type == "generation" and value <= 0:
+            raise ValueError
+    except (IndexError, ValueError):
+        await message.answer(
+            "❌ Проверьте значение и лимит.\n"
+            "Скидка: 1-99%, бананы: больше 0, лимит: больше 0."
+        )
         return
 
     expires_at = None
-    if len(parts) == 4:
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[3]):
+    date_index = value_index + 2
+    if len(parts) > date_index:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[date_index]):
             await message.answer(
                 "❌ Дата должна быть в формате <code>YYYY-MM-DD</code>.",
                 parse_mode="HTML",
             )
             return
-        expires_at = f"{parts[3]} 23:59:59"
+        expires_at = f"{parts[date_index]} 23:59:59"
 
     ok, result = await create_promo_code(
         code=code,
-        discount_percent=discount_percent,
+        discount_percent=value if promo_type == "discount" else 0,
         max_uses=max_uses,
         expires_at=expires_at,
         created_by=message.from_user.id,
+        promo_type=promo_type,
+        reward_credits=value if promo_type in {"bananas", "generation"} else 0,
     )
     if not ok:
         reason = {
             "exists": "Промокод с таким кодом уже существует.",
             "empty_code": "Код не должен быть пустым.",
+            "bad_type": "Тип должен быть discount, bananas или generation.",
             "bad_discount": "Скидка должна быть от 1 до 99%.",
+            "bad_reward": "Количество бананов должно быть больше нуля.",
             "bad_max_uses": "Лимит должен быть больше нуля.",
         }.get(result, "Не удалось создать промокод.")
         await message.answer(f"❌ {reason}")
@@ -780,7 +820,8 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
     await message.answer(
         "✅ <b>Промокод создан</b>\n\n"
         f"Код: <code>{result}</code>\n"
-        f"Скидка: <code>{discount_percent}%</code>\n"
+        f"Тип: <code>{ {'bananas': 'бесплатные бананы', 'generation': 'бесплатная генерация'}.get(promo_type, 'скидка') }</code>\n"
+        f"Значение: <code>{value}{' 🍌' if promo_type == 'bananas' else ' генерац.' if promo_type == 'generation' else '%'}</code>\n"
         f"Лимит: <code>{max_uses}</code> активаций\n"
         f"Срок: <code>{expires_at or 'без срока'}</code>",
         reply_markup=get_admin_keyboard(),
@@ -904,15 +945,12 @@ async def admin_price_vid_prompt(callback: types.CallbackQuery, state: FSMContex
         )
         await state.update_data(price_type="video_fixed", price_key=key)
     else:
-        dur = model_data.get("duration_costs", {})
-        dur_str = ", ".join(f"{d}с:{c}" for d, c in dur.items())
+        current = model_data.get("per_second", model_data.get("base", "?"))
         hint = (
-            f"Текущий базовый тариф: <code>{model_data.get('base', '?')}</code> 🍌\n"
-            f"Цены по длительности: <code>{dur_str}</code>\n\n"
-            f"Введите цены в формате <code>5:15,10:30,15:45</code>\n"
-            f"(длительность_сек:цена через запятую)"
+            f"Текущая цена: <code>{current}</code> 🍌 за 1 секунду\n\n"
+            f"Введите новую цену за <b>1 секунду</b> (целое число):"
         )
-        await state.update_data(price_type="video_duration", price_key=key)
+        await state.update_data(price_type="video_per_second", price_key=key)
 
     await state.set_state(AdminStates.waiting_price_value)
     await callback.message.edit_text(
@@ -957,25 +995,18 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
                 parse_mode="HTML",
             )
 
-        elif price_type == "video_duration":
-            # parse "5:15,10:30,15:45"
-            pairs = {}
-            for part in text.split(","):
-                part = part.strip()
-                if ":" not in part:
-                    raise ValueError(f"Bad format: {part}")
-                dur, cost = part.split(":", 1)
-                pairs[dur.strip()] = int(cost.strip())
-            if not pairs:
-                raise ValueError("Empty duration list")
+        elif price_type == "video_per_second":
+            new_price = int(text)
+            if new_price <= 0:
+                raise ValueError("Price must be positive")
             model_data = costs.setdefault("video_models", {}).setdefault(price_key, {})
-            model_data["duration_costs"] = pairs
-            model_data["base"] = min(pairs.values())
+            model_data["per_second"] = new_price
+            model_data["base"] = new_price
             _save_price_json(price_config)
-            dur_str = ", ".join(f"{d}с: {c}🍌" for d, c in pairs.items())
             await state.clear()
             await message.answer(
-                f"✅ Цены для <code>{price_key}</code> обновлены:\n{dur_str}",
+                f"✅ Цена для <code>{price_key}</code> обновлена: "
+                f"<b>{new_price}</b> 🍌/сек",
                 reply_markup=get_admin_keyboard(),
                 parse_mode="HTML",
             )

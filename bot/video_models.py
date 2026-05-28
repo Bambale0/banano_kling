@@ -2,6 +2,7 @@ from copy import deepcopy
 
 VIDEO_MODEL_ORDER_BY_TYPE = {
     "text": [
+        "gemini_omni",
         "v3_std",
         "v3_pro",
         "runway",
@@ -14,6 +15,7 @@ VIDEO_MODEL_ORDER_BY_TYPE = {
         "happyhorse_t2v",
     ],
     "imgtxt": [
+        "gemini_omni",
         "v3_std",
         "v3_pro",
         "seedance2",
@@ -29,6 +31,7 @@ VIDEO_MODEL_ORDER_BY_TYPE = {
         "happyhorse_ref2v",
     ],
     "video": [
+        "gemini_omni",
         "aleph",
         "glow",
         "happyhorse_edit",
@@ -37,6 +40,14 @@ VIDEO_MODEL_ORDER_BY_TYPE = {
 
 
 VIDEO_MODEL_CONFIGS = {
+    "gemini_omni": {
+        "label": "🔷 Gemini Omni",
+        "v_types": ["text", "imgtxt", "video"],
+        "aspect_ratios": ["16:9", "9:16"],
+        "durations": [4, 6, 8, 10],
+        "defaults": {"resolution": "720p", "seed": None},
+        "options": {"resolution": ["720p", "1080p", "4k"]},
+    },
     "v3_std": {
         "label": "⚡ Kling 3 Std",
         "v_types": ["text", "imgtxt"],
@@ -291,6 +302,7 @@ VIDEO_OPTION_LABELS = {
     "enable_translation": "Перевод",
     "prompt_extend": "Улучшение",
     "watermark": "Watermark",
+    "seed": "Seed",
 }
 
 

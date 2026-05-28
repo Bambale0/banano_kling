@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -17,6 +18,7 @@ from bot.database import (
     accept_partner_agreement,
     append_gpt55_history,
     clear_gpt55_history,
+    convert_partner_balance_to_credits,
     create_partner_withdrawal,
     get_gpt55_history,
     get_or_create_user,
@@ -50,6 +52,7 @@ from bot.states import (
 )
 
 logger = logging.getLogger(__name__)
+start_router = Router()
 router = Router()
 
 TELEGRAM_HTML_MESSAGE_LIMIT = 3900
@@ -89,6 +92,13 @@ def _set_user_menu(user_id: int, menu: str):
 def _get_user_menu(user_id: int) -> str:
     """Получает последнее посещённое меню пользователя"""
     return _user_last_menu.get(user_id)
+
+
+@start_router.message(CommandStart())
+async def cmd_start_from_any_state(message: types.Message, state: FSMContext):
+    """Global /start handler that resets any active flow before showing the menu."""
+    await state.clear()
+    await cmd_start(message)
 
 
 def _split_text_for_telegram(
@@ -215,8 +225,6 @@ async def _run_prompt_improvement(
     *,
     regenerate: bool = False,
 ) -> None:
-    from bot.services.gpt55_service import gpt55_service
-
     data = await state.get_data()
     base_idea = (data.get("prompt_improvement_idea") or "").strip()
     if len(base_idea) < 3:
@@ -236,7 +244,25 @@ async def _run_prompt_improvement(
     )
 
     await message.bot.send_chat_action(message.chat.id, "typing")
+    await message.answer(
+        "🪄 Улучшаю промпт. Результат пришлю сюда.",
+        reply_markup=get_prompt_improver_keyboard(),
+    )
+    asyncio.create_task(
+        _send_prompt_improvement_result(message, state, task),
+        name=f"prompt_improvement:{message.from_user.id}",
+    )
+
+
+async def _send_prompt_improvement_result(
+    message: types.Message,
+    state: FSMContext,
+    task: str,
+) -> None:
+    from bot.services.gpt55_service import gpt55_service
+
     try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
         response = await gpt55_service.ask(
             user_content=[{"type": "input_text", "text": task}],
             history=[],
@@ -491,6 +517,20 @@ async def cmd_start(message: types.Message):
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
+        return
+
+    elif args and args[0].startswith("feed_"):
+        from bot.handlers.feed import show_feed_task_by_id
+
+        task_id = args[0].replace("feed_", "", 1)
+        opened = await show_feed_task_by_id(message, message.from_user.id, task_id)
+        if not opened:
+            await message.answer(
+                "🔥 <b>Пост ленты недоступен</b>\n\n"
+                "Он мог быть удалён автором или ещё не готов.",
+                reply_markup=get_main_menu_keyboard(user.credits),
+                parse_mode="HTML",
+            )
         return
 
     referral_bonus_text = ""
@@ -800,7 +840,7 @@ async def render_partner_program(target, user_id: int):
 
     text = (
         "💼 <b>Партнёрская программа</b>\n\n"
-        "Здесь вы можете отслеживать рефералов, начисления и заявки на вывод.\n"
+        "Здесь вы можете отслеживать рефералов, начисления, выводы и перевод заработка в бананы.\n"
         "Юридически значимые условия размещены в публичной оферте.\n\n"
         f"🔗 Ваша ссылка: <code>{referral_link or 'Ссылка появится после активации'}</code>\n"
         f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
@@ -816,6 +856,7 @@ async def render_partner_program(target, user_id: int):
         "• регистрируется и закрепляется за вами\n"
         "• после первой оплаты начисляется вознаграждение\n"
         "• активным партнёрам начисляется денежный бонус в ₽\n\n"
+        f"🍌 Курс для использования в боте: <code>{config.PARTNER_RUB_PER_CREDIT} ₽ = 1 банан</code>\n\n"
         "<b>Последние заявки на вывод:</b>\n"
         f"{recent_text}"
     )
@@ -901,6 +942,86 @@ async def partner_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "partner_convert")
+async def partner_convert(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает перевод партнёрского заработка в бананы."""
+    stats = await get_partner_overview(callback.from_user.id)
+    if not stats.get("is_partner"):
+        await callback.answer(
+            "Сначала активируйте партнёрскую программу", show_alert=True
+        )
+        return
+
+    balance_rub = float(stats.get("balance_rub", 0) or 0)
+    rub_per_credit = max(1, int(config.PARTNER_RUB_PER_CREDIT))
+    available_credits = int(balance_rub // rub_per_credit)
+    if available_credits <= 0:
+        await callback.answer(
+            f"Для 1 банана нужно {rub_per_credit} ₽ на партнёрском балансе",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.edit_text(
+        "🍌 <b>Использовать заработок в боте</b>\n\n"
+        f"Партнёрский баланс: <code>{balance_rub}</code> ₽\n"
+        f"Курс: <code>{rub_per_credit} ₽ = 1 банан</code>\n"
+        f"Можно перевести: <code>{available_credits}</code> бананов\n\n"
+        "Введите, сколько бананов начислить на баланс.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.set_state(PartnerWithdrawalStates.waiting_convert_credits)
+
+
+@router.message(PartnerWithdrawalStates.waiting_convert_credits)
+async def partner_convert_credits(message: types.Message, state: FSMContext):
+    try:
+        credits = int((message.text or "").strip())
+    except Exception:
+        await message.answer(
+            "Введите количество бананов целым числом, например <code>10</code>.",
+            parse_mode="HTML",
+        )
+        return
+
+    rub_per_credit = max(1, int(config.PARTNER_RUB_PER_CREDIT))
+    stats = await get_partner_overview(message.from_user.id)
+    available_credits = int(float(stats.get("balance_rub", 0) or 0) // rub_per_credit)
+    if credits <= 0:
+        await message.answer("Количество бананов должно быть больше нуля.")
+        return
+    if credits > available_credits:
+        await message.answer(
+            f"Недостаточно партнёрского баланса. Доступно: <code>{available_credits}</code> бананов.",
+            parse_mode="HTML",
+        )
+        return
+
+    result = await convert_partner_balance_to_credits(
+        message.from_user.id,
+        credits,
+        rub_per_credit,
+    )
+    if not result:
+        await message.answer(
+            "Не удалось выполнить перевод. Обновите партнёрку и попробуйте ещё раз.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
+        return
+
+    await state.clear()
+    await message.answer(
+        "✅ <b>Готово</b>\n\n"
+        f"Начислено: <code>{result['credits']}</code> бананов\n"
+        f"Списано с партнёрского баланса: <code>{result['amount_rub']}</code> ₽\n\n"
+        "Бананы уже можно тратить на генерации.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data == "partner_withdraw")
 async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
     """Запускает вывод партнёрского заработка."""
@@ -919,17 +1040,22 @@ async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
             show_alert=True,
         )
         return
-    if stats.get("balance_rub", 0) < min_withdraw:
+    if min_withdraw > 0 and stats.get("balance_rub", 0) < min_withdraw:
         await callback.answer(
             f"Минимальная сумма вывода: {min_withdraw} ₽",
             show_alert=True,
         )
         return
 
+    min_text = (
+        f"Минимальная сумма: <code>{min_withdraw}</code> ₽\n"
+        if min_withdraw > 0
+        else "Минимальная сумма: <code>без порога</code>\n"
+    )
     await callback.message.edit_text(
         "🎟️ <b>Вывод заработка</b>\n\n"
         f"Доступно к выводу: <code>{stats.get('balance_rub', 0)}</code> ₽\n"
-        f"Минимальная сумма: <code>{min_withdraw}</code> ₽\n\n"
+        f"{min_text}\n"
         "Шаг 1 из 4.\n"
         "Введите сумму вывода в рублях без копеек или с копейками.",
         reply_markup=get_back_keyboard("menu_partner"),
@@ -951,7 +1077,7 @@ async def partner_withdraw_amount(message: types.Message, state: FSMContext):
         )
         return
 
-    if amount < min_withdraw:
+    if min_withdraw > 0 and amount < min_withdraw:
         await message.answer(
             f"Минимальная сумма вывода: <code>{min_withdraw}</code> ₽.",
             parse_mode="HTML",
@@ -1257,33 +1383,26 @@ async def show_history(callback: types.CallbackQuery):
 @router.callback_query(F.data == "motion_control_std")
 async def start_motion_control_std(callback: types.CallbackQuery, state: FSMContext):
     """Запускает Motion Control Standard"""
-    from bot.database import get_user_credits
     from bot.services.preset_manager import preset_manager
     from bot.states import GenerationStates
 
-    user_credits = await get_user_credits(callback.from_user.id)
-    cost = preset_manager.get_video_cost("v26_motion_std", 5)
-
-    if user_credits < cost:
-        await callback.answer(
-            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
-        )
-        return
+    price_per_second = preset_manager.get_video_cost("v26_motion_std", 1)
 
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
         generation_type="motion_control",
         video_model="v26_motion_std",
-        cost=cost,
+        price_per_second=price_per_second,
         mode="std",
     )
 
     await callback.message.edit_text(
-        f"🎬 <b>Motion Control Standard</b>"
-        f"Стоимость: {cost}🍌"
+        f"🎬 <b>Motion Control Standard</b>\n\n"
+        f"Стоимость: <code>{price_per_second}</code>🍌/сек "
+        f"(по длительности видео движения)\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать"
+        f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
         f"• Фото человека\n"
         f"• Фото персонажа\n"
@@ -1296,33 +1415,26 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
 @router.callback_query(F.data == "motion_control_pro")
 async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMContext):
     """Запускает Motion Control Pro"""
-    from bot.database import get_user_credits
     from bot.services.preset_manager import preset_manager
     from bot.states import GenerationStates
 
-    user_credits = await get_user_credits(callback.from_user.id)
-    cost = preset_manager.get_video_cost("v26_motion_pro", 5)
-
-    if user_credits < cost:
-        await callback.answer(
-            "❌ Недостаточно бананов! Пополни баланс.", show_alert=True
-        )
-        return
+    price_per_second = preset_manager.get_video_cost("v26_motion_pro", 1)
 
     # Сохраняем тип генерации
     await state.set_state(GenerationStates.waiting_for_motion_character_image)
     await state.update_data(
         generation_type="motion_control",
         video_model="v26_motion_pro",
-        cost=cost,
+        price_per_second=price_per_second,
         mode="pro",
     )
 
     await callback.message.edit_text(
-        f"💎 <b>Motion Control Pro</b>"
-        f"Стоимость: {cost}🍌"
+        f"💎 <b>Motion Control Pro</b>\n\n"
+        f"Стоимость: <code>{price_per_second}</code>🍌/сек "
+        f"(по длительности видео движения)\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
-        f"которое нужно анимировать"
+        f"которое нужно анимировать\n\n"
         f"Это может быть:\n"
         f"• Фото человека\n"
         f"• Фото персонажа\n"
@@ -1745,8 +1857,6 @@ async def clear_gpt55_command(message: types.Message, state: FSMContext):
 
 @router.message(StateFilter(GPT55States.waiting_for_message))
 async def handle_gpt55_message(message: types.Message, state: FSMContext):
-    from bot.services.gpt55_service import gpt55_service
-
     user_content = await _build_gpt55_user_content(message)
     if not user_content:
         await message.answer(
@@ -1757,8 +1867,25 @@ async def handle_gpt55_message(message: types.Message, state: FSMContext):
 
     await message.bot.send_chat_action(message.chat.id, "typing")
     history = await get_gpt55_history(message.from_user.id, limit=20)
+    await message.answer(
+        "🧠 Думаю над ответом. Если задача большая, это может занять минуту или две.",
+        reply_markup=get_gpt55_keyboard(),
+    )
+    asyncio.create_task(
+        _send_gpt55_response(message, user_content, history),
+        name=f"gpt55:{message.from_user.id}",
+    )
+
+
+async def _send_gpt55_response(
+    message: types.Message,
+    user_content: list[dict],
+    history: list[dict],
+) -> None:
+    from bot.services.gpt55_service import gpt55_service
 
     try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
         response = await gpt55_service.ask(
             user_content=user_content,
             history=history,
@@ -1927,6 +2054,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         get_or_create_user,
     )
     from bot.services.kling_service import kling_service
+    from bot.services.preset_manager import preset_manager
 
     data = await state.get_data()
     v_image_url = data.get("v_image_url")
@@ -1949,9 +2077,10 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     telegram_id = message.from_user.id
     user = await get_or_create_user(telegram_id)
-    cost = data.get("cost")
-    video_model = data.get("video_model")
+    video_model = data.get("video_model") or "v26_motion_pro"
     mode = data.get("mode", "std")
+    motion_duration = max(1, int(getattr(video, "duration", 0) or 1))
+    cost = preset_manager.get_video_cost(video_model, motion_duration)
 
     charge_external_id = f"motion_submit:{telegram_id}:{message.message_id}"
     charged = await deduct_credits(
@@ -1959,11 +2088,16 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         cost,
         reason="motion_control_charge",
         external_id=charge_external_id,
-        metadata={"model": video_model, "mode": mode},
+        metadata={"model": video_model, "mode": mode, "duration": motion_duration},
     )
     if not charged:
         await state.clear()
-        await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+        await message.answer(
+            "❌ Недостаточно бананов для Motion Control.\n\n"
+            f"Видео: <code>{motion_duration}</code> сек\n"
+            f"Стоимость: <code>{cost}</code>🍌",
+            parse_mode="HTML",
+        )
         return
 
     local_task_id = f"motion_{uuid.uuid4().hex[:12]}"
@@ -1974,6 +2108,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         type="motion_control",
         preset_id="motion_control",
         model=video_model,
+        duration=motion_duration,
         prompt="motion control",
         cost=cost,
     )
@@ -1994,10 +2129,11 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
             )
             await db.commit()
         await message.answer(
-            f"🚀 <b>Motion Control запущен!</b>"
+            f"🚀 <b>Motion Control запущен!</b>\n\n"
             f"💰 <code>{cost}</code>🍌\n"
+            f"⏱ <code>{motion_duration}</code> сек\n"
             f"🤖 <code>{mode.upper()}</code>\n"
-            f"🆔 <code>{api_task_id}</code>"
+            f"🆔 <code>{api_task_id}</code>\n\n"
             f"Ожидайте результат (1-5 мин)...",
             parse_mode="HTML",
         )

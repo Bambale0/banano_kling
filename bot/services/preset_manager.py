@@ -1,5 +1,6 @@
 import json
 import os
+from math import ceil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -268,6 +269,9 @@ class PresetManager:
             # Fixed-cost models (no duration selection)
             if "fixed_cost" in model_config:
                 return model_config["fixed_cost"]
+            per_second = model_config.get("per_second")
+            if per_second is not None:
+                return max(1, int(ceil(float(per_second) * duration)))
             duration_costs = model_config.get("duration_costs", {})
             if str(duration) in duration_costs:
                 return duration_costs[str(duration)]

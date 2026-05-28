@@ -11,11 +11,18 @@ import pytest_asyncio
 
 from bot.database import (MASTER_PARTNER_TELEGRAM_ID, GenerationTask,
                           Transaction, User, add_credits, add_generation_task,
-                          check_can_afford, complete_video_task,
-                          create_transaction, deduct_credits, get_admin_stats,
+                          add_free_generations, check_can_afford,
+                          complete_video_task, consume_free_generation,
+                          create_promo_code, create_transaction, deduct_credits,
+                          get_admin_stats, get_feed_tasks,
                           get_master_partner_user, get_or_create_user,
-                          get_task_by_id, get_transaction_by_order,
+                          get_public_feed_task, get_task_by_id,
+                          get_transaction_by_order, increment_feed_share,
+                          like_feed_task, remove_task_from_feed,
+                          share_task_to_feed,
                           get_user_credits, get_user_stats, init_db,
+                          mark_promo_code_used, normalize_promo_code,
+                          validate_promo_code,
                           update_transaction_status)
 
 
@@ -115,6 +122,165 @@ async def test_create_transaction(temp_db):
     assert trans.status == "pending"
 
 
+def test_normalize_promo_code_accepts_cyrillic_lookalikes():
+    """Russian-keyboard lookalikes should not break promo activation."""
+    assert normalize_promo_code("КRIS06") == "KRIS06"
+    assert normalize_promo_code("КРИС06") == "KRIS06"
+    assert normalize_promo_code("ВЕСНА2026") == "VESNA2026"
+    assert normalize_promo_code("СТАРТ_КРИС") == "START_KRIS"
+    assert normalize_promo_code("  vesna-2026 ") == "VESNA-2026"
+
+
+@pytest.mark.asyncio
+async def test_validate_promo_code_accepts_cyrillic_lookalike_input(temp_db):
+    ok, code = await create_promo_code("KRIS06", 20, 5, None, 999999)
+    assert ok
+    assert code == "KRIS06"
+
+    success, reason, promo = await validate_promo_code(123456, "КРИС06")
+
+    assert success
+    assert reason == "ok"
+    assert promo["code"] == "KRIS06"
+    assert promo["discount_percent"] == 20
+    assert promo["promo_type"] == "discount"
+
+
+@pytest.mark.asyncio
+async def test_create_banana_promo_code_grants_credit_type(temp_db):
+    ok, code = await create_promo_code(
+        "PARTNER50",
+        0,
+        10,
+        None,
+        999999,
+        promo_type="bananas",
+        reward_credits=50,
+    )
+    assert ok
+    assert code == "PARTNER50"
+
+    success, reason, promo = await validate_promo_code(123456, "PARTNER50")
+
+    assert success
+    assert reason == "ok"
+    assert promo["promo_type"] == "bananas"
+    assert promo["reward_credits"] == 50
+    assert promo["used_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_banana_promo_is_reusable_until_total_limit(temp_db):
+    ok, code = await create_promo_code(
+        "FREEBANANAS",
+        0,
+        5,
+        None,
+        999999,
+        promo_type="bananas",
+        reward_credits=25,
+    )
+    assert ok
+    assert code == "FREEBANANAS"
+
+    assert await mark_promo_code_used(
+        123456,
+        "FREEBANANAS",
+        order_id="bonus:FREEBANANAS:123456:1",
+    ) == (True, "ok")
+    assert await mark_promo_code_used(
+        123456,
+        "FREEBANANAS",
+        order_id="bonus:FREEBANANAS:123456:2",
+    ) == (True, "ok")
+    assert await mark_promo_code_used(
+        123456,
+        "FREEBANANAS",
+        order_id="bonus:FREEBANANAS:123456:2",
+    ) == (False, "already_used")
+
+
+@pytest.mark.asyncio
+async def test_create_generation_promo_code_grants_free_generation_type(temp_db):
+    ok, code = await create_promo_code(
+        "FREEGEN",
+        0,
+        10,
+        None,
+        999999,
+        promo_type="generation",
+        reward_credits=2,
+    )
+    assert ok
+    assert code == "FREEGEN"
+
+    success, reason, promo = await validate_promo_code(123456, "FREEGEN")
+
+    assert success
+    assert reason == "ok"
+    assert promo["promo_type"] == "generation"
+    assert promo["reward_credits"] == 2
+
+
+@pytest.mark.asyncio
+async def test_free_generation_balance_can_be_consumed(temp_db):
+    user = await get_or_create_user(123456)
+    assert user.free_generations == 0
+
+    assert await add_free_generations(123456, 2)
+    user = await get_or_create_user(123456)
+    assert user.free_generations == 2
+
+    assert await consume_free_generation(123456)
+    user = await get_or_create_user(123456)
+    assert user.free_generations == 1
+
+
+@pytest.mark.asyncio
+async def test_same_user_can_use_promo_until_total_limit(temp_db):
+    ok, code = await create_promo_code("PARTNERKRIS", 20, 2, None, 999999)
+    assert ok
+    assert code == "PARTNERKRIS"
+
+    success, reason, promo = await validate_promo_code(123456, "PARTNERKRIS")
+    assert success
+    assert reason == "ok"
+    assert promo["used_count"] == 0
+    assert await mark_promo_code_used(123456, "PARTNERKRIS", order_id="order-1") == (
+        True,
+        "ok",
+    )
+    success, reason, promo = await validate_promo_code(123456, "PARTNERKRIS")
+    assert success
+    assert reason == "ok"
+    assert promo["used_count"] == 1
+    assert await mark_promo_code_used(123456, "PARTNERKRIS", order_id="order-2") == (
+        True,
+        "ok",
+    )
+
+    success, reason, promo = await validate_promo_code(123456, "PARTNERKRIS")
+    assert not success
+    assert reason == "used_up"
+    assert promo == {}
+
+
+@pytest.mark.asyncio
+async def test_promo_redemption_is_idempotent_by_order_id(temp_db):
+    ok, code = await create_promo_code("START20", 20, 5, None, 999999)
+    assert ok
+    assert code == "START20"
+
+    assert await mark_promo_code_used(123456, "START20", order_id="same-order") == (
+        True,
+        "ok",
+    )
+    assert await mark_promo_code_used(123456, "START20", order_id="same-order") == (
+        False,
+        "already_used",
+    )
+
+
 @pytest.mark.asyncio
 async def test_update_transaction_status(temp_db):
     """Test update_transaction_status"""
@@ -146,6 +312,58 @@ async def test_complete_video_task(temp_db):
     task = await get_task_by_id("task1")
     assert task.status == "completed"
     assert task.result_url == "http://result.url"
+
+
+@pytest.mark.asyncio
+async def test_feed_publish_filters_and_metrics(temp_db):
+    user = await get_or_create_user(123456)
+    await add_generation_task(
+        user.id,
+        123456,
+        "img_task",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="hidden prompt",
+    )
+    assert await share_task_to_feed("img_task", 123456) == (False, "not_ready")
+
+    await complete_video_task("img_task", "http://result.url")
+    assert await share_task_to_feed("img_task", 123456) == (True, "ok")
+
+    public_task = await get_public_feed_task("img_task")
+    assert public_task is not None
+    assert public_task.prompt == "hidden prompt"
+    assert await like_feed_task("img_task") == 1
+    assert await increment_feed_share("img_task") == 1
+
+    feed_tasks = await get_feed_tasks()
+    assert [task.task_id for task in feed_tasks] == ["img_task"]
+
+    assert await remove_task_from_feed("img_task", 123456)
+    assert await get_public_feed_task("img_task") is None
+
+
+@pytest.mark.asyncio
+async def test_feed_publish_blocks_foreign_source(temp_db):
+    author = await get_or_create_user(111)
+    remixer = await get_or_create_user(222)
+    await add_generation_task(author.id, 111, "source", "image", "banana_pro")
+    await complete_video_task("source", "http://source.url")
+    assert await share_task_to_feed("source", 111) == (True, "ok")
+
+    await add_generation_task(
+        remixer.id,
+        222,
+        "derivative",
+        "image",
+        "banana_pro",
+        source_feed_task_id="source",
+    )
+    await complete_video_task("derivative", "http://derivative.url")
+
+    assert await share_task_to_feed("derivative", 222) == (False, "foreign_source")
 
 
 @pytest.mark.asyncio

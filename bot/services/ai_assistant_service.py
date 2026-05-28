@@ -6,6 +6,7 @@ AI Assistant Service - ИИ-ассистент для помощи пользо�
 import json
 import logging
 import os
+import asyncio
 from typing import Optional
 
 import aiohttp
@@ -70,7 +71,7 @@ class AIAssistantService:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Получение HTTP сессии"""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=60)
+            timeout = aiohttp.ClientTimeout(total=180)
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -112,60 +113,126 @@ class AIAssistantService:
 
 Вопрос пользователя: {user_message}"""
 
-        try:
-            session = await self._get_session()
+        session = await self._get_session()
 
-            headers = {
-                "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
-                "Content-Type": "application/json",
-            }
+        headers = {
+            "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
+            "Content-Type": "application/json",
+        }
 
-            payload = {
-                "messages": [
-                    {
-                        "role": "developer",
-                        "content": [{"type": "text", "text": system_prompt}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": full_message}],
-                    },
-                ],
-                "tools": [{"type": "function", "function": {"name": "web_search"}}],
-                "stream": False,
-                "reasoning_effort": "high",
-            }
+        payload = {
+            "messages": [
+                {
+                    "role": "developer",
+                    "content": [{"type": "text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": full_message}],
+                },
+            ],
+            "tools": [{"type": "function", "function": {"name": "web_search"}}],
+            "stream": False,
+            "reasoning_effort": "high",
+        }
 
-            async with session.post(
-                f"{config.KIE_BASE_URL}{self.ENDPOINT}",
-                headers=headers,
-                json=payload,
-            ) as response:
-                response_text = await response.text()
-                logger.info(
-                    f"Kie.ai GPT 5.2 response status: {response.status}, content-type: {response.headers.get('content-type', 'none')}"
-                )
-                logger.info(f"Response preview: {response_text[:500]}...")
+        for attempt in range(1, 3):
+            try:
+                if attempt > 1:
+                    await asyncio.sleep(1.5)
 
-                if response.status == 200:
-                    try:
-                        data = json.loads(response_text)
-                        if "choices" in data and data["choices"]:
-                            return data["choices"][0]["message"]["content"]
-                    except json.JSONDecodeError as json_err:
-                        logger.error(
-                            f"JSON decode error: {json_err}. Raw response: {response_text[:1000]}"
-                        )
-                        return None
-                else:
-                    logger.error(
-                        f"Kie.ai GPT 5.2 error {response.status}: {response_text[:1000]}"
+                if self._session is None or self._session.closed:
+                    session = await self._get_session()
+
+                per_request_timeout = aiohttp.ClientTimeout(total=120)
+                if attempt == 2:
+                    # Fallback without web search is usually faster and still useful for bot-help questions.
+                    payload = {k: v for k, v in payload.items() if k != "tools"}
+
+                async with session.post(
+                    f"{config.KIE_BASE_URL}{self.ENDPOINT}",
+                    headers=headers,
+                    json=payload,
+                    timeout=per_request_timeout,
+                ) as response:
+                    response_text = await response.text()
+                    logger.info(
+                        "Kie.ai GPT 5.2 response status: %s, content-type: %s",
+                        response.status,
+                        response.headers.get("content-type", "none"),
                     )
-            return None
+                    logger.info("Response preview: %s...", response_text[:500])
 
-        except Exception as e:
-            logger.exception(f"Kie.ai GPT 5.2 call failed: {e}")
-            return None
+                    if response.status == 200:
+                        try:
+                            data = json.loads(response_text)
+                            api_code = data.get("code")
+                            if api_code not in (None, 0, 200):
+                                logger.error(
+                                    "Kie.ai GPT 5.2 API error code=%s msg=%s",
+                                    api_code,
+                                    data.get("msg")
+                                    or data.get("message")
+                                    or response_text[:500],
+                                )
+                                continue
+                            if "choices" in data and data["choices"]:
+                                message = data["choices"][0].get("message", {})
+                                content = message.get("content")
+                                if isinstance(content, list):
+                                    parts = [
+                                        item.get("text", "")
+                                        for item in content
+                                        if isinstance(item, dict)
+                                    ]
+                                    content = "\n".join(part for part in parts if part)
+                                if content:
+                                    return str(content)
+                        except json.JSONDecodeError as json_err:
+                            logger.error(
+                                "JSON decode error: %s. Raw response: %s",
+                                json_err,
+                                response_text[:1000],
+                            )
+                            continue
+                    else:
+                        logger.error(
+                            "Kie.ai GPT 5.2 error %s: %s",
+                            response.status,
+                            response_text[:1000],
+                        )
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Kie.ai GPT 5.2 request timed out on attempt %s/2",
+                    attempt,
+                )
+                await self._reset_session()
+                continue
+            except aiohttp.ClientError as e:
+                logger.warning(
+                    "Kie.ai GPT 5.2 HTTP client error on attempt %s/2: %r",
+                    attempt,
+                    e,
+                )
+                await self._reset_session()
+                continue
+            except Exception as e:
+                logger.exception(
+                    "Kie.ai GPT 5.2 call failed on attempt %s/2: %s: %r",
+                    attempt,
+                    type(e).__name__,
+                    e,
+                )
+                await self._reset_session()
+                continue
+
+        return None
+
+    async def _reset_session(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+        self._session = None
 
     def _get_system_prompt(self) -> str:
         """Загрузка системной инструкции из файла"""
@@ -285,9 +352,12 @@ class AIAssistantService:
         duration_table = costs_ref.get("video_duration_costs", {}) or {}
 
         def _video_cost(model_key, duration: int):
-            # If model has explicit duration_costs, use it. Else use base * multiplier from duration_table
+            # Prefer per-second pricing. Fallbacks keep legacy price configs readable.
             model_info = video_models.get(model_key) or {}
             if model_info:
+                per_second = model_info.get("per_second")
+                if per_second is not None:
+                    return int(float(per_second) * duration)
                 dur_costs = model_info.get("duration_costs")
                 if dur_costs and str(duration) in dur_costs:
                     return dur_costs[str(duration)]

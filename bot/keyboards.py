@@ -53,19 +53,21 @@ def get_main_menu_keyboard(user_credits: int = 0):
     """Главное меню бота - согласно ux.md"""
     builder = InlineKeyboardBuilder()
 
+    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="📚 Каталог промтов", callback_data="menu_feed")
     builder.button(text="🌈 Микс фото", callback_data="quick_mix_photo")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
-    builder.button(text="📷 Фото → Промпт", callback_data="photo_to_prompt")
+    builder.button(text="🔷 Gemini Omni", callback_data="gemini_omni_menu")
     builder.button(text="✍️ Улучшить промпт", callback_data="gpt55_improve_prompt")
-    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
-    builder.button(text="💰 Купить бананы", callback_data="menu_topup")
+    builder.button(text="📷 Фото → Промпт", callback_data="photo_to_prompt")
     builder.button(text="🍌 Мой баланс", callback_data="menu_balance")
+    builder.button(text="💰 Купить бананы", callback_data="menu_topup")
     builder.button(text="💼 Партнёрам", callback_data="menu_partner")
     builder.button(text="🆘 Поддержка", callback_data="menu_support")
 
-    builder.adjust(2, 2, 2, 1, 2, 2)
+    builder.adjust(1, 2, 2, 2, 2, 2, 2)
 
     return builder.as_markup()
 
@@ -134,6 +136,7 @@ def get_admin_price_video_keyboard(price_config: dict):
     labels = {
         "v3_std": "Kling 3 Std",
         "v3_pro": "Kling 3 Pro",
+        "v26_motion_std": "Kling 2.6 Motion Std",
         "v26_motion_pro": "Kling 2.6 Motion Pro",
         "seedance2": "Seedance 2.0",
         "grok_imagine": "Grok Imagine (vid)",
@@ -155,6 +158,7 @@ def get_admin_price_video_keyboard(price_config: dict):
         "happyhorse_edit": "HappyHorse Edit",
         "wan_27_t2v": "Wan 2.7 T2V",
         "wan_27_i2v": "Wan 2.7 I2V",
+        "gemini_omni": "Gemini Omni",
     }
     builder = InlineKeyboardBuilder()
     video_models = price_config.get("costs_reference", {}).get("video_models", {})
@@ -162,6 +166,8 @@ def get_admin_price_video_keyboard(price_config: dict):
         name = labels.get(key, key)
         if "fixed_cost" in model_data:
             cost_str = f"{model_data['fixed_cost']}🍌"
+        elif "per_second" in model_data:
+            cost_str = f"{model_data['per_second']}🍌/с"
         else:
             base = model_data.get("base", "?")
             cost_str = f"от {base}🍌"
@@ -340,6 +346,46 @@ def get_create_video_keyboard(
     return builder.as_markup()
 
 
+def get_gemini_omni_keyboard(
+    audio_count: int = 0,
+    character_count: int = 0,
+    duration: int = 4,
+    resolution: str = "720p",
+    ratio: str = "16:9",
+):
+    """Самостоятельное меню Gemini Omni."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Запустить видео", callback_data="omni_start_video")
+    builder.button(text="🖼+📹 Фото + видео", callback_data="omni_add_photo_video")
+    builder.button(text="🖼 Добавить фото", callback_data="omni_add_photo")
+    builder.button(text="📹 Добавить видео", callback_data="omni_add_video")
+    for value in (4, 6, 8, 10):
+        check = "✅ " if int(duration) == value else ""
+        builder.button(text=f"{check}{value}с", callback_data=f"omni_duration_{value}")
+    for value in ("720p", "1080p", "4k"):
+        check = "✅ " if resolution == value else ""
+        builder.button(text=f"{check}{value}", callback_data=f"omni_resolution_{value}")
+    for value in ("16:9", "9:16"):
+        check = "✅ " if ratio == value else ""
+        builder.button(
+            text=f"{check}{value}", callback_data=f"omni_ratio_{value.replace(':', '_')}"
+        )
+    builder.button(text="🎙 Голос", callback_data="omni_create_audio")
+    builder.button(text="🧍 Персонаж", callback_data="omni_create_character")
+    builder.button(
+        text=f"➕ Voice ID {audio_count}/3", callback_data="omni_add_audio_id"
+    )
+    builder.button(
+        text=f"➕ Char ID {character_count}/3",
+        callback_data="omni_add_character_id",
+    )
+    builder.button(text="🌱 Seed", callback_data="omni_set_seed")
+    builder.button(text="🧹 Очистить", callback_data="omni_clear_refs")
+    builder.button(text="🏠 Главное", callback_data="back_main")
+    builder.adjust(1, 1, 2, 4, 3, 2, 2, 2, 1)
+    return builder.as_markup()
+
+
 def get_reference_videos_upload_keyboard(
     current_count: int = 0, max_count: int = 5, preset_id: str = None
 ):
@@ -385,6 +431,27 @@ def get_reference_images_upload_keyboard(
     builder.button(text="🔄 Перезагрузить", callback_data="ref_reload_new")
     builder.button(text="🔙 Назад", callback_data="back_main")
     builder.adjust(1, 2, 2)
+    return builder.as_markup()
+
+
+def get_face_preservation_keyboard():
+    """Клавиатура выбора режима сохранения лица для фото-референсов."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔒 Максимально сохранить", callback_data="face_mode_strict")
+    builder.button(text="✨ Немного улучшить", callback_data="face_mode_enhance")
+    builder.button(text="✅ Далее", callback_data="face_mode_none")
+    builder.button(text="🔙 Назад", callback_data="img_ref_upload_new")
+    builder.adjust(1, 1, 2)
+    return builder.as_markup()
+
+
+def get_prompt_safety_keyboard():
+    """Клавиатура ручного выбора улучшения промпта перед генерацией."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🛡 Сделать безопасным", callback_data="image_prompt_safe")
+    builder.button(text="✅ Оставить как есть", callback_data="image_prompt_original")
+    builder.button(text="🔙 Назад", callback_data="image_prompt_back")
+    builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 
@@ -679,12 +746,39 @@ def get_image_result_keyboard(task_id: str, original_url: str = None):
     if original_url:
         builder.button(text="📥 Скачать оригинал", url=original_url)
         builder.button(text="📸 Оживить фото", callback_data=f"animate_img_{task_id}")
+        builder.button(text="📤 В ленту", callback_data=f"feed_publish_{task_id}")
     builder.button(text="🔄 Повторить", callback_data=f"retry_img_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     if original_url:
-        builder.adjust(1, 1, 2)
+        builder.adjust(1, 2, 2)
     else:
         builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_feed_card_keyboard(task_id: str, index: int = 0, is_owner: bool = False):
+    """Клавиатура карточки bot-side ленты."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❤️", callback_data=f"feed_like_{task_id}_{index}")
+    builder.button(text="📤", callback_data=f"feed_share_{task_id}")
+    builder.button(text="➡️", callback_data=f"feed_next_{index + 1}")
+    builder.button(text="🔁 Повторить", callback_data=f"feed_repeat_{task_id}")
+    if is_owner:
+        builder.button(text="🗑 Удалить из ленты", callback_data=f"feed_remove_{task_id}_{index}")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    if is_owner:
+        builder.adjust(3, 1, 1, 1)
+    else:
+        builder.adjust(3, 1, 1)
+    return builder.as_markup()
+
+
+def get_feed_empty_keyboard():
+    """Клавиатура пустого состояния ленты."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -761,9 +855,10 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
         builder.button(text="📨 Поделиться ссылкой", url=share_url)
     builder.button(text="📈 Детальная статистика", callback_data="partner_stats")
     builder.button(text="🔄 Обновить", callback_data="menu_partner")
+    builder.button(text="🍌 Использовать в боте", callback_data="partner_convert")
     builder.button(text="🎟️ Вывод заработка", callback_data="partner_withdraw")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1, 1, 1)
+    builder.adjust(1)
     return builder.as_markup()
 
 

@@ -104,7 +104,10 @@ class Config:
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
     PARTNER_MIN_WITHDRAWAL_RUB: int = int(
-        os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "2000")
+        os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "0")
+    )
+    PARTNER_RUB_PER_CREDIT: int = int(
+        os.getenv("PARTNER_RUB_PER_CREDIT", "10")
     )
     JUMP_FINANCE_CLIENT_KEY: str = os.getenv("JUMP_FINANCE_CLIENT_KEY", "")
     JUMP_FINANCE_BASE_URL: str = os.getenv(
