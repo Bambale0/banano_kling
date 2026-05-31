@@ -1,8 +1,12 @@
+import csv
+import io
 import json
 import logging
 import html as html_utils
+from collections import deque
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramAPIError, TelegramEntityTooLarge
@@ -17,6 +21,7 @@ from bot.database import (
     create_promo_code,
     deactivate_prompt,
     deduct_credits,
+    export_users_for_admin,
     get_admin_finance_report,
     get_admin_partner_details,
     get_admin_partner_stats,
@@ -25,6 +30,8 @@ from bot.database import (
     get_admin_prompt_stats,
     get_admin_prompts,
     get_admin_stats,
+    get_bot_setting,
+    get_existing_user_stats,
     get_partner_withdrawal_request,
     get_pending_partner_withdrawals,
     get_promo_code_by_code,
@@ -32,8 +39,10 @@ from bot.database import (
     get_promo_code_by_id,
     get_user_stats,
     normalize_promo_code,
+    set_maintenance_mode,
     reject_prompt,
     set_promo_code_active,
+    set_user_banned,
 )
 from bot.keyboards import (
     get_admin_keyboard,
@@ -41,6 +50,12 @@ from bot.keyboards import (
     get_main_menu_button_keyboard,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.admin_ai_service import (
+    admin_ai_service,
+    normalize_plan,
+    summarize_plan_actions,
+    validate_plan,
+)
 from bot.states import AdminStates
 
 logger = logging.getLogger(__name__)
@@ -73,6 +88,14 @@ ADMIN_FINANCE_LONG_CELL_LIMITS = {
     "requisites": 1200,
     "result_url": 800,
 }
+ADMIN_AI_MEMORY_LIMIT = 8
+ADMIN_AI_RESULT_PREVIEW_LIMIT = 1200
+ADMIN_AI_MESSAGE_LIMIT = 3900
+ADMIN_AI_LOG_PATHS = (
+    Path("logs/bot.log"),
+    Path("logs/bot_output.log"),
+    Path("logs/watchdog.log"),
+)
 
 ADMIN_FINANCE_SECTION_ORDER = [
     "topups",
@@ -228,6 +251,32 @@ def _broadcast_confirm_keyboard() -> types.InlineKeyboardMarkup:
                 ),
                 types.InlineKeyboardButton(text="❌ Отмена", callback_data="admin_back"),
             ]
+        ]
+    )
+
+
+def _admin_ai_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="📘 Инструкция", callback_data="admin_ai_help")],
+            [types.InlineKeyboardButton(text="🔙 Админ-панель", callback_data="admin_back")],
+            [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
+        ]
+    )
+
+
+def _admin_ai_confirm_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Выполнить", callback_data="admin_ai_confirm"
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="admin_ai_cancel"
+                ),
+            ],
+            [types.InlineKeyboardButton(text="🔙 Админ-панель", callback_data="admin_back")],
         ]
     )
 
@@ -1073,6 +1122,418 @@ def _short(value, limit: int = 72) -> str:
     return f"{text[: limit - 1]}…"
 
 
+def _truncate_plain(value: Any, limit: int = ADMIN_AI_RESULT_PREVIEW_LIMIT) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 20)].rstrip()}... [сокращено]"
+
+
+def _format_admin_ai_help_text() -> str:
+    return """📘 <b>Инструкция: ИИ-админ</b>
+
+Как пользоваться:
+1. Откройте /admin → 🤖 ИИ-админ.
+2. Напишите задачу обычным текстом.
+3. Если действие меняет данные, подтвердите выполнение.
+
+Примеры:
+• <code>сделай отчёт по боту</code>
+• <code>проанализируй последние логи</code>
+• <code>найди новые ИИ для генерации видео и фото</code>
+• <code>проверь пользователя 123456789</code>
+• <code>начисли 50 бананов пользователю 123456789</code>
+• <code>создай промокод VIP20 скидка 20 лимит 100</code>
+• <code>очисти контекст</code>"""
+
+
+def _format_admin_ai_intro() -> str:
+    return (
+        "🤖 <b>ИИ-админ</b>\n\n"
+        "Напишите задачу обычным текстом. Я построю безопасный план, "
+        "а изменения данных выполню только после подтверждения.\n\n"
+        "Например: <code>сделай отчёт по боту</code> или "
+        "<code>проанализируй последние логи</code>."
+    )
+
+
+def _admin_ai_action_title(action: str) -> str:
+    return {
+        "stats": "статистика",
+        "user_info": "карточка пользователя",
+        "add_credits": "начислить бананы",
+        "deduct_credits": "списать бананы",
+        "ban_user": "забанить пользователя",
+        "unban_user": "разбанить пользователя",
+        "maintenance_status": "статус техрежима",
+        "maintenance_set": "изменить техрежим",
+        "create_promo": "создать промокод",
+        "deactivate_promo": "отключить промокод",
+        "list_promos": "список промокодов",
+        "export_users": "экспорт пользователей",
+        "bot_report": "отчёт по боту",
+        "analyze_logs": "анализ логов",
+        "research_ai": "research AI",
+        "clear_context": "очистить контекст",
+        "help": "инструкция",
+    }.get(action, action)
+
+
+def _format_admin_ai_params(params: dict[str, Any]) -> str:
+    if not params:
+        return "—"
+    parts = []
+    for key, value in params.items():
+        parts.append(f"{_html(key)}={_code(value)}")
+    return ", ".join(parts)
+
+
+def _format_admin_ai_plan_preview(plan: dict[str, Any]) -> str:
+    normalized = normalize_plan(plan)
+    actions = normalized.get("actions") or []
+    lines = [
+        "🤖 <b>План ИИ-админа</b>",
+        "",
+        f"Описание: {_html(normalized.get('summary'))}",
+        f"Уверенность: {_code(round(float(normalized.get('confidence', 0)) * 100))}%",
+        "",
+    ]
+    if actions:
+        lines.append("<b>Шаги:</b>")
+        for index, item in enumerate(actions, start=1):
+            lines.append(
+                f"{index}. {_html(_admin_ai_action_title(item['action']))} "
+                f"({_format_admin_ai_params(item.get('params') or {})})"
+            )
+    else:
+        lines.extend(
+            [
+                f"Действие: <b>{_html(_admin_ai_action_title(normalized['action']))}</b>",
+                f"Параметры: {_format_admin_ai_params(normalized.get('params') or {})}",
+            ]
+        )
+
+    if normalized.get("requires_confirmation"):
+        lines.extend(["", "⚠️ Действие изменяет данные или выгружает персональные данные."])
+    return "\n".join(lines)
+
+
+def _format_admin_ai_stats(stats: dict) -> str:
+    return "\n".join(
+        [
+            "Статистика бота",
+            f"Пользователей: {stats['total_users']}",
+            f"Генераций: {stats['total_generations']}",
+            f"Транзакций: {stats['total_transactions']}",
+            f"Выручка: {float(stats['total_revenue'] or 0):.0f} ₽",
+            f"Пакетных задач: {stats.get('total_batch_jobs', 0)}",
+            f"Рефералов: {stats.get('total_referrals', 0)}",
+        ]
+    )
+
+
+def _format_admin_ai_user_stats(telegram_id: int, stats: dict) -> str:
+    status = "забанен" if stats.get("is_banned") else "активен"
+    return "\n".join(
+        [
+            "Пользователь",
+            f"Telegram ID: {telegram_id}",
+            f"Статус: {status}",
+            f"Баланс: {stats['credits']} бананов",
+            f"Генераций: {stats['generations']}",
+            f"Потрачено: {stats['total_spent']}",
+            f"Регистрация: {stats['member_since']}",
+            f"Рефералов: {stats['referrals_count']}",
+            f"Заработано по рефке: {stats['referral_earned']} 🍌",
+            f"Рефкод: {stats['referral_code'] or '—'}",
+        ]
+    )
+
+
+def _format_admin_ai_promos(stats: dict) -> str:
+    lines = [
+        "Промокоды",
+        f"Всего: {stats.get('total_codes', 0)}",
+        f"Активных: {stats.get('active_codes', 0)}",
+        f"Использований: {stats.get('usage_count', 0)}",
+        f"Начислено бонусов: {stats.get('total_bonus_credits', 0)} 🍌",
+    ]
+    promocodes = stats.get("promocodes") or []
+    if promocodes:
+        lines.append("")
+        lines.append("Последние/активные:")
+        for promo in promocodes[:10]:
+            status = "активен" if promo.get("is_active") else "выключен"
+            lines.append(
+                f"• {promo.get('code')} — {status}, использований: {promo.get('usage_count', 0)}"
+            )
+    return "\n".join(lines)
+
+
+def _format_admin_ai_maintenance(enabled: bool) -> str:
+    return f"Техрежим: {'включён' if enabled else 'выключен'}."
+
+
+def _default_bot_report_actions() -> list[dict[str, Any]]:
+    return [
+        {"action": "stats", "params": {}, "summary": "Собрать статистику"},
+        {"action": "maintenance_status", "params": {}, "summary": "Проверить техрежим"},
+        {"action": "list_promos", "params": {}, "summary": "Показать промокоды"},
+        {
+            "action": "analyze_logs",
+            "params": {"lines": 250},
+            "summary": "Проанализировать последние логи",
+        },
+    ]
+
+
+def _read_admin_ai_logs(lines: int = 250) -> tuple[str, dict[str, int]]:
+    safe_lines = max(50, min(int(lines or 250), 1000))
+    sections: list[str] = []
+    metrics = {"ERROR": 0, "WARNING": 0, "WEBHOOK": 0, "RESTART": 0}
+
+    for path in ADMIN_AI_LOG_PATHS:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as file_obj:
+                tail = list(deque(file_obj, maxlen=safe_lines))
+        except OSError as exc:
+            sections.append(f"== {path} ==\nНе удалось прочитать: {exc}")
+            continue
+
+        text = "".join(tail)
+        upper_text = text.upper()
+        metrics["ERROR"] += upper_text.count("ERROR") + upper_text.count("EXCEPTION")
+        metrics["WARNING"] += upper_text.count("WARNING")
+        metrics["WEBHOOK"] += upper_text.count("WEBHOOK")
+        metrics["RESTART"] += upper_text.count("RESTART")
+        sections.append(f"== {path} ==\n{text[-8000:]}")
+
+    if not sections:
+        return "Лог-файлы из allowlist не найдены.", metrics
+    return "\n\n".join(sections), metrics
+
+
+def _build_users_csv(rows: list[dict[str, Any]]) -> bytes:
+    output = io.StringIO()
+    fieldnames = [
+        "telegram_id",
+        "username",
+        "first_name",
+        "last_name",
+        "credits",
+        "is_banned",
+        "referral_code",
+        "referred_by",
+        "has_paid",
+        "created_at",
+        "updated_at",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    return output.getvalue().encode("utf-8-sig")
+
+
+async def _send_admin_ai_result(
+    message: types.Message,
+    result: str,
+    *,
+    title: str = "🤖 ИИ-админ",
+) -> None:
+    plain = _truncate_plain(result, ADMIN_AI_MESSAGE_LIMIT - 80)
+    await message.answer(
+        f"<b>{_html(title)}</b>\n\n{_html(plain)}",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+async def _remember_admin_ai_context(
+    state: FSMContext,
+    *,
+    request: str,
+    plan: dict[str, Any],
+    result: str,
+) -> None:
+    data = await state.get_data()
+    memory = list(data.get("admin_ai_memory") or [])
+    memory.append(
+        {
+            "request": _truncate_plain(request, 300),
+            "plan": {
+                "action": normalize_plan(plan).get("action"),
+                "actions": summarize_plan_actions(plan),
+            },
+            "result": _truncate_plain(result, 500),
+        }
+    )
+    await state.update_data(admin_ai_memory=memory[-ADMIN_AI_MEMORY_LIMIT:])
+
+
+async def execute_admin_ai_action(
+    action: str,
+    params: dict[str, Any],
+    *,
+    admin_id: int,
+    message: types.Message,
+) -> str:
+    params = params or {}
+
+    if action == "stats":
+        return _format_admin_ai_stats(await get_admin_stats())
+
+    if action == "user_info":
+        telegram_id = int(params["telegram_id"])
+        stats = await get_existing_user_stats(telegram_id)
+        if not stats:
+            return f"Пользователь {telegram_id} не найден."
+        return _format_admin_ai_user_stats(telegram_id, stats)
+
+    if action == "add_credits":
+        telegram_id = int(params["telegram_id"])
+        amount = float(params["amount"])
+        if not await get_existing_user_stats(telegram_id):
+            return f"Пользователь {telegram_id} не найден."
+        success = await add_credits(telegram_id, amount)
+        stats = await get_existing_user_stats(telegram_id)
+        if not success or not stats:
+            return "Не удалось начислить бананы."
+        return (
+            f"Начислено {amount:g} бананов пользователю {telegram_id}.\n"
+            f"Текущий баланс: {stats['credits']}."
+        )
+
+    if action == "deduct_credits":
+        telegram_id = int(params["telegram_id"])
+        amount = float(params["amount"])
+        if not await get_existing_user_stats(telegram_id):
+            return f"Пользователь {telegram_id} не найден."
+        success = await deduct_credits(telegram_id, amount)
+        stats = await get_existing_user_stats(telegram_id)
+        if not success or not stats:
+            return "Не удалось списать бананы. Возможно, недостаточно баланса."
+        return (
+            f"Списано {amount:g} бананов у пользователя {telegram_id}.\n"
+            f"Текущий баланс: {stats['credits']}."
+        )
+
+    if action == "ban_user":
+        telegram_id = int(params["telegram_id"])
+        if await set_user_banned(telegram_id, True, admin_id=admin_id):
+            return f"Пользователь {telegram_id} забанен."
+        return f"Пользователь {telegram_id} не найден."
+
+    if action == "unban_user":
+        telegram_id = int(params["telegram_id"])
+        if await set_user_banned(telegram_id, False, admin_id=admin_id):
+            return f"Пользователь {telegram_id} разбанен."
+        return f"Пользователь {telegram_id} не найден."
+
+    if action == "maintenance_status":
+        enabled = (await get_bot_setting("maintenance_mode", "0")) == "1"
+        return _format_admin_ai_maintenance(enabled)
+
+    if action == "maintenance_set":
+        enabled = bool(params["enabled"])
+        await set_maintenance_mode(enabled, updated_by_telegram_id=admin_id)
+        return _format_admin_ai_maintenance(enabled)
+
+    if action == "list_promos":
+        return _format_admin_ai_promos(await get_admin_promo_stats())
+
+    if action == "create_promo":
+        code = str(params["code"])
+        existing = await get_promo_code_by_code(code, active_only=False)
+        if existing:
+            return f"Промокод {existing.code} уже существует."
+        promo = await create_promo_code(
+            code,
+            partner_name=params.get("partner_name") or code,
+            partner_telegram_id=params.get("partner_telegram_id"),
+            created_by_telegram_id=admin_id,
+        )
+        if not promo:
+            return "Не удалось создать промокод."
+        notes = []
+        unsupported = [
+            key
+            for key in ("discount_percent", "limit", "bonus_credits")
+            if params.get(key)
+        ]
+        if unsupported:
+            notes.append(
+                "Текущая схема промокодов хранит код и партнёра; скидка/лимит/фиксированный бонус не сохранялись."
+            )
+        suffix = f"\n{' '.join(notes)}" if notes else ""
+        return f"Промокод {promo.code} создан и активен.{suffix}"
+
+    if action == "deactivate_promo":
+        promo = await get_promo_code_by_code(str(params["code"]), active_only=False)
+        if not promo:
+            return f"Промокод {params['code']} не найден."
+        await set_promo_code_active(promo.id, False)
+        return f"Промокод {promo.code} отключён."
+
+    if action == "export_users":
+        rows = await export_users_for_admin()
+        file_bytes = _build_users_csv(rows)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        await message.answer_document(
+            BufferedInputFile(file_bytes, filename=f"users_export_{stamp}.csv"),
+            caption=f"Экспорт пользователей: {len(rows)} строк.",
+        )
+        return f"Экспорт пользователей подготовлен: {len(rows)} строк."
+
+    if action == "analyze_logs":
+        log_text, metrics = _read_admin_ai_logs(int(params.get("lines") or 250))
+        return await admin_ai_service.analyze_logs(log_text, metrics)
+
+    if action == "research_ai":
+        return await admin_ai_service.research_ai(str(params.get("query") or ""))
+
+    if action == "help":
+        return "Открыта инструкция ИИ-админа."
+
+    if action == "clear_context":
+        return "Контекст ИИ-админа очищен."
+
+    return f"Действие {action} не реализовано."
+
+
+async def execute_admin_ai_plan(
+    plan: dict[str, Any],
+    *,
+    admin_id: int,
+    message: types.Message,
+) -> str:
+    normalized = normalize_plan(plan)
+    actions = normalized.get("actions") or []
+    if not actions and normalized["action"] == "bot_report":
+        actions = [normalize_plan(item) for item in _default_bot_report_actions()]
+
+    if not actions:
+        return await execute_admin_ai_action(
+            normalized["action"],
+            normalized.get("params") or {},
+            admin_id=admin_id,
+            message=message,
+        )
+
+    sections = []
+    for index, item in enumerate(actions, start=1):
+        result = await execute_admin_ai_action(
+            item["action"],
+            item.get("params") or {},
+            admin_id=admin_id,
+            message=message,
+        )
+        sections.append(f"Шаг {index}: {_admin_ai_action_title(item['action'])}\n{result}")
+    return "\n\n".join(sections)
+
+
 def _format_admin_promocodes_text(stats: dict) -> str:
     total_amount = f"{float(stats.get('total_amount_rub') or 0):.2f}"
     lines = [
@@ -1551,6 +2012,202 @@ async def cmd_admin(message: types.Message):
 """
 
     await message.answer(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+
+
+@router.message(Command("admin_ai"))
+async def cmd_admin_ai(message: types.Message, state: FSMContext):
+    """Открывает ИИ-админа."""
+    if not is_admin(message.from_user.id):
+        await message.answer(
+            "⛔ У вас нет доступа к ИИ-админу.",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    await state.set_state(AdminStates.waiting_ai_request)
+    await message.answer(
+        _format_admin_ai_intro(),
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_ai")
+async def admin_ai_open(callback: types.CallbackQuery, state: FSMContext):
+    """Открывает ИИ-админа из панели."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        _format_admin_ai_intro(),
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_ai_help")
+async def admin_ai_help(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает инструкцию ИИ-админа."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        _format_admin_ai_help_text(),
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_ai_request)
+async def admin_ai_process_request(message: types.Message, state: FSMContext):
+    """Строит и выполняет безопасный план по текстовому запросу админа."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        await state.clear()
+        return
+
+    request = (message.text or "").strip()
+    if not request:
+        await message.answer(
+            "Напишите задачу текстом.",
+            reply_markup=_admin_ai_keyboard(),
+        )
+        return
+
+    await message.bot.send_chat_action(message.chat.id, "typing")
+    data = await state.get_data()
+    memory = list(data.get("admin_ai_memory") or [])
+    plan = await admin_ai_service.plan_action(
+        request,
+        context={
+            "admin_id": message.from_user.id,
+            "session_memory": memory[-6:],
+            "maintenance_mode": await get_bot_setting("maintenance_mode", "0"),
+        },
+    )
+    plan = normalize_plan(plan)
+    error = validate_plan(plan)
+    if error:
+        await message.answer(
+            f"⚠️ {_html(error)}",
+            reply_markup=_admin_ai_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    if plan["action"] == "clear_context":
+        await state.update_data(admin_ai_memory=[], admin_ai_plan=None)
+        await message.answer(
+            "✅ Контекст ИИ-админа очищен.",
+            reply_markup=_admin_ai_keyboard(),
+        )
+        return
+
+    if plan["action"] == "help":
+        await message.answer(
+            _format_admin_ai_help_text(),
+            reply_markup=_admin_ai_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    if plan.get("requires_confirmation"):
+        await state.update_data(admin_ai_plan=plan, admin_ai_request=request)
+        await state.set_state(AdminStates.confirming_ai_action)
+        await message.answer(
+            _format_admin_ai_plan_preview(plan),
+            reply_markup=_admin_ai_confirm_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    result = await execute_admin_ai_plan(
+        plan,
+        admin_id=message.from_user.id,
+        message=message,
+    )
+    await _remember_admin_ai_context(
+        state,
+        request=request,
+        plan=plan,
+        result=result,
+    )
+    await state.set_state(AdminStates.waiting_ai_request)
+    await _send_admin_ai_result(message, result)
+
+
+@router.callback_query(F.data == "admin_ai_confirm")
+async def admin_ai_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """Выполняет подтверждённый план ИИ-админа."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    data = await state.get_data()
+    plan = normalize_plan(data.get("admin_ai_plan"))
+    request = str(data.get("admin_ai_request") or "")
+    if not plan or plan.get("action") == "unknown":
+        await callback.message.edit_text(
+            "❌ План не найден. Напишите задачу заново.",
+            reply_markup=_admin_ai_keyboard(),
+        )
+        await state.set_state(AdminStates.waiting_ai_request)
+        await callback.answer()
+        return
+
+    error = validate_plan(plan)
+    if error:
+        await callback.message.edit_text(
+            f"⚠️ {_html(error)}",
+            reply_markup=_admin_ai_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.set_state(AdminStates.waiting_ai_request)
+        await callback.answer()
+        return
+
+    await state.update_data(admin_ai_plan=None)
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text("🤖 Выполняю план ИИ-админа...")
+    result = await execute_admin_ai_plan(
+        plan,
+        admin_id=callback.from_user.id,
+        message=callback.message,
+    )
+    await _remember_admin_ai_context(
+        state,
+        request=request,
+        plan=plan,
+        result=result,
+    )
+    await callback.message.edit_text(
+        f"<b>🤖 ИИ-админ</b>\n\n{_html(_truncate_plain(result, ADMIN_AI_MESSAGE_LIMIT - 80))}",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer("Готово")
+
+
+@router.callback_query(F.data == "admin_ai_cancel")
+async def admin_ai_cancel(callback: types.CallbackQuery, state: FSMContext):
+    """Отменяет сохранённый план ИИ-админа."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.update_data(admin_ai_plan=None, admin_ai_request=None)
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        "❌ План отменён. Можно написать новую задачу.",
+        reply_markup=_admin_ai_keyboard(),
+    )
+    await callback.answer("Отменено")
 
 
 @router.callback_query(F.data == "admin_reload")
@@ -2930,6 +3587,10 @@ async def admin_execute_broadcast(
 @router.callback_query(F.data == "admin_back")
 async def admin_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     """Возврат в админ-меню"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
     await state.clear()
     stats = await get_admin_stats()
 

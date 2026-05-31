@@ -194,6 +194,45 @@ def test_process_referral_rejects_referral_cycles(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_process_referral_allows_new_user_when_referrer_ancestry_is_already_cyclic(
+    tmp_path, monkeypatch
+):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        root = await db.get_or_create_user(3401)
+        parent = await db.get_or_create_user(3402)
+        referrer = await db.get_or_create_user(3403)
+        referred = await db.get_or_create_user(3404)
+
+        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+            await conn.execute(
+                "UPDATE users SET referred_by = ? WHERE id = ?",
+                (parent.id, root.id),
+            )
+            await conn.execute(
+                "UPDATE users SET referred_by = ? WHERE id = ?",
+                (root.id, parent.id),
+            )
+            await conn.execute(
+                "UPDATE users SET referred_by = ? WHERE id = ?",
+                (parent.id, referrer.id),
+            )
+            await conn.commit()
+
+        assert await db.process_referral(referred.telegram_id, referrer.referral_code)
+
+        updated_referred = await db.get_or_create_user(referred.telegram_id)
+        updated_referrer = await db.get_or_create_user(referrer.telegram_id)
+
+        assert updated_referred.referred_by == referrer.id
+        assert updated_referrer.referral_earned == db.PARTNER_INVITER_BONUS
+
+    asyncio.run(run())
+
+
 def test_unreferred_payment_marks_user_paid(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")
@@ -240,6 +279,45 @@ def test_commission_awarded_every_payment(tmp_path, monkeypatch):
         assert updated_referred.has_paid is True
         expected_total = round(100 * db.PARTNER_LEVEL1_PERCENT / 100 + 200 * db.PARTNER_LEVEL1_PERCENT / 100, 2)
         assert updated_referrer.partner_balance_rub == expected_total
+
+    asyncio.run(run())
+
+
+def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        level2_partner = await db.get_or_create_user(3501)
+        level1_partner = await db.get_or_create_user(3502)
+        buyer = await db.get_or_create_user(3503)
+
+        assert await db.process_referral(
+            level1_partner.telegram_id,
+            level2_partner.referral_code,
+        )
+        assert await db.process_referral(
+            buyer.telegram_id,
+            level1_partner.referral_code,
+        )
+
+        result = await db.credit_referral_commission(
+            buyer.telegram_id,
+            100,
+            transaction_amount_rub=1000,
+        )
+
+        updated_level1 = await db.get_or_create_user(level1_partner.telegram_id)
+        updated_level2 = await db.get_or_create_user(level2_partner.telegram_id)
+
+        assert result["mode"] == "partner"
+        assert result["value"] == 300
+        assert result["level2_value"] == 70
+        assert updated_level1.partner_balance_rub == 300
+        assert updated_level1.partner_total_revenue_rub == 1000
+        assert updated_level2.partner_balance_rub == 70
+        assert updated_level2.partner_total_revenue_rub == 1000
 
     asyncio.run(run())
 

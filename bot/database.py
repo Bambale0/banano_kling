@@ -601,6 +601,10 @@ class GenerationTask:
 async def init_db():
     """Инициализация базы данных"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")
+        await db.execute("PRAGMA foreign_keys=ON")
+        await db.execute("PRAGMA temp_store=MEMORY")
         # Таблица пользователей
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -681,6 +685,15 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        for statement in (
+            "ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN banned_at TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN banned_by_telegram_id INTEGER",
+        ):
+            try:
+                await db.execute(statement)
+            except aiosqlite.OperationalError:
+                pass
 
         # Таблица транзакций (платежи)
         await db.execute("""
@@ -853,6 +866,15 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_by_telegram_id INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -1375,7 +1397,13 @@ async def _referral_chain_contains(
         if current_id == target_user_id:
             return True
         if current_id in seen:
-            return True
+            logger.warning(
+                "Referral ancestry cycle detected: start_user_id=%s target_user_id=%s repeated_user_id=%s",
+                start_user_id,
+                target_user_id,
+                current_id,
+            )
+            return False
         seen.add(current_id)
 
         cursor = await db.execute(
@@ -1449,9 +1477,13 @@ async def process_referral(
     """Закрепляет пользователя за партнёром: пригласившему +3🍌 (новичок уже получил 15 при регистрации)."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
+        logger.info(
+            "Referral skipped: empty code for referred_telegram_id=%s",
+            referred_telegram_id,
+        )
         return False
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
 
         referrer_cursor = await db.execute(
@@ -1460,6 +1492,11 @@ async def process_referral(
         )
         referrer = await referrer_cursor.fetchone()
         if not referrer:
+            logger.info(
+                "Referral skipped: code not found referred_telegram_id=%s code=%s",
+                referred_telegram_id,
+                referral_code,
+            )
             return False
 
         referred_cursor = await db.execute(
@@ -1481,17 +1518,53 @@ async def process_referral(
             (referred_telegram_id,),
         )
         referred = await referred_cursor.fetchone()
-        if not referred or referred["referred_by"]:
+        if not referred:
+            logger.info(
+                "Referral skipped: referred user not found referred_telegram_id=%s code=%s referrer_id=%s",
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+            )
+            return False
+        if referred["referred_by"]:
+            logger.info(
+                "Referral skipped: already referred referred_telegram_id=%s code=%s referrer_id=%s existing_referrer_id=%s",
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+                referred["referred_by"],
+            )
             return False
         if referred["id"] == referrer["id"]:
+            logger.info(
+                "Referral skipped: self referral referred_telegram_id=%s code=%s user_id=%s",
+                referred_telegram_id,
+                referral_code,
+                referred["id"],
+            )
             return False
         if referred["has_paid"] or referred["has_completed_payment"]:
+            logger.info(
+                "Referral skipped: user already paid referred_telegram_id=%s code=%s referrer_id=%s has_paid=%s has_completed_payment=%s",
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+                referred["has_paid"],
+                referred["has_completed_payment"],
+            )
             return False
         if await _referral_chain_contains(
             db,
             start_user_id=referrer["id"],
             target_user_id=referred["id"],
         ):
+            logger.info(
+                "Referral skipped: chain cycle referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s",
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+                referred["id"],
+            )
             return False
 
         update_cursor = await db.execute(
@@ -1514,6 +1587,14 @@ async def process_referral(
         )
         if update_cursor.rowcount != 1:
             await db.rollback()
+            logger.info(
+                "Referral skipped: update rowcount=%s referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s",
+                update_cursor.rowcount,
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+                referred["id"],
+            )
             return False
         insert_cursor = await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, ?)",
@@ -1521,12 +1602,29 @@ async def process_referral(
         )
         if insert_cursor.rowcount != 1:
             await db.rollback()
+            logger.info(
+                "Referral skipped: insert rowcount=%s referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s",
+                insert_cursor.rowcount,
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
+                referred["id"],
+            )
             return False
         await db.execute(
             "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (inviter_bonus, inviter_bonus, referrer["id"]),
         )
         await db.commit()
+        logger.info(
+            "Referral processed: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s signup_bonus=%s inviter_bonus=%s",
+            referred_telegram_id,
+            referral_code,
+            referrer["id"],
+            referred["id"],
+            signup_bonus,
+            inviter_bonus,
+        )
         return True
 
 
@@ -3631,21 +3729,32 @@ async def deduct_credits(
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
 
-        # Проверяем баланс
-        cursor = await db.execute(
-            "SELECT credits FROM users WHERE telegram_id = ?", (telegram_id,)
-        )
-        row = await cursor.fetchone()
+        if check_balance:
+            cursor = await db.execute(
+                "SELECT credits FROM users WHERE telegram_id = ?", (telegram_id,)
+            )
+            row = await cursor.fetchone()
 
-        if not row or row["credits"] < amount:
+            if not row or row["credits"] < amount:
+                await db.rollback()
+                return False
+
+            await db.execute(
+                "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ? AND credits >= ?",
+                (amount, telegram_id, amount),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+                (amount, telegram_id),
+            )
+
+        if db.total_changes == 0:
+            await db.rollback()
             return False
 
-        # Списываем
-        await db.execute(
-            "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (amount, telegram_id),
-        )
         await db.commit()
         logger.info(f"Deducted {amount} credits from user {telegram_id}")
         return True
@@ -4547,27 +4656,30 @@ def _generation_result_urls(row: aiosqlite.Row) -> list[str]:
     return urls
 
 
+def _feed_activity_time_for_sort(row: aiosqlite.Row) -> datetime:
+    values: list[datetime] = []
+    for key in ("created_at", "updated_at"):
+        if key not in row.keys() or not row[key]:
+            continue
+        try:
+            values.append(datetime.fromisoformat(str(row[key])))
+        except (TypeError, ValueError):
+            continue
+    return max(values) if values else datetime.min
+
+
 def _calculate_feed_score(row: aiosqlite.Row) -> float:
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
     likes_count = int(row["likes_count"] or 0)
     shares_count = int(row["shares_count"] or 0)
     generation_count = 1 + remix_count
     score = likes_count + remix_count * 3 + shares_count * 5 + generation_count * 4
-    try:
-        created_at = datetime.fromisoformat(str(row["created_at"]))
-        age_seconds = (datetime.now() - created_at).total_seconds()
+    activity_time = _feed_activity_time_for_sort(row)
+    if activity_time != datetime.min:
+        age_seconds = (datetime.utcnow() - activity_time).total_seconds()
         if age_seconds <= 2 * 3600:
             score *= 1.5
-    except (TypeError, ValueError):
-        pass
     return float(score)
-
-
-def _feed_created_at_for_sort(row: aiosqlite.Row) -> datetime:
-    try:
-        return datetime.fromisoformat(str(row["created_at"]))
-    except (TypeError, ValueError):
-        return datetime.min
 
 
 def _feed_public_limit_for_type(generation_type: str) -> int:
@@ -4579,7 +4691,7 @@ def _feed_public_limit_for_type(generation_type: str) -> int:
 async def cleanup_public_feed_limits() -> dict[str, int]:
     """Keep the public feed bounded by media type, pruning low-score old posts."""
     stats = {"image": 0, "video": 0}
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
@@ -4609,7 +4721,7 @@ async def cleanup_public_feed_limits() -> dict[str, int]:
                 type_rows,
                 key=lambda row: (
                     _calculate_feed_score(row),
-                    _feed_created_at_for_sort(row),
+                    _feed_activity_time_for_sort(row),
                     int(row["id"] or 0),
                 ),
                 reverse=True,
@@ -4974,7 +5086,7 @@ async def get_generation_task_payload(
 
 
 async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
@@ -4996,7 +5108,7 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
 
 
 async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
@@ -5010,7 +5122,7 @@ async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
 
 
 async def share_to_library(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
@@ -5300,6 +5412,179 @@ async def get_admin_stats() -> dict:
             "total_batch_jobs": batch_row["count"] or 0,
             "total_referrals": referrals_row["count"] or 0,
         }
+
+
+async def _ensure_bot_settings_table(db: aiosqlite.Connection) -> None:
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_by_telegram_id INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+
+async def get_bot_setting(key: str, default: str | None = None) -> str | None:
+    """Возвращает значение глобальной настройки бота."""
+    setting_key = str(key or "").strip()[:80]
+    if not setting_key:
+        return default
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_bot_settings_table(db)
+        cursor = await db.execute(
+            "SELECT value FROM bot_settings WHERE key = ? LIMIT 1",
+            (setting_key,),
+        )
+        row = await cursor.fetchone()
+        return row["value"] if row else default
+
+
+async def set_bot_setting(
+    key: str,
+    value: str | int | float | bool,
+    *,
+    updated_by_telegram_id: int | None = None,
+) -> bool:
+    """Сохраняет глобальную настройку бота."""
+    setting_key = str(key or "").strip()[:80]
+    if not setting_key:
+        return False
+
+    setting_value = "1" if value is True else "0" if value is False else str(value)
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await _ensure_bot_settings_table(db)
+        await db.execute(
+            """
+            INSERT INTO bot_settings (key, value, updated_by_telegram_id, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_by_telegram_id = excluded.updated_by_telegram_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                setting_key,
+                setting_value,
+                int(updated_by_telegram_id) if updated_by_telegram_id else None,
+            ),
+        )
+        await db.commit()
+        return True
+
+
+async def is_maintenance_mode_enabled() -> bool:
+    return (await get_bot_setting("maintenance_mode", "0")) == "1"
+
+
+async def set_maintenance_mode(
+    enabled: bool,
+    *,
+    updated_by_telegram_id: int | None = None,
+) -> bool:
+    return await set_bot_setting(
+        "maintenance_mode",
+        "1" if enabled else "0",
+        updated_by_telegram_id=updated_by_telegram_id,
+    )
+
+
+async def is_user_banned(telegram_id: int) -> bool:
+    """Проверяет, заблокирован ли пользователь на уровне бота."""
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT COALESCE(is_banned, 0) AS is_banned FROM users WHERE telegram_id = ? LIMIT 1",
+                (int(telegram_id),),
+            )
+            row = await cursor.fetchone()
+            return bool(row and row["is_banned"])
+    except aiosqlite.OperationalError:
+        return False
+
+
+async def set_user_banned(
+    telegram_id: int,
+    banned: bool,
+    *,
+    admin_id: int | None = None,
+) -> bool:
+    """Ставит или снимает бан без создания нового пользователя."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE users
+            SET is_banned = ?,
+                banned_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
+                banned_by_telegram_id = CASE WHEN ? = 1 THEN ? ELSE NULL END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            """,
+            (
+                1 if banned else 0,
+                1 if banned else 0,
+                1 if banned else 0,
+                int(admin_id) if admin_id else None,
+                int(telegram_id),
+            ),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_existing_user_stats(telegram_id: int) -> Optional[dict[str, Any]]:
+    """Возвращает статистику только для существующего пользователя."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT COALESCE(is_banned, 0) AS is_banned
+            FROM users
+            WHERE telegram_id = ?
+            LIMIT 1
+            """,
+            (int(telegram_id),),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        is_banned_value = bool(row["is_banned"])
+
+    stats = await get_user_stats(telegram_id)
+    stats["is_banned"] = is_banned_value
+    return stats
+
+
+async def export_users_for_admin(limit: int = 50000) -> list[dict[str, Any]]:
+    """Возвращает ограниченный список пользователей для подтверждённого экспорта."""
+    safe_limit = max(1, min(int(limit or 50000), 50000))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                telegram_id,
+                username,
+                first_name,
+                last_name,
+                credits,
+                COALESCE(is_banned, 0) AS is_banned,
+                referral_code,
+                referred_by,
+                has_paid,
+                created_at,
+                updated_at
+            FROM users
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        return _sqlite_rows_to_dicts(await cursor.fetchall())
 
 
 async def save_batch_job(

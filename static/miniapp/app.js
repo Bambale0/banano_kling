@@ -227,7 +227,7 @@ function renderTaskList(tasks) {
         ? `<a class="task-link" href="${task.result_url}" target="_blank" rel="noreferrer">Открыть результат</a>`
         : '<span class="task-link muted">Результат ещё не готов</span>';
       return `
-        <article class="task-card ${state.selectedTaskId === task.task_id ? "is-active" : ""}" data-task-id="${task.task_id}">
+        <article class="task-card ${state.selectedTaskId === getTaskLookupId(task) ? "is-active" : ""}" data-task-id="${getTaskLookupId(task)}">
           <div class="task-head">
             <strong>${task.model_label}</strong>
             <span class="status-badge ${badgeClass}">${task.status}</span>
@@ -246,6 +246,10 @@ function renderTaskList(tasks) {
   for (const card of target.querySelectorAll("[data-task-id]")) {
     card.addEventListener("click", () => openTaskDetail(card.dataset.taskId));
   }
+}
+
+function getTaskLookupId(task) {
+  return String(task?.feed_id || task?.task_id || "");
 }
 
 function stopTaskPolling() {
@@ -460,7 +464,7 @@ async function refreshDashboard(options = {}) {
   updateVideoModelView();
 
   if (options.preserveSelection && state.selectedTaskId) {
-    const exists = (data.recent_tasks || []).some((task) => task.task_id === state.selectedTaskId);
+    const exists = (data.recent_tasks || []).some((task) => getTaskLookupId(task) === state.selectedTaskId);
     if (exists && !options.silentTaskRefresh) {
       await openTaskDetail(state.selectedTaskId);
     }
@@ -653,7 +657,8 @@ async function submitImage() {
     $("imageStatusText").textContent = "Фото задача успешно запущена.";
     await refreshDashboard();
     if (result.task_id) {
-      await openTaskDetail(result.task_id);
+      const launchedTask = (state.bootstrap?.recent_tasks || []).find((task) => task.task_id === result.task_id);
+      await openTaskDetail(launchedTask ? getTaskLookupId(launchedTask) : result.task_id);
     }
   } catch (error) {
     setResultCard("imageResult", `<p class="result-title">Ошибка</p><p>${error.message}</p>`, "is-error");
@@ -696,7 +701,8 @@ async function submitVideo() {
     $("videoStatusText").textContent = "Видео задача успешно запущена.";
     await refreshDashboard();
     if (result.task_id) {
-      await openTaskDetail(result.task_id);
+      const launchedTask = (state.bootstrap?.recent_tasks || []).find((task) => task.task_id === result.task_id);
+      await openTaskDetail(launchedTask ? getTaskLookupId(launchedTask) : result.task_id);
     }
   } catch (error) {
     setResultCard("videoResult", `<p class="result-title">Ошибка</p><p>${error.message}</p>`, "is-error");

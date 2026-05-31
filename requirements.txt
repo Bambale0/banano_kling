@@ -29,3 +29,6 @@ yookassa>=3.4.0
 
 # Redis cache / FSM storage
 redis>=5.0.0
+
+# PostgreSQL migration / future cutover
+psycopg[binary]>=3.2.0

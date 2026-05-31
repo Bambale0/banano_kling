@@ -7,7 +7,11 @@ from typing import Iterable
 import aiohttp
 
 from bot.config import config
-from bot.services.media_input_utils import is_local_upload_source, resolve_local_upload_path
+from bot.services.media_input_utils import (
+    image_source_to_provider_safe_png_url,
+    is_local_upload_source,
+    resolve_local_upload_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,15 @@ class KieFileUploadService:
         if cached_entry and time.time() - cached_entry[1] < 48 * 60 * 60:
             cached_url = cached_entry[0]
             return cached_url
+
+        stable_public_url = image_source_to_provider_safe_png_url(source)
+        if isinstance(stable_public_url, str) and stable_public_url.startswith(("http://", "https://")):
+            self._cache[cache_key] = (stable_public_url, time.time())
+            logger.info(
+                "Using stable public URL for KIE reference instead of temp upload: %s",
+                stable_public_url,
+            )
+            return stable_public_url
 
         try:
             rel_name = os.path.relpath(local_path, os.path.join("static", "uploads"))

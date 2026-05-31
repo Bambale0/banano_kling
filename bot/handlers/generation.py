@@ -72,7 +72,6 @@ from bot.services.media_input_utils import (
     filter_available_image_sources,
     is_reference_contact_sheet_url,
     missing_local_upload_sources,
-    reference_sources_to_contact_sheet_url,
 )
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
@@ -333,7 +332,9 @@ def _enforce_video_prompt_policy(prompt: str) -> Optional[str]:
     return _enforce_generation_prompt_policy(prompt, medium="video")
 
 
-def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
+def _apply_safe_prompt_framing(
+    img_service: str, prompt: str, *, has_reference_images: bool = False
+) -> str:
     """Reduce false positives for benign fashion/editorial prompts without bypassing policy."""
     prompt = (prompt or "").strip()
     if not prompt:
@@ -348,6 +349,30 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
     }:
         return prompt
 
+    garment_patterns = {
+        r"\blingerie\b",
+        r"\bunderwear\b",
+        r"\bbra\b",
+        r"\bthong\b",
+        r"\bstockings\b",
+        r"\bgarter\b",
+        r"\bbikini\b",
+        r"\bswimsuit\b",
+        r"\bнижн(?:ее|ем|его|ей|юю|им)\s+бель[еёя]\b",
+        r"\bбелье\b",
+        r"\bбельё\b",
+        r"\bбелья\b",
+        r"\bбюстгальтер\b",
+        r"\bлиф(?:чик|а|ом|е)?\b",
+        r"\bстринг\w*\b",
+        r"\bбикини\b",
+        r"\bкупальник\w*\b",
+        r"\bчулк\w*\b",
+        r"\bкорсет\w*\b",
+        r"\bбоди\b",
+    }
+    preserve_garment_terms = img_service == "seedream_edit" and has_reference_images
+
     replacements = [
         (r"\blingerie\b", "fashion outfit"),
         (r"\bunderwear\b", "fashion outfit"),
@@ -357,6 +382,13 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
         (r"\bgarter\b", "fashion accessory"),
         (r"\bbikini\b", "fashion swimwear"),
         (r"\bswimsuit\b", "fashion swimwear"),
+        (r"\bnude\b", "editorial"),
+        (r"\bnaked\b", "editorial"),
+        (r"\btopless\b", "covered fashion top"),
+        (r"\bbreast?s?\b", "silhouette"),
+        (r"\bnipple?s?\b", "upper outfit details"),
+        (r"\bbutt(?:ocks)?\b", "body line"),
+        (r"\bcrotch\b", "lower silhouette"),
         (r"\bнижн(?:ее|ем|его|ей|юю|им)\s+бель[еёя]\b", "модный образ"),
         (r"\bбелье\b", "модный образ"),
         (r"\bбельё\b", "модный образ"),
@@ -366,17 +398,68 @@ def _apply_safe_prompt_framing(img_service: str, prompt: str) -> str:
         (r"\bстринг\w*\b", "низ от купального образа"),
         (r"\bбикини\b", "купальный fashion-образ"),
         (r"\bкупальник\w*\b", "купальный fashion-образ"),
-        (r"\bчулки\b", "fashion-чулки"),
-        (r"\bкорсет\b", "fashion-корсет"),
+        (r"\bчулк\w*\b", "fashion-чулки"),
+        (r"\bкорсет\w*\b", "fashion-корсет"),
+        (r"\bбоди\b", "fashion-образ"),
+        (r"\bбудуар\w*\b", "soft editorial"),
+        (r"\bглубок\w*\s+вырез\w*\b", "аккуратный fashion-вырез"),
+        (r"\bпрозрачн\w*\b", "текстурный"),
+        (r"\bобнаженн\w*\b", "editorial"),
+        (r"\bгол(?:ый|ая|ое|ые|ого|ой|ую|ым|ыми|ых|ому|ом)\b", "editorial"),
+        (r"\bголыш\w*\b", "editorial"),
+        (r"\bобнаж\w*\b", "editorial"),
+        (r"\bсоск\w*\b", "детали верхней части образа"),
+        (r"\bгруд\w*\b", "силуэт"),
+        (r"\bягодиц\w*\b", "линии фигуры"),
+        (r"\bпромежност\w*\b", "нижний силуэт"),
+        (r"\bпирсинг\s+пупка\b", "аксессуар на талии"),
+        (r"\bпупок\b", "талия"),
+        (r"\bязык\b", "выражение лица"),
+        (r"\bоблизывает?\s+пал(?:ец|ьцы)\b", "касается пальца губами"),
+        (r"\bcleavage\b", "neckline"),
+        (r"\bbust\b", "upper silhouette"),
+        (r"\bhourglass\s+figure\b", "balanced proportions"),
+        (r"\bcurvy\b", "balanced silhouette"),
+        (r"\bvoluptuous\b", "editorial silhouette"),
+        (r"\bsensual\b", "editorial"),
+        (r"\bsultry\b", "editorial"),
+        (r"\bseductive\b", "confident"),
+        (r"\bhourglass\b", "balanced"),
+        (r"\bпышн\w*\s+груд\w*\b", "выразительный верхний силуэт"),
+        (r"\bпышн\w*\s+бюст\w*\b", "выразительный верхний силуэт"),
+        (r"\bбюст\w*\b", "верхний силуэт"),
+        (r"\bдекольт\w*\b", "линия выреза"),
+        (r"\bпесочн\w*\s+час\w*\b", "сбалансированные пропорции"),
+        (r"\bширок\w*\s+бед\w*\b", "выразительный силуэт"),
+        (r"\bокругл\w*\s+бед\w*\b", "плавный силуэт"),
+        (r"\bупруг\w*\s+ягодиц\w*\b", "подтянутый силуэт"),
+        (r"\bузк\w*\s+тал\w*\b", "четкий силуэт талии"),
+        (r"\bплоск\w*\s+живот\w*\b", "ровный силуэт живота"),
+        (r"\b\d+\s+размер(?:а|ом|е|у)?\b", "editorial proportions"),
+        (r"\bвлажн\w*\s+сияни\w*\s+кож\w*\b", "мягкое сияние кожи"),
+        (r"\bмасло\/вода\b", "soft glow"),
+        (r"\bчувствен\w*\b", "editorial"),
+        (r"\bсоблазнительн\w*\b", "уверенный editorial-акцент"),
+        (r"\bэротичес\w*\b", "editorial"),
+        (r"\bманящ\w*\b", "игривый акцент"),
     ]
     normalized = prompt
     for pattern, replacement in replacements:
+        if preserve_garment_terms and pattern in garment_patterns:
+            continue
         normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
 
-    safety_prefix = (
-        "Safe, non-explicit editorial image of an adult subject. "
-        "Fashion or product focused, no nudity, no explicit anatomy, no sexual content. "
-    )
+    if preserve_garment_terms:
+        safety_prefix = (
+            "Safe, non-explicit adult fashion/editorial image. "
+            "Treat lingerie, swimwear, and fitted garments in the uploaded references as clothing/fashion garments only; "
+            "no nudity, no explicit anatomy, no sexual content, no minors. "
+        )
+    else:
+        safety_prefix = (
+            "Safe, non-explicit editorial image of an adult subject. "
+            "Fashion or product focused scene, no nudity, no explicit anatomy, no sexual content. "
+        )
     selfie_instruction = ""
     if _prompt_requests_selfie_without_visible_device(prompt):
         selfie_instruction = (
@@ -417,6 +500,10 @@ def _apply_reference_detail_preservation(
 ) -> str:
     """For reference-based generation, preserve identity without suppressing edits."""
     prompt = (prompt or "").strip()
+    face_lock_prefix = (
+        "НЕ МЕНЯЙ ЧЕРТЫ ЛИЦА С ЗАГРУЖЕННОГО ФОТО.\n"
+        "Do not change the facial features from the uploaded photo.\n\n"
+    )
     if not reference_images or img_service not in {
         "banana_pro",
         "banana_2",
@@ -483,12 +570,13 @@ def _apply_reference_detail_preservation(
             identity_reference = "Use the uploaded image as the identity reference, not as a locked pose."
         if not prompt:
             return (
-                f"{identity_reference} Preserve the same "
+                f"{face_lock_prefix}{identity_reference} Preserve the same "
                 "recognizable person and face, but allow pose, body posture, scene, "
                 "background, camera angle, framing, lighting, and styling to change."
             )
         return (
             f"EDIT REQUEST (highest priority): {prompt}\n\n"
+            f"{face_lock_prefix}"
             f"{identity_reference} "
             "Follow the edit request even when it changes pose, body posture, action, "
             "scene, background, camera angle, framing, lighting, styling, or outfit.\n\n"
@@ -517,10 +605,11 @@ The uploaded images are visual references, not text content. Never render file n
         if prompt:
             return (
                 f"EDIT REQUEST (highest priority): {prompt}\n\n"
+                f"{face_lock_prefix}"
                 f"{reference_role_instruction}\n\n"
                 f"{identity_transfer_instruction}"
             )
-        return f"{reference_role_instruction}\n\n{identity_transfer_instruction}"
+        return f"{face_lock_prefix}{reference_role_instruction}\n\n{identity_transfer_instruction}"
     instruction = """
 REFERENCE IDENTITY GUIDANCE.
 
@@ -542,8 +631,11 @@ Do not copy the original reference pose, composition, hairstyle, makeup, raw ski
 Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
 """.strip()
     if prompt:
-        return f"EDIT REQUEST (highest priority): {prompt}\n\n{instruction}"
-    return instruction
+        return (
+            f"EDIT REQUEST (highest priority): {prompt}\n\n"
+            f"{face_lock_prefix}{instruction}"
+        )
+    return f"{face_lock_prefix}{instruction}"
 
 
 def _build_image_variant_prompt(
@@ -651,14 +743,10 @@ def _prepare_banana_reference_images(
     if img_service not in {"banana_pro", "banana_2", "nanobanana", "seedream_edit"}:
         return normalized
     max_refs = 5 if img_service == "seedream_edit" else 8
-    if len(normalized) > 1 and not is_reference_contact_sheet_url(normalized[0]):
-        board_url = reference_sources_to_contact_sheet_url(
-            normalized,
-            max_sources=max(2, min(4, max_refs - 1)),
-        )
-        if board_url:
-            normalized = [board_url, *normalized]
-    return normalized[:max_refs]
+    direct_refs = [
+        ref for ref in normalized if not is_reference_contact_sheet_url(ref)
+    ]
+    return direct_refs[:max_refs]
 
 
 async def _start_image_generation_task(
@@ -713,7 +801,9 @@ async def _start_image_generation_task(
             "runtime_img_service": runtime_img_service,
             "error": "missing_local_references",
         }
-    source_reference_images = list(reference_images)
+    source_reference_images = [
+        ref for ref in reference_images if not is_reference_contact_sheet_url(ref)
+    ]
     reference_images = _prepare_banana_reference_images(
         runtime_img_service, reference_images, prompt
     )
@@ -725,6 +815,7 @@ async def _start_image_generation_task(
         _apply_reference_detail_preservation(
             runtime_img_service, prompt, reference_images
         ),
+        has_reference_images=bool(reference_images),
     )
     request_snapshot = {
         "img_service": img_service,

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 PRICE_FILE = os.path.join("data", "price.json")
 AI_INSTRUCTIONS_FILE = os.path.join("bot", "utils", "ai_assistant_instructions.json")
+AI_ASSISTANT_TIMEOUT_SECONDS = int(os.getenv("AI_ASSISTANT_TIMEOUT_SECONDS", "20"))
 
 # Fallback-цены на случай, если data/price.json недоступен.
 FALLBACK_IMAGE_COSTS = {
@@ -106,7 +107,7 @@ class AIAssistantService:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Получение HTTP-сессии."""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=60)
+            timeout = aiohttp.ClientTimeout(total=max(5, AI_ASSISTANT_TIMEOUT_SECONDS))
             self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
@@ -125,8 +126,11 @@ class AIAssistantService:
             logger.warning("AI Assistant text request is empty")
             return None
 
-        system_prompt = self._get_system_prompt()
-        context_info = self._format_context(context or {})
+        context = context or {}
+        system_prompt = self._get_system_prompt(
+            is_admin=bool(context.get("is_admin"))
+        )
+        context_info = self._format_context(context)
         pricing_info = self.get_pricing_info()
 
         full_message = f"""Контекст пользователя:
@@ -216,8 +220,11 @@ class AIAssistantService:
                 context=context,
             )
 
-        system_prompt = self._get_system_prompt()
-        context_info = self._format_context(context or {})
+        context = context or {}
+        system_prompt = self._get_system_prompt(
+            is_admin=bool(context.get("is_admin"))
+        )
+        context_info = self._format_context(context)
         pricing_info = self.get_pricing_info()
         user_text = str(user_message or "").strip()
 
@@ -318,14 +325,18 @@ class AIAssistantService:
             logger.exception(f"Kie.ai Assistant audio call failed: {e}")
             return None
 
-    def _get_system_prompt(self) -> str:
+    def _get_system_prompt(self, *, is_admin: bool = False) -> str:
         """Загрузка системной инструкции из JSON-файла."""
         try:
             data = _load_json(AI_INSTRUCTIONS_FILE)
-            return data.get("system_prompt") or self._get_default_prompt()
+            prompt = data.get("system_prompt") or self._get_default_prompt()
         except Exception as e:
             logger.warning(f"Failed to load AI instructions: {e}")
-            return self._get_default_prompt()
+            prompt = self._get_default_prompt()
+
+        if is_admin:
+            prompt = f"{prompt}\n\n{self._get_admin_prompt_addendum()}"
+        return prompt
 
     def _get_default_prompt(self) -> str:
         """Базовая системная инструкция, если файл с инструкциями недоступен."""
@@ -339,6 +350,13 @@ class AIAssistantService:
 
 Отвечай кратко, дружелюбно и прикладно.
 Если это помогает, подсказывай конкретный следующий шаг в интерфейсе бота."""
+
+    def _get_admin_prompt_addendum(self) -> str:
+        """Дополнительные правила для администраторов."""
+        return """## РЕЖИМ АДМИНИСТРАТОРА
+Пользователь является администратором бота. Можно объяснять админские разделы: статистика, финансы, пользователи, партнёры, промокоды, цены, рассылки и модерация промптов.
+Не выдумывай приватные цифры, балансы, платежи, ID и статусы. Если точные данные не переданы в контексте, предложи использовать админ-функции BotAI или кнопку «Админ-панель».
+Изменения баланса, цен, промокодов, рассылки и модерации выполняются только через защищённые кнопки/админ-панель, а не через свободный текст модели."""
 
     def _format_context(self, context: dict) -> str:
         """Форматирование контекста пользователя для AI-ассистента."""
@@ -364,6 +382,12 @@ class AIAssistantService:
 
         if "available_models" in context:
             lines.append(f"- Доступные модели: {context['available_models']}")
+
+        if context.get("is_admin"):
+            lines.append("- Роль: администратор")
+
+        if "admin_capabilities" in context:
+            lines.append(f"- Админ-функции: {context['admin_capabilities']}")
 
         return "\n".join(lines) if lines else "Нет дополнительного контекста"
 

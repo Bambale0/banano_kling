@@ -1,9 +1,14 @@
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
 from typing import List
 
 logger = logging.getLogger(__name__)
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass
@@ -105,6 +110,7 @@ class Config:
     # Default to "/webhook" to avoid registering an empty route in aiohttp.
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
+    STATIC_BASE_URL: str = os.getenv("STATIC_BASE_URL", "")
     MINI_APP_PATH: str = os.getenv("MINI_APP_PATH", "/mini-app")
     MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
 
@@ -231,12 +237,11 @@ class Config:
     @property
     def static_base_url(self) -> str:
         """URL для доступа к статическим файлам"""
-        if hasattr(self, "STATIC_BASE_URL") and self.STATIC_BASE_URL:
-            return self.STATIC_BASE_URL
-        # По умолчанию используем WEBHOOK_HOST
-        return (
-            self.WEBHOOK_HOST if self.WEBHOOK_HOST else "https://dev.chillcreative.ru"
-        )
+        if (self.STATIC_BASE_URL or "").strip():
+            return self.STATIC_BASE_URL.strip().rstrip("/")
+        if (self.WEBHOOK_HOST or "").strip():
+            return self.WEBHOOK_HOST.strip().rstrip("/")
+        return "https://dev.chillcreative.ru"
 
     @property
     def mini_app_url(self) -> str:

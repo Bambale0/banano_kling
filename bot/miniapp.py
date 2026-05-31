@@ -607,9 +607,22 @@ async def _activate_start_param_referral(
 ) -> None:
     referral_code = _referral_code_from_start_param(start_param)
     if not referral_code:
+        if start_param:
+            logger.info(
+                "Mini App referral skipped: unsupported start_param user_id=%s start_param=%s",
+                telegram_id,
+                start_param,
+            )
         return
 
     try:
+        logger.info(
+            "Mini App referral requested: user_id=%s username=%s start_param=%s code=%s",
+            telegram_id,
+            telegram_user.get("username"),
+            start_param,
+            referral_code,
+        )
         referrer = await get_user_by_referral_code(referral_code)
         processed = await process_referral(telegram_id, referral_code)
     except Exception:
@@ -617,6 +630,17 @@ async def _activate_start_param_referral(
             "Failed to activate Mini App referral for user_id=%s start_param=%s",
             telegram_id,
             start_param,
+        )
+        return
+
+    if not processed:
+        logger.info(
+            "Mini App referral not applied: user_id=%s username=%s start_param=%s code=%s referrer_found=%s",
+            telegram_id,
+            telegram_user.get("username"),
+            start_param,
+            referral_code,
+            bool(referrer),
         )
         return
 
@@ -636,6 +660,13 @@ async def _activate_start_param_referral(
             app["bot"],
             referrer_telegram_id=referrer.telegram_id,
             referred=referred,
+        )
+        logger.info(
+            "Mini App referral applied: user_id=%s username=%s code=%s referrer_telegram_id=%s",
+            telegram_id,
+            telegram_user.get("username"),
+            referral_code,
+            referrer.telegram_id,
         )
 
 
@@ -807,6 +838,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
 
 
 async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] | None:
+    lookup_value = str(task_id or "").strip()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -818,9 +850,22 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
             """,
-            (telegram_id, task_id),
+            (telegram_id, lookup_value),
         )
         row = await cursor.fetchone()
+        if not row and lookup_value.isdigit():
+            cursor = await db.execute(
+                """
+                SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
+                       result_url, result_urls, is_public_feed, is_prompt_library,
+                       source_feed_gen_id, created_at, request_data
+                FROM generation_tasks
+                WHERE telegram_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (telegram_id, int(lookup_value)),
+            )
+            row = await cursor.fetchone()
 
     if not row:
         return None

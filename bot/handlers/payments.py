@@ -410,25 +410,28 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
 
     has_yookassa = yookassa_service.enabled
     has_crypto = cryptobot_service.enabled
+    has_lava = lava_service.enabled and bool(config.lava_offer_id_for_package(package_id))
 
-    if not has_yookassa and not has_crypto:
+    if not has_yookassa and not has_crypto and not has_lava:
         await callback.message.edit_text(
             "❌ Платёжные системы временно недоступны.\nОбратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         return
 
-    if has_yookassa and not has_crypto:
+    available_count = sum(1 for value in (has_yookassa, has_crypto, has_lava) if value)
+    if available_count == 1:
         await callback.answer()
-        await callback.bot.answer_callback_query(
-            callback.id, text="Перенаправляем на оплату…"
-        )
-        fake = callback.model_copy(update={"data": f"buy_yookassa_{package_id}"})
-        return await initiate_payment(fake, state)
-
-    if has_crypto and not has_yookassa:
-        await callback.answer()
-        fake = callback.model_copy(update={"data": f"buy_crypto_{package_id}"})
+        if has_yookassa:
+            await callback.bot.answer_callback_query(
+                callback.id, text="Перенаправляем на оплату…"
+            )
+            fake = callback.model_copy(update={"data": f"buy_yookassa_{package_id}"})
+            return await initiate_payment(fake, state)
+        if has_crypto:
+            fake = callback.model_copy(update={"data": f"buy_crypto_{package_id}"})
+            return await initiate_payment(fake, state)
+        fake = callback.model_copy(update={"data": f"buy_lava_{package_id}"})
         return await initiate_payment(fake, state)
 
     promo = await _get_selected_promo(state)
@@ -464,6 +467,8 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         provider = "yookassa"
     elif payload.startswith("crypto_"):
         provider = "cryptobot"
+    elif payload.startswith("lava_"):
+        provider = "lava"
     else:
         provider = config.payment_provider
 
@@ -497,6 +502,8 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         package_id = payload.replace("yookassa_", "", 1)
     elif payload.startswith("crypto_"):
         package_id = payload.replace("crypto_", "", 1)
+    elif payload.startswith("lava_"):
+        package_id = payload.replace("lava_", "", 1)
     elif "_" in payload:
         package_id = payload.split("_", 1)[1]
     else:
@@ -531,8 +538,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await lava_service.create_invoice(
             email=config.LAVA_DEFAULT_EMAIL,
             offer_id=offer_id,
-            currency="RUB",
-            amount=float(package["price_rub"]),
+            currency="USD",
             buyer_language="RU",
             client_utm={
                 "telegram_id": str(callback.from_user.id),

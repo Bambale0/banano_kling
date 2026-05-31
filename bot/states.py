@@ -76,6 +76,8 @@ class AdminStates(StatesGroup):
     waiting_prompt_id = State()  # Ввод ID промпта для модерации
     waiting_prompt_reject_reason = State()  # Причина отклонения промпта
     waiting_promo_code_value = State()  # Создание/поиск промокода
+    waiting_ai_request = State()  # Ввод задачи для ИИ-админа
+    confirming_ai_action = State()  # Подтверждение действия ИИ-админа
 
 
 class BatchGenerationStates(StatesGroup):

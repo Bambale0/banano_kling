@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
+from typing import Any, Awaitable, Callable
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,7 +20,7 @@ load_dotenv(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 )
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
@@ -38,6 +39,8 @@ from bot.database import (
     cleanup_saved_references,
     cleanup_stale_local_generation_tasks,
     init_db,
+    is_maintenance_mode_enabled,
+    is_user_banned,
 )
 from bot.handlers import (
     admin_router,
@@ -165,14 +168,82 @@ _configure_logging()
 logger = logging.getLogger(__name__)
 
 
+class AccessGuardMiddleware(BaseMiddleware):
+    """Blocks banned users and non-admin traffic while maintenance is enabled."""
+
+    async def __call__(
+        self,
+        handler: Callable[[types.TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: types.TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        user = getattr(event, "from_user", None)
+        if not user or config.is_admin(user.id):
+            return await handler(event, data)
+
+        try:
+            if await is_user_banned(user.id):
+                await self._reply(event, "⛔ Доступ к боту ограничен.")
+                return None
+            if await is_maintenance_mode_enabled():
+                await self._reply(
+                    event,
+                    "🛠 Бот временно на техническом обслуживании. Попробуйте позже.",
+                )
+                return None
+        except Exception:
+            logger.exception("Access guard failed; passing update through")
+
+        return await handler(event, data)
+
+    async def _reply(self, event: types.TelegramObject, text: str) -> None:
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer(text, show_alert=True)
+            except Exception:
+                logger.debug("Failed to answer blocked callback", exc_info=True)
+            return
+        if isinstance(event, types.Message):
+            try:
+                await event.answer(text)
+            except Exception:
+                logger.debug("Failed to answer blocked message", exc_info=True)
+
+
 def _preview_log_payload(value, limit: int = 1200) -> str:
+    def _redact_payload(obj):
+        if isinstance(obj, dict):
+            redacted = {}
+            for key, item in obj.items():
+                key_str = str(key)
+                lowered = key_str.lower()
+                if lowered in {"prompt", "negative_prompt", "system_prompt", "raw_body", "body_text", "param", "params"}:
+                    if isinstance(item, str):
+                        redacted[key_str] = f"[redacted:{len(item)} chars]"
+                    else:
+                        redacted[key_str] = "[redacted]"
+                    continue
+                if "url" in lowered and isinstance(item, str):
+                    redacted[key_str] = "[redacted:url]"
+                    continue
+                redacted[key_str] = _redact_payload(item)
+            return redacted
+        if isinstance(obj, list):
+            return [_redact_payload(item) for item in obj]
+        if isinstance(obj, str):
+            if obj.startswith(("http://", "https://")):
+                return "[redacted:url]"
+            return obj
+        return obj
+
     try:
-        if isinstance(value, (dict, list)):
-            text = json.dumps(value, ensure_ascii=False, default=str)
-        elif isinstance(value, bytes):
-            text = value.decode("utf-8", errors="replace")
+        prepared = _redact_payload(value)
+        if isinstance(prepared, (dict, list)):
+            text = json.dumps(prepared, ensure_ascii=False, default=str)
+        elif isinstance(prepared, bytes):
+            text = prepared.decode("utf-8", errors="replace")
         else:
-            text = str(value)
+            text = str(prepared)
     except Exception:
         text = repr(value)
     if len(text) <= limit:
@@ -1195,6 +1266,9 @@ def setup_dispatcher() -> Dispatcher:
 
     # Регистрируем глобальный обработчик ошибок
     dp.errors.register(errors_handler)
+    access_guard = AccessGuardMiddleware()
+    dp.message.outer_middleware(access_guard)
+    dp.callback_query.outer_middleware(access_guard)
 
     # ⭐ КРИТИЧЕСКИ ВАЖНО: Порядок роутеров в aiogram 3.x
     # Первый зарегистрированный роутер имеет НАИВЫСШИЙ приоритет!

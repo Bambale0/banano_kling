@@ -16,7 +16,8 @@ from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_topup_keyboard, get_video_media_step_keyboard,
                            get_video_model_label,
                            get_video_model_selection_keyboard,
-                           get_video_result_keyboard, load_prices)
+                           get_video_result_keyboard, get_ai_assistant_keyboard,
+                           load_prices)
 from bot.handlers.image_analyzer import (
     _audio_prompt_format,
     _clear_photo_prompt_audio_if_current,
@@ -94,6 +95,38 @@ def test_get_admin_keyboard():
     assert any(
         "admin_prompts" in btn.callback_data for row in kb.inline_keyboard for btn in row
     )
+    assert any(
+        "admin_ai" == btn.callback_data for row in kb.inline_keyboard for btn in row
+    )
+    assert any(
+        "admin_ai_help" == btn.callback_data for row in kb.inline_keyboard for btn in row
+    )
+
+
+def test_ai_assistant_keyboard_hides_admin_tools_for_regular_users(monkeypatch):
+    monkeypatch.setattr("bot.config.config.ADMIN_IDS_STR", "111")
+
+    kb = get_ai_assistant_keyboard(telegram_id=222)
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "ai_admin_help" not in callback_ids
+    assert "admin_back" not in callback_ids
+    assert callback_ids == ["back_main"]
+
+
+def test_ai_assistant_keyboard_shows_admin_tools_only_for_admin(monkeypatch):
+    monkeypatch.setattr("bot.config.config.ADMIN_IDS_STR", "111")
+
+    kb = get_ai_assistant_keyboard(telegram_id=111)
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "ai_admin_help" in callback_ids
+    assert "admin_back" in callback_ids
+    assert "back_main" in callback_ids
 
 
 def test_get_create_video_keyboard():

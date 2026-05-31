@@ -151,9 +151,11 @@ def get_admin_keyboard():
     builder.button(text="💸 Цены", callback_data="admin_prices")
     builder.button(text="🎟 Промокоды", callback_data="admin_promocodes")
     builder.button(text="📚 Промпты", callback_data="admin_prompts")
+    builder.button(text="🤖 ИИ-админ", callback_data="admin_ai")
+    builder.button(text="📘 Инструкция ИИ", callback_data="admin_ai_help")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -1016,6 +1018,8 @@ def get_payment_method_keyboard(
     package_id: str,
     has_yookassa: bool = True,
     has_crypto: bool = True,
+    has_lava: bool = False,
+    lava_price_usd: float | None = None,
 ) -> types.InlineKeyboardMarkup:
     """Выбор способа оплаты для конкретного пакета."""
     builder = InlineKeyboardBuilder()
@@ -1028,6 +1032,12 @@ def get_payment_method_keyboard(
         builder.button(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
+        )
+    if has_lava:
+        lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
+        builder.button(
+            text=f"🌍 Международная оплата (Lava){lava_suffix}",
+            callback_data=f"buy_lava_{package_id}",
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
@@ -1215,10 +1225,20 @@ def get_gemini_omni_result_keyboard():
     return builder.as_markup()
 
 
-def get_ai_assistant_keyboard():
+def get_ai_assistant_keyboard(
+    telegram_id: int | None = None,
+    back_callback: str = "back_main",
+    back_text: str = "🔙 В главное меню",
+):
     """Клавиатура для ИИ-ассистента"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 В главное меню", callback_data="back_main")
+    show_admin_tools = telegram_id is not None and config.is_admin(int(telegram_id))
+    if show_admin_tools:
+        builder.button(text="🛠 Админ-функции", callback_data="ai_admin_help")
+        builder.button(text="🔧 Админ-панель", callback_data="admin_back")
+    builder.button(text=back_text, callback_data=back_callback)
+    if show_admin_tools:
+        builder.adjust(2, 1)
     return builder.as_markup()
 
 

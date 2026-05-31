@@ -1,6 +1,7 @@
 import logging
 import html
 import mimetypes
+import re
 import uuid
 from urllib.parse import urlparse
 
@@ -45,6 +46,7 @@ from bot.database import (
 from bot.config import config
 from bot.keyboards import (
     get_ai_assistant_keyboard,
+    get_admin_keyboard,
     get_animate_hub_keyboard,
     get_back_keyboard,
     get_balance_keyboard,
@@ -474,17 +476,511 @@ def _ai_assistant_audio_error_text(error: Exception) -> str:
     return "⚠️ Не удалось прочитать аудио. Попробуйте отправить голосовое ещё раз."
 
 
+ADMIN_ASSISTANT_FINANCE_SECTIONS = {
+    "topups": ("пополн", "оплат", "платеж", "topup"),
+    "deductions": ("списан", "списания", "потрат", "deduct"),
+    "referrals_l1": ("1 линия", "первая линия", "l1"),
+    "referrals_l2": ("2 линия", "вторая линия", "l2"),
+    "partner_commissions": ("начислен", "комисс", "commission"),
+    "withdrawals": ("вывод", "withdraw"),
+}
+
+ADMIN_ASSISTANT_PROMPT_STATUSES = {
+    "pending": ("на провер", "ожида", "pending"),
+    "approved": ("опублик", "одобрен", "approved"),
+    "rejected": ("отклон", "rejected"),
+    "deactivated": ("скрыт", "деактив", "deactivated"),
+    "all": ("все", "all"),
+}
+
+
+def _ai_admin_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="📊 Статистика", callback_data="admin_stats"
+                ),
+                types.InlineKeyboardButton(
+                    text="📒 Финансы", callback_data="admin_finance"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="👥 Пользователи", callback_data="admin_users"
+                ),
+                types.InlineKeyboardButton(
+                    text="🎟 Промокоды", callback_data="admin_promocodes"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📚 Промпты", callback_data="admin_prompts"
+                ),
+                types.InlineKeyboardButton(
+                    text="💸 Цены", callback_data="admin_prices"
+                ),
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔧 Админ-панель", callback_data="admin_back"
+                ),
+                types.InlineKeyboardButton(
+                    text="🏠 Главное меню", callback_data="back_main"
+                ),
+            ],
+        ]
+    )
+
+
+def _ai_admin_single_action_keyboard(
+    text: str,
+    callback_data: str,
+) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text=text, callback_data=callback_data)],
+            [
+                types.InlineKeyboardButton(
+                    text="🛠 Админ-функции", callback_data="ai_admin_help"
+                ),
+                types.InlineKeyboardButton(
+                    text="🏠 Главное меню", callback_data="back_main"
+                ),
+            ],
+        ]
+    )
+
+
+def _normalize_ai_admin_text(value: str) -> str:
+    return str(value or "").strip().lower().replace("ё", "е")
+
+
+def _ai_admin_contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _ai_admin_extract_telegram_id(text: str) -> int | None:
+    # Telegram IDs are usually long; keep this broad enough for old accounts.
+    for match in re.finditer(r"(?<!\d)(\d{4,15})(?!\d)", text):
+        try:
+            return int(match.group(1))
+        except ValueError:
+            continue
+    return None
+
+
+def _ai_admin_extract_prompt_id(text: str) -> int | None:
+    patterns = (
+        r"(?:промпт|prompt)\s*#?\s*(\d{1,10})",
+        r"#\s*(\d{1,10})",
+        r"(?:id|айди)\s*[:#]?\s*(\d{1,10})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _ai_admin_extract_promo_code(raw_text: str) -> str | None:
+    if not re.search(r"\b(?:промокод|promo|код)\b", raw_text, flags=re.IGNORECASE):
+        return None
+    match = re.search(
+        r"(?:промокод|promo|код)\s*[:#-]?\s*([0-9A-Za-zА-Яа-яЁё_-]{2,32})",
+        raw_text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        code = match.group(1)
+        if code.lower().replace("ё", "е") not in {"промокод", "код", "статистика"}:
+            return code
+    return None
+
+
+async def _ai_admin_user_exists(telegram_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM users WHERE telegram_id = ? LIMIT 1",
+            (telegram_id,),
+        )
+        return await cursor.fetchone() is not None
+
+
+def _format_ai_admin_help() -> str:
+    return (
+        "🛠 <b>Админ-функции BotAI</b>\n\n"
+        "Можно писать обычным текстом:\n"
+        "• <code>статистика</code> — общая сводка\n"
+        "• <code>финансы</code>, <code>пополнения</code>, "
+        "<code>списания</code>, <code>выводы</code>\n"
+        "• <code>пользователь 123456789</code> — карточка и кнопки баланса\n"
+        "• <code>партнер 123456789</code> — партнёрская карточка\n"
+        "• <code>промокод SALE10</code> — статистика по коду\n"
+        "• <code>промпт #12</code> или <code>промпты на проверке</code>\n\n"
+        "Операции, которые меняют данные, открываются через защищённые кнопки админ-панели."
+    )
+
+
+def _format_ai_admin_stats(stats: dict) -> str:
+    return (
+        "🔧 <b>Админ-сводка</b>\n\n"
+        f"• Пользователей: <code>{stats['total_users']}</code>\n"
+        f"• Генераций: <code>{stats['total_generations']}</code>\n"
+        f"• Транзакций: <code>{stats['total_transactions']}</code>\n"
+        f"• Выручка: <code>{stats['total_revenue']:.0f}</code> ₽\n"
+        f"• Пакетных задач: <code>{stats.get('total_batch_jobs', 0)}</code>\n"
+        f"• Рефералов: <code>{stats.get('total_referrals', 0)}</code>"
+    )
+
+
+def _format_ai_admin_user_stats(telegram_id: int, stats: dict) -> str:
+    return f"""
+👤 <b>Пользователь</b>
+
+🆔 Telegram ID: <code>{telegram_id}</code>
+💰 Баланс: <code>{stats['credits']}</code> бананов
+📊 Генераций: <code>{stats['generations']}</code>
+💸 Потрачено: <code>{stats['total_spent']}</code>
+📅 Регистрация: <code>{stats['member_since']}</code>
+🤝 Рефералов: <code>{stats['referrals_count']}</code>
+🎁 Заработано по рефке: <code>{stats['referral_earned']}</code> 🍌
+🔗 Рефкод: <code>{stats['referral_code'] or '—'}</code>
+
+Для изменения баланса используйте кнопки ниже.
+""".strip()
+
+
+def _ai_admin_user_keyboard(telegram_id: int) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="➕ Добавить бананы",
+                    callback_data=f"admin_add_credits_{telegram_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="➖ Списать бананы",
+                    callback_data=f"admin_deduct_credits_{telegram_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🤝 Реферальная статистика",
+                    callback_data=f"admin_partner_view_{telegram_id}",
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🛠 Админ-функции", callback_data="ai_admin_help"
+                ),
+                types.InlineKeyboardButton(
+                    text="🔧 Админ-панель", callback_data="admin_back"
+                ),
+            ],
+        ]
+    )
+
+
+def _ai_admin_finance_section(text: str) -> str | None:
+    for section, aliases in ADMIN_ASSISTANT_FINANCE_SECTIONS.items():
+        if _ai_admin_contains_any(text, aliases):
+            return section
+    return None
+
+
+def _ai_admin_prompt_status(text: str) -> str:
+    for status, aliases in ADMIN_ASSISTANT_PROMPT_STATUSES.items():
+        if _ai_admin_contains_any(text, aliases):
+            return status
+    return "pending"
+
+
+async def _answer_admin_ai_assistant_message(
+    message: types.Message,
+    user_message: str,
+) -> bool:
+    if not config.is_admin(message.from_user.id):
+        return False
+
+    raw_text = str(user_message or "").strip()
+    text = _normalize_ai_admin_text(raw_text)
+    if not text:
+        return False
+
+    admin_word = "админ" in text or "admin" in text
+
+    from bot.handlers import admin as admin_handlers
+    from bot.database import (
+        get_admin_finance_report,
+        get_admin_partner_details,
+        get_admin_partner_stats,
+        get_admin_promo_stats,
+        get_admin_prompt_details,
+        get_admin_prompt_stats,
+        get_admin_prompts,
+        get_admin_stats,
+        get_pending_partner_withdrawals,
+        get_promo_code_by_code,
+        get_promo_code_details,
+    )
+
+    async def answer(
+        text_value: str,
+        reply_markup: types.InlineKeyboardMarkup | None = None,
+    ) -> None:
+        await message.answer(
+            text_value,
+            reply_markup=reply_markup
+            or get_ai_assistant_keyboard(telegram_id=message.from_user.id),
+            parse_mode="HTML",
+        )
+
+    if admin_word and _ai_admin_contains_any(
+        text, ("помощ", "умееш", "функц", "команд", "что мож")
+    ):
+        await answer(_format_ai_admin_help(), _ai_admin_keyboard())
+        return True
+
+    if text in {"админ", "admin", "админка", "панель", "админ панель"} or (
+        admin_word and "панел" in text
+    ):
+        stats = await get_admin_stats()
+        await answer(_format_ai_admin_stats(stats), get_admin_keyboard())
+        return True
+
+    if "рассыл" in text:
+        await answer(
+            "⚙️ <b>Рассылка</b>\n\n"
+            "Я могу открыть защищённый сценарий рассылки. Текст и фото рассылки подтверждаются перед отправкой.",
+            _ai_admin_single_action_keyboard(
+                "⚙️ Открыть рассылку",
+                "admin_broadcast",
+            ),
+        )
+        return True
+
+    if _ai_admin_contains_any(text, ("пользовател", "юзер", "user")):
+        telegram_id = _ai_admin_extract_telegram_id(text)
+        if telegram_id is None:
+            await answer(
+                "👥 <b>Пользователи</b>\n\n"
+                "Напишите Telegram ID, например: <code>пользователь 123456789</code>.",
+                _ai_admin_single_action_keyboard("👥 Открыть поиск", "admin_users"),
+            )
+            return True
+        if not await _ai_admin_user_exists(telegram_id):
+            await answer(
+                f"❌ Пользователь с Telegram ID <code>{telegram_id}</code> не найден.",
+                _ai_admin_single_action_keyboard("👥 Искать другого", "admin_users"),
+            )
+            return True
+        stats = await get_user_stats(telegram_id)
+        await answer(
+            _format_ai_admin_user_stats(telegram_id, stats),
+            _ai_admin_user_keyboard(telegram_id),
+        )
+        return True
+
+    if _ai_admin_contains_any(
+        text,
+        ("баланс пользовател", "бананы пользовател", "кредиты пользовател"),
+    ):
+        telegram_id = _ai_admin_extract_telegram_id(text)
+        if telegram_id and await _ai_admin_user_exists(telegram_id):
+            stats = await get_user_stats(telegram_id)
+            await answer(
+                _format_ai_admin_user_stats(telegram_id, stats),
+                _ai_admin_user_keyboard(telegram_id),
+            )
+            return True
+
+    if _ai_admin_contains_any(text, ("партнер", "реферал", "рефы")) and (
+        admin_word
+        or _ai_admin_contains_any(text, ("статист", "топ", "карточ", "вывод", "заявк"))
+        or _ai_admin_extract_telegram_id(text) is not None
+    ):
+        if "вывод" in text or "заявк" in text:
+            withdrawals = await get_pending_partner_withdrawals()
+            await answer(
+                admin_handlers._format_admin_withdrawals_text(withdrawals),
+                admin_handlers._admin_withdrawals_keyboard(withdrawals),
+            )
+            return True
+
+        telegram_id = _ai_admin_extract_telegram_id(text)
+        if telegram_id is not None:
+            details = await get_admin_partner_details(telegram_id)
+            if not details:
+                await answer(
+                    f"❌ Партнёр/пользователь с Telegram ID <code>{telegram_id}</code> не найден.",
+                    _ai_admin_single_action_keyboard(
+                        "🤝 Открыть поиск",
+                        "admin_partner_lookup",
+                    ),
+                )
+                return True
+            await answer(
+                admin_handlers._format_admin_partner_details_text(details),
+                admin_handlers._admin_partner_detail_keyboard(telegram_id),
+            )
+            return True
+
+        stats = await get_admin_partner_stats()
+        await answer(
+            admin_handlers._format_admin_partners_text(stats),
+            admin_handlers._admin_partners_keyboard(stats.get("top_partners", [])),
+        )
+        return True
+
+    finance_request = _ai_admin_contains_any(
+        text,
+        ("финанс", "выруч", "транзакц", "списан", "отчет"),
+    ) or (
+        admin_word
+        and _ai_admin_contains_any(text, ("пополн", "оплат", "платеж", "вывод"))
+    ) or _ai_admin_contains_any(
+        text,
+        ("пополнения", "пополнений", "платежи", "платежей", "оплаты"),
+    )
+
+    if finance_request:
+        section = _ai_admin_finance_section(text)
+        report = await get_admin_finance_report(25)
+        if section:
+            await answer(
+                admin_handlers._format_admin_finance_section_text(section, report),
+                admin_handlers._admin_finance_section_keyboard(section),
+            )
+        else:
+            await answer(
+                admin_handlers._format_admin_finance_overview(report),
+                admin_handlers._admin_finance_keyboard(),
+            )
+        return True
+
+    if _ai_admin_contains_any(text, ("статист", "метрик", "сводк", "дашборд")) and (
+        admin_word
+        or not _ai_admin_contains_any(text, ("модель", "промпт", "пользовател", "партнер"))
+    ):
+        stats = await get_admin_stats()
+        await answer(_format_ai_admin_stats(stats), get_admin_keyboard())
+        return True
+
+    promo_code = _ai_admin_extract_promo_code(raw_text)
+    if _ai_admin_contains_any(text, ("промокод", "promo")) and (
+        admin_word
+        or promo_code
+        or _ai_admin_contains_any(text, ("найди", "открой", "статист", "включ", "выключ"))
+    ):
+        if promo_code:
+            promo = await get_promo_code_by_code(promo_code, active_only=False)
+            if not promo:
+                await answer(
+                    f"❌ Промокод <code>{html.escape(promo_code)}</code> не найден.",
+                    _ai_admin_single_action_keyboard(
+                        "🎟 Открыть промокоды",
+                        "admin_promocodes",
+                    ),
+                )
+                return True
+            details = await get_promo_code_details(promo.id)
+            await answer(
+                admin_handlers._format_admin_promo_details_text(details),
+                admin_handlers._admin_promo_detail_keyboard(details["promo"]),
+            )
+            return True
+
+        stats = await get_admin_promo_stats()
+        await answer(
+            admin_handlers._format_admin_promocodes_text(stats),
+            admin_handlers._admin_promocodes_keyboard(stats.get("promocodes", [])),
+        )
+        return True
+
+    if "промпт" in text and (
+        admin_word
+        or _ai_admin_contains_any(
+            text,
+            (
+                "модерац",
+                "провер",
+                "опублик",
+                "отклон",
+                "скрыт",
+                "карточ",
+                "статист",
+                "#",
+            ),
+        )
+    ):
+        prompt_id = _ai_admin_extract_prompt_id(text)
+        if prompt_id is not None:
+            prompt = await get_admin_prompt_details(prompt_id)
+            if not prompt:
+                await answer(
+                    f"❌ Промпт <code>#{prompt_id}</code> не найден.",
+                    _ai_admin_single_action_keyboard(
+                        "📚 Открыть промпты",
+                        "admin_prompts",
+                    ),
+                )
+                return True
+            await answer(
+                admin_handlers._format_admin_prompt_detail_text(prompt),
+                admin_handlers._admin_prompt_detail_keyboard(prompt),
+            )
+            return True
+
+        status = _ai_admin_prompt_status(text)
+        stats = await get_admin_prompt_stats()
+        prompts = await get_admin_prompts(status=status, limit=10, offset=0)
+        total = int(stats.get("total" if status == "all" else status, 0) or 0)
+        await answer(
+            admin_handlers._format_admin_prompts_list_text(status, prompts, stats, 1),
+            admin_handlers._admin_prompts_list_keyboard(status, prompts, 1, total),
+        )
+        return True
+
+    if _ai_admin_contains_any(text, ("цен", "прайс", "стоимость")) and (
+        admin_word
+        or _ai_admin_contains_any(text, ("управ", "измен", "помен", "настро"))
+    ):
+        await answer(
+            "💸 <b>Управление ценами</b>\n\n"
+            "Откройте раздел, где нужно изменить пакеты, фото-модели или видео-модели.",
+            admin_handlers._admin_price_menu_keyboard(),
+        )
+        return True
+
+    if admin_word:
+        await answer(_format_ai_admin_help(), _ai_admin_keyboard())
+        return True
+
+    return False
+
+
 async def _build_ai_assistant_context(user_id: int, ai_mode: str) -> dict:
     user = await get_or_create_user(user_id)
     db_settings = await get_user_settings(user_id)
+    is_admin_user = config.is_admin(user_id)
 
-    return {
+    context = {
         "user_credits": user.credits,
         "preferred_model": db_settings["preferred_model"],
         "preferred_video_model": db_settings["preferred_video_model"],
         "image_service": db_settings.get("image_service", "nanobanana"),
         "menu_location": "главное меню" if ai_mode == "main_menu" else "настройки",
     }
+    if is_admin_user:
+        context["is_admin"] = True
+        context["admin_capabilities"] = (
+            "статистика, финансы, пользователи, партнёры, промокоды, цены, "
+            "рассылки и модерация промптов через защищённые кнопки"
+        )
+    return context
 
 
 async def _answer_ai_assistant_message(
@@ -509,7 +1005,7 @@ async def _answer_ai_assistant_message(
         except ValueError as e:
             await message.answer(
                 _ai_assistant_audio_error_text(e),
-                reply_markup=get_ai_assistant_keyboard(),
+                reply_markup=get_ai_assistant_keyboard(telegram_id=user_id),
                 parse_mode="HTML",
             )
             return
@@ -517,9 +1013,15 @@ async def _answer_ai_assistant_message(
     if not user_message and not audio_bytes:
         await message.answer(
             "Напишите вопрос текстом или отправьте голосовое/аудио для BotAI.",
-            reply_markup=get_ai_assistant_keyboard(),
+            reply_markup=get_ai_assistant_keyboard(telegram_id=user_id),
             parse_mode="HTML",
         )
+        return
+
+    if not audio_bytes and await _answer_admin_ai_assistant_message(
+        message,
+        user_message,
+    ):
         return
 
     context = await _build_ai_assistant_context(user_id, ai_mode)
@@ -541,13 +1043,13 @@ async def _answer_ai_assistant_message(
         if response:
             await message.answer(
                 f"🤖 <b>BotAI:</b>{response}",
-                reply_markup=get_ai_assistant_keyboard(),
+                reply_markup=get_ai_assistant_keyboard(telegram_id=user_id),
                 parse_mode="HTML",
             )
         else:
             await message.answer(
                 "😕 Извини, я временно недоступен. Попробуй ещё раз позже или напиши в поддержку @only_tany",
-                reply_markup=get_ai_assistant_keyboard(),
+                reply_markup=get_ai_assistant_keyboard(telegram_id=user_id),
                 parse_mode="HTML",
             )
 
@@ -555,7 +1057,7 @@ async def _answer_ai_assistant_message(
         logger.exception(f"AI Assistant error: {e}")
         await message.answer(
             "😕 Что-то пошло не так. Попробуй ещё раз или обратись в поддержку @only_tany",
-            reply_markup=get_ai_assistant_keyboard(),
+            reply_markup=get_ai_assistant_keyboard(telegram_id=user_id),
             parse_mode="HTML",
         )
 
@@ -618,11 +1120,29 @@ async def _activate_referral_code(
 ) -> str:
     code = str(referral_code or "").strip().upper()
     if not code:
+        logger.info(
+            "Referral activation skipped: empty code user_id=%s username=%s",
+            getattr(referred, "id", None),
+            getattr(referred, "username", None),
+        )
         return ""
 
+    logger.info(
+        "Referral activation requested: user_id=%s username=%s code=%s",
+        getattr(referred, "id", None),
+        getattr(referred, "username", None),
+        code,
+    )
     referrer = await get_user_by_referral_code(code)
     processed = await process_referral(referred.id, code)
     if not processed:
+        logger.info(
+            "Referral activation not applied: user_id=%s username=%s code=%s referrer_found=%s",
+            getattr(referred, "id", None),
+            getattr(referred, "username", None),
+            code,
+            bool(referrer),
+        )
         return ""
 
     if referrer:
@@ -632,6 +1152,13 @@ async def _activate_referral_code(
             referred=referred,
         )
 
+    logger.info(
+        "Referral activation applied: user_id=%s username=%s code=%s referrer_telegram_id=%s",
+        getattr(referred, "id", None),
+        getattr(referred, "username", None),
+        code,
+        getattr(referrer, "telegram_id", None) if referrer else None,
+    )
     return (
         "\n🎁 <b>Реферальный бонус активирован!</b>\n"
         "Вы получили бонус за регистрацию по приглашению."
@@ -1656,6 +2183,12 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     # Проверяем deep linking для возврата после оплаты
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
+    logger.info(
+        "Start command received: user_id=%s username=%s args=%s",
+        getattr(message.from_user, "id", None),
+        getattr(message.from_user, "username", None),
+        args,
+    )
 
     if args and args[0].startswith("success_"):
         # Извлекаем order_id из аргумента
@@ -2822,7 +3355,16 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
     }
 
     # Приветственное сообщение от ИИ
-    welcome_ai = """🍌 <b>AI-ассистент</b>
+    admin_hint = ""
+    if config.is_admin(callback.from_user.id):
+        admin_hint = (
+            "\n\n<b>Для админа:</b>\n"
+            "• напишите <code>статистика</code>, <code>финансы</code>, "
+            "<code>пользователь 123456789</code>\n"
+            "• или нажмите «Админ-функции» ниже"
+        )
+
+    welcome_ai = f"""🍌 <b>AI-ассистент</b>
 
 Я помогу с моделями, промптами, настройками и сценариями генерации.
 
@@ -2834,10 +3376,14 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
 • чем отличается Veo от Kling
 • как работает Motion Control
 
-<i>Просто напишите вопрос — отвечу по делу и подскажу следующий шаг в боте.</i>"""
+<i>Просто напишите вопрос — отвечу по делу и подскажу следующий шаг в боте.</i>{admin_hint}"""
 
     await callback.message.edit_text(
-        welcome_ai, reply_markup=get_ai_assistant_keyboard(), parse_mode="HTML"
+        welcome_ai,
+        reply_markup=get_ai_assistant_keyboard(
+            telegram_id=callback.from_user.id,
+        ),
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -2873,7 +3419,30 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
 <i>Напишите вопрос в свободной форме — например: «что лучше для рекламного ролика?»</i>"""
 
     await callback.message.edit_text(
-        welcome_ai, reply_markup=get_back_keyboard("menu_settings"), parse_mode="HTML"
+        welcome_ai,
+        reply_markup=get_ai_assistant_keyboard(
+            telegram_id=callback.from_user.id,
+            back_callback="menu_settings",
+            back_text="🔙 К настройкам",
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ai_admin_help")
+async def open_ai_admin_assistant_help(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает быстрые админ-функции внутри AI-ассистента."""
+    if not config.is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.set_state(AIAssistantStates.waiting_for_message)
+    await state.update_data(ai_mode="main_menu")
+    await callback.message.edit_text(
+        _format_ai_admin_help(),
+        reply_markup=_ai_admin_keyboard(),
+        parse_mode="HTML",
     )
     await callback.answer()
 

@@ -45,6 +45,8 @@ def test_admin_states():
     assert AdminStates.waiting_credits_amount
     assert AdminStates.waiting_prompt_id
     assert AdminStates.waiting_prompt_reject_reason
+    assert AdminStates.waiting_ai_request
+    assert AdminStates.confirming_ai_action
 
 
 def test_batch_generation_states():
