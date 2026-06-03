@@ -73,6 +73,7 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.seedream_service import seedream_lite_service as seedream_service
+from bot.services.subscription_service import subscription_service
 from bot.services.veo_service import veo_service
 from bot.states import GenerationStates
 from bot.utils.help_texts import (
@@ -181,10 +182,10 @@ def _build_image_creation_text(
     unit_cost = preset_manager.get_generation_cost(model_config["cost_key"])
     total_cost = unit_cost * max(1, int(img_count or 1))
     cost_text = (
-        f"💰 Стоимость: <code>{total_cost}</code>🍌 "
-        f"(<code>{img_count}</code>×<code>{unit_cost}</code>🍌)\n"
+        f"💰 Стоимость: <code>{total_cost}</code>🪙 "
+        f"(<code>{img_count}</code>×<code>{unit_cost}</code>🪙)\n"
         if img_count and img_count > 1
-        else f"💰 Стоимость: <code>{unit_cost}</code>🍌\n"
+        else f"💰 Стоимость: <code>{unit_cost}</code>🪙\n"
     )
     return (
         "🖼 <b>Создание фото</b>\n"
@@ -196,6 +197,146 @@ def _build_image_creation_text(
         "\n<b>Введите промпт для генерации:</b>\n"
         "Опишите сцену, стиль и детали результата."
     )
+
+
+def _build_feed_retry_model_text(
+    model_id: str,
+    options: dict,
+    reference_images: list,
+    prompt: str,
+    img_count: int = 1,
+) -> str:
+    model_config = get_image_model_config(model_id)
+    unit_cost = preset_manager.get_generation_cost(model_config["cost_key"])
+    total_cost = unit_cost * max(1, int(img_count or 1))
+    prompt_preview = html.escape((prompt or "").strip())
+    if len(prompt_preview) > 900:
+        prompt_preview = prompt_preview[:900].rstrip() + "..."
+    return (
+        "🔁 <b>Повтор по промпту из ленты</b>\n\n"
+        f"📎 Ваших референсов: <code>{len(reference_images)}</code>\n"
+        f"🤖 Модель: <code>{model_config['label']}</code>\n"
+        f"💰 Стоимость: <code>{total_cost}</code>🪙"
+        f"{f' (<code>{img_count}</code>×<code>{unit_cost}</code>🪙)' if img_count > 1 else ''}\n\n"
+        "📝 <b>Промпт (превью):</b>\n"
+        f"<code>{prompt_preview}</code>\n\n"
+        "⚙️ <b>Параметры:</b>\n"
+        f"{_format_image_settings(model_id, options)}\n\n"
+        "Можно изменить промпт перед запуском."
+    )
+
+
+async def _edit_feed_retry_control_message(
+    target,
+    text: str,
+    reply_markup=None,
+) -> int | None:
+    message = target.message if isinstance(target, types.CallbackQuery) else target
+    try:
+        if getattr(message, "photo", None):
+            await message.edit_caption(
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        else:
+            await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+        return message.message_id
+    except Exception:
+        if isinstance(target, types.CallbackQuery):
+            try:
+                await target.message.delete()
+            except Exception:
+                pass
+            sent = await target.message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+            return sent.message_id
+        else:
+            sent = await target.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+            return sent.message_id
+
+
+async def _edit_feed_retry_control_by_id(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup=None,
+) -> int:
+    try:
+        await bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return message_id
+    except Exception:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+            return message_id
+        except Exception:
+            sent = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+            return sent.message_id
+
+
+def _build_feed_retry_upload_text(prompt: str, current_count: int, max_refs: int = 14) -> str:
+    prompt_preview = html.escape((prompt or "").strip())
+    if len(prompt_preview) > 700:
+        prompt_preview = prompt_preview[:700].rstrip() + "..."
+    return (
+        "🔁 <b>Повторить генерацию</b>\n\n"
+        "Промпт исходной работы будет применён к вашим референсам.\n\n"
+        "📝 <b>Промпт (превью):</b>\n"
+        f"<code>{prompt_preview}</code>\n\n"
+        "Полный текст доступен по кнопке ниже.\n"
+        f"Загружено ваших фото: <code>{current_count}/{max_refs}</code>\n"
+        "Отправьте ещё фото или переходите к выбору модели."
+    )
+
+
+def _build_feed_retry_full_prompt_text(prompt: str) -> str:
+    escaped_prompt = html.escape((prompt or "").strip())
+    max_prompt_len = 3400
+    note = ""
+    if len(escaped_prompt) > max_prompt_len:
+        escaped_prompt = escaped_prompt[:max_prompt_len].rstrip() + "..."
+        note = "\n\n<i>Промпт длиннее лимита одного сообщения. Для запуска сохранён полный текст.</i>"
+    return (
+        "📄 <b>Полный промпт из ленты</b>\n\n"
+        f"<code>{escaped_prompt}</code>"
+        f"{note}\n\n"
+        "Можно заменить текст перед запуском."
+    )
+
+
+def _get_feed_retry_prompt_actions_keyboard():
+    builder = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✏️ Изменить промпт", callback_data="feed_retry_edit_prompt"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔙 Назад к повтору", callback_data="feed_retry_back_to_setup"
+                )
+            ],
+        ]
+    )
+    return builder
 
 
 def _build_mix_photo_prompt_text(ref_count: int) -> str:
@@ -385,12 +526,29 @@ async def _charge_generation_or_free_token(
     *,
     reason: str,
     external_id: str,
+    usage_type: str,
+    model: str,
     metadata: dict | None = None,
-) -> tuple[bool, bool]:
-    """Charge bananas or consume one free-generation token."""
+) -> tuple[bool, str, int | None]:
+    """Use subscription first, then free-generation token, then BoomCoin balance."""
+    decision = await subscription_service.consume(
+        telegram_id,
+        usage_type=usage_type,
+        model=model,
+        external_id=external_id,
+        metadata=metadata,
+    )
+    if decision.allowed:
+        logger.info(
+            "Consumed subscription usage for user %s: %s",
+            telegram_id,
+            decision.label,
+        )
+        return True, "subscription", decision.usage_id
+
     if await consume_free_generation(telegram_id):
         logger.info("Consumed free generation token for user %s", telegram_id)
-        return True, True
+        return True, "free_generation", None
     charged = await deduct_credits(
         telegram_id,
         amount,
@@ -398,22 +556,26 @@ async def _charge_generation_or_free_token(
         external_id=external_id,
         metadata=metadata,
     )
-    return charged, False
+    return charged, "credits" if charged else "none", None
 
 
 async def _refund_generation_charge(
     telegram_id: int,
     amount: int,
     *,
-    used_free_generation: bool,
+    billing_source: str,
+    subscription_usage_id: int | None = None,
     reason: str,
     external_id: str,
     metadata: dict | None = None,
 ) -> None:
-    if used_free_generation:
+    if billing_source == "subscription":
+        await subscription_service.refund(subscription_usage_id)
+        return
+    if billing_source == "free_generation":
         await refund_free_generation(telegram_id)
         return
-    if not config.is_admin(telegram_id):
+    if billing_source == "credits" and not config.is_admin(telegram_id):
         await add_credits_once(
             telegram_id,
             amount,
@@ -421,6 +583,14 @@ async def _refund_generation_charge(
             external_id=external_id,
             metadata=metadata,
         )
+
+
+def _format_billing_status(amount: int, billing_source: str) -> str:
+    if billing_source == "subscription":
+        return "по подписке"
+    if billing_source == "free_generation":
+        return "бесплатная генерация"
+    return f"<code>{amount}</code> BoomCoin списано"
 
 
 def _build_image_task_started_text(
@@ -449,7 +619,7 @@ def _build_video_waiting_text(
         f"🤖 Модель: <code>{html.escape(str(model))}</code>\n"
         f"⏱ Длительность: <code>{duration}s</code>\n"
         f"📐 Формат: <code>{html.escape(str(ratio))}</code>\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
+        f"💰 Стоимость: <code>{cost}</code>🪙\n\n"
         "Сейчас модель собирает кадры и движение. "
         "Результат придёт сюда автоматически.\n\n"
         "<i>Обычно это занимает 1-5 минут.</i>"
@@ -473,7 +643,7 @@ def _build_video_task_started_text(
         "✅ <b>Видео задача принята</b>\n\n"
         f"Код: <code>{html.escape(str(task_id))}</code>\n"
         f"🎯 <code>{html.escape(str(model))}</code> | {duration}s | {html.escape(ratio_text)}\n"
-        f"💰 <code>{cost}</code>🍌 {price_text}\n\n"
+        f"💰 <code>{cost}</code>🪙 {price_text}\n\n"
         "Работа идёт, результат появится в этом чате автоматически."
     )
 
@@ -624,10 +794,11 @@ def _format_video_settings(data: dict) -> str:
         "video": "Видео + Текст → Видео",
     }.get(ui["current_v_type"], ui["current_v_type"])
 
+    model_title = get_video_model_config(ui["current_model"]).get("label", ui["current_model"])
     lines = [
         "⚙️ <b>Текущие настройки:</b>",
         f"• Тип: <code>{type_text}</code>",
-        f"• Модель: <code>{ui['current_model']}</code>",
+        f"• Модель: <code>{model_title}</code>",
         f"• Длительность: <code>{ui['current_duration']} сек</code>",
     ]
 
@@ -855,7 +1026,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     # Показываем экран загрузки референсов (ШАГ 1)
     text = (
         "🖼 <b>Создание фото</b>\n\n"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n\n"
         "<b>Шаг 1: загрузка референсов</b>\n"
         "Это необязательно, но полезно для:\n"
         "• сходства с объектом\n"
@@ -1060,8 +1231,8 @@ async def start_motion_control(callback: types.CallbackQuery, state: FSMContext)
 
     text = (
         "🎯 <b>Kling 2.6 Motion Control</b>\n\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
-        f"Цена: <code>{price_per_second}</code>🍌/сек "
+        f"🪙 Баланс: <code>{user_credits}</code>\n\n"
+        f"Цена: <code>{price_per_second}</code>🪙/сек "
         "по длительности видео движения.\n\n"
         "<b>Шаг 1: Reference Image</b>\n"
         "Загрузите чёткое фото субъекта:\n"
@@ -1104,7 +1275,7 @@ async def show_photo_prompt(callback: types.CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    await state.set_state(GenerationStates.confirming_reference_images)
 
 
 @router.callback_query(F.data == "img_ref_upload_new")
@@ -1184,16 +1355,29 @@ async def _show_video_creation_screen(
             f"<code>{user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}</code>\n"
         )
 
-    text = (
-        "🎬 <b>Создание видео</b>\n\n"
-        f"{ref_text}"
-        f"{_format_video_settings(data)}\n"
-        f"{media_status}"
-        f"{prompt_text}"
+    title = "🎬 <b>Создание видео</b>"
+    prompt_hint = (
         "\n<b>Введите промпт для генерации:</b>\n"
         "• что происходит в сцене\n"
         "• как движется камера\n"
         "• какой нужен стиль и настрой"
+    )
+    if current_model == "grok_imagine":
+        title = "🧠 <b>Grok Imagine 1.5</b>"
+        prompt_hint = (
+            "\n<b>Что дальше:</b>\n"
+            "1. Выберите формат, длительность и режим ниже\n"
+            "2. При необходимости загрузите/замените стартовое фото\n"
+            "3. Отправьте промпт с описанием движения"
+        )
+
+    text = (
+        f"{title}\n\n"
+        f"{ref_text}"
+        f"{_format_video_settings(data)}\n"
+        f"{media_status}"
+        f"{prompt_text}"
+        f"{prompt_hint}"
     )
 
     # Напоминание о загрузке медиа
@@ -1547,7 +1731,7 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
 
     text = (
         "🎬 <b>Видео + Текст → Видео</b>\n\n"
-        f"🍌 Баланс: <code>{user_credits}</code>\n\n"
+        f"🪙 Баланс: <code>{user_credits}</code>\n\n"
         "<b>Шаг 1: загрузка видео-референсов</b>\n"
         + (
             "Для HappyHorse Edit нужно загрузить минимум одно видео.\n\n"
@@ -2622,22 +2806,40 @@ async def _refresh_image_creation_screen(
     data = await state.get_data()
     img_count = data.get("img_count", 1)
     current_service, current_options, reference_images = await _sync_image_state(state)
-    await callback.message.edit_text(
-        _build_image_creation_text(
+    is_feed_retry = bool(data.get("feed_retry_task_id"))
+    text = (
+        _build_feed_retry_model_text(
+            current_service,
+            current_options,
+            reference_images,
+            data.get("feed_retry_prompt", ""),
+            img_count,
+        )
+        if is_feed_retry
+        else _build_image_creation_text(
             current_service,
             current_options,
             reference_images,
             img_count,
-        ),
-        reply_markup=get_create_image_keyboard(
-            current_service=current_service,
-            current_ratio=current_options["aspect_ratio"],
-            num_refs=len(reference_images),
-            current_options=current_options,
-            img_count=img_count,
-        ),
-        parse_mode="HTML",
+        )
     )
+    markup = get_create_image_keyboard(
+        current_service=current_service,
+        current_ratio=current_options["aspect_ratio"],
+        num_refs=len(reference_images),
+        current_options=current_options,
+        img_count=img_count,
+        launch_callback_data="feed_retry_run" if is_feed_retry else None,
+        launch_text="🚀 Запустить повтор",
+        edit_prompt_callback_data="feed_retry_edit_prompt" if is_feed_retry else None,
+        full_prompt_callback_data="feed_retry_full_prompt" if is_feed_retry else None,
+    )
+    if is_feed_retry:
+        control_message_id = await _edit_feed_retry_control_message(callback, text, markup)
+        if control_message_id:
+            await state.update_data(feed_retry_control_message_id=control_message_id)
+    else:
+        await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "img_count_info")
@@ -2661,7 +2863,12 @@ async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(img_count=count)
     await _refresh_image_creation_screen(callback, state)
     await callback.answer(f"✅ Будет запущено {count} генераций")
-    await state.set_state(GenerationStates.waiting_for_input)
+    data = await state.get_data()
+    await state.set_state(
+        GenerationStates.confirming_reference_images
+        if data.get("feed_retry_task_id")
+        else GenerationStates.waiting_for_input
+    )
 
 
 @router.callback_query(F.data.startswith("img_model_"))
@@ -2670,7 +2877,12 @@ async def handle_dynamic_image_model(callback: types.CallbackQuery, state: FSMCo
     await _sync_image_state(state, model_id=model_id)
     await _refresh_image_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    data = await state.get_data()
+    await state.set_state(
+        GenerationStates.confirming_reference_images
+        if data.get("feed_retry_task_id")
+        else GenerationStates.waiting_for_input
+    )
 
 
 @router.callback_query(F.data.startswith("imgopt_"))
@@ -2716,7 +2928,12 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
     await _sync_image_state(state, option_updates={option_name: value})
     await _refresh_image_creation_screen(callback, state)
     await callback.answer()
-    await state.set_state(GenerationStates.waiting_for_input)
+    data = await state.get_data()
+    await state.set_state(
+        GenerationStates.confirming_reference_images
+        if data.get("feed_retry_task_id")
+        else GenerationStates.waiting_for_input
+    )
 
 
 @router.callback_query(F.data == "model_nanobanana")
@@ -3232,8 +3449,8 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
     # Шаг 1: Загрузка референсов
     await callback.message.edit_text(
         f"🖼 <b>Генерация фото</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n"
+        f"🤖 Модель: {model_name} ({model_cost}🪙)"
         f"<b>Шаг 1: Референсы (опционально)</b>"
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
@@ -3267,8 +3484,8 @@ async def start_image_editing(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"✏️ <b>Редактирование фото</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: 💎 Banano Pro ({edit_cost}🍌, 4K, сохранение лиц)"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n"
+        f"🤖 Модель: 💎 Banano Pro ({edit_cost}🪙, 4K, сохранение лиц)"
         f"<b>Как редактировать:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>4 фото лица</b> для сохранения (опционально)\n"
@@ -3314,8 +3531,8 @@ async def start_video_generation(callback: types.CallbackQuery, state: FSMContex
 
     await callback.message.edit_text(
         f"🎬 <b>Генерация видео</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n"
+        f"🤖 Модель: {model_name} ({model_cost}🪙)"
         f"<b>Опции видео:</b>\n"
         f"   ⏱ Длительность: <code>{video_options.get('duration', 5)} сек</code>\n"
         f"   📐 Формат: <code>{video_options.get('aspect_ratio', '16:9')}</code>\n"
@@ -3410,8 +3627,8 @@ async def start_video_editing(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"✂️ <b>Видео-эффекты</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n"
+        f"🤖 Модель: {model_name} ({model_cost}🪙)"
         f"<b>Kling 3 Omni</b>\n"
         f"Выберите, что хотите загрузить:"
         f"🎬 <b>Видео</b> - преобразование видео\n"
@@ -3456,8 +3673,8 @@ async def start_image_to_video(callback: types.CallbackQuery, state: FSMContext)
 
     await callback.message.edit_text(
         f"🖼 <b>Фото в видео</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n"
-        f"🤖 Модель: {model_name} ({model_cost}🍌)"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin\n"
+        f"🤖 Модель: {model_name} ({model_cost}🪙)"
         f"<b>Kling 3 - Image to Video</b>\n"
         f"Загрузите изображение,\n"
         f"которое хотите превратить в видео.\n"
@@ -3534,7 +3751,7 @@ async def handle_video_edit_change_type(
 
     await callback.message.edit_text(
         f"✂️ <b>Видео-эффекты</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin"
         f"<b>Kling 3 Omni</b>\n"
         f"Выберите, что хотите загрузить:"
         f"🎬 <b>Видео</b> - преобразование видео\n"
@@ -4070,7 +4287,7 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
         (
             "▶️ <b>Подтвердите генерацию</b>\n\n"
             f"Пресет: <b>{preset.name}</b>\n"
-            f"Стоимость: <code>{preset.cost}</code>🍌\n\n"
+            f"Стоимость: <code>{preset.cost}</code>🪙\n\n"
             "<b>Промпт:</b>\n"
             f"<code>{final_prompt[:300]}{'...' if len(final_prompt) > 300 else ''}</code>"
             f"{format_generation_options(generation_options)}"
@@ -4368,6 +4585,38 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         preset_id = data.get("preset_id", "new")
         current_count = len(reference_images)
 
+        if data.get("feed_retry_task_id"):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            text = _build_feed_retry_upload_text(
+                data.get("feed_retry_prompt") or "", current_count, max_refs
+            )
+            control_message_id = data.get("feed_retry_control_message_id")
+            if control_message_id:
+                new_message_id = await _edit_feed_retry_control_by_id(
+                    message.bot,
+                    message.chat.id,
+                    control_message_id,
+                    text,
+                    get_reference_images_upload_keyboard(
+                        current_count, max_refs, "feed_retry"
+                    ),
+                )
+                await state.update_data(feed_retry_control_message_id=new_message_id)
+            else:
+                sent = await message.answer(
+                    text,
+                    reply_markup=get_reference_images_upload_keyboard(
+                        current_count, max_refs, "feed_retry"
+                    ),
+                    parse_mode="HTML",
+                )
+                await state.update_data(feed_retry_control_message_id=sent.message_id)
+            logger.info(f"Feed retry reference photo {current_count} added: {image_url}")
+            return
+
         title = (
             "🧬 <b>Фото для микса</b>"
             if data.get("mix_mode")
@@ -4470,7 +4719,7 @@ async def handle_image_prompt_text(
         return  # Not for images, let other handlers catch
 
     telegram_id = telegram_id_override or message.from_user.id
-    submit_message_id = getattr(message, "message_id", 0)
+    submit_message_id = data.get("submission_id") or getattr(message, "message_id", 0)
     prompt = (prompt_override if prompt_override is not None else message.text).strip()
     if not prompt:
         await message.answer("⚠️ Введите промпт для генерации изображения.")
@@ -4572,23 +4821,6 @@ async def handle_image_prompt_text(
     total_cost = sum(job["cost"] for job in generation_jobs)
     img_count = len(generation_jobs)
 
-    use_free_generation = user.free_generations > 0
-    if not use_free_generation and user.credits < total_cost:
-        if mix_mode:
-            models_text = ", ".join(
-                get_image_model_config(job["model"])["label"] for job in generation_jobs
-            )
-            cost_text = f"Нужно: <code>{total_cost}</code>🍌 за 3 нейросети ({models_text})"
-        else:
-            cost = generation_jobs[0]["cost"]
-            cost_text = f"Нужно: <code>{total_cost}</code>🍌 ({img_count}×{cost}🍌)"
-        await message.answer(
-            f"❌ Недостаточно бананов! {cost_text}",
-            reply_markup=get_main_menu_keyboard(user.credits),
-            parse_mode="HTML",
-        )
-        return
-
     generation_lock = await generation_lock_guard.acquire(telegram_id)
     if not generation_lock:
         await message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
@@ -4596,11 +4828,13 @@ async def handle_image_prompt_text(
 
     processing_msg = None
     try:
-        charged, used_free_generation = await _charge_generation_or_free_token(
+        charged, billing_source, subscription_usage_id = await _charge_generation_or_free_token(
             telegram_id,
             total_cost,
             reason="image_generation_charge",
             external_id=f"image_submit:{telegram_id}:{submit_message_id}",
+            usage_type="image",
+            model="mix_photo" if mix_mode else img_service,
             metadata={
                 "model": "mix_photo" if mix_mode else img_service,
                 "models": [job["model"] for job in generation_jobs],
@@ -4610,9 +4844,12 @@ async def handle_image_prompt_text(
         if not charged:
             await generation_lock_guard.release(generation_lock)
             await state.clear()
-            await message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+            await message.answer(
+                "❌ Не хватает активной подписки, бесплатных генераций или BoomCoin. Генерация не запущена.",
+                reply_markup=get_main_menu_keyboard(user.credits),
+            )
             return
-        billing_cost = 0 if used_free_generation else total_cost
+        billing_cost = 0 if billing_source in {"subscription", "free_generation"} else total_cost
 
         if mix_mode:
             processing_msg = await message.answer(
@@ -4649,14 +4886,15 @@ async def handle_image_prompt_text(
         await _refund_generation_charge(
             telegram_id,
             total_cost,
-            used_free_generation=locals().get("used_free_generation", False),
+            billing_source=locals().get("billing_source", "none"),
+            subscription_usage_id=locals().get("subscription_usage_id"),
             reason="generation_refund",
             external_id=f"image_setup:{telegram_id}:{submit_message_id}",
             metadata={"handler": "image_setup"},
         )
         await generation_lock_guard.release(generation_lock)
         await state.clear()
-        await message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
+        await message.answer("❌ Ошибка запуска генерации. Ресурс возвращён.")
         return
 
     async def _run_single(idx: int, job: dict) -> None:
@@ -4675,6 +4913,9 @@ async def handle_image_prompt_text(
             prompt=prompt,
             cost=job_cost,
             reference_images=_serialize_reference_images(reference_images),
+            source_feed_task_id=data.get("source_feed_task_id"),
+            billing_source=locals().get("billing_source", "credits"),
+            subscription_usage_id=locals().get("subscription_usage_id"),
         )
         try:
             callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -4808,7 +5049,7 @@ async def handle_image_prompt_text(
                 retry_kb = get_image_result_keyboard(local_tid, saved_url)
                 await message.answer_photo(
                     photo=types.BufferedInputFile(result, filename="generated.png"),
-                    caption=f"✅ {prefix}{model_label}: готово!\n💰 <code>{job_cost}</code>🍌",
+                    caption=f"✅ {prefix}{model_label}: готово!\n💰 <code>{job_cost}</code>🪙",
                     parse_mode="HTML",
                     reply_markup=retry_kb,
                 )
@@ -4817,14 +5058,14 @@ async def handle_image_prompt_text(
                 )
                 await complete_video_task(local_tid, saved_url)
             else:
-                if not locals().get("used_free_generation", False) and not config.is_admin(telegram_id):
+                if locals().get("billing_source") == "credits" and not config.is_admin(telegram_id):
                     await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
                 await complete_video_task(local_tid, None)
-                await message.answer(f"❌ {prefix}{model_label}: ошибка генерации. Бананы возвращены.")
+                await message.answer(f"❌ {prefix}{model_label}: ошибка генерации. Ресурс возвращён.")
 
         except Exception as e:
             logger.exception(f"Image generation error (idx={idx}): {e}")
-            if not locals().get("used_free_generation", False) and not config.is_admin(telegram_id):
+            if locals().get("billing_source") == "credits" and not config.is_admin(telegram_id):
                 await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
             await complete_video_task(local_tid, None)
             await message.answer(f"❌ Ошибка генерации #{idx}.")
@@ -4841,6 +5082,208 @@ async def handle_image_prompt_text(
         await generation_lock_guard.release(generation_lock)
 
     await state.clear()
+
+
+@router.callback_query(F.data == "feed_retry_edit_prompt")
+async def handle_feed_retry_edit_prompt(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("feed_retry_task_id"):
+        await callback.answer("Пост для повтора не найден", show_alert=True)
+        return
+
+    await state.update_data(feed_retry_control_message_id=callback.message.message_id)
+    text = (
+        "✏️ <b>Изменить промпт</b>\n\n"
+        "Отправьте новый текст промпта одним сообщением.\n"
+        "Например: замените «брюнетка» на «блондинка» или добавьте нужные детали."
+    )
+    control_message_id = await _edit_feed_retry_control_message(
+        callback,
+        text,
+        get_reference_images_upload_keyboard(
+            len(data.get("reference_images", [])), 14, "feed_retry"
+        ),
+    )
+    if control_message_id:
+        await state.update_data(feed_retry_control_message_id=control_message_id)
+    await state.set_state(GenerationStates.waiting_for_feed_retry_prompt)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "feed_retry_full_prompt")
+async def handle_feed_retry_full_prompt(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("feed_retry_task_id")
+    if not task_id:
+        await callback.answer("Пост для повтора не найден", show_alert=True)
+        return
+
+    prompt = (data.get("feed_retry_prompt") or "").strip()
+    if not prompt:
+        task = await get_task_by_id(task_id)
+        prompt = (task.prompt if task else "") or ""
+    if not prompt:
+        await callback.answer("Промпт недоступен", show_alert=True)
+        return
+
+    control_message_id = await _edit_feed_retry_control_message(
+        callback,
+        _build_feed_retry_full_prompt_text(prompt),
+        _get_feed_retry_prompt_actions_keyboard(),
+    )
+    if control_message_id:
+        await state.update_data(
+            feed_retry_prompt=prompt,
+            feed_retry_control_message_id=control_message_id,
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "feed_retry_back_to_setup")
+async def handle_feed_retry_back_to_setup(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("feed_retry_task_id"):
+        await callback.answer("Пост для повтора не найден", show_alert=True)
+        return
+
+    await state.update_data(feed_retry_control_message_id=callback.message.message_id)
+    if data.get("reference_images"):
+        await _refresh_image_creation_screen(callback, state)
+        await state.set_state(GenerationStates.confirming_reference_images)
+    else:
+        text = _build_feed_retry_upload_text(data.get("feed_retry_prompt") or "", 0, 14)
+        control_message_id = await _edit_feed_retry_control_message(
+            callback,
+            text,
+            get_reference_images_upload_keyboard(0, 14, "feed_retry"),
+        )
+        if control_message_id:
+            await state.update_data(feed_retry_control_message_id=control_message_id)
+        await state.set_state(GenerationStates.uploading_reference_images)
+    await callback.answer()
+
+
+@router.message(GenerationStates.waiting_for_feed_retry_prompt, F.text)
+async def process_feed_retry_prompt(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    prompt = (message.text or "").strip()
+    if not prompt:
+        await message.answer("Отправьте текст промпта одним сообщением.")
+        return
+
+    await state.update_data(feed_retry_prompt=prompt)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    refs = data.get("reference_images", [])
+    control_message_id = data.get("feed_retry_control_message_id")
+    if refs:
+        current_service, current_options, reference_images = await _sync_image_state(state)
+        img_count = data.get("img_count", 1)
+        text = _build_feed_retry_model_text(
+            current_service,
+            current_options,
+            reference_images,
+            prompt,
+            img_count,
+        )
+        markup = get_create_image_keyboard(
+            current_service=current_service,
+            current_ratio=current_options["aspect_ratio"],
+            num_refs=len(reference_images),
+            current_options=current_options,
+            img_count=img_count,
+            launch_callback_data="feed_retry_run",
+            launch_text="🚀 Запустить повтор",
+            edit_prompt_callback_data="feed_retry_edit_prompt",
+            full_prompt_callback_data="feed_retry_full_prompt",
+        )
+        if control_message_id:
+            new_message_id = await _edit_feed_retry_control_by_id(
+                message.bot, message.chat.id, control_message_id, text, markup
+            )
+            await state.update_data(feed_retry_control_message_id=new_message_id)
+        else:
+            sent = await message.answer(text, reply_markup=markup, parse_mode="HTML")
+            await state.update_data(feed_retry_control_message_id=sent.message_id)
+        await state.set_state(GenerationStates.confirming_reference_images)
+        return
+
+    text = _build_feed_retry_upload_text(prompt, 0, 14)
+    markup = get_reference_images_upload_keyboard(0, 14, "feed_retry")
+    if control_message_id:
+        new_message_id = await _edit_feed_retry_control_by_id(
+            message.bot, message.chat.id, control_message_id, text, markup
+        )
+        await state.update_data(feed_retry_control_message_id=new_message_id)
+    else:
+        sent = await message.answer(text, reply_markup=markup, parse_mode="HTML")
+        await state.update_data(feed_retry_control_message_id=sent.message_id)
+    await state.set_state(GenerationStates.uploading_reference_images)
+
+
+@router.callback_query(F.data == "feed_retry_choose_model")
+async def handle_feed_retry_choose_model(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("feed_retry_task_id")
+    refs = data.get("reference_images", [])
+    if not task_id:
+        await callback.answer("Пост для повтора не найден", show_alert=True)
+        return
+    if not refs:
+        await callback.answer("Загрузите хотя бы один референс", show_alert=True)
+        return
+
+    task = await get_task_by_id(task_id)
+    if not task or not task.prompt:
+        await callback.answer("Пост уже недоступен", show_alert=True)
+        return
+
+    await state.update_data(
+        generation_type="image",
+        source_feed_task_id=task.task_id,
+        preset_id="feed_retry",
+        feed_retry_prompt=data.get("feed_retry_prompt") or task.prompt,
+    )
+    await _refresh_image_creation_screen(callback, state)
+    await callback.answer()
+    await state.set_state(GenerationStates.confirming_reference_images)
+
+
+@router.callback_query(F.data == "feed_retry_run")
+async def handle_feed_retry_run(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("feed_retry_task_id")
+    refs = data.get("reference_images", [])
+    if not task_id:
+        await callback.answer("Пост для повтора не найден", show_alert=True)
+        return
+    if not refs:
+        await callback.answer("Загрузите хотя бы один референс", show_alert=True)
+        return
+
+    task = await get_task_by_id(task_id)
+    if not task or not task.prompt:
+        await callback.answer("Пост уже недоступен", show_alert=True)
+        return
+
+    prompt = (data.get("feed_retry_prompt") or task.prompt).strip()
+    await state.update_data(
+        generation_type="image",
+        source_feed_task_id=task.task_id,
+        submission_id=f"feed_retry:{task.task_id}:{callback.id}",
+        feed_retry_prompt=prompt,
+    )
+    await callback.answer("🚀 Запускаю повтор...")
+    await handle_image_prompt_text(
+        callback.message,
+        state,
+        prompt_override=prompt,
+        improve_prompt=False,
+        telegram_id_override=callback.from_user.id,
+    )
 
 
 @router.callback_query(F.data.startswith("retry_img_"))
@@ -4871,9 +5314,6 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
         return
 
     user = await get_or_create_user(callback.from_user.id)
-    if user.credits < cost:
-        await callback.answer(f"❌ Нужно {cost}🍌", show_alert=True)
-        return
 
     generation_lock = await generation_lock_guard.acquire(callback.from_user.id)
     if not generation_lock:
@@ -4884,16 +5324,20 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
     processing_msg = None
     try:
         await callback.answer("🔄 Запускаю повтор...")
-        charged = await deduct_credits(
+        charged, billing_source, subscription_usage_id = await _charge_generation_or_free_token(
             callback.from_user.id,
             cost,
             reason="image_retry_charge",
             external_id=f"retry:{task_id}:{callback.id}",
+            usage_type="image",
+            model=img_service,
             metadata={"model": img_service, "source_task_id": task_id},
         )
         if not charged:
             await generation_lock_guard.release(generation_lock)
-            await callback.message.answer("❌ Не удалось списать бананы. Повтор не запущен.")
+            await callback.message.answer(
+                "❌ Не хватает активной подписки, бесплатных генераций или BoomCoin. Повтор не запущен."
+            )
             return
 
         await add_generation_task(
@@ -4905,24 +5349,27 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             model=img_service,
             aspect_ratio=aspect_ratio,
             prompt=prompt,
-            cost=cost,
+            cost=0 if billing_source in {"subscription", "free_generation"} else cost,
             reference_images=_serialize_reference_images(reference_images),
             source_feed_task_id=source_feed_task_id,
+            billing_source=billing_source,
+            subscription_usage_id=subscription_usage_id,
         )
 
         processing_msg = await callback.message.answer("🔄 Повторяю генерацию...")
     except Exception:
         logger.exception("Retry image setup failed")
-        if not config.is_admin(callback.from_user.id):
-            await add_credits_once(
-                callback.from_user.id,
-                cost,
-                reason="generation_refund",
-                external_id=local_task_id,
-                metadata={"handler": "retry_image_setup"},
-            )
+        await _refund_generation_charge(
+            callback.from_user.id,
+            cost,
+            billing_source=locals().get("billing_source", "none"),
+            subscription_usage_id=locals().get("subscription_usage_id"),
+            reason="generation_refund",
+            external_id=local_task_id,
+            metadata={"handler": "retry_image_setup"},
+        )
         await generation_lock_guard.release(generation_lock)
-        await callback.message.answer("❌ Ошибка запуска повтора. Бананы возвращены.")
+        await callback.message.answer("❌ Ошибка запуска повтора. Ресурс возвращён.")
         return
 
     try:
@@ -5003,7 +5450,8 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
                 await db.commit()
             await callback.message.answer(
                 f"🚀 Повтор запущен!\n🆔 <code>{api_task_id}</code>\n"
-                f"💰 <code>{cost}</code>🍌 списано\nОжидайте результат (1-3 мин).",
+                f"💰 {_format_billing_status(cost, locals().get('billing_source', 'credits'))}\n"
+                "Ожидайте результат (1-3 мин).",
                 parse_mode="HTML",
             )
         elif result:  # bytes
@@ -5011,7 +5459,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             retry_kb = get_image_result_keyboard(local_task_id, saved_url)
             await callback.message.answer_photo(
                 photo=types.BufferedInputFile(result, filename="generated.png"),
-                caption=f"✅ Готово!\n💰 <code>{cost}</code>🍌 списано",
+                caption=f"✅ Готово!\n💰 {_format_billing_status(cost, locals().get('billing_source', 'credits'))}",
                 parse_mode="HTML",
                 reply_markup=retry_kb,
             )
@@ -5020,21 +5468,29 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             )
             await complete_video_task(local_task_id, saved_url)
         else:
-            if not config.is_admin(callback.from_user.id):
-                await add_credits_once(callback.from_user.id, cost, reason="generation_refund", external_id=local_task_id if "local_task_id" in locals() else f"retry:{task_id}")
+            await _refund_generation_charge(
+                callback.from_user.id,
+                cost,
+                billing_source=locals().get("billing_source", "none"),
+                subscription_usage_id=locals().get("subscription_usage_id"),
+                reason="generation_refund",
+                external_id=local_task_id if "local_task_id" in locals() else f"retry:{task_id}",
+                metadata={"handler": "retry_image_empty_result"},
+            )
             await complete_video_task(local_task_id, None)
-            await callback.message.answer("❌ Ошибка повтора. Бананы возвращены.")
+            await callback.message.answer("❌ Ошибка повтора. Ресурс возвращён.")
 
     except Exception as e:
         logger.exception(f"Retry image error: {e}")
-        if not config.is_admin(callback.from_user.id):
-            await add_credits_once(
-                callback.from_user.id,
-                cost,
-                reason="generation_refund",
-                external_id=local_task_id,
-                metadata={"handler": "retry_image"},
-            )
+        await _refund_generation_charge(
+            callback.from_user.id,
+            cost,
+            billing_source=locals().get("billing_source", "none"),
+            subscription_usage_id=locals().get("subscription_usage_id"),
+            reason="generation_refund",
+            external_id=local_task_id,
+            metadata={"handler": "retry_image"},
+        )
         await complete_video_task(local_task_id, None)
         await callback.message.answer("❌ Ошибка повтора.")
     finally:
@@ -5201,35 +5657,46 @@ async def run_no_preset_video_from_message(
             f"Admin {telegram_id} - free access (skipped {cost} credits)"
         )
     else:
-        if user.free_generations <= 0 and not await check_can_afford(telegram_id, cost):
-            await target_message.answer(
-                f"❌ Недостаточно бананов!\nНужно: <code>{cost}</code>🍌\nПополните баланс.",
-                reply_markup=get_main_menu_keyboard(
-                    await get_user_credits(telegram_id)
-                ),
-                parse_mode="HTML",
-            )
-            await state.clear()
-            return
         generation_lock = await generation_lock_guard.acquire(telegram_id)
         if not generation_lock:
             await target_message.answer("⏳ Предыдущая генерация ещё запускается. Подождите несколько секунд и попробуйте снова.")
             await state.clear()
             return
-        charged, used_free_generation = await _charge_generation_or_free_token(
+        charged, billing_source, subscription_usage_id = await _charge_generation_or_free_token(
             telegram_id,
             cost,
             reason="video_generation_charge",
             external_id=f"video_submit:{telegram_id}:{submit_message_id}",
+            usage_type="video",
+            model=v_model,
             metadata={"model": v_model, "duration": v_duration, "ratio": v_ratio},
         )
         if not charged:
             await generation_lock_guard.release(generation_lock)
             await state.clear()
-            await target_message.answer("❌ Не удалось списать бананы. Генерация не запущена.")
+            await target_message.answer(
+                "❌ Не хватает активной подписки с видео, бесплатных генераций или BoomCoin. Генерация не запущена.",
+                reply_markup=get_main_menu_keyboard(await get_user_credits(telegram_id)),
+            )
             return
 
     refund_external_id = f"video:{telegram_id}:{submit_message_id}"
+    current_billing_source = locals().get("billing_source", "none")
+    current_subscription_usage_id = locals().get("subscription_usage_id")
+
+    async def refund_current_video_charge(handler: str) -> None:
+        if is_admin:
+            return
+        await _refund_generation_charge(
+            telegram_id,
+            cost,
+            billing_source=current_billing_source,
+            subscription_usage_id=current_subscription_usage_id,
+            reason="generation_refund",
+            external_id=refund_external_id,
+            metadata={"handler": handler},
+        )
+
     processing_msg = None
     try:
         processing_msg = await target_message.answer(
@@ -5240,7 +5707,7 @@ async def run_no_preset_video_from_message(
                     f"Передаю задачу модели {v_model}: "
                     f"{v_duration}s, "
                     f"{'формат по фото' if v_model == 'wan_27_i2v' else v_ratio}, "
-                    f"{cost}🍌."
+                    f"{cost}🪙."
                 ),
                 eta="Обычно видео занимает 1-5 минут.",
             ),
@@ -5252,14 +5719,15 @@ async def run_no_preset_video_from_message(
             await _refund_generation_charge(
                 telegram_id,
                 cost,
-                used_free_generation=locals().get("used_free_generation", False),
+                billing_source=locals().get("billing_source", "none"),
+                subscription_usage_id=locals().get("subscription_usage_id"),
                 reason="generation_refund",
                 external_id=refund_external_id,
                 metadata={"handler": "video_setup"},
             )
         await generation_lock_guard.release(generation_lock)
         await state.clear()
-        await target_message.answer("❌ Ошибка запуска генерации. Бананы возвращены.")
+        await target_message.answer("❌ Ошибка запуска генерации. Ресурс возвращён.")
         return
 
     try:
@@ -5270,8 +5738,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Grok Imagine требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("grok_missing_image")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5298,8 +5765,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Aleph Video требует референсное видео (видео+текст режим)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("aleph_missing_video")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5320,8 +5786,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Runway не поддерживает видео референсы. Используйте текст или фото+текст."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("runway_unsupported_video_ref")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5368,13 +5833,7 @@ async def run_no_preset_video_from_message(
                     "на базе этого preset и повторите запуск.",
                     parse_mode="HTML",
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(
-                        telegram_id,
-                        cost,
-                        reason="generation_refund",
-                        external_id=refund_external_id,
-                    )
+                await refund_current_video_charge("gemini_omni_invalid_voice")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5387,13 +5846,7 @@ async def run_no_preset_video_from_message(
                     "тогда я автоматически добавлю исходное фото в видеозадачу.",
                     parse_mode="HTML",
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(
-                        telegram_id,
-                        cost,
-                        reason="generation_refund",
-                        external_id=refund_external_id,
-                    )
+                await refund_current_video_charge("gemini_omni_missing_visual")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5414,13 +5867,7 @@ async def run_no_preset_video_from_message(
                     f"❌ Gemini Omni принимает до {GEMINI_OMNI_MAX_INPUT_UNITS} единиц входов: фото=1, видео=2, персонаж=1. "
                     "Уменьшите количество фото или Character ID."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(
-                        telegram_id,
-                        cost,
-                        reason="generation_refund",
-                        external_id=refund_external_id,
-                    )
+                await refund_current_video_charge("gemini_omni_too_many_inputs")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5453,8 +5900,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     f"❌ {v_model} требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("hailuo_missing_image")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5493,8 +5939,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     f"❌ {v_model} требует минимум одно изображение (фото+текст режим)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("happyhorse_missing_image")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5503,8 +5948,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ HappyHorse Edit требует видео-референс (режим видео+текст)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("happyhorse_missing_video")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5529,8 +5973,7 @@ async def run_no_preset_video_from_message(
                 await target_message.answer(
                     "❌ Wan 2.7 I2V требует стартовое изображение (фото+текст режим)."
                 )
-                if not is_admin and not locals().get("used_free_generation", False):
-                    await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+                await refund_current_video_charge("wan_missing_image")
                 await processing_msg.delete()
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
@@ -5588,7 +6031,9 @@ async def run_no_preset_video_from_message(
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 prompt=prompt,
-                cost=cost,
+                cost=0 if locals().get("billing_source") in {"subscription", "free_generation"} else cost,
+                billing_source=locals().get("billing_source", "credits"),
+                subscription_usage_id=locals().get("subscription_usage_id"),
             )
             await target_message.answer(
                 _build_video_task_started_text(
@@ -5628,8 +6073,7 @@ async def run_no_preset_video_from_message(
                 )
             )
         else:
-            if not is_admin and not locals().get("used_free_generation", False):
-                await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
+            await refund_current_video_charge("provider_rejected_task")
             error_text = result.get("error") if isinstance(result, dict) else None
             error_code = result.get("code") if isinstance(result, dict) else None
             if v_model == "gemini_omni" and error_text:
@@ -5637,7 +6081,7 @@ async def run_no_preset_video_from_message(
                     await target_message.answer(
                         "❌ Gemini Omni не принял Audio ID: он не найден или создан в другом Kie аккаунте.\n\n"
                         "Создайте голос через <b>Gemini Omni → Создать голос</b> "
-                        "и повторите запуск. Бананы возвращены.",
+                        "и повторите запуск. Ресурс возвращён.",
                         parse_mode="HTML",
                     )
                 else:
@@ -5645,16 +6089,15 @@ async def run_no_preset_video_from_message(
                         f"❌ Gemini Omni отклонил задачу"
                         f"{f' (код {error_code})' if error_code else ''}:\n"
                         f"<code>{html.escape(str(error_text))}</code>\n\n"
-                        "Бананы возвращены.",
+                        "Ресурс возвращён.",
                         parse_mode="HTML",
                     )
             else:
-                await target_message.answer("❌ Не удалось создать задачу. Бананы возвращены.")
+                await target_message.answer("❌ Не удалось создать задачу. Ресурс возвращён.")
     except Exception as e:
         logger.exception(f"Video generation error: {e}")
-        if not is_admin and not locals().get("used_free_generation", False):
-            await add_credits_once(telegram_id, cost, reason="generation_refund", external_id=refund_external_id)
-        await target_message.answer("❌ Ошибка генерации. Бананы возвращены.")
+        await refund_current_video_charge("provider_exception")
+        await target_message.answer("❌ Ошибка генерации. Ресурс возвращён.")
 
     await generation_lock_guard.release(generation_lock)
     await state.clear()

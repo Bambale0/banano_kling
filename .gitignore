@@ -35,7 +35,7 @@ venv/
 *.db.backup*
 *.sqlite
 *.sqlite3
-tests/
+backups/
 # Logs
 logs/
 *.log

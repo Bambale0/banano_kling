@@ -1,6 +1,7 @@
 """Runtime reliability tests: idempotency, locks, and credit ledger."""
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,3 +58,62 @@ async def test_runtime_reliability_service_blocks_duplicate_events_and_locks():
     assert await reliability.acquire_generation_lock(777) is False
     await reliability.release_generation_lock(777)
     assert await reliability.acquire_generation_lock(777) is True
+
+
+@pytest.mark.asyncio
+async def test_user_profile_sync_middleware_updates_event_user(monkeypatch):
+    import bot.main as main
+
+    calls = []
+
+    async def fake_get_or_create_user(
+        telegram_id,
+        username=None,
+        first_name=None,
+        last_name=None,
+    ):
+        calls.append((telegram_id, username, first_name, last_name))
+
+    monkeypatch.setattr(main, "get_or_create_user", fake_get_or_create_user)
+    middleware = main.UserProfileSyncMiddleware()
+    event = SimpleNamespace(
+        from_user=SimpleNamespace(
+            id=555,
+            is_bot=False,
+            username="fresh_user",
+            first_name="Fresh",
+            last_name="Name",
+        )
+    )
+
+    async def handler(received_event, data):
+        data["handled"] = received_event is event
+        return "ok"
+
+    data = {}
+    result = await middleware(handler, event, data)
+
+    assert result == "ok"
+    assert data["handled"] is True
+    assert calls == [(555, "fresh_user", "Fresh", "Name")]
+
+
+@pytest.mark.asyncio
+async def test_register_user_bot_commands_excludes_admin_commands():
+    import bot.main as main
+
+    class FakeBot:
+        def __init__(self):
+            self.commands = None
+
+        async def set_my_commands(self, commands):
+            self.commands = commands
+
+    bot = FakeBot()
+
+    await main._register_user_bot_commands(bot)
+
+    command_names = [command.command for command in bot.commands]
+    assert command_names == ["start", "help", "feed", "ref", "earn", "clear"]
+    assert "admin" not in command_names
+    assert not any(command.startswith("admin_") for command in command_names)

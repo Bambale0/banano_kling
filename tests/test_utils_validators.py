@@ -107,7 +107,7 @@ class TestValidators:
     def test_validate_credits_amount_too_large(self):
         is_valid, error = validate_credits_amount(100001)
         assert not is_valid
-        assert error == "Превышен лимит кредитов"
+        assert error == "Превышен лимит BoomCoin"
 
     def test_validate_credits_amount_float(self):
         is_valid, error = validate_credits_amount(10.5)

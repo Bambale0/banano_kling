@@ -3,6 +3,7 @@ import logging
 import re
 import csv
 import io
+import html
 from pathlib import Path
 
 from aiogram import Bot, F, Router, types
@@ -31,6 +32,7 @@ from bot.keyboards import (
     get_back_keyboard,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.admin_ai_service import admin_ai_service
 from bot.states import AdminStates
 
 PRICE_PATH = Path("data/price.json")
@@ -60,13 +62,13 @@ def _user_actions_keyboard(user_id: int, is_banned: bool):
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text="➕ Добавить бананы",
+                    text="➕ Добавить BoomCoin",
                     callback_data=f"admin_add_credits_{user_id}",
                 )
             ],
             [
                 types.InlineKeyboardButton(
-                    text="➖ Списать бананы",
+                    text="➖ Списать BoomCoin",
                     callback_data=f"admin_deduct_credits_{user_id}",
                 )
             ],
@@ -80,6 +82,529 @@ def _user_actions_keyboard(user_id: int, is_banned: bool):
             [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
         ]
     )
+
+
+def _admin_ai_keyboard():
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="📘 Инструкция", callback_data="admin_ai_help")],
+            [types.InlineKeyboardButton(text="🔙 Админ-панель", callback_data="admin_back")],
+            [types.InlineKeyboardButton(text="🏠 Домой", callback_data="back_main")],
+        ]
+    )
+
+
+def _admin_ai_confirm_keyboard():
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="✅ Выполнить", callback_data="admin_ai_confirm"
+                ),
+                types.InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="admin_ai_cancel"
+                ),
+            ],
+            [types.InlineKeyboardButton(text="🔙 Админ-панель", callback_data="admin_back")],
+        ]
+    )
+
+
+def _admin_ai_help_text() -> str:
+    return """
+📘 <b>Инструкция: ИИ-админ</b>
+
+ИИ-админ — агентный помощник для управления ботом. Он понимает обычный язык, сохраняет контекст текущей админ-сессии и может выполнять цепочки шагов.
+
+<b>Как пользоваться</b>
+1. Откройте <code>/admin</code> → <b>🤖 ИИ-админ</b> или команду <code>/admin_ai</code>.
+2. Напишите задачу обычным текстом.
+3. Если действие меняет данные, бот покажет план и попросит нажать <b>✅ Выполнить</b>.
+4. После результата можно продолжать в том же контексте: <code>проверь подробнее</code>, <code>теперь покажи пользователя</code>.
+
+<b>Отчёты и агентные цепочки</b>
+• <code>сделай отчёт по боту</code>
+• <code>дай сводку по состоянию бота и логам</code>
+• <code>проверь здоровье бота</code>
+
+Для отчёта агент сам выполняет несколько шагов: статистика, техрежим, промокоды, анализ последних логов.
+
+<b>Анализ логов</b>
+• <code>проанализируй последние логи</code>
+• <code>почему могли падать генерации?</code>
+• <code>найди ошибки webhook за последние 500 строк</code>
+
+Агент читает только разрешённые файлы: <code>logs/bot.log</code>, <code>logs/bot_output.log</code>, <code>logs/watchdog.log</code>. Произвольные shell-команды через ИИ не выполняются.
+
+<b>Research по AI-генерации</b>
+• <code>найди новые ИИ для генерации видео и фото</code>
+• <code>сравни свежие модели image-to-image для фотореализма</code>
+• <code>что стоит протестировать для генерации контента?</code>
+
+Research использует GPT 5.5 с web search и возвращает краткий отчёт: факты, риски, рекомендации для продукта.
+
+<b>Пользователи и баланс</b>
+• <code>проверь пользователя 123456789</code>
+• <code>начисли 50 BoomCoin пользователю 123456789</code>
+• <code>спиши 10 BoomCoin у 123456789</code>
+• <code>забань 123456789</code>
+• <code>разбань 123456789</code>
+
+<b>Промокоды</b>
+• <code>покажи промокоды</code>
+• <code>создай промокод VIP20 скидка 20 лимит 100</code>
+• <code>создай промокод GIFT50 BoomCoin 50 лимит 200</code>
+• <code>создай промокод FREEGEN генерации 1 лимит 100</code>
+• <code>отключи промокод VIP20</code>
+
+<b>Техрежим и экспорт</b>
+• <code>включи техрежим</code>
+• <code>выключи техрежим</code>
+• <code>какой сейчас техрежим?</code>
+• <code>экспорт пользователей</code>
+
+<b>Безопасность</b>
+Действия, которые меняют данные, всегда требуют подтверждения: баланс, бан/разбан, техрежим, промокоды, экспорт. Массовая рассылка через ИИ не выполняется — используйте штатный раздел <b>📣 Рассылка</b>.
+
+<b>Контекст</b>
+ИИ-админ помнит последние результаты в рамках текущей FSM-сессии. Чтобы начать заново, напишите: <code>очисти контекст</code>.
+""".strip()
+
+
+def _format_user_stats(user_id: int, stats: dict) -> str:
+    promos = stats.get("promos") or []
+    promo_text = (
+        "\n".join(
+            f"• <code>{html.escape(str(p['code']))}</code> −{p['discount_percent']}% ({p['redeemed_at']})"
+            for p in promos
+        )
+        if promos
+        else "нет"
+    )
+    ban_text = "забанен" if stats.get("is_banned") else "активен"
+    return f"""
+👤 <b>Пользователь</b>
+
+🆔 ID: <code>{user_id}</code>
+💰 BoomCoin: <code>{stats['credits']}</code>
+🚦 Статус: <code>{ban_text}</code>
+📊 Генераций: <code>{stats['generations']}</code>
+💸 Потрачено: <code>{stats['total_spent']}</code>
+📅 Регистрация: <code>{stats['member_since']}</code>
+🎟 Промокоды:
+{promo_text}
+"""
+
+
+def _format_admin_stats(stats: dict) -> str:
+    return f"""
+📊 <b>Статистика бота</b>
+
+👥 Пользователей: <code>{stats['total_users']}</code>
+🟢 Активных за 7 дней: <code>{stats['active_users']}</code>
+🚫 Забанено: <code>{stats['banned_users']}</code>
+🪙 Баланс пользователей: <code>{stats['total_user_balance']}</code>
+🎨 Генераций: <code>{stats['total_generations']}</code>
+💳 Транзакций: <code>{stats['total_transactions']}</code>
+💰 Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
+🎁 Рефералов: <code>{stats.get('total_referrals', 0)}</code>
+"""
+
+
+def _format_promos(promos: list[dict]) -> str:
+    if not promos:
+        return "🎟 <b>Промокоды</b>\n\nПока промокодов нет."
+    lines = ["🎟 <b>Последние промокоды</b>", ""]
+    for promo in promos:
+        status = "✅" if promo["is_active"] else "⛔"
+        expires = promo["expires_at"] or "без срока"
+        if promo.get("promo_type") == "bananas":
+            value = f"+{promo['reward_credits']}🪙"
+        elif promo.get("promo_type") == "generation":
+            value = f"{promo['reward_credits']} free gen"
+        else:
+            value = f"−{promo['discount_percent']}%"
+        lines.append(
+            f"{status} <code>{html.escape(str(promo['code']))}</code> — "
+            f"{value}, {promo['used_count']}/{promo['max_uses']}, до {expires}"
+        )
+    return "\n".join(lines)
+
+
+def _clip_html(text: str, limit: int = 3600) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n\n<i>Обрезано под лимит Telegram.</i>"
+
+
+def _read_log_tail(lines: int = 250) -> str:
+    log_paths = [
+        Path("logs/bot.log"),
+        Path("logs/bot_output.log"),
+        Path("logs/watchdog.log"),
+    ]
+    collected: list[str] = []
+    for path in log_paths:
+        if not path.exists():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            collected.append(f"== {path} ==\nНе удалось прочитать: {exc}")
+            continue
+        tail = content[-max(20, min(lines, 1000)) :]
+        collected.append(f"== {path} ==\n" + "\n".join(tail))
+    return "\n\n".join(collected) or "Лог-файлы не найдены."
+
+
+def _quick_log_metrics(log_text: str) -> dict:
+    patterns = {
+        "ERROR": r"\bERROR\b|exception|Traceback",
+        "WARNING": r"\bWARNING\b|warning",
+        "WEBHOOK": r"webhook",
+        "RESTART": r"Bot starting|Server started|Starting in webhook mode",
+        "HEALTH": r"GET /health",
+    }
+    return {
+        name: len(re.findall(pattern, log_text, flags=re.I))
+        for name, pattern in patterns.items()
+    }
+
+
+async def _analyze_logs_with_ai(query: str, lines: int = 250) -> str:
+    log_text = _read_log_tail(lines)
+    metrics = _quick_log_metrics(log_text)
+    prompt = (
+        "Проанализируй логи Telegram-бота Banana Boom для админа. "
+        "Дай краткий отчёт: что происходит, ошибки/риски, вероятная причина, что проверить дальше. "
+        "Если критичных ошибок нет, скажи это явно.\n\n"
+        f"Запрос админа: {query or 'общий анализ'}\n"
+        f"Метрики: {json.dumps(metrics, ensure_ascii=False)}\n\n"
+        f"Логи:\n{log_text[-12000:]}"
+    )
+    try:
+        from bot.services.gpt55_service import gpt55_service
+
+        response = await gpt55_service.ask(
+            [{"type": "input_text", "text": prompt}],
+            history=[],
+            reasoning_effort="high",
+            web_search=False,
+        )
+    except Exception as exc:
+        logger.warning("Admin AI log analysis failed: %r", exc)
+        response = None
+
+    if response:
+        return _clip_html(
+            "🧾 <b>Анализ логов</b>\n\n"
+            f"{html.escape(response)}\n\n"
+            f"<b>Счётчики:</b> <code>{html.escape(json.dumps(metrics, ensure_ascii=False))}</code>"
+        )
+
+    important = [
+        line for line in log_text.splitlines()
+        if re.search(r"\b(ERROR|WARNING)\b|Traceback|exception|failed", line, flags=re.I)
+    ][-20:]
+    important_text = "\n".join(important) if important else "Критичных ERROR/WARNING в выбранном хвосте не найдено."
+    return _clip_html(
+        "🧾 <b>Анализ логов</b>\n\n"
+        f"<b>Счётчики:</b> <code>{html.escape(json.dumps(metrics, ensure_ascii=False))}</code>\n\n"
+        f"<b>Важные строки:</b>\n<code>{html.escape(important_text)}</code>"
+    )
+
+
+async def _research_ai_generation(query: str) -> str:
+    prompt = (
+        "Сделай актуальный research для админа Telegram-бота генерации контента. "
+        "Найди новые/важные AI-модели, API и провайдеров для image/video generation, "
+        "оцени полезность для продукта, качество, стоимость/риски, что стоит протестировать. "
+        "Ответ по-русски, структурно и кратко. Отделяй проверенные факты от рекомендаций.\n\n"
+        f"Запрос: {query or 'новые AI в генерации контента'}"
+    )
+    try:
+        from bot.services.gpt55_service import gpt55_service
+
+        response = await gpt55_service.ask(
+            [{"type": "input_text", "text": prompt}],
+            history=[],
+            reasoning_effort="high",
+            web_search=True,
+        )
+    except Exception as exc:
+        logger.warning("Admin AI research failed: %r", exc)
+        response = None
+
+    if not response:
+        return (
+            "🔎 <b>Research AI</b>\n\n"
+            "Не удалось получить веб-исследование сейчас. Проверьте KIE_AI_API_KEY/Kie.ai доступ."
+        )
+    return _clip_html("🔎 <b>Research AI-генерации</b>\n\n" + html.escape(response))
+
+
+def _validate_admin_ai_action(plan: dict) -> str | None:
+    actions = plan.get("actions")
+    if isinstance(actions, list) and actions:
+        for item in actions:
+            error = _validate_admin_ai_action(item)
+            if error:
+                return error
+        return None
+
+    action = plan.get("action")
+    params = plan.get("params") or {}
+    if action == "unknown":
+        return plan.get("summary") or "Не понял действие."
+    if action in {"user_info", "add_credits", "deduct_credits", "ban_user", "unban_user"}:
+        if not params.get("telegram_id"):
+            return "Нужен Telegram ID пользователя."
+    if action in {"add_credits", "deduct_credits"} and not params.get("amount"):
+        return "Нужна сумма BoomCoin."
+    if action == "maintenance_set" and "enabled" not in params:
+        return "Нужно указать: включить или выключить техрежим."
+    if action == "create_promo":
+        if not params.get("code"):
+            return "Нужен код промокода."
+        if not params.get("value") or not params.get("max_uses"):
+            return "Для промокода нужны значение и лимит активаций."
+    if action == "deactivate_promo" and not params.get("code"):
+        return "Нужен код промокода."
+    return None
+
+
+def _admin_ai_plan_preview(plan: dict) -> str:
+    if isinstance(plan.get("actions"), list) and plan["actions"]:
+        lines = [
+            "🤖 <b>ИИ-админ подготовил агентный прогон</b>",
+            "",
+            f"Описание: {html.escape(str(plan.get('summary') or ''))}",
+            "",
+            "<b>Шаги:</b>",
+        ]
+        for index, item in enumerate(plan["actions"], start=1):
+            action = item.get("action")
+            params = item.get("params") or {}
+            lines.append(
+                f"{index}. <code>{html.escape(str(action))}</code> — "
+                f"{html.escape(str(item.get('summary') or ''))}"
+            )
+            if params:
+                params_text = ", ".join(f"{key}={value}" for key, value in params.items())
+                lines.append(f"   <code>{html.escape(params_text)}</code>")
+        lines.extend(["", "Подтвердите выполнение."])
+        return "\n".join(lines)
+
+    action = plan.get("action")
+    params = plan.get("params") or {}
+    lines = [
+        "🤖 <b>ИИ-админ подготовил действие</b>",
+        "",
+        f"Действие: <code>{html.escape(str(action))}</code>",
+        f"Описание: {html.escape(str(plan.get('summary') or ''))}",
+    ]
+    if params:
+        lines.append("")
+        lines.append("<b>Параметры:</b>")
+        for key, value in params.items():
+            lines.append(f"• <code>{html.escape(str(key))}</code>: <code>{html.escape(str(value))}</code>")
+    lines.extend(["", "Подтвердите выполнение."])
+    return "\n".join(lines)
+
+
+async def _execute_admin_ai_action(
+    action: str,
+    params: dict,
+    admin_id: int,
+    message: types.Message,
+) -> str:
+    if action == "bot_report":
+        stats = _format_admin_stats(await get_admin_stats())
+        maintenance = await _execute_admin_ai_action("maintenance_status", {}, admin_id, message)
+        log_report = await _analyze_logs_with_ai(params.get("scope", ""), 180)
+        return _clip_html(
+            "📋 <b>Агентный отчёт по боту</b>\n\n"
+            f"{stats}\n\n{maintenance}\n\n{log_report}"
+        )
+
+    if action == "analyze_logs":
+        return await _analyze_logs_with_ai(
+            params.get("query", ""),
+            int(params.get("lines") or 250),
+        )
+
+    if action == "research_ai":
+        return await _research_ai_generation(params.get("query", ""))
+
+    if action == "clear_context":
+        return "🧹 Контекст ИИ-админа очищен."
+
+    if action == "stats":
+        return _format_admin_stats(await get_admin_stats())
+
+    if action == "user_info":
+        user_id = int(params["telegram_id"])
+        return _format_user_stats(user_id, await get_user_stats(user_id))
+
+    if action == "list_promos":
+        return _format_promos(await get_promo_codes(limit=10))
+
+    if action == "maintenance_status":
+        enabled = (await get_bot_setting("maintenance_mode", "0")) == "1"
+        return f"⚙️ <b>Техрежим</b>\n\nСейчас: <code>{'включён' if enabled else 'выключен'}</code>"
+
+    if action == "export_users":
+        rows = await export_users()
+        buffer = io.StringIO()
+        fieldnames = [
+            "telegram_id",
+            "credits",
+            "is_banned",
+            "has_paid",
+            "referral_code",
+            "referral_earned",
+            "created_at",
+            "updated_at",
+        ]
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+        await message.answer_document(
+            types.BufferedInputFile(
+                buffer.getvalue().encode("utf-8-sig"),
+                filename="users_export.csv",
+            ),
+            caption=f"📦 Экспорт пользователей: {len(rows)} строк",
+        )
+        return "✅ Экспорт сформирован и отправлен файлом."
+
+    if action == "add_credits":
+        user_id = int(params["telegram_id"])
+        amount = int(params["amount"])
+        success = await add_credits(
+            user_id,
+            amount,
+            reason="admin_ai_adjustment_add",
+            external_id=f"admin_ai:{admin_id}:add:{user_id}:{message.message_id}",
+            metadata={"admin_id": admin_id},
+        )
+        stats = await get_user_stats(user_id)
+        status = "✅ Начислено" if success else "ℹ️ Операция уже была выполнена"
+        return (
+            f"{status}: <code>{amount}</code>🪙 пользователю <code>{user_id}</code>\n"
+            f"Текущий баланс: <code>{stats['credits']}</code>🪙"
+        )
+
+    if action == "deduct_credits":
+        user_id = int(params["telegram_id"])
+        amount = int(params["amount"])
+        success = await deduct_credits(
+            user_id,
+            amount,
+            reason="admin_ai_adjustment_deduct",
+            external_id=f"admin_ai:{admin_id}:deduct:{user_id}:{message.message_id}",
+            metadata={"admin_id": admin_id},
+        )
+        if not success:
+            return "❌ Не удалось списать BoomCoin. Возможно, недостаточно баланса."
+        stats = await get_user_stats(user_id)
+        return (
+            f"✅ Списано: <code>{amount}</code>🪙 у пользователя <code>{user_id}</code>\n"
+            f"Текущий баланс: <code>{stats['credits']}</code>🪙"
+        )
+
+    if action in {"ban_user", "unban_user"}:
+        user_id = int(params["telegram_id"])
+        is_banned = action == "ban_user"
+        await set_user_banned(user_id, is_banned)
+        return (
+            f"{'🚫 Пользователь забанен' if is_banned else '✅ Пользователь разбанен'}: "
+            f"<code>{user_id}</code>"
+        )
+
+    if action == "maintenance_set":
+        enabled = bool(params["enabled"])
+        await set_bot_setting("maintenance_mode", "1" if enabled else "0")
+        return f"✅ Техрежим {'включён' if enabled else 'выключен'}."
+
+    if action == "create_promo":
+        promo_type = params.get("promo_type") or "discount"
+        value = int(params["value"])
+        max_uses = int(params["max_uses"])
+        expires_at = f"{params['expires_at']} 23:59:59" if params.get("expires_at") else None
+        ok, result = await create_promo_code(
+            code=params["code"],
+            discount_percent=value if promo_type == "discount" else 0,
+            max_uses=max_uses,
+            expires_at=expires_at,
+            created_by=admin_id,
+            promo_type=promo_type,
+            reward_credits=value if promo_type in {"bananas", "generation"} else 0,
+        )
+        if not ok:
+            return f"❌ Не удалось создать промокод: <code>{html.escape(str(result))}</code>"
+        suffix = "🪙" if promo_type == "bananas" else " генерац." if promo_type == "generation" else "%"
+        return (
+            "✅ <b>Промокод создан</b>\n\n"
+            f"Код: <code>{result}</code>\n"
+            f"Тип: <code>{promo_type}</code>\n"
+            f"Значение: <code>{value}{suffix}</code>\n"
+            f"Лимит: <code>{max_uses}</code>\n"
+            f"Срок: <code>{expires_at or 'без срока'}</code>"
+        )
+
+    if action == "deactivate_promo":
+        deleted = await deactivate_promo_code(params["code"])
+        return "✅ Промокод отключён." if deleted else "❌ Активный промокод не найден."
+
+    return "❌ Это действие пока не поддерживается."
+
+
+async def _execute_admin_ai_plan(
+    plan: dict,
+    admin_id: int,
+    message: types.Message,
+) -> str:
+    actions = plan.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return await _execute_admin_ai_action(
+            plan["action"],
+            plan.get("params") or {},
+            admin_id,
+            message,
+        )
+
+    sections = ["📋 <b>Агентный прогон выполнен</b>"]
+    for index, item in enumerate(actions, start=1):
+        action = item.get("action")
+        params = item.get("params") or {}
+        result = await _execute_admin_ai_action(action, params, admin_id, message)
+        sections.append(
+            f"\n<b>Шаг {index}: <code>{html.escape(str(action))}</code></b>\n{result}"
+        )
+    return _clip_html("\n".join(sections))
+
+
+def _remember_admin_ai_context(data: dict, request: str, plan: dict, result: str) -> list[dict]:
+    memory = data.get("admin_ai_memory")
+    if not isinstance(memory, list):
+        memory = []
+    memory.append(
+        {
+            "request": request[:500],
+            "plan": {
+                "action": plan.get("action"),
+                "actions": [
+                    item.get("action") for item in plan.get("actions", [])
+                    if isinstance(item, dict)
+                ],
+            },
+            "result": re.sub(r"<[^>]+>", "", result)[:900],
+        }
+    )
+    return memory[-8:]
 
 
 @router.message(Command("admin"))
@@ -98,7 +623,7 @@ async def cmd_admin(message: types.Message):
 • Пользователей: <code>{stats['total_users']}</code>
 • Активных за 7 дней: <code>{stats['active_users']}</code>
 • Забанено: <code>{stats['banned_users']}</code>
-• Баланс пользователей: <code>{stats['total_user_balance']}</code> 🍌
+• Баланс пользователей: <code>{stats['total_user_balance']}</code> 🪙
 • Генераций: <code>{stats['total_generations']}</code>
 • Транзакций: <code>{stats['total_transactions']}</code>
 • Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
@@ -106,7 +631,7 @@ async def cmd_admin(message: types.Message):
 <b>Разделы:</b>
 📊 Статистика — пользователи, платежи, баланс.
 📣 Рассылка — текст или фото + текст.
-🍌 Баланс — начислить или списать бананы.
+🪙 Баланс — начислить или списать BoomCoin.
 🎟 Промокоды — создать, удалить, посмотреть список.
 👤 Пользователь — ID, баланс, бан, активированные промокоды.
 🚫 Бан / разбан — ограничить доступ к боту.
@@ -116,6 +641,182 @@ async def cmd_admin(message: types.Message):
 """
 
     await message.answer(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+
+
+@router.message(Command("admin_ai"))
+async def cmd_admin_ai(message: types.Message, state: FSMContext):
+    """Открывает ИИ-управление ботом для админа."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    await state.set_state(AdminStates.waiting_ai_request)
+    await message.answer(
+        "🤖 <b>ИИ-админ</b>\n\n"
+        "Напишите, что нужно сделать с ботом. Я сохраняю контекст этой админ-сессии "
+        "и могу выполнять несколько шагов подряд.\n\n"
+        "Примеры:\n"
+        "• <code>сделай отчёт по боту</code>\n"
+        "• <code>проанализируй последние логи</code>\n"
+        "• <code>найди новые AI для генерации видео и фото</code>\n"
+        "• <code>покажи статистику</code>\n"
+        "• <code>проверь пользователя 123456789</code>\n"
+        "• <code>начисли 50 BoomCoin пользователю 123456789</code>\n"
+        "• <code>включи техрежим</code>\n"
+        "• <code>создай промокод VIP20 скидка 20 лимит 100</code>\n\n"
+        "Изменения бот всегда попросит подтвердить.",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_ai")
+async def admin_ai_open(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        "🤖 <b>ИИ-админ</b>\n\n"
+        "Напишите обычным языком, что нужно сделать: отчёт, анализ логов, research новых AI, "
+        "статистика, пользователь, баланс, бан, промокод, техрежим или экспорт.\n\n"
+        "Контекст этой сессии сохраняется. Можно написать: <code>теперь проверь ошибки подробнее</code>.\n\n"
+        "Опасные действия выполняются только после подтверждения.",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_ai_help")
+async def admin_ai_help(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        _admin_ai_help_text(),
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_ai_request, F.text)
+async def admin_ai_process_request(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Нет доступа")
+        return
+
+    wait_msg = await message.answer("🤖 Думаю над командой...")
+    stats = await get_admin_stats()
+    data = await state.get_data()
+    memory = data.get("admin_ai_memory") if isinstance(data.get("admin_ai_memory"), list) else []
+    plan = await admin_ai_service.plan_action(
+        message.text,
+        context={
+            "admin_id": message.from_user.id,
+            "total_users": stats.get("total_users"),
+            "maintenance_mode": await get_bot_setting("maintenance_mode", "0"),
+            "session_memory": memory[-6:],
+        },
+    )
+    validation_error = _validate_admin_ai_action(plan)
+    if validation_error:
+        await wait_msg.edit_text(
+            "🤖 <b>ИИ-админ</b>\n\n"
+            f"{html.escape(validation_error)}\n\n"
+            "Попробуйте написать команду конкретнее.",
+            reply_markup=_admin_ai_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    if plan.get("action") == "clear_context":
+        await state.update_data(admin_ai_memory=[], admin_ai_plan=None)
+        await wait_msg.edit_text(
+            "🧹 Контекст ИИ-админа очищен.\n\nМожно начать новую админ-задачу.",
+            reply_markup=_admin_ai_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    action = plan["action"]
+    params = plan.get("params") or {}
+    if plan.get("requires_confirmation"):
+        await state.update_data(admin_ai_plan=plan)
+        await state.set_state(AdminStates.confirming_ai_action)
+        await wait_msg.edit_text(
+            _admin_ai_plan_preview(plan),
+            reply_markup=_admin_ai_confirm_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    result = await _execute_admin_ai_plan(plan, message.from_user.id, wait_msg)
+    await state.update_data(
+        admin_ai_memory=_remember_admin_ai_context(data, message.text, plan, result)
+    )
+    await wait_msg.edit_text(
+        f"{result}\n\n🤖 Можно отправить следующую админ-команду.",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_ai_cancel")
+async def admin_ai_cancel(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.set_state(AdminStates.waiting_ai_request)
+    await state.update_data(admin_ai_plan=None)
+    await callback.message.edit_text(
+        "❌ Действие отменено.\n\nНапишите следующую команду для ИИ-админа.",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_ai_confirm")
+async def admin_ai_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    data = await state.get_data()
+    plan = data.get("admin_ai_plan") or {}
+    validation_error = _validate_admin_ai_action(plan)
+    if validation_error:
+        await callback.answer(validation_error, show_alert=True)
+        return
+
+    await callback.message.edit_text("⏳ Выполняю действие...", parse_mode="HTML")
+    result = await _execute_admin_ai_action(
+        plan["action"],
+        plan.get("params") or {},
+        callback.from_user.id,
+        callback.message,
+    ) if not plan.get("actions") else await _execute_admin_ai_plan(
+        plan,
+        callback.from_user.id,
+        callback.message,
+    )
+    await state.update_data(
+        admin_ai_plan=None,
+        admin_ai_memory=_remember_admin_ai_context(
+            data,
+            str(plan.get("summary") or plan.get("action") or "confirm"),
+            plan,
+            result,
+        ),
+    )
+    await state.set_state(AdminStates.waiting_ai_request)
+    await callback.message.edit_text(
+        f"{result}\n\n🤖 Можно отправить следующую админ-команду.",
+        reply_markup=_admin_ai_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_reload")
@@ -148,7 +849,7 @@ async def admin_show_stats(callback: types.CallbackQuery):
 • Всего: <code>{stats['total_users']}</code>
 • Активных за 7 дней: <code>{stats['active_users']}</code>
 • Забанено: <code>{stats['banned_users']}</code>
-• Общий баланс: <code>{stats['total_user_balance']}</code> 🍌
+• Общий баланс: <code>{stats['total_user_balance']}</code> 🪙
 
 🎨 <b>Генерации:</b>
 • Всего: <code>{stats['total_generations']}</code>
@@ -208,6 +909,24 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
         else "нет"
     )
     ban_text = "забанен" if stats.get("is_banned") else "активен"
+    full_name = " ".join(
+        part
+        for part in (stats.get("first_name"), stats.get("last_name"))
+        if part
+    ).strip()
+    name_text = html.escape(full_name) if full_name else "не указано"
+    username = stats.get("username")
+    username_text = f"@{html.escape(username)}" if username else "нет username"
+    subscription = stats.get("subscription")
+    if subscription:
+        subscription_text = (
+            f"{html.escape(str(subscription['package_name']))} до "
+            f"{html.escape(str(subscription['expires_at']))} "
+            f"(фото {int(subscription['images_used'])}/{int(subscription['image_limit'])}, "
+            f"видео {int(subscription['videos_used'])}/{int(subscription['video_limit'])})"
+        )
+    else:
+        subscription_text = "нет активной"
     data = await state.get_data()
     if data.get("admin_user_flow") == "ban":
         await set_user_banned(user_id, not bool(stats.get("is_banned")))
@@ -227,7 +946,10 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
 👤 <b>Пользователь</b>
 
 🆔 ID: <code>{user_id}</code>
-💰 Кредитов: <code>{stats['credits']}</code>
+👤 Имя: <code>{name_text}</code>
+🔗 Username: <code>{username_text}</code>
+💰 BoomCoin: <code>{stats['credits']}</code>
+🧾 Подписка: <code>{subscription_text}</code>
 🚦 Статус: <code>{ban_text}</code>
 📊 Генераций: <code>{stats['generations']}</code>
 💸 Потрачено: <code>{stats['total_spent']}</code>
@@ -249,7 +971,7 @@ async def admin_process_user_id(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_add_credits_"))
 async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает количество кредитов для добавления"""
+    """Запрашивает количество BoomCoin для добавления"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
@@ -258,9 +980,9 @@ async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(target_user_id=user_id, action="add")
 
     await callback.message.edit_text(
-        f"➕ <b>Добавление кредитов</b>"
+        f"➕ <b>Добавление BoomCoin</b>"
         f"Пользователь ID: <code>{user_id}</code>"
-        f"Введите количество кредитов для добавления:",
+        f"Введите количество BoomCoin для добавления:",
         reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
@@ -270,7 +992,7 @@ async def admin_add_credits_prompt(callback: types.CallbackQuery, state: FSMCont
 
 @router.callback_query(F.data.startswith("admin_deduct_credits_"))
 async def admin_deduct_credits_prompt(callback: types.CallbackQuery, state: FSMContext):
-    """Запрашивает количество кредитов для списания"""
+    """Запрашивает количество BoomCoin для списания"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
@@ -279,9 +1001,9 @@ async def admin_deduct_credits_prompt(callback: types.CallbackQuery, state: FSMC
     await state.update_data(target_user_id=user_id, action="deduct")
 
     await callback.message.edit_text(
-        f"➖ <b>Списание кредитов</b>"
+        f"➖ <b>Списание BoomCoin</b>"
         f"Пользователь ID: <code>{user_id}</code>"
-        f"Введите количество кредитов для списания:",
+        f"Введите количество BoomCoin для списания:",
         reply_markup=_admin_nav_keyboard("admin_back"),
         parse_mode="HTML",
     )
@@ -326,7 +1048,7 @@ async def admin_ban_menu(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.waiting_credits_amount)
 async def admin_process_credits_amount(message: types.Message, state: FSMContext):
-    """Обрабатывает ввод количества кредитов"""
+    """Обрабатывает ввод количества BoomCoin"""
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -341,13 +1063,13 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
 
     if action == "add":
         success = await add_credits(user_id, amount, reason="admin_adjustment_add", external_id=f"admin:{message.from_user.id}:add:{user_id}:{message.message_id}")
-        action_text = f"добавлено <code>{amount}</code> кредитов"
+        action_text = f"добавлено <code>{amount}</code> BoomCoin"
     else:
         # Для списания нужно реализовать deduct_credits_by_admin
         from bot.database import deduct_credits
 
         success = await deduct_credits(user_id, amount, reason="admin_adjustment_deduct", external_id=f"admin:{message.from_user.id}:deduct:{user_id}:{message.message_id}")
-        action_text = f"списано <code>{amount}</code> кредитов"
+        action_text = f"списано <code>{amount}</code> BoomCoin"
 
     if success:
         stats = await get_user_stats(user_id)
@@ -355,13 +1077,13 @@ async def admin_process_credits_amount(message: types.Message, state: FSMContext
             f"✅ <b>Успешно!</b>"
             f"Пользователь ID: <code>{user_id}</code>\n"
             f"Действие: {action_text}\n"
-            f"Текущий баланс: <code>{stats['credits']}</code> кредитов",
+            f"Текущий баланс: <code>{stats['credits']}</code> BoomCoin",
             reply_markup=get_admin_keyboard(),
             parse_mode="HTML",
         )
     else:
         await message.answer(
-            f"❌ Ошибка! Возможно, недостаточно кредитов для списания.",
+            f"❌ Ошибка! Возможно, недостаточно BoomCoin для списания.",
             reply_markup=get_admin_keyboard(),
         )
 
@@ -649,7 +1371,7 @@ async def admin_promos_menu(callback: types.CallbackQuery, state: FSMContext):
         "🎟 <b>Промокоды</b>",
         "",
         "Скидка: <code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>",
-        "Бананы: <code>КОД bananas КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
+        "BoomCoin: <code>КОД boomcoin КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
         "Генерации: <code>КОД generation КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
         "Старый формат тоже работает: <code>START20 20 50</code>",
         "",
@@ -660,7 +1382,7 @@ async def admin_promos_menu(callback: types.CallbackQuery, state: FSMContext):
             status = "✅" if promo["is_active"] else "⛔"
             expires = promo["expires_at"] or "без срока"
             if promo.get("promo_type") == "bananas":
-                promo_value = f"+{promo['reward_credits']}🍌"
+                promo_value = f"+{promo['reward_credits']}🪙"
             elif promo.get("promo_type") == "generation":
                 promo_value = f"{promo['reward_credits']} free gen"
             else:
@@ -708,11 +1430,11 @@ async def admin_promo_create_prompt(callback: types.CallbackQuery, state: FSMCon
         "➕ <b>Создание промокода</b>\n\n"
         "Отправьте одной строкой:\n"
         "<code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>\n"
-        "<code>КОД bananas КОЛ-ВО_БАНАНОВ ЛИМИТ [YYYY-MM-DD]</code>\n\n"
+        "<code>КОД boomcoin КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>\n\n"
         "<code>КОД generation КОЛ-ВО_ГЕНЕРАЦИЙ ЛИМИТ [YYYY-MM-DD]</code>\n\n"
         "Пример:\n"
         "<code>START20 discount 20 50 2026-06-01</code>\n"
-        "<code>PARTNER50 bananas 50 200</code>\n"
+        "<code>PARTNER50 boomcoin 50 200</code>\n"
         "<code>FREEGEN generation 1 100</code>\n\n"
         "Старый формат для скидки тоже работает:\n"
         "<code>VIP15 15 10</code>",
@@ -747,7 +1469,7 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
         await message.answer(
             "❌ Неверный формат.\n\n"
             "Нужно: <code>КОД discount ПРОЦЕНТ ЛИМИТ [YYYY-MM-DD]</code>\n"
-            "или <code>КОД bananas КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>\n"
+            "или <code>КОД boomcoin КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>\n"
             "или <code>КОД generation КОЛ-ВО ЛИМИТ [YYYY-MM-DD]</code>",
             parse_mode="HTML",
         )
@@ -759,7 +1481,7 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
     if len(parts) >= 4 and parts[1].lower() in {"discount", "sale", "скидка"}:
         promo_type = "discount"
         value_index = 2
-    elif len(parts) >= 4 and parts[1].lower() in {"bananas", "banana", "credits", "free", "бананы"}:
+    elif len(parts) >= 4 and parts[1].lower() in {"boomcoin", "bananas", "banana", "credits", "free"}:
         promo_type = "bananas"
         value_index = 2
     elif len(parts) >= 4 and parts[1].lower() in {"generation", "generations", "gen", "free_generation", "генерация", "генерации"}:
@@ -780,7 +1502,7 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
     except (IndexError, ValueError):
         await message.answer(
             "❌ Проверьте значение и лимит.\n"
-            "Скидка: 1-99%, бананы: больше 0, лимит: больше 0."
+            "Скидка: 1-99%, BoomCoin: больше 0, лимит: больше 0."
         )
         return
 
@@ -808,9 +1530,9 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
         reason = {
             "exists": "Промокод с таким кодом уже существует.",
             "empty_code": "Код не должен быть пустым.",
-            "bad_type": "Тип должен быть discount, bananas или generation.",
+            "bad_type": "Тип должен быть discount, boomcoin или generation.",
             "bad_discount": "Скидка должна быть от 1 до 99%.",
-            "bad_reward": "Количество бананов должно быть больше нуля.",
+            "bad_reward": "Количество BoomCoin должно быть больше нуля.",
             "bad_max_uses": "Лимит должен быть больше нуля.",
         }.get(result, "Не удалось создать промокод.")
         await message.answer(f"❌ {reason}")
@@ -820,8 +1542,8 @@ async def admin_process_promo_data(message: types.Message, state: FSMContext):
     await message.answer(
         "✅ <b>Промокод создан</b>\n\n"
         f"Код: <code>{result}</code>\n"
-        f"Тип: <code>{ {'bananas': 'бесплатные бананы', 'generation': 'бесплатная генерация'}.get(promo_type, 'скидка') }</code>\n"
-        f"Значение: <code>{value}{' 🍌' if promo_type == 'bananas' else ' генерац.' if promo_type == 'generation' else '%'}</code>\n"
+        f"Тип: <code>{ {'bananas': 'бесплатные BoomCoin', 'generation': 'бесплатная генерация'}.get(promo_type, 'скидка') }</code>\n"
+        f"Значение: <code>{value}{' 🪙' if promo_type == 'bananas' else ' генерац.' if promo_type == 'generation' else '%'}</code>\n"
         f"Лимит: <code>{max_uses}</code> активаций\n"
         f"Срок: <code>{expires_at or 'без срока'}</code>",
         reply_markup=get_admin_keyboard(),
@@ -920,7 +1642,7 @@ async def admin_price_img_prompt(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(AdminStates.waiting_price_value)
     await callback.message.edit_text(
         f"🖼 <b>Изменение цены: <code>{key}</code></b>\n\n"
-        f"Текущая цена: <code>{current}</code> 🍌\n\n"
+        f"Текущая цена: <code>{current}</code> 🪙\n\n"
         f"Введите новую цену (целое число):",
         reply_markup=_admin_nav_keyboard("admin_price_cat_image"),
         parse_mode="HTML",
@@ -940,14 +1662,14 @@ async def admin_price_vid_prompt(callback: types.CallbackQuery, state: FSMContex
 
     if "fixed_cost" in model_data:
         hint = (
-            f"Текущая цена: <code>{model_data['fixed_cost']}</code> 🍌 (фиксированная)\n\n"
+            f"Текущая цена: <code>{model_data['fixed_cost']}</code> 🪙 (фиксированная)\n\n"
             f"Введите новую цену (целое число):"
         )
         await state.update_data(price_type="video_fixed", price_key=key)
     else:
         current = model_data.get("per_second", model_data.get("base", "?"))
         hint = (
-            f"Текущая цена: <code>{current}</code> 🍌 за 1 секунду\n\n"
+            f"Текущая цена: <code>{current}</code> 🪙 за 1 секунду\n\n"
             f"Введите новую цену за <b>1 секунду</b> (целое число):"
         )
         await state.update_data(price_type="video_per_second", price_key=key)
@@ -977,7 +1699,7 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
             _save_price_json(price_config)
             await state.clear()
             await message.answer(
-                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🍌",
+                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🪙",
                 reply_markup=get_admin_keyboard(),
                 parse_mode="HTML",
             )
@@ -990,7 +1712,7 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
             _save_price_json(price_config)
             await state.clear()
             await message.answer(
-                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🍌",
+                f"✅ Цена для <code>{price_key}</code> обновлена: <b>{new_price}</b> 🪙",
                 reply_markup=get_admin_keyboard(),
                 parse_mode="HTML",
             )
@@ -1006,7 +1728,7 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
             await state.clear()
             await message.answer(
                 f"✅ Цена для <code>{price_key}</code> обновлена: "
-                f"<b>{new_price}</b> 🍌/сек",
+                f"<b>{new_price}</b> 🪙/сек",
                 reply_markup=get_admin_keyboard(),
                 parse_mode="HTML",
             )

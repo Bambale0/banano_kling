@@ -1,6 +1,6 @@
 # Banano Kling AI Bot
 
-Telegram-бот на Aiogram 3.x для генерации изображений и видео через несколько AI-провайдеров, с балансом в "бананах", оплатами, промокодами, партнерской программой, админ-панелью и webhook-интеграциями.
+Telegram-бот на Aiogram 3.x для генерации изображений и видео через несколько AI-провайдеров, с балансом в "BoomCoin", оплатами, промокодами, партнерской программой, админ-панелью и webhook-интеграциями.
 
 ## Что умеет бот
 
@@ -11,10 +11,15 @@ Telegram-бот на Aiogram 3.x для генерации изображени�
 - Референсы: фото-референсы и видео-референсы в поддерживаемых сценариях.
 - Фото -> промпт и улучшение промпта через GPT 5.5.
 - Gemini Omni как отдельный мультимодальный сценарий.
-- Баланс в бананах, пополнение через T-Bank и Crypto Bot.
+- Баланс в BoomCoin, пополнение через T-Bank и Crypto Bot.
 - Промокоды со скидками и лимитом использований.
-- Партнерская программа: ссылка, начисления в рублях, выплаты через Jump Finance, перевод партнерского заработка в бананы.
-- Админ-панель: статистика, пользователи, баланс, промокоды, цены, рассылка, бан/разбан, техрежим.
+- Партнерская программа: ссылка, начисления в рублях, выплаты через Jump Finance, перевод партнерского заработка в BoomCoin.
+- Админ-панель: ИИ-админ, статистика, пользователи, баланс, промокоды, цены, рассылка, бан/разбан, техрежим.
+
+## Документация по ИИ-админу
+
+- [Инструкция по внедрению ИИ-админа в Telegram-бот](docs/ai_admin_implementation_guide.md) — reusable-гайд для похожих Aiogram-проектов: архитектура, безопасность, FSM, агентные цепочки, анализ логов, research, тесты и чеклист внедрения.
+- [PostgreSQL + Redis migration runbook](docs/postgres_redis_cutover_runbook.md) — безопасный порядок миграции `bot.db` в PostgreSQL, включение Redis, checksum, cutover и rollback.
 
 ## Текущий стек
 
@@ -102,7 +107,7 @@ bot/
     *_service.py          интеграции с AI/payment/storage/reliability
   utils/                  тексты помощи, валидаторы, инструкции ассистента
 data/
-  price.json              пакеты бананов, цены генераций, admin_ids fallback
+  price.json              пакеты BoomCoin, цены генераций, admin_ids fallback
   runway_characters.json  локальный storage для Runway character ids
 docs/                     эксплуатационные и интеграционные заметки
 scripts/                  systemd/watchdog/cleanup helpers
@@ -207,11 +212,11 @@ JUMP_FINANCE_PAYOUT_SERVICE_NAME=Партнерское вознагражден
 JUMP_FINANCE_PAYOUT_PURPOSE=Выплата партнерского вознаграждения
 ```
 
-`PARTNER_MIN_WITHDRAWAL_RUB=0` означает вывод без минимального порога. `PARTNER_RUB_PER_CREDIT=10` означает курс `10 ₽ = 1 банан` для перевода партнерского заработка во внутренний баланс.
+`PARTNER_MIN_WITHDRAWAL_RUB=0` означает вывод без минимального порога. `PARTNER_RUB_PER_CREDIT=10` означает курс `10 ₽ = 1 BoomCoin` для перевода партнерского заработка во внутренний баланс.
 
 ## Баланс, платежи и промокоды
 
-Внутренняя валюта - бананы (`users.credits`).
+Внутренняя валюта - BoomCoin (`users.credits`).
 
 Пакеты и цены живут в `data/price.json`. Runtime-обертка - `bot.services.preset_manager`.
 
@@ -221,11 +226,11 @@ JUMP_FINANCE_PAYOUT_PURPOSE=Выплата партнерского вознаг
 2. `handlers/payments.py` создает транзакцию в `transactions`.
 3. Провайдер возвращает ссылку/инвойс.
 4. Webhook подтверждает оплату.
-5. `_complete_transaction()` идемпотентно начисляет бананы через `add_credits_once()`.
+5. `_complete_transaction()` идемпотентно начисляет BoomCoin через `add_credits_once()`.
 6. Если есть реферал, `credit_first_payment_referral_bonus()` начисляет первый бонус.
 7. Промокод помечается использованным по `order_id`.
 
-Ledger операций по бананам хранится в `credit_transactions`. Важные причины:
+Ledger операций по BoomCoin хранится в `credit_transactions`. Важные причины:
 
 - `payment_completed`;
 - `generation_charge`;
@@ -247,14 +252,14 @@ Ledger операций по бананам хранится в `credit_transact
 2. Ссылка имеет вид `https://t.me/<bot>?start=ref_<code>`.
 3. `process_referral()` закрепляет нового пользователя за пригласившим один раз.
 4. При первой оплате реферала:
-   - если пригласивший не активировал партнерку, начисляется banana-бонус;
+   - если пригласивший не активировал партнерку, начисляется BoomCoin-бонус;
    - если активировал, начисляется рублевый партнерский бонус.
 5. Базовая ставка - 45%.
 6. Gold-ставка - 50% при обороте от 300 000 ₽.
 7. Рублевый баланс хранится в `users.partner_balance_rub`.
 8. Вывод создает запись в `partner_withdrawals` и резервирует сумму.
 9. Если выплата failed/cancelled, сумма возвращается на партнерский баланс.
-10. Кнопка `🍌 Использовать в боте` переводит рубли партнерки в бананы по `PARTNER_RUB_PER_CREDIT`.
+10. Кнопка `🪙 Использовать в боте` переводит рубли партнерки в BoomCoin по `PARTNER_RUB_PER_CREDIT`.
 
 ## База данных
 
@@ -262,7 +267,7 @@ Ledger операций по бананам хранится в `credit_transact
 
 Ключевые таблицы:
 
-- `users` - пользователи, бананы, рефералы, партнерские поля, бан;
+- `users` - пользователи, BoomCoin, рефералы, партнерские поля, бан;
 - `transactions` - платежные транзакции T-Bank/Crypto Bot;
 - `generation_tasks` - задачи генерации и результаты;
 - `generation_history` - история генераций;
@@ -273,7 +278,7 @@ Ledger операций по бананам хранится в `credit_transact
 - `referrals` - связи реферер/реферал;
 - `partner_withdrawals` - выплаты партнерам;
 - `batch_jobs` - batch-задачи;
-- `credit_transactions` - ledger начислений/списаний бананов.
+- `credit_transactions` - ledger начислений/списаний BoomCoin.
 
 Есть файл [migrations/postgres_schema_v1.sql](migrations/postgres_schema_v1.sql), но runtime сейчас использует SQLite.
 
@@ -363,7 +368,7 @@ pgrep -af "python -m bot.main"
 
 - Не хранить секреты в git; `.env` локальный.
 - При изменении FSM/роутеров учитывать порядок подключения роутеров в `setup_dispatcher()`.
-- Начисление/списание бананов проводить через функции `database.py`, чтобы не обходить ledger.
+- Начисление/списание BoomCoin проводить через функции `database.py`, чтобы не обходить ledger.
 - Для новых provider webhooks добавлять idempotency и возврат `200` на нефатальные ошибки, иначе внешние сервисы будут ретраить.
 - Для платежей использовать idempotent external ids.
 - Для новых моделей сначала обновлять `image_models.py`/`video_models.py`, затем `data/price.json`, затем клавиатуры/handlers.

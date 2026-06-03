@@ -16,6 +16,7 @@ from bot.image_models import (
 from bot.services.preset_manager import preset_manager
 from bot.video_models import (
     VIDEO_OPTION_LABELS,
+    format_inline_choice,
     get_video_model_config,
     get_video_models_for_type,
     get_video_option_label,
@@ -38,10 +39,20 @@ def load_prices() -> dict:
 
 
 try:
-    PACKAGES = load_prices().get("packages", [])
+    PRICE_CONFIG = load_prices()
+    PACKAGES = PRICE_CONFIG.get("packages", [])
 except Exception:
     logger.exception("Failed to load package prices for keyboard fallback")
+    PRICE_CONFIG = {}
     PACKAGES = []
+
+
+def get_credit_emoji() -> str:
+    return str(PRICE_CONFIG.get("credit_emoji") or "🪙")
+
+
+def get_credit_plural() -> str:
+    return str(PRICE_CONFIG.get("credit_name_plural") or "BoomCoin")
 
 
 # =============================================================================
@@ -56,14 +67,14 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
-    builder.button(text="📚 Каталог промтов", callback_data="menu_feed")
+    builder.button(text="📚 Каталог промптов", callback_data="menu_feed")
     builder.button(text="🌈 Микс фото", callback_data="quick_mix_photo")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="🔷 Gemini Omni", callback_data="gemini_omni_menu")
     builder.button(text="✍️ Улучшить промпт", callback_data="gpt55_improve_prompt")
     builder.button(text="📷 Фото → Промпт", callback_data="photo_to_prompt")
-    builder.button(text="🍌 Мой баланс", callback_data="menu_balance")
-    builder.button(text="💰 Купить бананы", callback_data="menu_topup")
+    builder.button(text="🪙 Мой баланс", callback_data="menu_balance")
+    builder.button(text="💰 Купить BoomCoin", callback_data="menu_topup")
     builder.button(text="💼 Партнёрам", callback_data="menu_partner")
     builder.button(text="🆘 Поддержка", callback_data="menu_support")
 
@@ -75,9 +86,14 @@ def get_main_menu_keyboard(user_credits: int = 0):
 def get_admin_keyboard():
     """Админ-панель"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="🤖 ИИ-админ", callback_data="admin_ai")
+    builder.button(text="📘 Инструкция ИИ", callback_data="admin_ai_help")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="📣 Рассылка", callback_data="admin_broadcast")
-    builder.button(text="🍌 Баланс", callback_data="admin_users")
+    builder.button(text="💵 Пакеты", callback_data="admin_packages")
+    builder.button(text="🎁 Рефералка", callback_data="admin_ref:menu")
+    builder.button(text="📨 Push-сценарии", callback_data="push_scenarios:menu")
+    builder.button(text="🪙 Баланс", callback_data="admin_users")
     builder.button(text="🎟 Промокоды", callback_data="admin_promos")
     builder.button(text="👤 Пользователь", callback_data="admin_users")
     builder.button(text="🚫 Бан / разбан", callback_data="admin_ban_menu")
@@ -86,7 +102,7 @@ def get_admin_keyboard():
     builder.button(text="💰 Цены", callback_data="admin_prices")
     builder.button(text="🔄 Обновить", callback_data="admin_reload")
     builder.button(text="🏠 Домой", callback_data="back_main")
-    builder.adjust(2, 2, 2, 2, 2, 1)
+    builder.adjust(2, 2, 3, 2, 2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -125,7 +141,7 @@ def get_admin_price_image_keyboard(price_config: dict):
         cb = f"admin_price_img_{key}"
         if len(cb) > 64:
             cb = cb[:64]
-        builder.button(text=f"{name}: {cost}🍌", callback_data=cb)
+        builder.button(text=f"{name}: {cost}🪙", callback_data=cb)
     builder.button(text="🔙 Назад", callback_data="admin_prices")
     builder.adjust(2)
     return builder.as_markup()
@@ -165,12 +181,12 @@ def get_admin_price_video_keyboard(price_config: dict):
     for key, model_data in video_models.items():
         name = labels.get(key, key)
         if "fixed_cost" in model_data:
-            cost_str = f"{model_data['fixed_cost']}🍌"
+            cost_str = f"{model_data['fixed_cost']}🪙"
         elif "per_second" in model_data:
-            cost_str = f"{model_data['per_second']}🍌/с"
+            cost_str = f"{model_data['per_second']}🪙/с"
         else:
             base = model_data.get("base", "?")
-            cost_str = f"от {base}🍌"
+            cost_str = f"от {base}🪙"
         cb = f"admin_price_vid_{key}"
         if len(cb) > 64:
             cb = cb[:64]
@@ -278,7 +294,7 @@ def get_create_video_keyboard(
         check = "✅ " if current_model == model_info["key"] else ""
         model_buttons.append(
             InlineKeyboardButton(
-                text=f"{check}{model_info['label']} • {model_info['cost']}🍌",
+                text=f"{check}{model_info['label']} • {model_info['cost']}🪙",
                 callback_data=f"v_model_{model_info['key']}",
             )
         )
@@ -292,46 +308,80 @@ def get_create_video_keyboard(
     supported_ratios = model_config.get("aspect_ratios")
     if supported_ratios is None:
         supported_ratios = ["16:9", "9:16", "1:1"]
-    ratio_buttons = []
-    for ratio in supported_ratios:
-        check = "✅ " if current_ratio == ratio else ""
-        label = ratio.replace(":", "∶")  # визуально лучше
-        ratio_buttons.append(
+
+    def _selected(text: str, active: bool) -> str:
+        return f"● {text}" if active else f"○ {text}"
+
+    if current_model == "grok_imagine":
+        ratio_labels = {
+            "16:9": "▭ 16×9",
+            "9:16": "▯ 9×16",
+            "1:1": "□ 1×1",
+            "3:2": "▭ 3×2",
+            "2:3": "▯ 2×3",
+        }
+        ratio_buttons = [
             InlineKeyboardButton(
-                text=f"{check}{label}",
+                text=_selected(ratio_labels.get(ratio, ratio.replace(":", "×")), current_ratio == ratio),
                 callback_data=f"vratio_{ratio.replace(':', '_')}",
             )
-        )
-    for index in range(0, len(ratio_buttons), 3):
-        builder.row(*ratio_buttons[index : index + 3])
+            for ratio in supported_ratios
+        ]
+        builder.row(*ratio_buttons[:3])
+        if len(ratio_buttons) > 3:
+            builder.row(*ratio_buttons[3:])
+    else:
+        ratio_buttons = []
+        for ratio in supported_ratios:
+            label = ratio.replace(":", "∶")
+            ratio_buttons.append(
+                InlineKeyboardButton(
+                    text=_selected(label, current_ratio == ratio),
+                    callback_data=f"vratio_{ratio.replace(':', '_')}",
+                )
+            )
+        for index in range(0, len(ratio_buttons), 3):
+            builder.row(*ratio_buttons[index : index + 3])
 
     available_durations = model_config.get("durations") or []
     if available_durations:
         duration_buttons = []
         for dur in available_durations:
-            check = "✅ " if current_duration == dur else ""
+            label = f"{dur}с"
+            if current_model == "grok_imagine":
+                duration_names = {6: "6с", 10: "10с", 20: "20с", 30: "30с"}
+                label = duration_names.get(dur, label)
             duration_buttons.append(
                 InlineKeyboardButton(
-                    text=f"{check}{dur} сек", callback_data=f"vdur_{dur}"
+                    text=_selected(label, current_duration == dur),
+                    callback_data=f"vdur_{dur}",
                 )
             )
-        for index in range(0, len(duration_buttons), 4):
-            builder.row(*duration_buttons[index : index + 4])
+        row_size = 2 if current_model == "grok_imagine" else 4
+        for index in range(0, len(duration_buttons), row_size):
+            builder.row(*duration_buttons[index : index + row_size])
 
     # Дополнительные возможности модели: качество, разрешение, звук, режимы.
     for option_name, allowed_values in model_config.get("options", {}).items():
-        option_label = VIDEO_OPTION_LABELS.get(option_name, option_name)
         buttons = []
         for value in allowed_values:
             value_token = str(value).lower()
-            check = "✅ " if current_video_options.get(option_name) == value else ""
+            label = format_inline_choice(option_name, value)
+            if current_model == "grok_imagine":
+                label = _selected(label, current_video_options.get(option_name) == value)
+            else:
+                check = "✅ " if current_video_options.get(option_name) == value else ""
+                option_label = VIDEO_OPTION_LABELS.get(option_name, option_name)
+                label = f"{check}{option_label}: {label}"
             buttons.append(
                 InlineKeyboardButton(
-                    text=f"{check}{option_label}: {get_video_option_label(option_name, value)}",
+                    text=label,
                     callback_data=f"vopt_{option_name}_{value_token}",
                 )
             )
         row_size = 2 if len(buttons) <= 4 else 3
+        if current_model == "grok_imagine":
+            row_size = 2
         for index in range(0, len(buttons), row_size):
             builder.row(*buttons[index : index + row_size])
 
@@ -340,7 +390,7 @@ def get_create_video_keyboard(
 
     # Кнопка создания - после выбора опций пользователь отправляет промпт
     builder.row(
-        InlineKeyboardButton(text=f"💰 {total_cost}🍌", callback_data="back_main"),
+        InlineKeyboardButton(text=f"💰 {total_cost}🪙", callback_data="back_main"),
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"),
     )
     return builder.as_markup()
@@ -418,6 +468,10 @@ def get_reference_images_upload_keyboard(
     if preset_id == "new":
         builder.button(text="⏭ Пропустить", callback_data="img_ref_skip_new")
         builder.button(text="✅ Продолжить", callback_data="img_ref_continue_new")
+    elif preset_id == "feed_retry":
+        builder.button(text="✅ Выбрать модель", callback_data="feed_retry_choose_model")
+        builder.button(text="📄 Полный промпт", callback_data="feed_retry_full_prompt")
+        builder.button(text="✏️ Изменить промпт", callback_data="feed_retry_edit_prompt")
     elif preset_id == "generate_image":
         builder.button(text="⏭ Пропустить", callback_data="img_ref_skip")
         builder.button(
@@ -430,7 +484,10 @@ def get_reference_images_upload_keyboard(
         )
     builder.button(text="🔄 Перезагрузить", callback_data="ref_reload_new")
     builder.button(text="🔙 Назад", callback_data="back_main")
-    builder.adjust(1, 2, 2)
+    if preset_id == "feed_retry":
+        builder.adjust(1, 1, 2, 2)
+    else:
+        builder.adjust(1, 2, 2)
     return builder.as_markup()
 
 
@@ -466,6 +523,10 @@ def get_create_image_keyboard(
     num_refs: int = 0,
     current_options: dict | None = None,
     img_count: int = 1,
+    launch_callback_data: str | None = None,
+    launch_text: str = "🚀 Запустить",
+    edit_prompt_callback_data: str | None = None,
+    full_prompt_callback_data: str | None = None,
 ):
     """Меню создания фото - всё на одном экране"""
     builder = InlineKeyboardBuilder()
@@ -485,7 +546,7 @@ def get_create_image_keyboard(
         check = "✅ " if current_service == model_id else ""
         model_buttons.append(
             InlineKeyboardButton(
-                text=f"{check}{config['label']} • {cost}🍌",
+                text=f"{check}{config['label']} • {cost}🪙",
                 callback_data=f"img_model_{model_id}",
             )
         )
@@ -524,6 +585,12 @@ def get_create_image_keyboard(
     )
     builder.row(*count_buttons)
 
+    if launch_callback_data:
+        builder.row(InlineKeyboardButton(text=launch_text, callback_data=launch_callback_data))
+    if full_prompt_callback_data:
+        builder.row(InlineKeyboardButton(text="📄 Полный промпт", callback_data=full_prompt_callback_data))
+    if edit_prompt_callback_data:
+        builder.row(InlineKeyboardButton(text="✏️ Изменить промпт", callback_data=edit_prompt_callback_data))
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return builder.as_markup()
 
@@ -629,7 +696,7 @@ def get_payment_provider_keyboard(current_provider: str = "tbank"):
 
 
 def get_payment_packages_keyboard(packages: list, provider: str = None):
-    """Клавиатура выбора пакета бананов с выбором провайдера"""
+    """Клавиатура выбора пакета BoomCoin с выбором провайдера"""
     provider = provider or config.payment_provider
     if provider not in {"tbank", "cryptobot"}:
         provider = "tbank"
@@ -639,14 +706,23 @@ def get_payment_packages_keyboard(packages: list, provider: str = None):
     if provider_kb.inline_keyboard:
         builder.row(*provider_kb.inline_keyboard[0])
 
+    credit_emoji = get_credit_emoji()
     for pkg in packages:
+        if pkg.get("hidden"):
+            continue
         bonus = (
-            f" +{pkg['bonus_credits']} бонусов (🍌)"
+            f" +{pkg['bonus_credits']} бонусов ({credit_emoji})"
             if pkg.get("bonus_credits", 0) > 0
             else ""
         )
+        marker = "🔥 " if pkg.get("popular") else ""
+        period = f" / {pkg['period']}" if pkg.get("period") else ""
+        limit = f" · {pkg['photo_limit_text']}" if pkg.get("photo_limit_text") else ""
         builder.button(
-            text=f"{pkg['credits']}🍌 - {pkg['price_rub']}₽{bonus}",
+            text=(
+                f"{marker}{pkg['name']} - {pkg['price_rub']}₽{period}"
+                f"{limit}{bonus}"
+            ),
             callback_data=f"buy_{provider}_{pkg['id']}",
         )
 
@@ -665,7 +741,7 @@ def get_balance_keyboard(user_credits: int = 0):
     """Меню баланса"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text=f"У тебя: {user_credits} 🍌", callback_data="back_main")
+    builder.button(text=f"У тебя: {user_credits} 🪙", callback_data="back_main")
 
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="📋 История", callback_data="menu_history")
@@ -855,7 +931,7 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
         builder.button(text="📨 Поделиться ссылкой", url=share_url)
     builder.button(text="📈 Детальная статистика", callback_data="partner_stats")
     builder.button(text="🔄 Обновить", callback_data="menu_partner")
-    builder.button(text="🍌 Использовать в боте", callback_data="partner_convert")
+    builder.button(text="🪙 Использовать в боте", callback_data="partner_convert")
     builder.button(text="🎟️ Вывод заработка", callback_data="partner_withdraw")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
@@ -899,7 +975,7 @@ def get_category_keyboard(category: str, presets: list, user_credits: int):
     for preset in presets:
         affordable = "✅" if user_credits >= preset.cost else "❌"
         builder.button(
-            text=f"{preset.name} — {preset.cost}🍌 {affordable}",
+            text=f"{preset.name} — {preset.cost}🪙 {affordable}",
             callback_data=f"preset_{preset.id}",
         )
     builder.button(text="🔙 Назад в меню", callback_data="back_main")

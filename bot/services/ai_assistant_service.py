@@ -264,7 +264,7 @@ class AIAssistantService:
         lines = []
 
         if "user_credits" in context:
-            lines.append(f"- Баланс: {context['user_credits']} бананов")
+            lines.append(f"- Баланс: {context['user_credits']} BoomCoin")
 
         if "preferred_model" in context:
             lines.append(f"- Текущая модель изображений: {context['preferred_model']}")
@@ -429,48 +429,48 @@ class AIAssistantService:
         return f"""## АКТУАЛЬНЫЕ ЦЕНЫ (автоматически загружены из data/price.json)
 
 🖼 Генерация изображений:
-- Banana Pro: {pro_cost}🍌
-- Banana 2: 7🍌
-- GPT Image 2: {gpt_image_2_cost}🍌
-- Seedream: {seedream_cost}🍌
-- Z-Image Turbo: {z_image_turbo_cost}🍌
+- Banana Pro: {pro_cost}🪙
+- Banana 2: 7🪙
+- GPT Image 2: {gpt_image_2_cost}🪙
+- Seedream: {seedream_cost}🪙
+- Z-Image Turbo: {z_image_turbo_cost}🪙
 
 🎬 Генерация видео (текст → видео):
 │ Модель              │ 5 сек │ 10 сек │ 15 сек │
-│ Kling 2.6           │ {v26_5}🍌   │ {v26_10}🍌  │  -     │
-│ Kling 3 Std         │ {video_std_5}🍌   │ {video_std_10}🍌  │ {video_std_15}🍌  │
-│ Kling 3 Pro         │ {video_pro_5}🍌   │ {video_pro_10}🍌  │ {video_pro_15}🍌  │
-│ Seedance 2.0        │ {seedance_5}🍌   │ {seedance_10}🍌  │ {seedance_15}🍌  │
-│ Kling 3 Omni Std    │ {omni_std_5}🍌   │ {omni_std_10}🍌  │ {omni_std_15}🍌  │
-│ Kling 3 Omni Pro    │ {omni_pro_5}🍌   │ {omni_pro_10}🍌  │ {omni_pro_15}🍌  │
+│ Kling 2.6           │ {v26_5}🪙   │ {v26_10}🪙  │  -     │
+│ Kling 3 Std         │ {video_std_5}🪙   │ {video_std_10}🪙  │ {video_std_15}🪙  │
+│ Kling 3 Pro         │ {video_pro_5}🪙   │ {video_pro_10}🪙  │ {video_pro_15}🪙  │
+│ Seedance 2.0        │ {seedance_5}🪙   │ {seedance_10}🪙  │ {seedance_15}🪙  │
+│ Kling 3 Omni Std    │ {omni_std_5}🪙   │ {omni_std_10}🪙  │ {omni_std_15}🪙  │
+│ Kling 3 Omni Pro    │ {omni_pro_5}🪙   │ {omni_pro_10}🪙  │ {omni_pro_15}🪙  │
 
 🎨 Grok Imagine:
 │ Длительность │ Цена │
-│ 6 сек        │ {grok_6}🍌  │
-│ 10 сек       │ {grok_10}🍌  │
-│ 20 сек       │ {grok_20}🍌  │
-│ 30 сек       │ {grok_30}🍌  │
+│ 6 сек        │ {grok_6}🪙  │
+│ 10 сек       │ {grok_10}🪙  │
+│ 20 сек       │ {grok_20}🪙  │
+│ 30 сек       │ {grok_30}🪙  │
 
 🎬 Kling 2.6 Motion Control (движение с видео):
 │ Модель  │ 5 сек │ 10 сек │
-│ Pro     │ {motion_pro_5}🍌   │ {motion_pro_10}🍌  │
-│ Std     │ {motion_std_5}🍌   │ {motion_std_10}🍌  │
+│ Pro     │ {motion_pro_5}🪙   │ {motion_pro_10}🪙  │
+│ Std     │ {motion_std_5}🪙   │ {motion_std_10}🪙  │
 
 🎞 Фото/видео → видео:
 │ Модель  │ 5 сек │ 10 сек │
-│ Runway  │ {runway_5}🍌   │ {runway_10}🍌  │
-│ Aleph   │ {aleph_5}🍌   │ {aleph_10}🍌  │
-│ Glow    │ {glow_5}🍌   │ {glow_10}🍌  │
-│ HappyHorse T2V │ {happyhorse_t2v_5}🍌 │ - │
-│ HappyHorse I2V │ {happyhorse_i2v_5}🍌 │ - │
-│ HappyHorse Ref │ {happyhorse_ref2v_5}🍌 │ - │
-│ HappyHorse Edit│ {happyhorse_edit_5}🍌 │ - │
-│ V2V Std │ {v2v_std_5}🍌   │ {v2v_std_10}🍌  │
-│ V2V Pro │ {v2v_pro_5}🍌   │ {v2v_pro_10}🍌  │
+│ Runway  │ {runway_5}🪙   │ {runway_10}🪙  │
+│ Aleph   │ {aleph_5}🪙   │ {aleph_10}🪙  │
+│ Glow    │ {glow_5}🪙   │ {glow_10}🪙  │
+│ HappyHorse T2V │ {happyhorse_t2v_5}🪙 │ - │
+│ HappyHorse I2V │ {happyhorse_i2v_5}🪙 │ - │
+│ HappyHorse Ref │ {happyhorse_ref2v_5}🪙 │ - │
+│ HappyHorse Edit│ {happyhorse_edit_5}🪙 │ - │
+│ V2V Std │ {v2v_std_5}🪙   │ {v2v_std_10}🪙  │
+│ V2V Pro │ {v2v_pro_5}🪙   │ {v2v_pro_10}🪙  │
 
 💳 Пополнение: T-Bank или Crypto Bot
 
-✏️ Редактирование: от {pro_cost}🍌"""
+✏️ Редактирование: от {pro_cost}🪙"""
 
     async def close(self):
         """Закрытие сессии"""

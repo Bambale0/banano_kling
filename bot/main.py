@@ -20,11 +20,17 @@ from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Update
+from aiogram.types import BotCommand, Update
 from aiohttp import web
 
 from bot.config import config
-from bot.database import init_db, is_maintenance_mode, is_user_banned
+from bot.database import (
+    get_or_create_user,
+    init_db,
+    is_maintenance_mode,
+    is_user_banned,
+    refund_generation_billing,
+)
 from bot.handlers import (
     admin_router,
     batch_generation_router,
@@ -32,6 +38,7 @@ from bot.handlers import (
     feed_router,
     generation_router,
     image_analyzer_router,
+    optional_admin_routers,
     payments_router,
     start_router,
 )
@@ -48,6 +55,16 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+
+USER_BOT_COMMANDS: tuple[BotCommand, ...] = (
+    BotCommand(command="start", description="Открыть главное меню"),
+    BotCommand(command="help", description="Помощь по боту"),
+    BotCommand(command="feed", description="Лента работ"),
+    BotCommand(command="ref", description="Реферальная программа"),
+    BotCommand(command="earn", description="Партнёрская программа"),
+    BotCommand(command="clear", description="Очистить чат GPT 5.5"),
+)
 
 
 TERMINAL_SUCCESS_STATUSES = {"success", "completed", "succeeded", "finished"}
@@ -136,6 +153,20 @@ class AccessControlMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+class UserProfileSyncMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user") or getattr(event, "from_user", None)
+        if user and not getattr(user, "is_bot", False):
+            await get_or_create_user(
+                user.id,
+                username=getattr(user, "username", None),
+                first_name=getattr(user, "first_name", None),
+                last_name=getattr(user, "last_name", None),
+            )
+
+        return await handler(event, data)
+
+
 def _build_friendly_generation_error(
     fail_code: str | int | None,
     fail_msg: str | None,
@@ -175,7 +206,7 @@ def _build_friendly_generation_error(
         )
 
     refund_text = (
-        "\n\n🍌 Бананы возвращены на счёт."
+        "\n\n🪙 BoomCoin возвращены на счёт."
         if credits_returned
         else "\n\nПопробуйте ещё раз чуть позже."
     )
@@ -212,7 +243,7 @@ def _build_generation_result_caption(
     if getattr(task, "aspect_ratio", None):
         details.append(f"📐 <code>{html.escape(str(task.aspect_ratio))}</code>")
     if getattr(task, "cost", None):
-        details.append(f"💰 <code>{task.cost}🍌</code>")
+        details.append(f"💰 <code>{task.cost}🪙</code>")
     if details:
         lines.append(" · ".join(details))
 
@@ -269,12 +300,45 @@ async def _static_cleanup_loop():
         await asyncio.sleep(6 * 3600)
 
 
+async def _schedule_push_scenario_loop(bot: Bot) -> None:
+    if not config.PUSH_SCENARIOS_BACKGROUND_ENABLED:
+        logger.info("Push scenario background loop is disabled by config")
+        return
+
+    try:
+        from bot.services.push_scenario_dispatcher import push_scenario_background_loop
+
+        asyncio.create_task(
+            push_scenario_background_loop(
+                bot,
+                interval_seconds=config.PUSH_SCENARIOS_INTERVAL_SECONDS,
+                batch_limit=config.PUSH_SCENARIOS_BATCH_LIMIT,
+                sleep_seconds=config.PUSH_SCENARIOS_SEND_SLEEP_SECONDS,
+                user_cooldown_seconds=config.PUSH_SCENARIOS_USER_COOLDOWN_SECONDS,
+                startup_delay_seconds=config.PUSH_SCENARIOS_STARTUP_DELAY_SECONDS,
+            )
+        )
+        logger.info("Scheduled push scenario background loop")
+    except Exception:
+        logger.exception("Failed to schedule push scenario background loop")
+
+
+async def _register_user_bot_commands(bot: Bot) -> None:
+    await bot.set_my_commands(list(USER_BOT_COMMANDS))
+    logger.info("Registered %s user bot commands", len(USER_BOT_COMMANDS))
+
+
 async def on_startup(bot: Bot):
     """Действия при старте бота"""
     logger.info("Bot starting...")
 
     # База данных уже инициализирована в main() функции
     logger.info("Database already initialized")
+
+    try:
+        await _register_user_bot_commands(bot)
+    except Exception:
+        logger.exception("Failed to register user bot commands")
 
     # Устанавливаем вебхук для Telegram (если используем webhook mode)
     if config.WEBHOOK_HOST:
@@ -294,6 +358,8 @@ async def on_startup(bot: Bot):
         )
     except Exception:
         logger.exception("Failed to schedule static cleanup task")
+
+    await _schedule_push_scenario_loop(bot)
 
 
 async def on_shutdown(bot: Bot):
@@ -333,6 +399,8 @@ async def errors_handler(event: types.ErrorEvent):
 def setup_dispatcher() -> Dispatcher:
     """Настройка диспетчера с роутерами"""
     dp = Dispatcher()
+    dp.message.middleware(UserProfileSyncMiddleware())
+    dp.callback_query.middleware(UserProfileSyncMiddleware())
     dp.message.middleware(AccessControlMiddleware())
     dp.callback_query.middleware(AccessControlMiddleware())
 
@@ -357,6 +425,8 @@ def setup_dispatcher() -> Dispatcher:
     dp.include_router(image_analyzer_router)  # Анализ фото в промпт
     dp.include_router(feed_router)  # Bot-side лента публичных фото
     dp.include_router(admin_router)  # Админ-команды
+    for optional_router in optional_admin_routers:
+        dp.include_router(optional_router)  # Дополнительные админ-модули
     dp.include_router(payments_router)  # Платежи
     dp.include_router(batch_generation_router)  # Пакетная генерация
     dp.include_router(common_router)  # Общие команды - ПОСЛЕДНИЙ!
@@ -648,14 +718,18 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     )
                             elif _status_kind(status) == "failure":
                                 # Fail case
-                                await add_credits(telegram_id, task.cost or 0)
+                                await refund_generation_billing(
+                                    task_id,
+                                    metadata={"provider": "kie_ai_legacy"},
+                                )
                                 await bot_instance.send_message(
                                     chat_id=telegram_id,
                                     text=_build_friendly_generation_error(
                                         fail_code,
                                         fail_msg,
                                         service_name=model_display,
-                                        credits_returned=bool(task.cost),
+                                        credits_returned=bool(task.cost)
+                                        or task.billing_source == "subscription",
                                     ),
                                     parse_mode="HTML",
                                 )
@@ -827,13 +901,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         fail_msg = data.get(
                             "msg", str(status) if status else "Unknown error"
                         )
-                        await add_credits(telegram_id, task.cost)
+                        await refund_generation_billing(
+                            task_id,
+                            metadata={"provider": "kling_legacy"},
+                        )
                         await bot_instance.send_message(
                             chat_id=telegram_id,
                             text=f"❌ <b>Генерация Kling не удалась</b>\\n\\n"
                             f"ID: <code>{task_id}</code>\\n\\n"
                             f"<code>{fail_msg}</code>\\n\\n"
-                            f"🍌 Кредиты возвращены.",
+                            f"🪙 BoomCoin возвращены.",
                             parse_mode="HTML",
                         )
                         await complete_video_task(task_id, None)
@@ -877,16 +954,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     if telegram_id:
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
-                            # Try to get preset cost from preset manager (presets.json)
-                            preset = preset_manager.get_preset(task.preset_id)
-                            preset_cost = preset.cost if preset else 0
-                            await add_credits(telegram_id, preset_cost)
+                            await refund_generation_billing(
+                                task_id,
+                                metadata={"provider": "kling_sensitive"},
+                            )
                             await bot_instance.send_message(
                                 chat_id=telegram_id,
                                 text=(
                                     "❌ <b>Ваш промпт был помечен как чувствительный контент</b>"
                                     "Пожалуйста, попробуйте другой промпт без чувствительного контента."
-                                    "🍌 Кредиты возвращены на счёт."
+                                    "🪙 BoomCoin возвращены на счёт."
                                 ),
                                 parse_mode="HTML",
                             )
@@ -1416,7 +1493,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             # Build ultra-compact caption with minimal line breaks
             info_lines = []
             if task.cost:
-                info_lines.append(f"💰{task.cost}🍌")
+                info_lines.append(f"💰{task.cost}🪙")
             if task.duration:
                 info_lines.append(f"⏱{task.duration}с")
             if task.aspect_ratio:
@@ -1616,14 +1693,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 f"{service_name} task {task_id} FAILED: failCode={fail_code}, failMsg={fail_msg}, full data: {webhook_data}"
             )
 
-            if task and task.cost and task.cost > 0 and telegram_id:
-                from bot.database import add_credits_once
-
-                await add_credits_once(
-                    telegram_id,
-                    task.cost,
-                    reason="generation_refund",
-                    external_id=str(task_id),
+            if task and telegram_id:
+                await refund_generation_billing(
+                    task_id,
                     metadata={"provider": "kie_ai", "status": normalized_status},
                 )
 
@@ -1761,7 +1833,7 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
             if task.aspect_ratio:
                 caption += f"\n📐 <code>{task.aspect_ratio}</code>"
             if task.cost:
-                caption += f"\n💰 <code>{task.cost}🍌</code>"
+                caption += f"\n💰 <code>{task.cost}🪙</code>"
             if task.prompt:
                 caption += f"\n\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
 
@@ -1844,14 +1916,17 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
             # Failure
             msg = data.get("msg", "Unknown error")
             logger.error(f"Veo task {task_id} failed: code={code}, msg={msg}")
-            if task and task.cost and task.cost > 0 and telegram_id:
-                await add_credits(telegram_id, task.cost)
+            if task and telegram_id:
+                await refund_generation_billing(
+                    task_id,
+                    metadata={"provider": "veo"},
+                )
             if telegram_id:
                 bot_instance = Bot(token=config.BOT_TOKEN)
                 try:
                     await bot_instance.send_message(
                         chat_id=telegram_id,
-                        text=f"❌ <b>Veo 3.1: ошибка генерации</b>\nID: <code>{task_id}</code>\n{msg}\n🍌 Кредиты возвращены.",
+                        text=f"❌ <b>Veo 3.1: ошибка генерации</b>\nID: <code>{task_id}</code>\n{msg}\n🪙 BoomCoin возвращены.",
                         parse_mode="HTML",
                     )
                 finally:

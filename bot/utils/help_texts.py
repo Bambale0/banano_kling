@@ -13,12 +13,12 @@ from typing import Dict, List
 def get_welcome_message() -> str:
     """Приветственное сообщение с объяснением возможностей"""
     return """
-🍌 <b>Добро пожаловать в Banano Kling AI Bot!</b>
+🪙 <b>Добро пожаловать в Banano Kling AI Bot!</b>
 
 Передовые AI: Nano Banana, GPT Image 2, Kling 3/2.6, Seedream, Grok.
 
-🖼 Изображения (5-7🍌): текст/фото→фото, до 14 рефов, 4K
-🎬 Видео (15+🍌): t2v/i2v/motion/V2V, 3-30с
+🖼 Изображения (5-7🪙): текст/фото→фото, до 14 рефов, 4K
+🎬 Видео (15+🪙): t2v/i2v/motion/V2V, 3-30с
 ✂️ Batch/FX: пакетное редактирование, апскейл
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
@@ -102,20 +102,20 @@ def get_model_selection_help() -> str:
 🤖 <b>Выбор модели AI</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🖼 <b>Изображения (5-7🍌)</b>
+🖼 <b>Изображения (5-7🪙)</b>
 
-• Nano Banana Flash (gemini_2_5_flash, 5🍌) - быстро
-• Nano Banana Pro (gemini_3_pro/nano-banana-pro, 5🍌) - 4K
-• Banana 2 (7🍌), GPT Image 2 (5🍌), Seedream (5-7🍌), Z-Image Turbo (5🍌)
+• Nano Banana Flash (gemini_2_5_flash, 5🪙) - быстро
+• Nano Banana Pro (gemini_3_pro/nano-banana-pro, 5🪙) - 4K
+• Banana 2 (7🪙), GPT Image 2 (5🪙), Seedream (5-7🪙), Z-Image Turbo (5🪙)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 <b>Видео (15+🍌)</b>
+🎬 <b>Видео (15+🪙)</b>
 
-• Kling 3 Std/Pro (15 base, 9-45🍌 / 3-15с)
-• Kling 2.6 Pro/Motion (15-30🍌)
-• Grok Imagine (15-50🍌, 6-30с)
-• Runway/Aleph (15-40🍌)
-• HappyHorse T2V/I2V/Ref2V/Edit (20-25🍌, 1080p)
+• Kling 3 Std/Pro (15 base, 9-45🪙 / 3-15с)
+• Kling 2.6 Pro/Motion (15-30🪙)
+• Grok Imagine (15-50🪙, 6-30с)
+• Runway/Aleph (15-40🪙)
+• HappyHorse T2V/I2V/Ref2V/Edit (20-25🪙, 1080p)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Рекомендации:</b>
@@ -158,7 +158,7 @@ def get_resolution_help() -> str:
 • Баннеры/плакаты: 4K
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ <b>注意:</b> Большее разрешение = больше кредитов
+⚠️ <b>注意:</b> Большее разрешение = больше BoomCoin
 """
 
 
@@ -442,24 +442,24 @@ def get_error_handling() -> Dict[str, str]:
     """Сообщения об ошибках и их решение"""
     return {
         "no_credits": """
-❌ <b>Недостаточно бананов!</b>
+❌ <b>Недостаточно BoomCoin!</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-Для генерации нужно {cost}🍌
-У вас: {credits}🍌
+Для генерации нужно {cost}🪙
+У вас: {credits}🪙
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Что делать:</b>
 
 • Нажмите "💳 Пополнить баланс"
-• Выберите пакет бананов
+• Выберите пакет BoomCoin
 • После оплаты продолжите генерацию
 """,
         "generation_failed": """
 ❌ <b>Ошибка генерации</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-Что-то пошло не так. Бананы возвращены.
+Что-то пошло не так. BoomCoin возвращены.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Попробуйте:</b>
@@ -491,7 +491,7 @@ def get_success_message(preset_name: str, credits: int) -> str:
 ✅ <b>Готово!</b>
 
 🎯 Пресет: {preset_name}
-🍌 Списано: {credits}🍌
+🪙 Списано: {credits}🪙
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💡 <b>Что дальше:</b>
@@ -544,7 +544,7 @@ class UserHints:
 def format_preset_info(preset) -> str:
     """Форматирует информацию о пресете для пользователя"""
     info = f"🎯 <b>{preset.name}</b>"
-    info += f"🍌 Стоимость: <code>{preset.cost}</code>🍌\n"
+    info += f"🪙 Стоимость: <code>{preset.cost}</code>🪙\n"
     info += f"🤖 Модель: <code>{preset.model}</code>\n"
 
     if hasattr(preset, "description") and preset.description:

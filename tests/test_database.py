@@ -12,16 +12,21 @@ import pytest_asyncio
 from bot.database import (MASTER_PARTNER_TELEGRAM_ID, GenerationTask,
                           Transaction, User, add_credits, add_generation_task,
                           add_free_generations, check_can_afford,
+                          activate_user_subscription,
                           complete_video_task, consume_free_generation,
+                          consume_subscription_usage,
                           create_promo_code, create_transaction, deduct_credits,
                           get_admin_stats, get_feed_tasks,
                           get_master_partner_user, get_or_create_user,
+                          get_active_subscription,
                           get_public_feed_task, get_task_by_id,
                           get_transaction_by_order, increment_feed_share,
                           like_feed_task, remove_task_from_feed,
                           share_task_to_feed,
                           get_user_credits, get_user_stats, init_db,
                           mark_promo_code_used, normalize_promo_code,
+                          refund_generation_billing,
+                          refund_subscription_usage,
                           validate_promo_code,
                           update_transaction_status)
 
@@ -63,15 +68,24 @@ async def test_init_db(temp_db):
 @pytest.mark.asyncio
 async def test_get_or_create_user(temp_db):
     """Test get_or_create_user creates and retrieves user"""
-    user = await get_or_create_user(123456)
+    user = await get_or_create_user(
+        123456,
+        username="old_user",
+        first_name="Ivan",
+        last_name="Petrov",
+    )
     assert user.telegram_id == 123456
     assert user.credits == 10  # bonus
     assert user.referral_code is not None
+    assert user.username == "old_user"
+    assert user.first_name == "Ivan"
 
     # Get again
-    user2 = await get_or_create_user(123456)
+    user2 = await get_or_create_user(123456, username="new_user")
     assert user2.id == user.id
     assert user2.credits == 10
+    assert user2.username == "new_user"
+    assert user2.first_name == "Ivan"
 
 
 @pytest.mark.asyncio
@@ -109,6 +123,106 @@ async def test_check_can_afford(temp_db):
     await get_or_create_user(123456)
     assert await check_can_afford(123456, 5)
     assert not await check_can_afford(123456, 15)
+
+
+@pytest.mark.asyncio
+async def test_subscription_usage_limit_and_refund(temp_db):
+    await activate_user_subscription(
+        123456,
+        package_id="boom",
+        package_name="Boom",
+        days=30,
+        image_limit=1,
+        video_limit=0,
+    )
+
+    subscription = await get_active_subscription(123456)
+    assert subscription is not None
+    assert subscription["package_id"] == "boom"
+    assert subscription["images_used"] == 0
+
+    ok, reason, usage = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:1",
+    )
+    assert ok
+    assert reason == "ok"
+
+    ok, reason, duplicate = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:1",
+    )
+    assert ok
+    assert reason == "already_consumed"
+    assert duplicate["subscription_id"] == usage["subscription_id"]
+
+    ok, reason, _ = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:2",
+    )
+    assert not ok
+    assert reason == "limit_exhausted"
+
+    assert await refund_subscription_usage(usage["id"])
+
+    ok, reason, _ = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:2",
+    )
+    assert ok
+    assert reason == "ok"
+
+
+@pytest.mark.asyncio
+async def test_refund_generation_billing_returns_subscription_usage(temp_db):
+    user = await get_or_create_user(123456)
+    await activate_user_subscription(
+        123456,
+        package_id="pro",
+        package_name="Pro",
+        days=30,
+        image_limit=5,
+        video_limit=1,
+        includes_pro=True,
+    )
+    ok, reason, usage = await consume_subscription_usage(
+        123456,
+        usage_type="video",
+        model="v3_pro",
+        external_id="video:1",
+    )
+    assert ok
+    assert reason == "ok"
+
+    assert await add_generation_task(
+        user.id,
+        123456,
+        "provider-task-1",
+        "video",
+        "no_preset_video",
+        model="v3_pro",
+        cost=0,
+        billing_source="subscription",
+        subscription_usage_id=usage["id"],
+    )
+    assert await refund_generation_billing("provider-task-1")
+
+    ok, reason, _ = await consume_subscription_usage(
+        123456,
+        usage_type="video",
+        model="v3_pro",
+        external_id="video:2",
+    )
+    assert ok
+    assert reason == "ok"
 
 
 @pytest.mark.asyncio

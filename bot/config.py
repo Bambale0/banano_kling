@@ -100,6 +100,26 @@ class Config:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
     REDIS_URL: str = os.getenv("REDIS_URL", "")
 
+    # Автоматические push-сценарии
+    PUSH_SCENARIOS_BACKGROUND_ENABLED: bool = os.getenv(
+        "PUSH_SCENARIOS_BACKGROUND_ENABLED", "1"
+    ).lower() in ("1", "true", "yes", "on")
+    PUSH_SCENARIOS_INTERVAL_SECONDS: int = int(
+        os.getenv("PUSH_SCENARIOS_INTERVAL_SECONDS", "1800")
+    )
+    PUSH_SCENARIOS_BATCH_LIMIT: int = int(
+        os.getenv("PUSH_SCENARIOS_BATCH_LIMIT", "10")
+    )
+    PUSH_SCENARIOS_SEND_SLEEP_SECONDS: float = float(
+        os.getenv("PUSH_SCENARIOS_SEND_SLEEP_SECONDS", "1.0")
+    )
+    PUSH_SCENARIOS_USER_COOLDOWN_SECONDS: int = int(
+        os.getenv("PUSH_SCENARIOS_USER_COOLDOWN_SECONDS", "86400")
+    )
+    PUSH_SCENARIOS_STARTUP_DELAY_SECONDS: int = int(
+        os.getenv("PUSH_SCENARIOS_STARTUP_DELAY_SECONDS", "60")
+    )
+
     # Партнёрская программа
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")

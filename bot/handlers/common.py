@@ -8,7 +8,7 @@ from html import escape
 import aiosqlite
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -44,6 +44,7 @@ from bot.keyboards import (
 )
 from bot.services.jump_finance_service import JumpFinanceError, jump_finance_service
 from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import subscription_service
 from bot.states import (
     AdminStates,
     GenerationStates,
@@ -95,10 +96,12 @@ def _get_user_menu(user_id: int) -> str:
 
 
 @start_router.message(CommandStart())
-async def cmd_start_from_any_state(message: types.Message, state: FSMContext):
+async def cmd_start_from_any_state(
+    message: types.Message, state: FSMContext, command: CommandObject
+):
     """Global /start handler that resets any active flow before showing the menu."""
     await state.clear()
-    await cmd_start(message)
+    await cmd_start(message, command)
 
 
 def _split_text_for_telegram(
@@ -305,12 +308,12 @@ def _build_welcome_text(credits: int, referral_bonus_text: str = "") -> str:
         "• редактировать фото и работать с референсами\n"
         "• создавать видео из текста, фото и видео\n"
         "• анимировать персонажей через Motion Control\n\n"
-        f"🍌 <b>Ваш баланс:</b> <code>{credits}</code> бананов\n\n"
+        f"🪙 <b>Ваш баланс:</b> <code>{credits}</code> BoomCoin\n\n"
         f"{bonus_block}"
         '📢 <b>Наш канал:</b> <a href="https://t.me/ai_neir_set">@ai_neir_set</a>\n\n'
         "<i>Выберите нужный режим ниже.</i>\n\n"
         "⚠️ <b>Важно:</b>\n"
-        "Запрещено создавать порнографические материалы. За нарушение доступ к боту может быть ограничен без возврата потраченных бананов."
+        "Запрещено создавать порнографические материалы. За нарушение доступ к боту может быть ограничен без возврата потраченных BoomCoin."
     )
 
 
@@ -423,13 +426,21 @@ async def _sync_partner_withdrawals(user_id: int) -> None:
 
 
 @router.message(CommandStart(), StateFilter(None))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, command: CommandObject | None = None):
     """Обработчик команды /start"""
     # Создаём или получаем пользователя
-    user = await get_or_create_user(message.from_user.id)
+    user = await get_or_create_user(
+        message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+    )
 
     # Проверяем deep linking для возврата после оплаты
-    args = message.text.split()[1:] if len(message.text.split()) > 1 else []
+    payload = (command.args if command and command.args else "").strip()
+    args = [payload] if payload else (
+        message.text.split()[1:] if len(message.text.split()) > 1 else []
+    )
 
     if args and args[0].startswith("success_"):
         # Извлекаем order_id из аргумента
@@ -444,10 +455,10 @@ async def cmd_start(message: types.Message):
 
         if transaction:
             if transaction.status == "completed":
-                # Кредиты уже были начислены
+                # BoomCoin уже были начислены
                 await message.answer(
                     f"✅ <b>Оплата уже обработана!</b>"
-                    f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
+                    f"🪙 Ваш баланс: <code>{user.credits}</code> BoomCoin",
                     reply_markup=get_main_menu_keyboard(user.credits),
                     parse_mode="HTML",
                 )
@@ -486,9 +497,9 @@ async def cmd_start(message: types.Message):
 
                     await message.answer(
                         f"🎉 <b>Оплата успешно обработана!</b>"
-                        f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+                        f"🪙 Начислено: <code>{transaction.credits}</code> BoomCoin\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽"
-                        f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
+                        f"💎 Ваш баланс: <code>{user.credits}</code> BoomCoin",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
                     )
@@ -497,7 +508,7 @@ async def cmd_start(message: types.Message):
                     # Ожидаем подтверждения от банка/провайдера
                     await message.answer(
                         "⏳ <b>Оплата в обработке...</b>"
-                        "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
+                        "Пожалуйста, подождите. BoomCoin будут начислены в течение нескольких минут.",
                         reply_markup=get_main_menu_keyboard(user.credits),
                         parse_mode="HTML",
                     )
@@ -583,8 +594,8 @@ async def cmd_help(message: types.Message):
 
 <b>💎 Nano Banana (Генерация изображений)</b>
 Бот использует передовые модели Google Gemini:
-• <b>Nano Banana Flash</b> — быстрая генерация (1🍌)
-• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3🍌)
+• <b>Nano Banana Flash</b> — быстрая генерация (1🪙)
+• <b>Nano Banana Pro</b> — профессиональное качество, 4K (3🪙)
 
 <b>📝 Как составлять промпты:</b>
 • Опишите сцену подробно, а не просто ключевые слова
@@ -600,10 +611,10 @@ async def cmd_help(message: types.Message):
 Опишите сцену для видео или загрузите изображение.
 Видео будет готово через 1-3 минуты.
 
-<b>🍌 Стоимость операций:</b>
+<b>🪙 Стоимость операций:</b>
 • Banana Pro / Banana 2 / GPT Image 2 / Seedream
-• Редактирование по референсам: 3🍌 (до 14 референсов, 4K)
-• Kling Standard: 6🍌 | Kling Pro: 8-10🍌
+• Редактирование по референсам: 3🪙 (до 14 референсов, 4K)
+• Kling Standard: 6🪙 | Kling Pro: 8-10🪙
 
 <b>❓ Нужна помощь?</b>
 Обратитесь в поддержку: <a href="https://t.me/S_k7222">@S_k7222</a>
@@ -681,12 +692,40 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         # Если сообщение нельзя отредактировать (например, нет текста или сообщение удалено)
         logger.warning(f"Cannot edit message: {e}")
-        # Отправляем новое сообщение
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer(
             welcome_text,
             reply_markup=get_main_menu_keyboard(user.credits),
             parse_mode="HTML",
         )
+    await callback.answer()
+
+
+def _format_subscription_limits(subscription: dict | None) -> str:
+    if not subscription:
+        return "\n🧾 Подписка: <code>нет активной</code>"
+
+    image_limit = int(subscription.get("image_limit") or 0)
+    images_used = int(subscription.get("images_used") or 0)
+    video_limit = int(subscription.get("video_limit") or 0)
+    videos_used = int(subscription.get("videos_used") or 0)
+    images_left = max(0, image_limit - images_used)
+    videos_left = max(0, video_limit - videos_used)
+    video_text = (
+        f"осталось {videos_left} из {video_limit}"
+        if video_limit > 0
+        else "не входит в пакет"
+    )
+
+    return (
+        f"\n🧾 Подписка: <code>{subscription['package_name']}</code>\n"
+        f"🖼 Фото осталось: <code>{images_left}</code> из <code>{image_limit}</code>\n"
+        f"🎬 Видео: <code>{video_text}</code>\n"
+        f"⏳ До: <code>{subscription['expires_at']}</code>"
+    )
 
 
 @router.callback_query(F.data == "menu_balance")
@@ -694,23 +733,38 @@ async def show_balance(callback: types.CallbackQuery):
     """Показывает баланс и статистику пользователя"""
     user = await get_or_create_user(callback.from_user.id)
     stats = await get_user_stats(callback.from_user.id)
+    subscription_text = _format_subscription_limits(stats.get("subscription"))
 
     balance_text = f"""
 💎 <b>Ваш баланс</b>
 
-🍌 Доступно бананов: <code>{stats['credits']}</code>
+🪙 Доступно BoomCoin: <code>{stats['credits']}</code>
+{subscription_text}
 📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
+💸 Потрачено BoomCoin: <code>{stats['total_spent']}</code>
 📅 Дата регистрации: <code>{stats['member_since']}</code>
 🎁 Приглашено друзей: <code>{stats.get('referrals_count', 0)}</code>
-💰 Заработано на рефералах: <code>{stats.get('referral_earned', 0)}</code>
+💰 Реферальный баланс: <code>{stats.get('referral_earned', 0)}</code>
 """
 
-    await callback.message.edit_text(
-        balance_text,
-        reply_markup=get_main_menu_keyboard(user.credits),
-        parse_mode="HTML",
-    )
+    try:
+        await callback.message.edit_text(
+            balance_text,
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Cannot edit message in show_balance: %s", e)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(
+            balance_text,
+            reply_markup=get_main_menu_keyboard(user.credits),
+            parse_mode="HTML",
+        )
+    await callback.answer()
 
 
 @router.message(Command("ref"), StateFilter(None))
@@ -840,7 +894,7 @@ async def render_partner_program(target, user_id: int):
 
     text = (
         "💼 <b>Партнёрская программа</b>\n\n"
-        "Здесь вы можете отслеживать рефералов, начисления, выводы и перевод заработка в бананы.\n"
+        "Здесь вы можете отслеживать рефералов, начисления, выводы и перевод заработка в BoomCoin.\n"
         "Юридически значимые условия размещены в публичной оферте.\n\n"
         f"🔗 Ваша ссылка: <code>{referral_link or 'Ссылка появится после активации'}</code>\n"
         f"👥 Всего рефералов: <code>{stats.get('referrals_count', 0)}</code>\n"
@@ -856,7 +910,7 @@ async def render_partner_program(target, user_id: int):
         "• регистрируется и закрепляется за вами\n"
         "• после первой оплаты начисляется вознаграждение\n"
         "• активным партнёрам начисляется денежный бонус в ₽\n\n"
-        f"🍌 Курс для использования в боте: <code>{config.PARTNER_RUB_PER_CREDIT} ₽ = 1 банан</code>\n\n"
+        f"🪙 Курс для использования в боте: <code>{config.PARTNER_RUB_PER_CREDIT} ₽ = 1 BoomCoin</code>\n\n"
         "<b>Последние заявки на вывод:</b>\n"
         f"{recent_text}"
     )
@@ -944,7 +998,7 @@ async def partner_stats(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "partner_convert")
 async def partner_convert(callback: types.CallbackQuery, state: FSMContext):
-    """Запускает перевод партнёрского заработка в бананы."""
+    """Запускает перевод партнёрского заработка в BoomCoin."""
     stats = await get_partner_overview(callback.from_user.id)
     if not stats.get("is_partner"):
         await callback.answer(
@@ -957,17 +1011,17 @@ async def partner_convert(callback: types.CallbackQuery, state: FSMContext):
     available_credits = int(balance_rub // rub_per_credit)
     if available_credits <= 0:
         await callback.answer(
-            f"Для 1 банана нужно {rub_per_credit} ₽ на партнёрском балансе",
+            f"Для 1 BoomCoin нужно {rub_per_credit} ₽ на партнёрском балансе",
             show_alert=True,
         )
         return
 
     await callback.message.edit_text(
-        "🍌 <b>Использовать заработок в боте</b>\n\n"
+        "🪙 <b>Использовать заработок в боте</b>\n\n"
         f"Партнёрский баланс: <code>{balance_rub}</code> ₽\n"
-        f"Курс: <code>{rub_per_credit} ₽ = 1 банан</code>\n"
-        f"Можно перевести: <code>{available_credits}</code> бананов\n\n"
-        "Введите, сколько бананов начислить на баланс.",
+        f"Курс: <code>{rub_per_credit} ₽ = 1 BoomCoin</code>\n"
+        f"Можно перевести: <code>{available_credits}</code> BoomCoin\n\n"
+        "Введите, сколько BoomCoin начислить на баланс.",
         reply_markup=get_back_keyboard("menu_partner"),
         parse_mode="HTML",
     )
@@ -981,7 +1035,7 @@ async def partner_convert_credits(message: types.Message, state: FSMContext):
         credits = int((message.text or "").strip())
     except Exception:
         await message.answer(
-            "Введите количество бананов целым числом, например <code>10</code>.",
+            "Введите количество BoomCoin целым числом, например <code>10</code>.",
             parse_mode="HTML",
         )
         return
@@ -990,11 +1044,11 @@ async def partner_convert_credits(message: types.Message, state: FSMContext):
     stats = await get_partner_overview(message.from_user.id)
     available_credits = int(float(stats.get("balance_rub", 0) or 0) // rub_per_credit)
     if credits <= 0:
-        await message.answer("Количество бананов должно быть больше нуля.")
+        await message.answer("Количество BoomCoin должно быть больше нуля.")
         return
     if credits > available_credits:
         await message.answer(
-            f"Недостаточно партнёрского баланса. Доступно: <code>{available_credits}</code> бананов.",
+            f"Недостаточно партнёрского баланса. Доступно: <code>{available_credits}</code> BoomCoin.",
             parse_mode="HTML",
         )
         return
@@ -1014,9 +1068,9 @@ async def partner_convert_credits(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "✅ <b>Готово</b>\n\n"
-        f"Начислено: <code>{result['credits']}</code> бананов\n"
+        f"Начислено: <code>{result['credits']}</code> BoomCoin\n"
         f"Списано с партнёрского баланса: <code>{result['amount_rub']}</code> ₽\n\n"
-        "Бананы уже можно тратить на генерации.",
+        "BoomCoin уже можно тратить на генерации.",
         reply_markup=get_back_keyboard("menu_partner"),
         parse_mode="HTML",
     )
@@ -1301,7 +1355,7 @@ async def show_motion_control_menu(callback: types.CallbackQuery):
 2. Загрузи видео с движением
 3. Получи анимированное фото!
 
-💰 Баланс: {user_credits}🍌
+💰 Баланс: {user_credits}🪙
 
 Выбери качество:
 """
@@ -1356,8 +1410,8 @@ async def show_history(callback: types.CallbackQuery):
 📋 <b>История</b>
 
 📊 Всего генераций: <code>{stats['generations']}</code>
-💸 Потрачено бананов: <code>{stats['total_spent']}</code>
-💎 Текущий баланс: <code>{user.credits}</code>🍌
+💸 Потрачено BoomCoin: <code>{stats['total_spent']}</code>
+💎 Текущий баланс: <code>{user.credits}</code>🪙
 📅 Дата регистрации: <code>{stats['member_since']}</code>
 
 <i>Детальная история скоро будет доступна!</i>
@@ -1399,7 +1453,7 @@ async def start_motion_control_std(callback: types.CallbackQuery, state: FSMCont
 
     await callback.message.edit_text(
         f"🎬 <b>Motion Control Standard</b>\n\n"
-        f"Стоимость: <code>{price_per_second}</code>🍌/сек "
+        f"Стоимость: <code>{price_per_second}</code>🪙/сек "
         f"(по длительности видео движения)\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
@@ -1431,7 +1485,7 @@ async def start_motion_control_pro(callback: types.CallbackQuery, state: FSMCont
 
     await callback.message.edit_text(
         f"💎 <b>Motion Control Pro</b>\n\n"
-        f"Стоимость: <code>{price_per_second}</code>🍌/сек "
+        f"Стоимость: <code>{price_per_second}</code>🪙/сек "
         f"(по длительности видео движения)\n\n"
         f"📸 <b>Шаг 1:</b> Загрузи фото персонажа,\n"
         f"которое нужно анимировать\n\n"
@@ -1641,7 +1695,7 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"📂 <b>{categories[category]['name']}</b>\n"
         f"📝 {categories[category].get('description', '')}"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin"
         f"Выберите пресет:",
         reply_markup=get_category_keyboard(category, presets, user_credits),
         parse_mode="HTML",
@@ -1696,7 +1750,7 @@ async def handle_message_in_menu(message: types.Message, state: FSMContext):
         if response:
             # Отправляем ответ пользователю с клавиатурой ИИ
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>{response}",
+                f"🪙 <b>Banana Boom AI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )
@@ -1931,11 +1985,11 @@ async def open_ai_assistant_main(callback: types.CallbackQuery, state: FSMContex
     context = {
         "user_credits": user.credits,
         "menu_location": "главное меню",
-        "available_models": "Flash (1🍌), Pro (2🍌), видео Std/Pro/Omni",
+        "available_models": "Flash (1🪙), Pro (2🪙), видео Std/Pro/Omni",
     }
 
     # Приветственное сообщение от ИИ
-    welcome_ai = """🍌 Привет! Я Banana Boom AI - твой ИИ-ассистент!
+    welcome_ai = """🪙 Привет! Я Banana Boom AI - твой ИИ-ассистент!
 
 Я здесь, чтобы помочь тебе с ЛЮБЫМ вопросом! Ты можешь спросить меня абсолютно обо всём:
 
@@ -1977,18 +2031,18 @@ async def open_ai_assistant_settings(callback: types.CallbackQuery, state: FSMCo
         "available_models": "Banana Pro, Banana 2, GPT Image 2, Seedream, Kling 3 (Std/Pro/Omni)",
     }
 
-    welcome_ai = """🍌 Я здесь, чтобы помочь с настройками!
+    welcome_ai = """🪙 Я здесь, чтобы помочь с настройками!
 
 Ты находишься в меню настройки моделей.
 Я могу объяснить:
 
-🍌 Какая модель изображений лучше:
-   - Flash (1🍌) - быстро и дёшево
-   - Pro (2🍌) - высокое качество, 4K
+🪙 Какая модель изображений лучше:
+   - Flash (1🪙) - быстро и дёшево
+   - Pro (2🪙) - высокое качество, 4K
 
 🎬 Какая модель видео подойдёт:
-   - Std (4🍌) - стандарт
-   - Pro (5🍌) - лучше качество
+   - Std (4🪙) - стандарт
+   - Pro (5🪙) - лучше качество
    - Omni - продвинутая
 
 🖼 Чем отличаются сервисы:
@@ -2083,19 +2137,31 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     cost = preset_manager.get_video_cost(video_model, motion_duration)
 
     charge_external_id = f"motion_submit:{telegram_id}:{message.message_id}"
-    charged = await deduct_credits(
+    charge_metadata = {"model": video_model, "mode": mode, "duration": motion_duration}
+    subscription_decision = await subscription_service.consume(
         telegram_id,
-        cost,
-        reason="motion_control_charge",
+        usage_type="video",
+        model=video_model,
         external_id=charge_external_id,
-        metadata={"model": video_model, "mode": mode, "duration": motion_duration},
+        metadata=charge_metadata,
     )
+    billing_source = "subscription" if subscription_decision.allowed else "credits"
+    subscription_usage_id = subscription_decision.usage_id
+    charged = subscription_decision.allowed
+    if not charged:
+        charged = await deduct_credits(
+            telegram_id,
+            cost,
+            reason="motion_control_charge",
+            external_id=charge_external_id,
+            metadata=charge_metadata,
+        )
     if not charged:
         await state.clear()
         await message.answer(
-            "❌ Недостаточно бананов для Motion Control.\n\n"
+            "❌ Не хватает подписки с видео или BoomCoin для Motion Control.\n\n"
             f"Видео: <code>{motion_duration}</code> сек\n"
-            f"Стоимость: <code>{cost}</code>🍌",
+            f"Стоимость: <code>{cost}</code>🪙",
             parse_mode="HTML",
         )
         return
@@ -2110,7 +2176,9 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         model=video_model,
         duration=motion_duration,
         prompt="motion control",
-        cost=cost,
+        cost=0 if billing_source == "subscription" else cost,
+        billing_source=billing_source,
+        subscription_usage_id=subscription_usage_id,
     )
 
     task_result = await kling_service.generate_motion_control(
@@ -2130,7 +2198,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
             await db.commit()
         await message.answer(
             f"🚀 <b>Motion Control запущен!</b>\n\n"
-            f"💰 <code>{cost}</code>🍌\n"
+            f"💰 <code>{'по подписке' if billing_source == 'subscription' else str(cost) + ' BoomCoin'}</code>\n"
             f"⏱ <code>{motion_duration}</code> сек\n"
             f"🤖 <code>{mode.upper()}</code>\n"
             f"🆔 <code>{api_task_id}</code>\n\n"
@@ -2139,7 +2207,9 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
         )
         await state.clear()
     else:
-        if not config.is_admin(telegram_id):
+        if billing_source == "subscription":
+            await subscription_service.refund(subscription_usage_id)
+        elif not config.is_admin(telegram_id):
             await add_credits_once(
                 telegram_id,
                 cost,
@@ -2147,7 +2217,7 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
                 external_id=f"motion:{telegram_id}:{message.message_id}",
                 metadata={"handler": "motion_control"},
             )
-        await message.answer("❌ Ошибка запуска. Бананы возвращены.", parse_mode="HTML")
+        await message.answer("❌ Ошибка запуска. BoomCoin возвращены.", parse_mode="HTML")
 
 
 @router.message(GenerationStates.waiting_for_motion_character_image)
@@ -2201,7 +2271,7 @@ async def handle_ai_assistant_message(message: types.Message, state: FSMContext)
         if response:
             # Отправляем ответ пользователю
             await message.answer(
-                f"🍌 <b>Banana Boom AI:</b>{response}",
+                f"🪙 <b>Banana Boom AI:</b>{response}",
                 reply_markup=get_ai_assistant_keyboard(),
                 parse_mode="HTML",
             )

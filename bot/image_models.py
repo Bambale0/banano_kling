@@ -42,8 +42,8 @@ IMAGE_MODEL_CONFIGS = {
         "service": "banana_pro",
     },
     "banana_2": {
-        "label": "🍌 Banana 2",
-        "settings_label": "🍌 Banana 2",
+        "label": "🪙 Banana 2",
+        "settings_label": "🪙 Banana 2",
         "cost_key": "banana_2",
         "requires_refs": False,
         "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:2"],

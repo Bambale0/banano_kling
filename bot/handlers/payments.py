@@ -23,12 +23,15 @@ from bot.database import (
 )
 from bot.keyboards import (
     get_back_keyboard,
+    get_credit_emoji,
+    get_credit_plural,
     get_main_menu_keyboard,
     get_payment_confirmation_keyboard,
     get_payment_packages_keyboard,
 )
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import subscription_service
 from bot.services.tbank_service import tbank_service
 from bot.states import PaymentStates
 
@@ -66,17 +69,24 @@ def _format_bonus_text(referral_bonus: dict) -> str:
     if referral_bonus.get("mode") == "partner":
         return f"🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽\n"
     if referral_bonus.get("mode") == "banana":
-        return f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов\n"
+        return f"🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> BoomCoin\n"
     return ""
 
 
+def _package_id_from_order_id(order_id: str) -> str:
+    return order_id.rsplit("_", 1)[-1]
+
+
 def _topup_menu_text() -> str:
+    credit_emoji = get_credit_emoji()
+    credit_plural = get_credit_plural()
     return (
-        "🍌 <b>Пополнение баланса</b>\n\n"
-        "Выберите способ оплаты и пакет бананов.\n"
-        "<i>Чем больше пакет, тем выгоднее цена за банан.</i>\n\n"
-        "🍌 <b>Как тратятся бананы</b>\n"
-        "• стандартные генерации: от 1 🍌\n"
+        f"{credit_emoji} <b>Пополнение баланса</b>\n\n"
+        f"Выберите способ оплаты и тариф BoomCoin.\n"
+        f"<i>Чем больше тариф, тем выгоднее цена за {credit_plural}.</i>\n\n"
+        f"{credit_emoji} <b>Что входит</b>\n"
+        "• гибридные тарифы: 24 часа, неделя или месяц\n"
+        "• фото-лимиты указаны на кнопках тарифов\n"
         "• продвинутые модели: дороже, в зависимости от режима"
     )
 
@@ -90,9 +100,13 @@ def _payment_created_text(
     promo_code: str | None = None,
     promo_discount_percent: int = 0,
 ) -> str:
+    credit_emoji = get_credit_emoji()
+    credit_plural = get_credit_plural()
     bonus_text = ""
     if package.get("bonus_credits", 0) > 0:
-        bonus_text = f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> бананов"
+        bonus_text = (
+            f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> {credit_plural}"
+        )
     if promo_code and promo_discount_percent and original_amount_rub:
         price_text = (
             f"💰 Сумма: <s>{original_amount_rub}</s> ₽ → <code>{amount_rub}</code> ₽\n"
@@ -101,16 +115,36 @@ def _payment_created_text(
     else:
         price_text = f"💰 Сумма: <code>{amount_rub}</code> ₽"
 
+    feature_lines = []
+    if package.get("period"):
+        feature_lines.append(f"⏳ Срок: <code>{package['period']}</code>")
+    if package.get("photo_limit_text"):
+        feature_lines.append(f"🖼 Фото: <code>{package['photo_limit_text']}</code>")
+    if package.get("video_limit_text"):
+        feature_lines.append(f"🎬 Видео: <code>{package['video_limit_text']}</code>")
+    if subscription_service.is_subscription_package(package):
+        feature_lines.append("✅ Подписка активируется после оплаты")
+    features_text = ("\n" + "\n".join(feature_lines)) if feature_lines else ""
+    balance_label = (
+        "Бонусный баланс"
+        if subscription_service.is_subscription_package(package)
+        else credit_plural
+    )
+    balance_suffix = f" {credit_plural}" if balance_label != credit_plural else ""
+
     return (
         f"💳 <b>Оплата пакета «{package['name']}»</b>\n\n"
-        f"🍌 Бананов: <code>{total_credits}</code>{bonus_text}\n"
+        f"{credit_emoji} {balance_label}: <code>{total_credits}</code>{balance_suffix}{bonus_text}"
+        f"{features_text}\n"
         f"{price_text}\n\n"
         "Нажмите кнопку ниже, чтобы перейти к оплате.\n"
-        "После успешной оплаты бананы начислятся автоматически."
+        "После успешной оплаты баланс и доступ начислятся автоматически."
     )
 
 
 def _payment_success_text(transaction, referral_bonus: dict | None = None) -> str:
+    credit_emoji = get_credit_emoji()
+    credit_plural = get_credit_plural()
     bonus_text = _format_bonus_text(referral_bonus or {})
     promo_text = ""
     if transaction.promo_code and transaction.promo_discount_percent:
@@ -120,7 +154,7 @@ def _payment_success_text(transaction, referral_bonus: dict | None = None) -> st
         )
     return (
         "🎉 <b>Оплата успешна!</b>\n\n"
-        f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
+        f"{credit_emoji} Начислено: <code>{transaction.credits}</code> {credit_plural}\n"
         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
         f"{promo_text}"
         f"{bonus_text}\n"
@@ -175,6 +209,10 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
                 order_id,
                 promo_reason,
             )
+
+    package = preset_manager.get_package(_package_id_from_order_id(order_id))
+    if package and subscription_service.is_subscription_package(package):
+        await subscription_service.activate_from_package(telegram_id, package)
 
     if bot:
         try:
@@ -257,9 +295,9 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                     ),
                     metadata={"promo_code": promo["code"]},
                 )
-                reward_text = f"Начислено: <code>{reward_credits}</code> 🍌"
+                reward_text = f"Начислено: <code>{reward_credits}</code> 🪙"
                 success_text = (
-                    "Бананы уже на балансе."
+                    "BoomCoin уже на балансе."
                     if credited
                     else "Эта активация уже была начислена ранее."
                 )
@@ -385,7 +423,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await cryptobot_service.create_invoice(
             amount_rub=amount_rub,
             order_id=order_id,
-            description=f"Покупка {package['credits']} бананов ({package['name']})",
+            description=f"Покупка {package['credits']} BoomCoin ({package['name']})",
             paid_btn_url=success_url,
         )
     else:
@@ -393,7 +431,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await tbank_service.init_payment(
             amount=amount_kop,
             order_id=order_id,
-            description=f"Покупка {package['credits']} бананов ({package['name']})",
+            description=f"Покупка {package['credits']} BoomCoin ({package['name']})",
             customer_key=str(callback.from_user.id),
             success_url=success_url,
             fail_url=fail_url,

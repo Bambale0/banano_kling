@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import aiosqlite
@@ -105,6 +105,9 @@ class User:
     credits: int
     created_at: datetime
     updated_at: datetime
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     referral_code: Optional[str] = None
     referred_by: Optional[int] = None
     referral_earned: int = 0
@@ -155,6 +158,8 @@ class GenerationTask:
     likes_count: int = 0
     shares_count: int = 0
     source_feed_task_id: Optional[str] = None
+    billing_source: str = "credits"
+    subscription_usage_id: Optional[int] = None
 
 
 async def init_db():
@@ -230,6 +235,11 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+        for column_name in ("username", "first_name", "last_name"):
+            try:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {column_name} TEXT")
+            except aiosqlite.OperationalError:
+                pass
 
         # Таблица транзакций (платежи)
         await db.execute(
@@ -337,6 +347,18 @@ async def init_db():
         try:
             await db.execute(
                 "ALTER TABLE generation_tasks ADD COLUMN source_feed_task_id TEXT"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN billing_source TEXT DEFAULT 'credits'"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN subscription_usage_id INTEGER"
             )
         except aiosqlite.OperationalError:
             pass
@@ -595,11 +617,61 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id ON credit_transactions(user_id)"
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                package_id TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                image_limit INTEGER NOT NULL DEFAULT 0,
+                video_limit INTEGER NOT NULL DEFAULT 0,
+                includes_pro INTEGER NOT NULL DEFAULT 0,
+                priority INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_active ON user_subscriptions(user_id, status, expires_at)"
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscription_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                usage_type TEXT NOT NULL,
+                model TEXT,
+                external_id TEXT UNIQUE,
+                metadata_json TEXT DEFAULT '{}',
+                refunded INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                refunded_at TIMESTAMP,
+                FOREIGN KEY (subscription_id) REFERENCES user_subscriptions(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_usage_subscription ON subscription_usage(subscription_id, usage_type, refunded)"
+        )
+
         await db.commit()
         logger.info("Database initialized successfully")
 
 
-async def get_or_create_user(telegram_id: int) -> User:
+async def get_or_create_user(
+    telegram_id: int,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> User:
     """Получает или создаёт пользователя (thread-safe)"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -611,6 +683,29 @@ async def get_or_create_user(telegram_id: int) -> User:
         row = await cursor.fetchone()
 
         if row:
+            profile_updates = {
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+            }
+            changed_fields = [
+                key
+                for key, value in profile_updates.items()
+                if key in row.keys() and value is not None and row[key] != value
+            ]
+            if changed_fields:
+                set_clause = ", ".join(f"{key} = ?" for key in changed_fields)
+                values = [profile_updates[key] for key in changed_fields]
+                await db.execute(
+                    f"UPDATE users SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (*values, row["id"]),
+                )
+                await db.commit()
+                cursor = await db.execute(
+                    "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
+                )
+                row = await cursor.fetchone()
+
             referral_code = (
                 row["referral_code"] if "referral_code" in row.keys() else None
             )
@@ -630,6 +725,9 @@ async def get_or_create_user(telegram_id: int) -> User:
                 credits=int(row["credits"] or 0),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
+                username=row["username"] if "username" in row.keys() else None,
+                first_name=row["first_name"] if "first_name" in row.keys() else None,
+                last_name=row["last_name"] if "last_name" in row.keys() else None,
                 referral_code=referral_code,
                 referred_by=referred_by,
                 referral_earned=referral_earned or 0,
@@ -665,13 +763,18 @@ async def get_or_create_user(telegram_id: int) -> User:
                 ),
             )
 
-        # Создаём нового пользователя с бонусными кредитами
+        # Создаём нового пользователя с бонусными BoomCoin
         # Используем INSERT OR IGNORE для защиты от race condition
         try:
             referral_code = await generate_referral_code(db)
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 10, ?)",
-                (telegram_id, referral_code),
+                """
+                INSERT INTO users (
+                    telegram_id, credits, referral_code, username, first_name, last_name
+                )
+                VALUES (?, 10, ?, ?, ?, ?)
+                """,
+                (telegram_id, referral_code, username, first_name, last_name),
             )
             await db.commit()
             logger.info(f"Created new user: {telegram_id}")
@@ -705,6 +808,9 @@ async def get_or_create_user(telegram_id: int) -> User:
             credits=int(row["credits"] or 0),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+            username=row["username"] if "username" in row.keys() else None,
+            first_name=row["first_name"] if "first_name" in row.keys() else None,
+            last_name=row["last_name"] if "last_name" in row.keys() else None,
             referral_code=referral_code,
             referred_by=referred_by,
             referral_earned=referral_earned or 0,
@@ -1247,7 +1353,7 @@ async def convert_partner_balance_to_credits(
     credits: int,
     rub_per_credit: int,
 ) -> dict | None:
-    """Переводит партнёрский рублёвый баланс в бананы."""
+    """Переводит партнёрский рублёвый баланс в BoomCoin."""
     if credits <= 0 or rub_per_credit <= 0:
         return None
 
@@ -1397,7 +1503,7 @@ async def get_referral_stats(telegram_id: int) -> dict:
 
 
 async def get_user_credits(telegram_id: int) -> int:
-    """Получает баланс кредитов пользователя"""
+    """Получает баланс BoomCoin пользователя"""
     user = await get_or_create_user(telegram_id)
     return user.credits
 
@@ -1430,7 +1536,7 @@ async def add_credits(
     external_id: str | None = None,
     metadata: dict | None = None,
 ) -> bool:
-    """Добавляет кредиты пользователю и пишет audit ledger entry."""
+    """Добавляет BoomCoin пользователю и пишет audit ledger entry."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -1848,7 +1954,7 @@ async def deduct_credits(
     external_id: str | None = None,
     metadata: dict | None = None,
 ) -> bool:
-    """Списывает кредиты с проверкой баланса"""
+    """Списывает BoomCoin с проверкой баланса"""
     from bot.config import config
 
     # Админы не платят
@@ -1905,6 +2011,226 @@ async def check_can_afford(telegram_id: int, amount: int) -> bool:
 
     user = await get_or_create_user(telegram_id)
     return user.credits >= amount
+
+
+async def activate_user_subscription(
+    telegram_id: int,
+    *,
+    package_id: str,
+    package_name: str,
+    days: int,
+    image_limit: int,
+    video_limit: int = 0,
+    includes_pro: bool = False,
+    priority: bool = False,
+) -> dict:
+    """Activates a paid subscription and returns the stored subscription."""
+    if days <= 0 or image_limit <= 0:
+        raise ValueError("subscription days and image_limit must be positive")
+
+    user = await get_or_create_user(telegram_id)
+    expires_at = datetime.utcnow() + timedelta(days=days)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            UPDATE user_subscriptions
+            SET status = 'replaced'
+            WHERE user_id = ? AND status = 'active' AND datetime(expires_at) > datetime('now')
+            """,
+            (user.id,),
+        )
+        cursor = await db.execute(
+            """
+            INSERT INTO user_subscriptions (
+                user_id, package_id, package_name, expires_at, image_limit,
+                video_limit, includes_pro, priority, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """,
+            (
+                user.id,
+                package_id,
+                package_name,
+                expires_at.isoformat(timespec="seconds"),
+                int(image_limit),
+                int(video_limit or 0),
+                1 if includes_pro else 0,
+                1 if priority else 0,
+            ),
+        )
+        subscription_id = cursor.lastrowid
+        await db.commit()
+
+        cursor = await db.execute(
+            "SELECT * FROM user_subscriptions WHERE id = ?", (subscription_id,)
+        )
+        return dict(await cursor.fetchone())
+
+
+async def get_active_subscription(telegram_id: int) -> dict | None:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                s.*,
+                COALESCE(SUM(CASE WHEN u.usage_type = 'image' AND u.refunded = 0 THEN 1 ELSE 0 END), 0) AS images_used,
+                COALESCE(SUM(CASE WHEN u.usage_type = 'video' AND u.refunded = 0 THEN 1 ELSE 0 END), 0) AS videos_used
+            FROM user_subscriptions s
+            LEFT JOIN subscription_usage u ON u.subscription_id = s.id
+            WHERE s.user_id = ?
+              AND s.status = 'active'
+              AND datetime(s.expires_at) > datetime('now')
+            GROUP BY s.id
+            ORDER BY datetime(s.expires_at) DESC, s.id DESC
+            LIMIT 1
+            """,
+            (user.id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def consume_subscription_usage(
+    telegram_id: int,
+    *,
+    usage_type: str,
+    model: str,
+    external_id: str,
+    requires_pro: bool = False,
+    metadata: dict | None = None,
+) -> tuple[bool, str, dict | None]:
+    """Consumes one subscription slot if the active subscription covers it."""
+    if usage_type not in {"image", "video"}:
+        return False, "unsupported_usage_type", None
+
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+
+            cursor = await db.execute(
+                """
+                SELECT u.id, u.subscription_id, s.package_name
+                FROM subscription_usage u
+                JOIN user_subscriptions s ON s.id = u.subscription_id
+                WHERE u.external_id = ? AND u.refunded = 0
+                """,
+                (external_id,),
+            )
+            existing = await cursor.fetchone()
+            if existing:
+                await db.commit()
+                return True, "already_consumed", dict(existing)
+
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM user_subscriptions
+                WHERE user_id = ?
+                  AND status = 'active'
+                  AND datetime(expires_at) > datetime('now')
+                ORDER BY datetime(expires_at) DESC, id DESC
+                LIMIT 1
+                """,
+                (user.id,),
+            )
+            subscription = await cursor.fetchone()
+            if not subscription:
+                await db.rollback()
+                return False, "no_active_subscription", None
+            if requires_pro and not bool(subscription["includes_pro"]):
+                await db.rollback()
+                return False, "pro_not_included", dict(subscription)
+
+            limit_column = "image_limit" if usage_type == "image" else "video_limit"
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) AS used
+                FROM subscription_usage
+                WHERE subscription_id = ?
+                  AND usage_type = ?
+                  AND refunded = 0
+                """,
+                (subscription["id"], usage_type),
+            )
+            used = int((await cursor.fetchone())["used"] or 0)
+            limit = int(subscription[limit_column] or 0)
+            if limit <= 0 or used >= limit:
+                await db.rollback()
+                return False, "limit_exhausted", dict(subscription)
+
+            cursor = await db.execute(
+                """
+                INSERT INTO subscription_usage (
+                    subscription_id, user_id, usage_type, model, external_id, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    subscription["id"],
+                    user.id,
+                    usage_type,
+                    model,
+                    external_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+            usage = {
+                "id": cursor.lastrowid,
+                "subscription_id": subscription["id"],
+                "package_name": subscription["package_name"],
+                "used": used + 1,
+                "limit": limit,
+            }
+            await db.commit()
+            return True, "ok", usage
+        except aiosqlite.IntegrityError:
+            await db.rollback()
+            return False, "duplicate_external_id", None
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def refund_subscription_usage(usage_id: int) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE subscription_usage
+            SET refunded = 1, refunded_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND refunded = 0
+            """,
+            (usage_id,),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def refund_generation_billing(
+    task_id: str,
+    *,
+    reason: str = "generation_refund",
+    metadata: dict | None = None,
+) -> bool:
+    """Refunds whatever resource was used for a generation task."""
+    task = await get_task_by_id(task_id)
+    if not task:
+        return False
+    if task.billing_source == "subscription":
+        return await refund_subscription_usage(task.subscription_usage_id or 0)
+    if task.cost and task.cost > 0 and task.telegram_id:
+        return await add_credits_once(
+            task.telegram_id,
+            task.cost,
+            reason=reason,
+            external_id=str(task_id),
+            metadata=metadata or {},
+        )
+    return False
 
 
 async def add_free_generations(
@@ -2067,6 +2393,8 @@ async def add_generation_task(
     cost: Optional[int] = None,
     reference_images: Optional[str] = None,
     source_feed_task_id: Optional[str] = None,
+    billing_source: str = "credits",
+    subscription_usage_id: Optional[int] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -2074,8 +2402,8 @@ async def add_generation_task(
             """INSERT OR IGNORE INTO generation_tasks 
                (user_id, telegram_id, task_id, type, preset_id, model,
                 duration, aspect_ratio, prompt, cost, reference_images,
-                source_feed_task_id, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                source_feed_task_id, billing_source, subscription_usage_id, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
             (
                 user_id,
                 telegram_id,
@@ -2089,6 +2417,8 @@ async def add_generation_task(
                 cost,
                 reference_images,
                 source_feed_task_id,
+                billing_source,
+                subscription_usage_id,
             ),
         )
         await db.commit()
@@ -2138,6 +2468,16 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             shares_count=int(row["shares_count"] or 0) if "shares_count" in row.keys() else 0,
             source_feed_task_id=(
                 row["source_feed_task_id"] if "source_feed_task_id" in row.keys() else None
+            ),
+            billing_source=(
+                row["billing_source"]
+                if "billing_source" in row.keys() and row["billing_source"]
+                else "credits"
+            ),
+            subscription_usage_id=(
+                row["subscription_usage_id"]
+                if "subscription_usage_id" in row.keys()
+                else None
             ),
         )
 
@@ -2360,7 +2700,7 @@ async def get_user_stats(telegram_id: int) -> dict:
         )
         gen_row = await cursor.fetchone()
 
-        # Считаем потраченные кредиты
+        # Считаем потраченные BoomCoin
         cursor = await db.execute(
             "SELECT SUM(cost) as total FROM generation_tasks WHERE user_id = ? AND status = 'completed'",
             (user.id,),
@@ -2369,9 +2709,14 @@ async def get_user_stats(telegram_id: int) -> dict:
 
         referral_stats = await get_referral_stats(telegram_id)
         promo_rows = await get_user_promo_redemptions(telegram_id)
+        subscription = await get_active_subscription(telegram_id)
         banned = bool(getattr(user, "is_banned", False))
 
         return {
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
             "credits": user.credits,
             "generations": gen_row["count"] or 0,
             "total_spent": cost_row["total"] or 0,
@@ -2381,6 +2726,7 @@ async def get_user_stats(telegram_id: int) -> dict:
             "referral_earned": referral_stats["referral_earned"],
             "is_banned": banned,
             "promos": promo_rows,
+            "subscription": subscription,
         }
 
 

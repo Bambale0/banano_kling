@@ -99,8 +99,22 @@ def test_get_help_keyboard():
 
 
 def test_get_payment_packages_keyboard(mock_prices):
-    kb = get_payment_packages_keyboard(mock_prices["packages"])
+    packages = [
+        {
+            **mock_prices["packages"][0],
+            "period": "месяц",
+            "photo_limit_text": "до 2 000 фото",
+            "popular": True,
+        }
+    ]
+    kb = get_payment_packages_keyboard(packages)
     assert kb.inline_keyboard
+    button_text = " ".join(
+        btn.text for row in kb.inline_keyboard for btn in row if btn.callback_data
+    )
+    assert "Mini" in button_text
+    assert "месяц" in button_text
+    assert "до 2 000 фото" in button_text
 
 
 def test_get_payment_provider_keyboard():

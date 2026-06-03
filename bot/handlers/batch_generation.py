@@ -19,10 +19,59 @@ from bot.services.batch_service import BatchStatus, batch_service
 from bot.services.gemini_service import gemini_service
 from bot.services.preset_manager import preset_manager
 from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
+from bot.services.subscription_service import subscription_service
 from bot.states import GenerationStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def _charge_batch_generation(
+    user_id: int,
+    cost: int,
+    *,
+    external_id: str,
+    metadata: dict,
+) -> tuple[bool, str, int | None]:
+    decision = await subscription_service.consume(
+        user_id,
+        usage_type="image",
+        model="gemini_3_pro",
+        external_id=external_id,
+        metadata=metadata,
+    )
+    if decision.allowed:
+        return True, "subscription", decision.usage_id
+    success = await deduct_credits(
+        user_id,
+        cost,
+        reason="batch_ref_edit_charge",
+        external_id=external_id,
+        metadata=metadata,
+    )
+    return success, "credits" if success else "none", None
+
+
+async def _refund_batch_generation(
+    user_id: int,
+    cost: int,
+    *,
+    billing_source: str,
+    subscription_usage_id: int | None,
+    external_id: str,
+    metadata: dict,
+) -> None:
+    if billing_source == "subscription":
+        await subscription_service.refund(subscription_usage_id)
+        return
+    if billing_source == "credits":
+        await add_credits_once(
+            user_id,
+            cost,
+            reason="generation_refund",
+            external_id=external_id,
+            metadata=metadata,
+        )
 
 
 # Клавиатуры для пакетного редактирования
@@ -41,7 +90,7 @@ def get_batch_confirmation_keyboard(job_id: str, cost: int):
     """Подтверждение пакетной генерации"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text=f"▶️ Запустить за {cost}🍌", callback_data=f"batchrun_{job_id}")
+    builder.button(text=f"▶️ Запустить за {cost}🪙", callback_data=f"batchrun_{job_id}")
     builder.button(text="🔙 Отмена", callback_data="cancel_batch")
 
     return builder.as_markup()
@@ -83,10 +132,10 @@ def get_upscale_options_keyboard(job_id: str, item_index: int):
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="📐 2K (5🍌)", callback_data=f"upscale_{job_id}_{item_index}_2K_5"
+        text="📐 2K (5🪙)", callback_data=f"upscale_{job_id}_{item_index}_2K_5"
     )
     builder.button(
-        text="🖼 4K (10🍌)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
+        text="🖼 4K (10🪙)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
     )
     builder.button(text="🔙 Назад к результатам", callback_data=f"batchback_{job_id}")
 
@@ -149,7 +198,7 @@ async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext
 
     text = (
         f"🎨 <b>Редактирование по референсам</b>"
-        f"🍌 Ваш баланс: <code>{user_credits}</code> бананов"
+        f"🪙 Ваш баланс: <code>{user_credits}</code> BoomCoin"
         f"<b>Как это работает:</b>\n"
         f"1. Загрузите <b>главное фото</b> для редактирования\n"
         f"2. Добавьте до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
@@ -164,7 +213,7 @@ async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext
         f"• До 10 объектов с высокой точностью\n"
         f"• До 4 персонажей для консистентности\n"
         f"• Перенос стиля, композиции, цветов"
-        f"💰 Стоимость: <b>4🍌</b> (Pro модель, 4K, сохранение лиц)"
+        f"💰 Стоимость: <b>4🪙</b> (Pro модель, 4K, сохранение лиц)"
         f"<i>📸 Отправьте главное фото для редактирования:</i>"
     )
 
@@ -267,7 +316,7 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"✏️ <b>Введите промпт</b>"
         f"🎨 <b>Режим:</b> Редактирование по референсам\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 14 референсов)"
+        f"💰 Стоимость: <code>{cost}</code>🪙 (Pro модель, до 14 референсов)"
         f"📸 Главное фото: ✅ Загружено\n"
         f"📎 Референсов: <code>{ref_count}/14</code>"
         f"Опишите, <b>что нужно сделать</b> с главным фото:\n"
@@ -338,9 +387,9 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
 
     if not is_admin and user_credits < cost:
         await callback.message.edit_text(
-            f"❌ <b>Недостаточно бананов!</b>"
-            f"Требуется: <code>{cost}</code>🍌\n"
-            f"Доступно: <code>{user_credits}</code>🍌"
+            f"❌ <b>Недостаточно BoomCoin!</b>"
+            f"Требуется: <code>{cost}</code>🪙\n"
+            f"Доступно: <code>{user_credits}</code>🪙"
             f"💳 Пополните баланс.",
             reply_markup=get_main_menu_keyboard(),
         )
@@ -360,7 +409,7 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
         f"📎 Референсов: <code>{ref_count}/14</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"🤖 Модель: <code>Gemini 3 Pro</code> (4K)\n"
-        f"💰 Стоимость: <code>{cost}</code>🍌"
+        f"💰 Стоимость: <code>{cost}</code>🪙"
         f"<i>Нажмите кнопку ниже для запуска:</i>",
         reply_markup=get_batch_confirmation_keyboard("ref_edit", cost),
         parse_mode="HTML",
@@ -383,17 +432,15 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         await callback.answer("Ошибка: главное фото не найдено", show_alert=True)
         return
 
-    # Списываем кредиты
     charge_external_id = f"batch_ref_edit:{user_id}:{callback.message.message_id}"
-    success = await deduct_credits(
+    success, billing_source, subscription_usage_id = await _charge_batch_generation(
         user_id,
         cost,
-        reason="batch_ref_edit_charge",
         external_id=charge_external_id,
         metadata={"aspect_ratio": aspect_ratio, "refs": len(ref_images)},
     )
     if not success:
-        await callback.answer("Ошибка списания кредитов", show_alert=True)
+        await callback.answer("Не хватает подписки или BoomCoin", show_alert=True)
         return
 
     await callback.answer("🚀 Запускаю редактирование с референсами...")
@@ -404,6 +451,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         f"🤖 Модель: <code>Gemini 3 Pro</code>\n"
         f"📎 Референсов: <code>{len(ref_images)}</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
+        f"💰 Оплата: <code>{'по подписке' if billing_source == 'subscription' else str(cost) + ' BoomCoin'}</code>\n"
         f"⏱ Это займёт 15-30 секунд..."
         f"<i>Используйте /cancel для отмены</i>",
         parse_mode="HTML",
@@ -440,43 +488,43 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
                     f"🎨 Режим: Редактирование с референсами\n"
                     f"📎 Референсов использовано: <code>{len(ref_images)}</code>\n"
                     f"📐 Формат: <code>{aspect_ratio}</code>\n"
-                    f"💰 Стоимость: <code>{cost}</code>🍌"
+                    f"💰 Оплата: <code>{'по подписке' if billing_source == 'subscription' else str(cost) + ' BoomCoin'}</code>"
                     f"<i>Сохраните изображение, если нужно</i>"
                 ),
                 reply_markup=get_main_menu_keyboard(await get_user_credits(user_id)),
                 parse_mode="HTML",
             )
         else:
-            # Возвращаем кредиты при неудаче
-            await add_credits_once(
+            await _refund_batch_generation(
                 user_id,
                 cost,
-                reason="generation_refund",
+                billing_source=billing_source,
+                subscription_usage_id=subscription_usage_id,
                 external_id=charge_external_id,
                 metadata={"handler": "batch_ref_edit"},
             )
             await callback.message.answer(
                 "❌ <b>Не удалось отредактировать изображение</b>\n"
                 "Попробуйте другой промпт или референсы.\n"
-                "Кредиты возвращены.",
+                "BoomCoin возвращены.",
                 reply_markup=get_main_menu_keyboard(),
                 parse_mode="HTML",
             )
 
     except Exception as e:
         logger.exception(f"Reference editing failed: {e}")
-        # Возвращаем кредиты при ошибке
-        await add_credits_once(
+        await _refund_batch_generation(
             user_id,
             cost,
-            reason="generation_refund",
+            billing_source=locals().get("billing_source", "none"),
+            subscription_usage_id=locals().get("subscription_usage_id"),
             external_id=charge_external_id,
             metadata={"handler": "batch_ref_edit"},
         )
         await callback.message.answer(
             "❌ <b>Ошибка редактирования</b>\n"
             f"<code>{str(e)[:100]}</code>\n"
-            "Кредиты возвращены.",
+            "BoomCoin возвращены.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
@@ -500,7 +548,7 @@ async def show_batch_results(
             metadata={"handler": "batch_job", "failed": len(failed)},
         )
         await callback.message.answer(
-            "❌ <b>Все редактирования не удались</b>\n" "Кредиты полностью возвращены.",
+            "❌ <b>Все редактирования не удались</b>\n" "BoomCoin полностью возвращены.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML",
         )
@@ -516,7 +564,7 @@ async def show_batch_results(
         f"✅ <b>Пакетное редактирование завершено!</b>"
         f"📊 Успешно: <code>{len(successful)}/{len(job.items)}</code>\n"
         f"⏱ Время: <code>{duration:.1f}</code> сек\n"
-        f"🍌 Стоимость: <code>{job.total_cost}</code>🍌"
+        f"🪙 Стоимость: <code>{job.total_cost}</code>🪙"
         f"<i>Нажмите номер для просмотра в полном размере</i>"
     )
 
@@ -593,7 +641,7 @@ async def show_upscale_options(callback: types.CallbackQuery):
 
     await callback.message.edit_caption(
         caption=f"🔍 <b>Апскейл варианта {item_index + 1}</b>"
-        f"🍌 Доступно: <code>{user_credits}</code>🍌"
+        f"🪙 Доступно: <code>{user_credits}</code>🪙"
         f"Выберите качество:",
         reply_markup=get_upscale_options_keyboard(job_id, item_index),
         parse_mode="HTML",
@@ -612,7 +660,7 @@ async def execute_upscale(callback: types.CallbackQuery):
 
     # Проверяем возможность оплаты (админы могут бесплатно)
     if not await check_can_afford(callback.from_user.id, cost):
-        await callback.answer(f"Нужно {cost} кредитов", show_alert=True)
+        await callback.answer(f"Нужно {cost} BoomCoin", show_alert=True)
         return
 
     # Списываем (админам - бесплатно)
@@ -639,7 +687,7 @@ async def execute_upscale(callback: types.CallbackQuery):
                 photo=types.BufferedInputFile(result, f"upscaled_{resolution}.png"),
                 caption=f"✅ <b>Апскейл завершён!</b>"
                 f"🖼 Разрешение: <code>{resolution}</code>\n"
-                f"🍌 Стоимость: <code>{cost}</code>🍌",
+                f"🪙 Стоимость: <code>{cost}</code>🪙",
                 parse_mode="HTML",
             )
         else:
@@ -650,7 +698,7 @@ async def execute_upscale(callback: types.CallbackQuery):
                 external_id=charge_external_id,
                 metadata={"handler": "upscale"},
             )
-            await callback.message.answer("❌ Ошибка апскейла. Бананы возвращены.")
+            await callback.message.answer("❌ Ошибка апскейла. BoomCoin возвращены.")
 
     except Exception as e:
         logger.exception(f"Upscale failed: {e}")
@@ -661,7 +709,7 @@ async def execute_upscale(callback: types.CallbackQuery):
             external_id=charge_external_id,
             metadata={"handler": "upscale"},
         )
-        await callback.message.answer("❌ Ошибка. Кредиты возвращены.")
+        await callback.message.answer("❌ Ошибка. BoomCoin возвращены.")
 
 
 @router.callback_query(F.data.startswith("batchdownload_"))

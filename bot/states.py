@@ -29,6 +29,7 @@ class GenerationStates(StatesGroup):
     confirming_reference_images = State()  # Подтверждение референсов перед генерацией
     selecting_face_preservation = State()  # Выбор режима сохранения лица после референсов
     confirming_prompt_improvement = State()  # Ручной выбор улучшения/безопасности промпта
+    waiting_for_feed_retry_prompt = State()  # Редактирование промпта повтора из ленты
 
     # Состояния для пакетного редактирования
     waiting_for_batch_image = State()  # Ожидание загрузки фото
@@ -76,9 +77,11 @@ class AdminStates(StatesGroup):
     waiting_broadcast_photo = State()  # Ожидание фото для рассылки
     confirming_broadcast = State()  # Подтверждение рассылки
     waiting_user_id = State()  # Ввод ID пользователя
-    waiting_credits_amount = State()  # Ввод количества кредитов
+    waiting_credits_amount = State()  # Ввод количества BoomCoin
     waiting_price_value = State()  # Ввод новой цены
     waiting_promo_data = State()  # Ввод параметров промокода
+    waiting_ai_request = State()  # Админский ИИ-ассистент
+    confirming_ai_action = State()  # Подтверждение действия ИИ-ассистента
 
 
 class BatchGenerationStates(StatesGroup):

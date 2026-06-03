@@ -19,7 +19,7 @@ router = Router()
 
 PHOTO_TO_PROMPT_TEXT = (
     "📸 <b>Анализ фото → Промпт</b>\n"
-    "🍌 Баланс: <code>{credits}</code>🍌\n\n"
+    "🪙 Баланс: <code>{credits}</code>🪙\n\n"
     "Отправьте фото для анализа.\n"
     "🤖 ИИ создаст точный промпт для повторения:\n"
     "• Лица и люди\n"
@@ -121,7 +121,7 @@ async def _send_photo_prompt_result(
 
         short_caption = (
             f"✅ <b>Готовый промпт!</b>\n"
-            f"🍌 Баланс: <code>{user_credits}</code>🍌"
+            f"🪙 Баланс: <code>{user_credits}</code>🪙"
         )
         await message.answer_photo(
             photo=photo_file_id,

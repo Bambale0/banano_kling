@@ -306,6 +306,37 @@ VIDEO_OPTION_LABELS = {
 }
 
 
+def format_inline_choice(option_name: str, value) -> str:
+    labels = {
+        "mode": {
+            "normal": "🎬 Normal",
+            "fun": "✨ Fun",
+            "spicy": "🌶 Spicy",
+        },
+        "resolution": {
+            "720p": "📺 HD",
+            "1080p": "🖥 Full HD",
+            "4k": "🎞 4K",
+        },
+        "quality": {
+            "720p": "📺 HD",
+            "1080p": "🖥 Full HD",
+            "4k": "🎞 4K",
+            "std": "⚡ Std",
+            "pro": "💎 Pro",
+        },
+        "nsfw_checker": {
+            True: "🛡 Фильтр ON",
+            False: "🔓 Фильтр OFF",
+        },
+    }
+    option_labels = labels.get(option_name)
+    if option_labels is not None and value in option_labels:
+        return option_labels[value]
+    return get_video_option_label(option_name, value)
+
+
+
 def get_video_model_config(model_id: str) -> dict:
     return deepcopy(VIDEO_MODEL_CONFIGS.get(model_id, VIDEO_MODEL_CONFIGS["v3_std"]))
 

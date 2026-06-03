@@ -149,7 +149,7 @@ class PresetManager:
         }
 
     def get_packages(self) -> List[Dict]:
-        """Возвращает пакеты кредитов"""
+        """Возвращает пакеты BoomCoin"""
         return self._price_config.get("packages", [])
 
     def get_package(self, package_id: str) -> Optional[Dict]:
@@ -181,7 +181,7 @@ class PresetManager:
             options: Дополнительные опции (duration для видео, и т.д.)
 
         Returns:
-            Стоимость в бананах
+            Стоимость в BoomCoin
         """
         costs = self._price_config.get("costs_reference", {})
         image_models = costs.get("image_models", {})
@@ -238,7 +238,7 @@ class PresetManager:
             duration: Длительность в секундах (3-15)
 
         Returns:
-            Стоимость в бананах
+            Стоимость в BoomCoin
         """
         costs = self._price_config.get("costs_reference", {})
         video_models = costs.get("video_models", {})
@@ -306,7 +306,7 @@ class PresetManager:
             model: Модель (gemini_2_5_flash, gemini_3_pro, и т.д.)
 
         Returns:
-            Стоимость в бананах
+            Стоимость в BoomCoin
         """
         return self.get_generation_cost(model)
 
