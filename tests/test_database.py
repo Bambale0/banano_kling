@@ -182,6 +182,45 @@ async def test_subscription_usage_limit_and_refund(temp_db):
 
 
 @pytest.mark.asyncio
+async def test_subscription_limit_exhaustion_can_fall_back_to_credits(temp_db):
+    await get_or_create_user(123456)
+    await activate_user_subscription(
+        123456,
+        package_id="boom",
+        package_name="Boom",
+        days=30,
+        image_limit=1,
+        video_limit=0,
+    )
+
+    ok, reason, _ = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:1",
+    )
+    assert ok
+    assert reason == "ok"
+
+    ok, reason, _ = await consume_subscription_usage(
+        123456,
+        usage_type="image",
+        model="banana_2",
+        external_id="image:2",
+    )
+    assert not ok
+    assert reason == "limit_exhausted"
+
+    assert await deduct_credits(
+        123456,
+        2,
+        reason="generation_charge",
+        external_id="image:2",
+    )
+    assert await get_user_credits(123456) == 8
+
+
+@pytest.mark.asyncio
 async def test_refund_generation_billing_returns_subscription_usage(temp_db):
     user = await get_or_create_user(123456)
     await activate_user_subscription(

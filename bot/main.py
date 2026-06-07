@@ -323,6 +323,34 @@ async def _schedule_push_scenario_loop(bot: Bot) -> None:
         logger.exception("Failed to schedule push scenario background loop")
 
 
+async def _recurring_payments_loop(bot: Bot) -> None:
+    interval = max(300, int(config.RECURRING_PAYMENTS_INTERVAL_SECONDS))
+    await asyncio.sleep(30)
+    while True:
+        try:
+            from bot.services.recurring_service import renew_due_recurring_subscriptions
+
+            renewed = await renew_due_recurring_subscriptions(bot=bot)
+            if renewed:
+                logger.info("Recurring subscriptions renewed: %s", renewed)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Recurring payments loop failed")
+        await asyncio.sleep(interval)
+
+
+async def _schedule_recurring_payments_loop(bot: Bot) -> None:
+    if not config.RECURRING_PAYMENTS_ENABLED:
+        logger.info("Recurring payments loop is disabled by config")
+        return
+    try:
+        asyncio.create_task(_recurring_payments_loop(bot))
+        logger.info("Scheduled recurring payments loop")
+    except Exception:
+        logger.exception("Failed to schedule recurring payments loop")
+
+
 async def _register_user_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(list(USER_BOT_COMMANDS))
     logger.info("Registered %s user bot commands", len(USER_BOT_COMMANDS))
@@ -360,6 +388,7 @@ async def on_startup(bot: Bot):
         logger.exception("Failed to schedule static cleanup task")
 
     await _schedule_push_scenario_loop(bot)
+    await _schedule_recurring_payments_loop(bot)
 
 
 async def on_shutdown(bot: Bot):

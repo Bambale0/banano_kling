@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
@@ -55,16 +55,25 @@ def get_credit_plural() -> str:
     return str(PRICE_CONFIG.get("credit_name_plural") or "BoomCoin")
 
 
+def get_support_contact() -> str:
+    return str(PRICE_CONFIG.get("support_contact") or "@s_k7222")
+
+
 # =============================================================================
 # ГЛАВНОЕ МЕНЮ - согласно ux.md
 # =============================================================================
 
 
-def get_main_menu_keyboard(user_credits: int = 0):
+def get_main_menu_keyboard(user_credits: int = 0, user_id: int | None = None):
     """Главное меню бота - согласно ux.md"""
     builder = InlineKeyboardBuilder()
 
     builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
+    if user_id is not None and config.is_admin(user_id) and config.MINI_APP_URL:
+        builder.button(
+            text="🧩 Mini App",
+            web_app=WebAppInfo(url=config.MINI_APP_URL),
+        )
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
     builder.button(text="📚 Каталог промптов", callback_data="menu_feed")
@@ -705,30 +714,67 @@ def get_payment_packages_keyboard(packages: list, provider: str = None):
     provider_kb = get_payment_provider_keyboard(provider)
     if provider_kb.inline_keyboard:
         builder.row(*provider_kb.inline_keyboard[0])
+    builder.row(
+        InlineKeyboardButton(text="🔁 Автопродление", callback_data="recurring_status")
+    )
 
-    credit_emoji = get_credit_emoji()
-    for pkg in packages:
-        if pkg.get("hidden"):
-            continue
+    def _is_subscription_package(pkg: dict) -> bool:
+        return pkg.get("kind") == "subscription" or bool(pkg.get("subscription_days"))
+
+    def _visible(items: list[dict]) -> list[dict]:
+        return [pkg for pkg in items if not pkg.get("hidden")]
+
+    def _credit_package_text(pkg: dict) -> str:
+        total = int(pkg.get("credits") or 0) + int(pkg.get("bonus_credits") or 0)
         bonus = (
-            f" +{pkg['bonus_credits']} бонусов ({credit_emoji})"
+            f" +{pkg['bonus_credits']}"
             if pkg.get("bonus_credits", 0) > 0
             else ""
         )
+        return f"{total} BoomCoin · {pkg['price_rub']}₽{bonus}"
+
+    def _subscription_package_text(pkg: dict) -> str:
         marker = "🔥 " if pkg.get("popular") else ""
-        period = f" / {pkg['period']}" if pkg.get("period") else ""
+        period = f" · {pkg['period']}" if pkg.get("period") else ""
         limit = f" · {pkg['photo_limit_text']}" if pkg.get("photo_limit_text") else ""
-        builder.button(
-            text=(
-                f"{marker}{pkg['name']} - {pkg['price_rub']}₽{period}"
-                f"{limit}{bonus}"
-            ),
-            callback_data=f"buy_{provider}_{pkg['id']}",
+        return f"{marker}{pkg['name']} · {pkg['price_rub']}₽{period}{limit}"
+
+    visible_packages = _visible(packages)
+    credit_packages = [
+        pkg for pkg in visible_packages if not _is_subscription_package(pkg)
+    ]
+    subscription_packages = [
+        pkg for pkg in visible_packages if _is_subscription_package(pkg)
+    ]
+
+    if credit_packages:
+        builder.row(
+            InlineKeyboardButton(text="🪙 BoomCoin без подписки", callback_data="ignore")
+        )
+        for pkg in credit_packages:
+            builder.row(
+                InlineKeyboardButton(
+                    text=_credit_package_text(pkg),
+                    callback_data=f"buy_{provider}_{pkg['id']}",
+                )
+            )
+
+    if subscription_packages:
+        builder.row(
+            InlineKeyboardButton(text="🧾 Подписки", callback_data="ignore")
+        )
+    for pkg in subscription_packages:
+        if pkg.get("hidden"):
+            continue
+        builder.row(
+            InlineKeyboardButton(
+                text=_subscription_package_text(pkg),
+                callback_data=f"buy_{provider}_{pkg['id']}",
+            )
         )
 
-    builder.button(text="🎟 Промокод", callback_data="promo_enter")
-    builder.button(text="🔙 Назад", callback_data="menu_balance")
-    builder.adjust(2, 1)
+    builder.row(InlineKeyboardButton(text="🎟 Промокод", callback_data="promo_enter"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="menu_balance"))
     return builder.as_markup()
 
 

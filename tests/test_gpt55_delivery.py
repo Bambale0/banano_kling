@@ -44,17 +44,17 @@ def test_format_subscription_limits_shows_remaining_package_limits():
     text = _format_subscription_limits(
         {
             "package_name": "Studio",
-            "image_limit": 8000,
+            "image_limit": 350,
             "images_used": 125,
-            "video_limit": 50,
+            "video_limit": 8,
             "videos_used": 7,
             "expires_at": "2026-07-03 12:00:00",
         }
     )
 
     assert "Подписка: <code>Studio</code>" in text
-    assert "Фото осталось: <code>7875</code> из <code>8000</code>" in text
-    assert "Видео: <code>осталось 43 из 50</code>" in text
+    assert "Фото осталось: <code>225</code> из <code>350</code>" in text
+    assert "Видео: <code>осталось 1 из 8</code>" in text
     assert "До: <code>2026-07-03 12:00:00</code>" in text
 
 
@@ -62,7 +62,7 @@ def test_format_subscription_limits_marks_missing_video_limit():
     text = _format_subscription_limits(
         {
             "package_name": "Boom",
-            "image_limit": 2000,
+            "image_limit": 100,
             "images_used": 3,
             "video_limit": 0,
             "videos_used": 0,
@@ -70,5 +70,5 @@ def test_format_subscription_limits_marks_missing_video_limit():
         }
     )
 
-    assert "Фото осталось: <code>1997</code> из <code>2000</code>" in text
+    assert "Фото осталось: <code>97</code> из <code>100</code>" in text
     assert "Видео: <code>не входит в пакет</code>" in text

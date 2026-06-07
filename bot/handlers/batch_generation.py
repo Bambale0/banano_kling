@@ -391,7 +391,7 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
             f"Требуется: <code>{cost}</code>🪙\n"
             f"Доступно: <code>{user_credits}</code>🪙"
             f"💳 Пополните баланс.",
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(user_id=user_id),
         )
         await state.clear()
         return
@@ -491,7 +491,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
                     f"💰 Оплата: <code>{'по подписке' if billing_source == 'subscription' else str(cost) + ' BoomCoin'}</code>"
                     f"<i>Сохраните изображение, если нужно</i>"
                 ),
-                reply_markup=get_main_menu_keyboard(await get_user_credits(user_id)),
+                reply_markup=get_main_menu_keyboard(await get_user_credits(user_id), user_id),
                 parse_mode="HTML",
             )
         else:
@@ -507,7 +507,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
                 "❌ <b>Не удалось отредактировать изображение</b>\n"
                 "Попробуйте другой промпт или референсы.\n"
                 "BoomCoin возвращены.",
-                reply_markup=get_main_menu_keyboard(),
+                reply_markup=get_main_menu_keyboard(user_id=user_id),
                 parse_mode="HTML",
             )
 
@@ -525,7 +525,7 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
             "❌ <b>Ошибка редактирования</b>\n"
             f"<code>{str(e)[:100]}</code>\n"
             "BoomCoin возвращены.",
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(user_id=user_id),
             parse_mode="HTML",
         )
 
@@ -549,7 +549,7 @@ async def show_batch_results(
         )
         await callback.message.answer(
             "❌ <b>Все редактирования не удались</b>\n" "BoomCoin полностью возвращены.",
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(user_id=callback.from_user.id),
             parse_mode="HTML",
         )
         return
@@ -746,7 +746,8 @@ async def cancel_batch(callback: types.CallbackQuery, state: FSMContext):
     """Отмена пакетной генерации"""
     await state.clear()
     await callback.message.edit_text(
-        "❌ Пакетная генерация отменена.", reply_markup=get_main_menu_keyboard()
+        "❌ Пакетная генерация отменена.",
+        reply_markup=get_main_menu_keyboard(user_id=callback.from_user.id),
     )
 
 

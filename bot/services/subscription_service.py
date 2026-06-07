@@ -34,10 +34,13 @@ class SubscriptionService:
         entitlement = package.get("entitlement")
         if isinstance(entitlement, dict):
             return entitlement
-        if not package.get("subscription_days"):
+        is_subscription = package.get("kind") == "subscription" or bool(
+            package.get("subscription_days")
+        )
+        if not is_subscription:
             return None
         return {
-            "days": int(package.get("subscription_days") or 0),
+            "days": int(package.get("subscription_days") or 30),
             "image_limit": int(package.get("image_limit") or 0),
             "video_limit": int(package.get("video_limit") or 0),
             "includes_pro": bool(package.get("includes_pro")),

@@ -279,9 +279,10 @@ class ConfirmResponse(BaseModel):
 class ChargeRequest(BaseModel):
     """Запрос на рекуррентный платеж"""
 
+    payment_id: Optional[str] = Field(None, alias="PaymentId")
     rebill_id: str = Field(..., alias="RebillId")
-    amount: int = Field(..., alias="Amount")
-    order_id: str = Field(..., alias="OrderId")
+    amount: Optional[int] = Field(None, alias="Amount")
+    order_id: Optional[str] = Field(None, alias="OrderId")
     send_email: Optional[bool] = Field(None, alias="SendEmail")
     info_email: Optional[str] = Field(None, alias="InfoEmail")
     description: Optional[str] = Field(None, alias="Description")

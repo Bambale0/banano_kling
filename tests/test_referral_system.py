@@ -226,6 +226,47 @@ def test_partner_balance_conversion_rejects_insufficient_balance(tmp_path, monke
     asyncio.run(run())
 
 
+def test_admin_partner_summaries_show_real_partner_metrics(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "admin_partner_summaries.db")
+
+        await db.init_db()
+
+        partner = await db.get_master_partner_user()
+        await db.accept_partner_agreement(partner.telegram_id)
+        referred = await db.get_or_create_user(9201)
+        await db.process_referral(referred.telegram_id, partner.referral_code)
+        await db.create_transaction(
+            "partner-order-1",
+            referred.id,
+            "payment-1",
+            "tbank",
+            100,
+            1000.0,
+            status="completed",
+        )
+        await db.credit_first_payment_referral_bonus(
+            referred.telegram_id,
+            100,
+            transaction_amount_rub=1000.0,
+        )
+
+        summaries = await db.get_admin_partner_summaries()
+
+        assert len(summaries) == 1
+        summary = summaries[0]
+        assert summary["telegram_id"] == partner.telegram_id
+        assert summary["referral_code"] == partner.referral_code
+        assert summary["users_count"] == 1
+        assert summary["payments_count"] == 1
+        assert summary["revenue_rub"] == 1000.0
+        assert summary["commission_rub"] == 450.0
+        assert summary["balance_rub"] == 450.0
+        assert summary["today_payments"] == 1
+
+    asyncio.run(run())
+
+
 def test_stats_include_referrals(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")

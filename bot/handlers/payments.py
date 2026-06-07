@@ -11,13 +11,17 @@ from bot.database import (
     add_credits,
     add_credits_once,
     add_free_generations,
+    confirm_recurring_subscription,
     create_transaction,
     credit_first_payment_referral_bonus,
+    disable_recurring_subscription,
     get_or_create_user,
+    get_recurring_subscription,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
     get_user_credits,
     mark_promo_code_used,
+    upsert_recurring_subscription,
     validate_promo_code,
     update_transaction_status,
 )
@@ -28,12 +32,15 @@ from bot.keyboards import (
     get_main_menu_keyboard,
     get_payment_confirmation_keyboard,
     get_payment_packages_keyboard,
+    get_support_contact,
 )
 from bot.services.cryptobot_service import cryptobot_service
+from bot.services.admin_config_service import admin_package_config_service
 from bot.services.preset_manager import preset_manager
 from bot.services.subscription_service import subscription_service
 from bot.services.tbank_service import tbank_service
 from bot.states import PaymentStates
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -77,17 +84,54 @@ def _package_id_from_order_id(order_id: str) -> str:
     return order_id.rsplit("_", 1)[-1]
 
 
-def _topup_menu_text() -> str:
+def _subscription_feature_text(package: dict) -> str:
+    features = []
+    if package.get("photo_limit_text"):
+        features.append(package["photo_limit_text"])
+    if package.get("includes_pro"):
+        features.append("Banana Pro")
+    if package.get("video_limit_text"):
+        features.append(package["video_limit_text"])
+    if package.get("priority"):
+        features.append("приоритет")
+    if not package.get("video_limit_text"):
+        features.append("без видео")
+    return ", ".join(features)
+
+
+def _credit_package_summary(package: dict) -> str:
+    total = int(package.get("credits") or 0) + int(package.get("bonus_credits") or 0)
+    bonus = int(package.get("bonus_credits") or 0)
+    bonus_text = f" (+{bonus} бонус)" if bonus else ""
+    return f"• <b>{total} BoomCoin</b> — {package['price_rub']} ₽{bonus_text}"
+
+
+def _topup_menu_text(packages: list[dict] | None = None) -> str:
     credit_emoji = get_credit_emoji()
     credit_plural = get_credit_plural()
+    credit_lines = []
+    subscription_lines = []
+    packages = packages if packages is not None else preset_manager.get_packages()
+    for package in packages:
+        if subscription_service.is_subscription_package(package):
+            subscription_lines.append(
+                f"• <b>{package['name']}</b> — {package['price_rub']} ₽ / "
+                f"{package.get('period', 'период')}: {_subscription_feature_text(package)}"
+            )
+        elif not package.get("hidden"):
+            credit_lines.append(_credit_package_summary(package))
+    credit_text = "\n".join(credit_lines)
+    subscription_text = "\n".join(subscription_lines)
     return (
         f"{credit_emoji} <b>Пополнение баланса</b>\n\n"
-        f"Выберите способ оплаты и тариф BoomCoin.\n"
-        f"<i>Чем больше тариф, тем выгоднее цена за {credit_plural}.</i>\n\n"
-        f"{credit_emoji} <b>Что входит</b>\n"
-        "• гибридные тарифы: 24 часа, неделя или месяц\n"
-        "• фото-лимиты указаны на кнопках тарифов\n"
-        "• продвинутые модели: дороже, в зависимости от режима"
+        f"<b>{credit_plural}</b>\n"
+        "Разовый баланс без срока действия: для видео, доплат и генераций сверх подписки.\n"
+        f"{credit_text}\n\n"
+        "<b>Подписки</b>\n"
+        f"Фото-лимиты по времени + бонусный баланс {credit_plural}. "
+        f"После лимита бот продолжит работать за {credit_plural}.\n"
+        f"{subscription_text}\n\n"
+        "<i>Для старта берите Boom. Для Banana Pro и видео — Pro или Studio.</i>"
     )
 
 
@@ -99,14 +143,13 @@ def _payment_created_text(
     original_amount_rub: int | float | None = None,
     promo_code: str | None = None,
     promo_discount_percent: int = 0,
+    recurring_enabled: bool = False,
 ) -> str:
     credit_emoji = get_credit_emoji()
     credit_plural = get_credit_plural()
     bonus_text = ""
     if package.get("bonus_credits", 0) > 0:
-        bonus_text = (
-            f"\n🎁 Бонус: <code>{package['bonus_credits']}</code> {credit_plural}"
-        )
+        bonus_text = f" (+{package['bonus_credits']} бонус)"
     if promo_code and promo_discount_percent and original_amount_rub:
         price_text = (
             f"💰 Сумма: <s>{original_amount_rub}</s> ₽ → <code>{amount_rub}</code> ₽\n"
@@ -131,6 +174,11 @@ def _payment_created_text(
         else credit_plural
     )
     balance_suffix = f" {credit_plural}" if balance_label != credit_plural else ""
+    after_payment_text = (
+        "После успешной оплаты баланс и доступ начислятся автоматически."
+        if subscription_service.is_subscription_package(package)
+        else f"После успешной оплаты {credit_plural} начислятся автоматически."
+    )
 
     return (
         f"💳 <b>Оплата пакета «{package['name']}»</b>\n\n"
@@ -138,7 +186,65 @@ def _payment_created_text(
         f"{features_text}\n"
         f"{price_text}\n\n"
         "Нажмите кнопку ниже, чтобы перейти к оплате.\n"
-        "После успешной оплаты баланс и доступ начислятся автоматически."
+        f"{after_payment_text}"
+        f"{_payment_created_recurring_note(recurring_enabled)}"
+    )
+
+
+def _recurring_choice_keyboard(package_id: str, provider: str):
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="💳 Оплатить один раз",
+        callback_data=f"buyonce_{provider}_{package_id}",
+    )
+    builder.button(
+        text="☐ Согласен на автопродление",
+        callback_data=f"recagree_{provider}_{package_id}",
+    )
+    builder.button(text="🔙 Назад", callback_data="menu_topup")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _recurring_consent_keyboard(package_id: str, provider: str):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Согласие дано", callback_data="recurring_consent_checked")
+    builder.button(
+        text="💳 Перейти к первой оплате",
+        callback_data=f"buyrec_{provider}_{package_id}",
+    )
+    builder.button(text="🔙 Назад", callback_data=f"buy_{provider}_{package_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _recurring_choice_text(package: dict) -> str:
+    support_contact = get_support_contact()
+    return (
+        f"🧾 <b>{package['name']}</b>\n\n"
+        f"Цена: <code>{package['price_rub']}</code> ₽ / {package.get('period', 'период')}\n"
+        f"Лимит: <code>{package.get('photo_limit_text', 'по пакету')}</code>\n\n"
+        "Можно оплатить один раз или включить автопродление.\n\n"
+        "<b>Условия автопродления</b>\n"
+        f"• Сумма списания: <code>{package['price_rub']}</code> ₽\n"
+        f"• Периодичность: <code>{package.get('period', 'период')}</code>\n"
+        "• Карта сохраняется у Т-Банка, а бот продлит подписку автоматически "
+        "в конце срока.\n"
+        "• Отключить можно в разделе пополнения.\n"
+        f"• Для отмены подписки или возврата напишите в поддержку: <code>{support_contact}</code>\n\n"
+        "Чтобы включить автопродление, нажмите кнопку согласия ниже."
+    )
+
+
+def _payment_created_recurring_note(enabled: bool) -> str:
+    if not enabled:
+        return ""
+    support_contact = get_support_contact()
+    return (
+        "\n\n🔁 <b>Автопродление будет включено после оплаты.</b>\n"
+        "Т-Банк сохранит платежные реквизиты и вернет токен для будущих списаний.\n"
+        f"Отменить автопродление или запросить возврат можно через поддержку: "
+        f"<code>{support_contact}</code>."
     )
 
 
@@ -163,15 +269,20 @@ def _payment_success_text(transaction, referral_bonus: dict | None = None) -> st
 
 
 async def _render_topup_menu(message: types.Message, provider: str):
-    packages = preset_manager.get_packages()
+    packages = await admin_package_config_service.list_packages(include_hidden=False)
     await message.edit_text(
-        _topup_menu_text(),
+        _topup_menu_text(packages),
         reply_markup=get_payment_packages_keyboard(packages, provider=provider),
         parse_mode="HTML",
     )
 
 
-async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
+async def _complete_transaction(
+    order_id: str,
+    bot: Bot | None = None,
+    *,
+    payment_data: dict | None = None,
+) -> bool:
     transaction = await get_transaction_by_order(order_id)
     if not transaction or transaction.status == "completed":
         return bool(transaction and transaction.status == "completed")
@@ -210,9 +321,32 @@ async def _complete_transaction(order_id: str, bot: Bot | None = None) -> bool:
                 promo_reason,
             )
 
-    package = preset_manager.get_package(_package_id_from_order_id(order_id))
+    package = await admin_package_config_service.get_package(
+        _package_id_from_order_id(order_id)
+    )
     if package and subscription_service.is_subscription_package(package):
-        await subscription_service.activate_from_package(telegram_id, package)
+        subscription = await subscription_service.activate_from_package(
+            telegram_id, package
+        )
+        recurring_row = await get_recurring_subscription(telegram_id)
+        rebill_id = (
+            (payment_data or {}).get("RebillId")
+            or (payment_data or {}).get("rebill_id")
+            or (
+                recurring_row.get("rebill_id")
+                if recurring_row
+                and recurring_row.get("status") == "pending"
+                and recurring_row.get("package_id") == package.get("id")
+                else None
+            )
+        )
+        if rebill_id and transaction.provider == "tbank":
+            await confirm_recurring_subscription(
+                telegram_id,
+                rebill_id=str(rebill_id),
+                next_charge_at=subscription["expires_at"],
+                last_order_id=order_id,
+            )
 
     if bot:
         try:
@@ -236,6 +370,70 @@ async def show_topup_menu(callback: types.CallbackQuery):
 @router.callback_query(F.data == "menu_buy_credits")
 async def show_packages(callback: types.CallbackQuery):
     await _render_topup_menu(callback.message, config.payment_provider)
+
+
+def _recurring_status_keyboard(enabled: bool):
+    builder = InlineKeyboardBuilder()
+    if enabled:
+        builder.button(text="⛔ Отключить автопродление", callback_data="recurring_disable")
+    builder.button(text="💳 Купить подписку", callback_data="menu_topup")
+    builder.button(text="🔙 Назад", callback_data="menu_topup")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _recurring_status_text(row: dict | None) -> str:
+    if not row or row.get("status") == "disabled":
+        return (
+            "🔁 <b>Автопродление</b>\n\n"
+            "Сейчас автопродление выключено.\n"
+            "Чтобы включить его, в пополнении выберите подписку, оплатите через Т-Банк и нажмите "
+            "вариант <b>«Оплатить и включить автопродление»</b>."
+        )
+
+    status = {
+        "pending": "ожидает первой оплаты",
+        "active": "включено",
+        "disabled": "выключено",
+    }.get(str(row.get("status")), str(row.get("status")))
+    next_charge = row.get("next_charge_at") or "после подтверждения первой оплаты"
+    error_text = f"\n⚠️ Ошибка: <code>{row['last_error']}</code>" if row.get("last_error") else ""
+    return (
+        "🔁 <b>Автопродление</b>\n\n"
+        f"Статус: <code>{status}</code>\n"
+        f"Пакет: <code>{row.get('package_name')}</code>\n"
+        f"Сумма: <code>{int(float(row.get('amount_rub') or 0))}</code> ₽\n"
+        f"Следующее списание: <code>{next_charge}</code>"
+        f"{error_text}"
+    )
+
+
+@router.callback_query(F.data == "recurring_status")
+async def show_recurring_status(callback: types.CallbackQuery):
+    row = await get_recurring_subscription(callback.from_user.id)
+    enabled = bool(row and row.get("status") != "disabled")
+    await callback.message.edit_text(
+        _recurring_status_text(row),
+        reply_markup=_recurring_status_keyboard(enabled),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "recurring_disable")
+async def disable_recurring(callback: types.CallbackQuery):
+    disabled = await disable_recurring_subscription(callback.from_user.id)
+    await callback.message.edit_text(
+        (
+            "✅ <b>Автопродление отключено</b>\n\n"
+            "Текущая оплаченная подписка останется активной до конца срока."
+            if disabled
+            else "Автопродление уже выключено."
+        ),
+        reply_markup=_recurring_status_keyboard(False),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "promo_enter")
@@ -308,7 +506,8 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                 f"{reward_text}\n\n"
                 f"{success_text if credited else 'Промокод уже был применён ранее.'}",
                 reply_markup=get_main_menu_keyboard(
-                    await get_user_credits(message.from_user.id)
+                    await get_user_credits(message.from_user.id),
+                    message.from_user.id,
                 ),
                 parse_mode="HTML",
             )
@@ -322,7 +521,7 @@ async def process_promo_code(message: types.Message, state: FSMContext):
             f"Скидка: <code>{promo['discount_percent']}%</code>\n\n"
             "Теперь выберите пакет для оплаты.",
             reply_markup=get_payment_packages_keyboard(
-                preset_manager.get_packages(),
+                await admin_package_config_service.list_packages(include_hidden=False),
                 provider=config.payment_provider,
             ),
             parse_mode="HTML",
@@ -354,9 +553,56 @@ async def select_topup_provider(callback: types.CallbackQuery):
     await callback.answer(provider_text)
 
 
-@router.callback_query(F.data.startswith("buy_"))
+@router.callback_query(F.data.startswith("recagree_"))
+async def confirm_recurring_consent(callback: types.CallbackQuery):
+    payload = callback.data.replace("recagree_", "", 1)
+    provider = config.payment_provider
+
+    if payload.startswith("tbank_"):
+        provider = "tbank"
+        package_id = payload.replace("tbank_", "", 1)
+    else:
+        package_id = payload
+
+    package = await admin_package_config_service.get_package(package_id)
+    if not package or package.get("hidden"):
+        await callback.answer("Пакет не найден", show_alert=True)
+        return
+    if provider != "tbank" or not subscription_service.is_subscription_package(package):
+        await callback.answer(
+            "Автопродление доступно только для подписок через Т-Банк.",
+            show_alert=True,
+        )
+        return
+
+    await callback.message.edit_text(
+        _recurring_choice_text(package)
+        + "\n\n✅ <b>Вы согласились на регулярные списания.</b>",
+        reply_markup=_recurring_consent_keyboard(package_id, provider),
+        parse_mode="HTML",
+    )
+    await callback.answer("Согласие на автопродление отмечено")
+
+
+@router.callback_query(F.data == "recurring_consent_checked")
+async def recurring_consent_checked(callback: types.CallbackQuery):
+    await callback.answer("Согласие уже отмечено")
+
+
+@router.callback_query(
+    F.data.startswith("buy_")
+    | F.data.startswith("buyonce_")
+    | F.data.startswith("buyrec_")
+)
 async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
-    payload = callback.data.replace("buy_", "")
+    recurring_requested = callback.data.startswith("buyrec_")
+    one_time_selected = callback.data.startswith("buyonce_")
+    if recurring_requested:
+        payload = callback.data.replace("buyrec_", "", 1)
+    elif one_time_selected:
+        payload = callback.data.replace("buyonce_", "", 1)
+    else:
+        payload = callback.data.replace("buy_", "", 1)
     provider = config.payment_provider
 
     if payload.startswith("cryptobot_"):
@@ -368,10 +614,34 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
     else:
         package_id = payload
 
-    package = preset_manager.get_package(package_id)
+    package = await admin_package_config_service.get_package(package_id)
     if not package:
         await callback.answer("Пакет не найден", show_alert=True)
         return
+    if package.get("hidden"):
+        await callback.answer("Пакет скрыт", show_alert=True)
+        return
+    is_subscription = subscription_service.is_subscription_package(package)
+    if (
+        is_subscription
+        and provider == "tbank"
+        and not recurring_requested
+        and not one_time_selected
+    ):
+        await callback.message.edit_text(
+            _recurring_choice_text(package),
+            reply_markup=_recurring_choice_keyboard(package_id, provider),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+    if recurring_requested and (provider != "tbank" or not is_subscription):
+        await callback.answer(
+            "Автопродление доступно только для подписок через Т-Банк.",
+            show_alert=True,
+        )
+        return
+    total_credits = package["credits"] + package.get("bonus_credits", 0)
 
     data = await state.get_data()
     active_promo = data.get("active_promo") or {}
@@ -423,7 +693,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await cryptobot_service.create_invoice(
             amount_rub=amount_rub,
             order_id=order_id,
-            description=f"Покупка {package['credits']} BoomCoin ({package['name']})",
+            description=f"Покупка {total_credits} BoomCoin ({package['name']})",
             paid_btn_url=success_url,
         )
     else:
@@ -431,11 +701,12 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await tbank_service.init_payment(
             amount=amount_kop,
             order_id=order_id,
-            description=f"Покупка {package['credits']} BoomCoin ({package['name']})",
+            description=f"Покупка {total_credits} BoomCoin ({package['name']})",
             customer_key=str(callback.from_user.id),
             success_url=success_url,
             fail_url=fail_url,
             notification_url=config.tbank_notification_url,
+            recurrent=recurring_requested,
         )
 
     is_success = (
@@ -489,7 +760,6 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
     logger.info("Payment created successfully: %s via %s", payment_id, provider)
 
     user = await get_or_create_user(callback.from_user.id)
-    total_credits = package["credits"] + package.get("bonus_credits", 0)
 
     await create_transaction(
         order_id=order_id,
@@ -503,6 +773,17 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         promo_discount_percent=promo_discount_percent,
         status="pending",
     )
+    if recurring_requested:
+        await upsert_recurring_subscription(
+            callback.from_user.id,
+            provider="tbank",
+            package_id=package_id,
+            package_name=str(package["name"]),
+            amount_rub=amount_rub,
+            credits=total_credits,
+            customer_key=str(callback.from_user.id),
+            status="pending",
+        )
 
     await callback.message.edit_text(
         _payment_created_text(
@@ -512,6 +793,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
             original_amount_rub=original_price_rub,
             promo_code=promo_code,
             promo_discount_percent=promo_discount_percent,
+            recurring_enabled=recurring_requested,
         ),
         reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
         parse_mode="HTML",
@@ -541,7 +823,7 @@ async def check_payment_status(callback: types.CallbackQuery):
     if transaction.status == "completed":
         await callback.message.edit_text(
             _payment_success_text(transaction),
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_main_menu_keyboard(user_id=callback.from_user.id),
             parse_mode="HTML",
         )
         return
@@ -558,11 +840,11 @@ async def check_payment_status(callback: types.CallbackQuery):
         await callback.answer("⏳ Платёж ещё не подтверждён.", show_alert=True)
         return
 
-    await _complete_transaction(order_id)
+    await _complete_transaction(order_id, payment_data=result)
     transaction = await get_transaction_by_order(order_id)
     await callback.message.edit_text(
         _payment_success_text(transaction),
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_keyboard(user_id=callback.from_user.id),
         parse_mode="HTML",
     )
 
@@ -571,7 +853,7 @@ async def check_payment_status(callback: types.CallbackQuery):
 async def cancel_payment(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "❌ <b>Платёж отменён</b>\n\nВы можете попробовать снова в любое время.",
-        reply_markup=get_main_menu_keyboard(),
+        reply_markup=get_main_menu_keyboard(user_id=callback.from_user.id),
         parse_mode="HTML",
     )
 
@@ -588,8 +870,32 @@ async def handle_tbank_webhook(request):
                 {"Success": False, "Message": "Invalid signature"}, status=200
             )
 
+        if data.get("Status") == "AUTHORIZED" and data.get("RebillId"):
+            transaction = await get_transaction_by_order(data.get("OrderId"))
+            if transaction:
+                telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+                package = await admin_package_config_service.get_package(
+                    _package_id_from_order_id(transaction.order_id)
+                )
+                if telegram_id and package and subscription_service.is_subscription_package(package):
+                    await upsert_recurring_subscription(
+                        telegram_id,
+                        provider="tbank",
+                        package_id=str(package["id"]),
+                        package_name=str(package["name"]),
+                        amount_rub=float(transaction.amount_rub),
+                        credits=int(transaction.credits),
+                        customer_key=str(telegram_id),
+                        rebill_id=str(data["RebillId"]),
+                        status="pending",
+                    )
+
         if data.get("Status") == "CONFIRMED":
-            await _complete_transaction(data.get("OrderId"), request.app["bot"])
+            await _complete_transaction(
+                data.get("OrderId"),
+                request.app["bot"],
+                payment_data=data,
+            )
 
         return web.json_response({"Success": True}, status=200)
     except Exception as exc:

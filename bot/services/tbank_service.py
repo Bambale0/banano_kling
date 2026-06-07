@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from bot.config import config
 from tbank_payment.client import TBankAsyncClient
 from tbank_payment.exceptions import TBankAPIError, TBankAuthError, TBankValidationError
-from tbank_payment.models import GetStateRequest, InitPaymentRequest
+from tbank_payment.models import ChargeRequest, GetStateRequest, InitPaymentRequest
 from tbank_payment.webhooks import WebhookHandler
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ class TBankService:
         fail_url: str,
         notification_url: str,
         data: Optional[Dict] = None,
+        recurrent: bool = False,
     ) -> Optional[Dict]:
         """Инициализация платежа (совместимый интерфейс)"""
         request = InitPaymentRequest(
@@ -48,6 +49,7 @@ class TBankService:
             OrderId=order_id,
             Description=description,
             CustomerKey=customer_key,
+            Recurrent="Y" if recurrent else None,
             SuccessURL=success_url,
             FailURL=fail_url,
             NotificationURL=notification_url,
@@ -71,6 +73,39 @@ class TBankService:
             }
         except Exception as e:
             logger.error(f"T-Bank init_payment unexpected error: {e}")
+            return {"Success": False, "Message": f"Unexpected error: {str(e)}"}
+
+    async def charge_recurrent(
+        self,
+        *,
+        payment_id: str,
+        rebill_id: str,
+        send_email: bool = False,
+        info_email: str | None = None,
+    ) -> Optional[Dict]:
+        request = ChargeRequest(
+            PaymentId=payment_id,
+            RebillId=rebill_id,
+            SendEmail=send_email,
+            InfoEmail=info_email,
+        )
+        try:
+            data = request.model_dump(by_alias=True, exclude_none=True)
+            result = await self.client._make_request("Charge", data)
+            return (
+                result.model_dump(mode="json")
+                if hasattr(result, "model_dump")
+                else dict(result)
+            )
+        except (TBankAPIError, TBankAuthError, TBankValidationError) as e:
+            logger.error(f"T-Bank charge_recurrent error: {e}")
+            return {
+                "Success": False,
+                "ErrorCode": getattr(e, "error_code", None),
+                "Message": str(e),
+            }
+        except Exception as e:
+            logger.error(f"T-Bank charge_recurrent unexpected error: {e}")
             return {"Success": False, "Message": f"Unexpected error: {str(e)}"}
 
     async def get_state(self, payment_id: str) -> Optional[Dict]:
@@ -127,6 +162,12 @@ class LazyTBankService:
             logger.error("T-Bank is not configured")
             return {"Success": False, "Message": "T-Bank is not configured"}
         return await self._get_service().init_payment(*args, **kwargs)
+
+    async def charge_recurrent(self, *args, **kwargs) -> Optional[Dict]:
+        if not self.configured:
+            logger.error("T-Bank is not configured")
+            return {"Success": False, "Message": "T-Bank is not configured"}
+        return await self._get_service().charge_recurrent(*args, **kwargs)
 
     async def get_state(self, payment_id: str) -> Optional[Dict]:
         if not self.configured:

@@ -459,7 +459,7 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
                 await message.answer(
                     f"✅ <b>Оплата уже обработана!</b>"
                     f"🪙 Ваш баланс: <code>{user.credits}</code> BoomCoin",
-                    reply_markup=get_main_menu_keyboard(user.credits),
+                    reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                     parse_mode="HTML",
                 )
                 return
@@ -500,7 +500,7 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
                         f"🪙 Начислено: <code>{transaction.credits}</code> BoomCoin\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽"
                         f"💎 Ваш баланс: <code>{user.credits}</code> BoomCoin",
-                        reply_markup=get_main_menu_keyboard(user.credits),
+                        reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                         parse_mode="HTML",
                     )
                     return
@@ -509,14 +509,14 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
                     await message.answer(
                         "⏳ <b>Оплата в обработке...</b>"
                         "Пожалуйста, подождите. BoomCoin будут начислены в течение нескольких минут.",
-                        reply_markup=get_main_menu_keyboard(user.credits),
+                        reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                         parse_mode="HTML",
                     )
                     return
         else:
             await message.answer(
                 "❌ <b>Транзакция не найдена</b>" "Пожалуйста, свяжитесь с поддержкой.",
-                reply_markup=get_main_menu_keyboard(user.credits),
+                reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                 parse_mode="HTML",
             )
             return
@@ -525,7 +525,7 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
         await message.answer(
             "❌ <b>Оплата не была завершена</b>"
             "Вы можете попробовать снова в любое время.",
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
             parse_mode="HTML",
         )
         return
@@ -539,7 +539,7 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
             await message.answer(
                 "🔥 <b>Пост ленты недоступен</b>\n\n"
                 "Он мог быть удалён автором или ещё не готов.",
-                reply_markup=get_main_menu_keyboard(user.credits),
+                reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                 parse_mode="HTML",
             )
         return
@@ -559,7 +559,7 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
     try:
         await message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
             parse_mode="HTML",
         )
     except TelegramBadRequest as e:
@@ -686,7 +686,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -698,7 +698,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
             pass
         await callback.message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -750,7 +750,7 @@ async def show_balance(callback: types.CallbackQuery):
     try:
         await callback.message.edit_text(
             balance_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -761,7 +761,7 @@ async def show_balance(callback: types.CallbackQuery):
             pass
         await callback.message.answer(
             balance_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -1420,7 +1420,7 @@ async def show_history(callback: types.CallbackQuery):
     try:
         await callback.message.edit_text(
             history_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -1428,7 +1428,7 @@ async def show_history(callback: types.CallbackQuery):
         logger.warning(f"Cannot edit message: {e}")
         await callback.message.answer(
             history_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     await callback.answer()

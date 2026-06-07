@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 from aiogram import F, Router, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -9,9 +11,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.database import get_admin_partner_summaries
 from bot.services.referral_admin_config import (
     PartnerPayout,
-    PartnerSummary,
     ReferralAdminConfig,
     ReferralAdminConfigService,
     referral_admin_config_service,
@@ -44,7 +46,7 @@ def _settings_keyboard(config_data: ReferralAdminConfig) -> types.InlineKeyboard
     builder.button(text=trigger_text, callback_data=f"admin_ref:trigger:{next_trigger}")
     builder.button(text="Дневной лимит", callback_data="admin_ref:set_daily_limit")
     builder.button(text="Антифрод", callback_data="admin_ref:antifraud")
-    builder.button(text="Партнёрский кабинет", callback_data="admin_ref:partner_summary")
+    builder.button(text="Партнёры", callback_data="admin_ref:partner_summary")
     builder.button(text="Выплаты", callback_data="admin_ref:payouts")
     builder.button(text="Назад в админку", callback_data="admin_back")
     builder.adjust(1)
@@ -93,17 +95,55 @@ def _format_antifraud(config_data: ReferralAdminConfig) -> str:
     return "\n".join(lines)
 
 
-def _format_partner_summary(summary: PartnerSummary) -> str:
-    return (
-        "<b>Партнёрский кабинет: read-only summary</b>\n\n"
-        f"Партнёр: <b>{summary.partner}</b>\n"
-        f"Пришло пользователей: <b>{summary.users_count}</b>\n"
-        f"Оплат: <b>{summary.payments_count}</b>\n"
-        f"Выручка: <b>{summary.revenue_rub:.2f} ₽</b>\n"
-        f"Комиссия: <b>{summary.commission_rub:.2f} ₽</b>\n"
-        f"Промокод: <code>{summary.promo_code}</code>\n"
-        f"Ссылка: <code>{summary.referral_link}</code>"
+def _format_partner_name(summary: dict) -> str:
+    username = str(summary.get("username") or "").strip()
+    if username:
+        return f"@{html.escape(username)}"
+    full_name = " ".join(
+        part for part in (
+            str(summary.get("first_name") or "").strip(),
+            str(summary.get("last_name") or "").strip(),
+        )
+        if part
     )
+    if full_name:
+        return html.escape(full_name)
+    return f"ID {html.escape(str(summary.get('telegram_id') or ''))}"
+
+
+def _format_partner_summaries(summaries: list[dict], bot_username: str | None = None) -> str:
+    if not summaries:
+        return (
+            "<b>Партнёры</b>\n\n"
+            "Пока нет пользователей с активированным партнёрским статусом."
+        )
+
+    lines = ["<b>Партнёры</b>"]
+    for index, summary in enumerate(summaries, start=1):
+        referral_code = str(summary.get("referral_code") or "").strip()
+        referral_link = (
+            f"https://t.me/{bot_username}?start=ref_{referral_code}"
+            if bot_username and referral_code
+            else ""
+        )
+        lines.append(
+            "\n"
+            f"{index}. <b>{_format_partner_name(summary)}</b> "
+            f"· <code>{html.escape(str(summary.get('telegram_id') or ''))}</code>\n"
+            f"Пришло пользователей: <b>{int(summary.get('users_count') or 0)}</b>\n"
+            f"Оплат: <b>{int(summary.get('payments_count') or 0)}</b>\n"
+            f"Выручка: <b>{float(summary.get('revenue_rub') or 0):.2f} ₽</b>\n"
+            f"Комиссия: <b>{float(summary.get('commission_rub') or 0):.2f} ₽</b>\n"
+            f"Баланс к выплате: <b>{float(summary.get('balance_rub') or 0):.2f} ₽</b>\n"
+            f"Сегодня: <b>{int(summary.get('today_payments') or 0)}</b> оплат, "
+            f"<b>{float(summary.get('today_revenue_rub') or 0):.2f} ₽</b>\n"
+            f"Уровень: <code>{html.escape(str(summary.get('tier') or 'basic'))}</code>, "
+            f"{int(summary.get('percent') or 0)}%\n"
+            f"Промокод: <code>{html.escape(referral_code or '-')}</code>"
+        )
+        if referral_link:
+            lines.append(f"Ссылка: <code>{html.escape(referral_link)}</code>")
+    return "\n".join(lines)
 
 
 def _format_payouts(payouts: list[PartnerPayout]) -> str:
@@ -250,17 +290,15 @@ async def admin_partner_summary(callback: types.CallbackQuery) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
-    summary = _service().build_partner_summary(
-        partner="demo-partner",
-        users_count=0,
-        payments_count=0,
-        revenue_rub=0,
-        commission_rub=0,
-        promo_code="PARTNER",
-        referral_link="https://t.me/your_bot?start=PARTNER",
-    )
+    summaries = await get_admin_partner_summaries(limit=10)
+    bot_username = None
+    try:
+        me = await callback.bot.get_me()
+        bot_username = me.username
+    except Exception:
+        bot_username = None
     await callback.message.edit_text(
-        _format_partner_summary(summary),
+        _format_partner_summaries(summaries, bot_username),
         reply_markup=_back_keyboard(),
         parse_mode="HTML",
     )

@@ -661,6 +661,34 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_subscription_usage_subscription ON subscription_usage(subscription_id, usage_type, refunded)"
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recurring_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE,
+                telegram_id INTEGER NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'tbank',
+                package_id TEXT NOT NULL,
+                package_name TEXT NOT NULL,
+                amount_rub REAL NOT NULL,
+                credits INTEGER NOT NULL DEFAULT 0,
+                rebill_id TEXT,
+                customer_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                next_charge_at TIMESTAMP,
+                last_charge_at TIMESTAMP,
+                last_order_id TEXT,
+                last_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recurring_subscriptions_due ON recurring_subscriptions(status, next_charge_at)"
+        )
+
         await db.commit()
         logger.info("Database initialized successfully")
 
@@ -1274,6 +1302,78 @@ async def get_partner_overview(telegram_id: int) -> dict:
             "today_payments": pay_row["today_payments"] or 0,
             "today_revenue": round(pay_row["today_revenue"] or 0, 2),
         }
+
+
+async def get_admin_partner_summaries(limit: int = 10) -> list[dict]:
+    """Return partner metrics for the admin dashboard."""
+    limit = max(1, min(int(limit or 10), 50))
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                u.id,
+                u.telegram_id,
+                u.username,
+                u.first_name,
+                u.last_name,
+                u.referral_code,
+                u.partner_agreed_at,
+                u.partner_total_revenue_rub,
+                u.partner_balance_rub,
+                u.partner_tier,
+                COUNT(DISTINCT referred.id) AS users_count,
+                COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) AS payments_count,
+                COALESCE(SUM(CASE WHEN t.status = 'completed' THEN t.amount_rub ELSE 0 END), 0) AS revenue_rub,
+                COALESCE(SUM(CASE WHEN t.status = 'completed' AND date(t.created_at) = date('now') THEN 1 ELSE 0 END), 0) AS today_payments,
+                COALESCE(SUM(CASE WHEN t.status = 'completed' AND date(t.created_at) = date('now') THEN t.amount_rub ELSE 0 END), 0) AS today_revenue_rub,
+                COALESCE(w.withdrawn_rub, 0) AS withdrawn_rub
+            FROM users u
+            LEFT JOIN users referred ON referred.referred_by = u.id
+            LEFT JOIN transactions t ON t.user_id = referred.id
+            LEFT JOIN (
+                SELECT user_id, SUM(amount_rub) AS withdrawn_rub
+                FROM partner_withdrawals
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) w ON w.user_id = u.id
+            WHERE u.partner_agreed_at IS NOT NULL
+            GROUP BY u.id
+            ORDER BY revenue_rub DESC, users_count DESC, u.partner_agreed_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+
+    summaries: list[dict] = []
+    for row in rows:
+        stored_revenue = float(row["partner_total_revenue_rub"] or 0)
+        actual_revenue = float(row["revenue_rub"] or 0)
+        total_revenue = round(max(stored_revenue, actual_revenue), 2)
+        balance_rub = round(float(row["partner_balance_rub"] or 0), 2)
+        withdrawn_rub = round(float(row["withdrawn_rub"] or 0), 2)
+        summaries.append(
+            {
+                "telegram_id": row["telegram_id"],
+                "username": row["username"],
+                "first_name": row["first_name"],
+                "last_name": row["last_name"],
+                "referral_code": row["referral_code"] or "",
+                "partner_agreed_at": row["partner_agreed_at"],
+                "users_count": row["users_count"] or 0,
+                "payments_count": row["payments_count"] or 0,
+                "revenue_rub": total_revenue,
+                "commission_rub": round(balance_rub + withdrawn_rub, 2),
+                "balance_rub": balance_rub,
+                "withdrawn_rub": withdrawn_rub,
+                "tier": get_partner_tier_by_total(total_revenue),
+                "percent": get_partner_percent_by_total(total_revenue),
+                "today_payments": row["today_payments"] or 0,
+                "today_revenue_rub": round(float(row["today_revenue_rub"] or 0), 2),
+            }
+        )
+    return summaries
 
 
 async def create_partner_withdrawal(
@@ -2205,6 +2305,187 @@ async def refund_subscription_usage(usage_id: int) -> bool:
             WHERE id = ? AND refunded = 0
             """,
             (usage_id,),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def upsert_recurring_subscription(
+    telegram_id: int,
+    *,
+    provider: str,
+    package_id: str,
+    package_name: str,
+    amount_rub: float,
+    credits: int,
+    customer_key: str,
+    rebill_id: str | None = None,
+    status: str = "pending",
+    next_charge_at: str | None = None,
+) -> dict:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """
+            INSERT INTO recurring_subscriptions (
+                user_id, telegram_id, provider, package_id, package_name,
+                amount_rub, credits, customer_key, rebill_id, status,
+                next_charge_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                telegram_id = excluded.telegram_id,
+                provider = excluded.provider,
+                package_id = excluded.package_id,
+                package_name = excluded.package_name,
+                amount_rub = excluded.amount_rub,
+                credits = excluded.credits,
+                customer_key = excluded.customer_key,
+                rebill_id = COALESCE(excluded.rebill_id, recurring_subscriptions.rebill_id),
+                status = excluded.status,
+                next_charge_at = excluded.next_charge_at,
+                last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user.id,
+                telegram_id,
+                provider,
+                package_id,
+                package_name,
+                float(amount_rub),
+                int(credits),
+                customer_key,
+                rebill_id,
+                status,
+                next_charge_at,
+            ),
+        )
+        await db.commit()
+        cursor = await db.execute(
+            "SELECT * FROM recurring_subscriptions WHERE user_id = ?", (user.id,)
+        )
+        return dict(await cursor.fetchone())
+
+
+async def confirm_recurring_subscription(
+    telegram_id: int,
+    *,
+    rebill_id: str,
+    next_charge_at: str,
+    last_order_id: str | None = None,
+) -> bool:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE recurring_subscriptions
+            SET rebill_id = ?,
+                status = 'active',
+                next_charge_at = ?,
+                last_order_id = COALESCE(?, last_order_id),
+                last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+            """,
+            (rebill_id, next_charge_at, last_order_id, user.id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def disable_recurring_subscription(
+    telegram_id: int,
+    *,
+    reason: str = "user_disabled",
+) -> bool:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE recurring_subscriptions
+            SET status = 'disabled',
+                last_error = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND status != 'disabled'
+            """,
+            (reason, user.id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def get_recurring_subscription(telegram_id: int) -> dict | None:
+    user = await get_or_create_user(telegram_id)
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM recurring_subscriptions WHERE user_id = ?", (user.id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_due_recurring_subscriptions(limit: int = 20) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM recurring_subscriptions
+            WHERE status = 'active'
+              AND rebill_id IS NOT NULL
+              AND next_charge_at IS NOT NULL
+              AND datetime(next_charge_at) <= datetime('now')
+            ORDER BY datetime(next_charge_at) ASC, id ASC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def mark_recurring_charge_success(
+    recurring_id: int,
+    *,
+    order_id: str,
+    next_charge_at: str,
+) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE recurring_subscriptions
+            SET last_charge_at = CURRENT_TIMESTAMP,
+                last_order_id = ?,
+                next_charge_at = ?,
+                last_error = NULL,
+                status = 'active',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (order_id, next_charge_at, recurring_id),
+        )
+        await db.commit()
+        return cursor.rowcount == 1
+
+
+async def mark_recurring_charge_failed(
+    recurring_id: int,
+    *,
+    error: str,
+    next_charge_at: str | None = None,
+) -> bool:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE recurring_subscriptions
+            SET last_error = ?,
+                next_charge_at = COALESCE(?, next_charge_at),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (error[:500], next_charge_at, recurring_id),
         )
         await db.commit()
         return cursor.rowcount == 1

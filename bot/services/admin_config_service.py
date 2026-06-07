@@ -10,6 +10,23 @@ from bot.services.preset_manager import preset_manager
 
 
 PACKAGE_SETTINGS_KEY = "admin_payment_packages"
+PACKAGE_OVERRIDE_FIELDS = {
+    "price_rub",
+    "credits",
+    "bonus_credits",
+    "subscription_days",
+    "image_limit",
+    "photo_limit_text",
+    "video_limit",
+    "video_limit_text",
+    "includes_pro",
+    "priority",
+    "popular",
+    "hidden",
+    "discount_enabled",
+    "discount_percent",
+    "original_price_rub",
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +65,45 @@ class AdminPackageConfigService:
         if bonus_credits < 0:
             return PackageUpdateResult(False, error="bonus_must_be_non_negative")
         return await self._update_package(package_id, {"bonus_credits": bonus_credits})
+
+    async def set_credits(self, package_id: str, credits: int) -> PackageUpdateResult:
+        if credits < 0:
+            return PackageUpdateResult(False, error="credits_must_be_non_negative")
+        return await self._update_package(package_id, {"credits": credits})
+
+    async def set_subscription_days(
+        self, package_id: str, days: int
+    ) -> PackageUpdateResult:
+        if days < 0:
+            return PackageUpdateResult(False, error="days_must_be_non_negative")
+        return await self._update_package(package_id, {"subscription_days": days})
+
+    async def set_image_limit(
+        self, package_id: str, image_limit: int
+    ) -> PackageUpdateResult:
+        if image_limit < 0:
+            return PackageUpdateResult(False, error="image_limit_must_be_non_negative")
+        updates: dict[str, Any] = {"image_limit": image_limit}
+        if image_limit > 0:
+            updates["photo_limit_text"] = f"до {image_limit} фото"
+        return await self._update_package(package_id, updates)
+
+    async def set_video_limit(
+        self, package_id: str, video_limit: int
+    ) -> PackageUpdateResult:
+        if video_limit < 0:
+            return PackageUpdateResult(False, error="video_limit_must_be_non_negative")
+        updates: dict[str, Any] = {"video_limit": video_limit}
+        if video_limit > 0:
+            updates["video_limit_text"] = f"{video_limit} видео"
+        return await self._update_package(package_id, updates)
+
+    async def set_bool_field(
+        self, package_id: str, field: str, enabled: bool
+    ) -> PackageUpdateResult:
+        if field not in {"includes_pro", "priority"}:
+            return PackageUpdateResult(False, error="unsupported_bool_field")
+        return await self._update_package(package_id, {field: bool(enabled)})
 
     async def set_popular(self, package_id: str) -> PackageUpdateResult:
         packages = await self._load_packages()
@@ -124,11 +180,12 @@ class AdminPackageConfigService:
         if not isinstance(packages, list):
             return self._default_packages()
 
-        return [
+        packages = [
             self._normalize_package(package)
             for package in packages
             if isinstance(package, dict)
         ]
+        return self._merge_with_defaults(packages)
 
     async def _save_packages(self, packages: list[dict[str, Any]]) -> None:
         payload = {
@@ -145,14 +202,50 @@ class AdminPackageConfigService:
             for package in preset_manager.get_packages()
         ]
 
+    def _merge_with_defaults(
+        self, stored_packages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        default_packages = self._default_packages()
+        default_by_id = {package["id"]: package for package in default_packages}
+        stored_by_id = {package["id"]: package for package in stored_packages}
+
+        matching_ids = set(default_by_id).intersection(stored_by_id)
+        if len(matching_ids) < max(1, len(default_by_id) // 2):
+            return default_packages
+
+        merged: list[dict[str, Any]] = []
+        for default_package in default_packages:
+            package_id = default_package["id"]
+            merged_package = copy.deepcopy(default_package)
+            if package_id in stored_by_id:
+                for field in PACKAGE_OVERRIDE_FIELDS:
+                    if field in stored_by_id[package_id]:
+                        merged_package[field] = stored_by_id[package_id][field]
+            merged.append(self._normalize_package(merged_package))
+        return merged
+
     @staticmethod
     def _normalize_package(package: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(package)
         normalized["id"] = str(normalized.get("id", "")).strip()
+        normalized["kind"] = str(normalized.get("kind") or "credits")
         normalized["name"] = str(normalized.get("name") or normalized["id"])
         normalized["credits"] = int(normalized.get("credits", 0))
         normalized["price_rub"] = int(normalized.get("price_rub", 0))
         normalized["bonus_credits"] = int(normalized.get("bonus_credits", 0))
+        normalized["subscription_days"] = int(normalized.get("subscription_days", 0) or 0)
+        normalized["image_limit"] = int(normalized.get("image_limit", 0) or 0)
+        if normalized["image_limit"] > 0:
+            normalized["photo_limit_text"] = f"до {normalized['image_limit']} фото"
+        else:
+            normalized.pop("photo_limit_text", None)
+        normalized["video_limit"] = int(normalized.get("video_limit", 0) or 0)
+        normalized["includes_pro"] = bool(normalized.get("includes_pro", False))
+        normalized["priority"] = bool(normalized.get("priority", False))
+        if normalized["video_limit"] <= 0:
+            normalized.pop("video_limit_text", None)
+        elif not normalized.get("video_limit_text"):
+            normalized["video_limit_text"] = f"{normalized['video_limit']} видео"
         normalized["popular"] = bool(normalized.get("popular", False))
         normalized["hidden"] = bool(normalized.get("hidden", False))
         normalized["discount_enabled"] = bool(normalized.get("discount_enabled", False))

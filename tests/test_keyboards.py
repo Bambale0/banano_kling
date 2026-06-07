@@ -38,6 +38,13 @@ def test_load_prices(mock_prices):
 def test_get_main_menu_keyboard():
     kb = get_main_menu_keyboard(10)
     assert kb.inline_keyboard
+    rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
+    callback_data = [
+        btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
     assert any(
         "create_video_new" in btn.callback_data
         for row in kb.inline_keyboard
@@ -45,6 +52,44 @@ def test_get_main_menu_keyboard():
     )
     assert any(
         "menu_feed" in btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+    assert "recurring_status" not in callback_data
+    assert ["menu_partner", "menu_support"] in rows
+
+
+def test_main_menu_mini_app_button_is_admin_only(monkeypatch):
+    monkeypatch.setattr("bot.keyboards.config.ADMIN_IDS_STR", "123")
+    monkeypatch.setattr("bot.keyboards.config.MINI_APP_URL", "https://example.com/mini")
+
+    user_kb = get_main_menu_keyboard(10, user_id=456)
+    admin_kb = get_main_menu_keyboard(10, user_id=123)
+
+    assert not any(
+        getattr(btn, "web_app", None)
+        for row in user_kb.inline_keyboard
+        for btn in row
+    )
+    mini_buttons = [
+        btn
+        for row in admin_kb.inline_keyboard
+        for btn in row
+        if getattr(btn, "web_app", None)
+    ]
+    assert len(mini_buttons) == 1
+    assert mini_buttons[0].text == "🧩 Mini App"
+    assert mini_buttons[0].web_app.url == "https://example.com/mini"
+
+
+def test_main_menu_hides_mini_app_without_url(monkeypatch):
+    monkeypatch.setattr("bot.keyboards.config.ADMIN_IDS_STR", "123")
+    monkeypatch.setattr("bot.keyboards.config.MINI_APP_URL", "")
+
+    kb = get_main_menu_keyboard(10, user_id=123)
+
+    assert not any(
+        getattr(btn, "web_app", None)
         for row in kb.inline_keyboard
         for btn in row
     )
@@ -103,7 +148,8 @@ def test_get_payment_packages_keyboard(mock_prices):
         {
             **mock_prices["packages"][0],
             "period": "месяц",
-            "photo_limit_text": "до 2 000 фото",
+            "photo_limit_text": "до 100 фото",
+            "subscription_days": 30,
             "popular": True,
         }
     ]
@@ -112,9 +158,73 @@ def test_get_payment_packages_keyboard(mock_prices):
     button_text = " ".join(
         btn.text for row in kb.inline_keyboard for btn in row if btn.callback_data
     )
-    assert "Mini" in button_text
+    assert "Mini · 150₽" in button_text
     assert "месяц" in button_text
-    assert "до 2 000 фото" in button_text
+    assert "до 100 фото" in button_text
+
+
+def test_get_payment_packages_keyboard_splits_credits_and_subscriptions():
+    packages = [
+        {
+            "id": "coin50",
+            "name": "50 BoomCoin",
+            "credits": 50,
+            "price_rub": 499,
+            "bonus_credits": 0,
+        },
+        {
+            "id": "pro",
+            "name": "Pro",
+            "credits": 199,
+            "price_rub": 2990,
+            "period": "месяц",
+            "photo_limit_text": "до 180 фото",
+            "video_limit_text": "4 видео",
+            "subscription_days": 30,
+            "includes_pro": True,
+        },
+    ]
+
+    kb = get_payment_packages_keyboard(packages, provider="tbank")
+    rows = [[btn.text for btn in row] for row in kb.inline_keyboard]
+    button_text = " ".join(text for row in rows for text in row)
+
+    assert ["✅ 💳 Т-Банк", "₿ Crypto Bot"] in rows
+    assert ["🔁 Автопродление"] in rows
+    assert ["🪙 BoomCoin без подписки"] in rows
+    assert "50 BoomCoin · 499₽" in button_text
+    assert ["🧾 Подписки"] in rows
+    assert "Pro · 2990₽ · месяц · до 180 фото" in button_text
+    assert "Banana Pro" not in button_text
+
+
+def test_get_payment_packages_keyboard_uses_kind_for_subscriptions():
+    packages = [
+        {
+            "id": "coin50",
+            "kind": "credits",
+            "name": "50 BoomCoin",
+            "credits": 50,
+            "price_rub": 499,
+        },
+        {
+            "id": "boom",
+            "kind": "subscription",
+            "name": "Boom",
+            "credits": 50,
+            "price_rub": 1490,
+            "period": "месяц",
+            "photo_limit_text": "до 100 фото",
+        },
+    ]
+
+    kb = get_payment_packages_keyboard(packages, provider="tbank")
+    rows = [[btn.text for btn in row] for row in kb.inline_keyboard]
+    button_text = " ".join(text for row in rows for text in row)
+
+    assert ["🧾 Подписки"] in rows
+    assert "Boom · 1490₽ · месяц · до 100 фото" in button_text
+    assert "buy_tbank_boom" in str(kb.inline_keyboard)
 
 
 def test_get_payment_provider_keyboard():

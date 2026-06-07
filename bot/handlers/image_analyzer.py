@@ -126,7 +126,7 @@ async def _send_photo_prompt_result(
         await message.answer_photo(
             photo=photo_file_id,
             caption=short_caption,
-            reply_markup=get_main_menu_keyboard(user_credits),
+            reply_markup=get_main_menu_keyboard(user_credits, message.from_user.id),
             parse_mode="HTML",
         )
 

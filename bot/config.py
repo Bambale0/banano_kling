@@ -96,6 +96,9 @@ class Config:
     WEBHOOK_BIND_HOST: str = os.getenv("WEBHOOK_BIND_HOST", "127.0.0.1")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
 
+    # Telegram Mini App
+    MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
+
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
     REDIS_URL: str = os.getenv("REDIS_URL", "")
@@ -118,6 +121,20 @@ class Config:
     )
     PUSH_SCENARIOS_STARTUP_DELAY_SECONDS: int = int(
         os.getenv("PUSH_SCENARIOS_STARTUP_DELAY_SECONDS", "60")
+    )
+
+    # Автопродление подписок через T-Bank
+    RECURRING_PAYMENTS_ENABLED: bool = os.getenv(
+        "RECURRING_PAYMENTS_ENABLED", "1"
+    ).lower() in ("1", "true", "yes", "on")
+    RECURRING_PAYMENTS_INTERVAL_SECONDS: int = _get_env_int(
+        "RECURRING_PAYMENTS_INTERVAL_SECONDS", 3600
+    )
+    RECURRING_PAYMENTS_BATCH_LIMIT: int = _get_env_int(
+        "RECURRING_PAYMENTS_BATCH_LIMIT", 20
+    )
+    RECURRING_PAYMENTS_RETRY_HOURS: int = _get_env_int(
+        "RECURRING_PAYMENTS_RETRY_HOURS", 12
     )
 
     # Партнёрская программа

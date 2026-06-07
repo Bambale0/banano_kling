@@ -4846,7 +4846,7 @@ async def handle_image_prompt_text(
             await state.clear()
             await message.answer(
                 "❌ Не хватает активной подписки, бесплатных генераций или BoomCoin. Генерация не запущена.",
-                reply_markup=get_main_menu_keyboard(user.credits),
+                reply_markup=get_main_menu_keyboard(user.credits, telegram_id),
             )
             return
         billing_cost = 0 if billing_source in {"subscription", "free_generation"} else total_cost
@@ -5676,7 +5676,7 @@ async def run_no_preset_video_from_message(
             await state.clear()
             await target_message.answer(
                 "❌ Не хватает активной подписки с видео, бесплатных генераций или BoomCoin. Генерация не запущена.",
-                reply_markup=get_main_menu_keyboard(await get_user_credits(telegram_id)),
+                reply_markup=get_main_menu_keyboard(await get_user_credits(telegram_id), telegram_id),
             )
             return
 
