@@ -158,10 +158,6 @@
           "13": 39,
           "14": 42,
           "15": 45
-        },
-        "quality_costs": {
-          "480p": 2,
-          "720p": 3
         }
       },
       "seedance_2": {
@@ -303,11 +299,5 @@
     939259764,
     339795159
   ],
-  "support_contact": "@only_tany",
-  "partner_exchange": {
-    "rub_per_credit": 10
-  },
-  "service_prices": {
-    "video_prompt": 3
-  }
+  "support_contact": "@only_tany"
 }

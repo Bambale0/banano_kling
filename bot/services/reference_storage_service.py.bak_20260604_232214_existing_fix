@@ -50,11 +50,6 @@ async def save_reference_file(
         if existing:
             local_path = resolve_local_upload_path(existing.file_url)
             if local_path and os.path.exists(local_path):
-                if normalized_kind == "image":
-                    try:
-                        image_source_to_provider_safe_png_url(existing.file_url)
-                    except Exception:
-                        logger.exception("Failed to restore png sidecar for existing reference: %s", existing.file_url)
                 await touch_saved_references(
                     telegram_id, [existing.file_url], kind=normalized_kind
                 )

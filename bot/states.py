@@ -62,6 +62,7 @@ class PaymentStates(StatesGroup):
     waiting_payment = State()  # Ожидание оплаты
     waiting_partner_withdraw_requisites = State()  # Реквизиты для вывода партнёру
     waiting_partner_withdraw_amount = State()  # Сумма вывода партнёру
+    waiting_partner_exchange_amount = State()  # Сумма обмена партнёрского баланса в бананы
 
 
 class AdminStates(StatesGroup):
@@ -92,9 +93,10 @@ class BatchGenerationStates(StatesGroup):
 
 
 class ImageAnalyzerStates(StatesGroup):
-    """Состояния для анализа изображения в промпт"""
+    """Состояния для анализа медиа в промпт"""
 
     waiting_for_photo = State()
+    waiting_for_video_prompt = State()
 
 
 class SeedreamVideoStates(StatesGroup):

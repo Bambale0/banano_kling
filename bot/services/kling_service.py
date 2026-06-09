@@ -53,6 +53,7 @@ class KlingService:
 
     NON_KLING_MODELS = {
         "grok_imagine",
+        "grok_imagine_v15",
         "seedance_2",
         "grok_imagine_i2i",
         "banana_pro",
@@ -619,11 +620,16 @@ class KlingService:
             )
 
         if model in self.GLOW_MODELS:
+            cleaned_video_urls = [url for url in (video_urls or []) if url]
+            if not cleaned_video_urls:
+                return self._build_error(
+                    "video_url_required",
+                    "Kling Glow requires a movement video URL",
+                )
             return await self.generate_motion_control(
                 image_url=image_url or "",
-                video_urls=video_urls or [],
-                preset_motion="glow",
-                prompt=prompt,
+                video_urls=cleaned_video_urls,
+                prompt=prompt or "Apply glow-style motion to the reference character",
                 motion_direction="video",
                 mode="std",
                 webhook_url=webhook_url,

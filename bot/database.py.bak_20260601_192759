@@ -15,18 +15,6 @@ logger = logging.getLogger(__name__)
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
 SAVED_REFERENCES_MAX_PER_KIND = int(os.getenv("SAVED_REFERENCES_MAX_PER_KIND", "3"))
-REFERRAL_ANTIFRAUD_MAX_PER_HOUR = int(os.getenv("REFERRAL_ANTIFRAUD_MAX_PER_HOUR", "30"))
-REFERRAL_ANTIFRAUD_MAX_PER_DAY = int(os.getenv("REFERRAL_ANTIFRAUD_MAX_PER_DAY", "120"))
-REFERRAL_ANTIFRAUD_BLOCK_CODES = {
-    code.strip().upper()
-    for code in os.getenv("REFERRAL_ANTIFRAUD_BLOCK_CODES", "").split(",")
-    if code.strip()
-}
-REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS = {
-    int(value.strip())
-    for value in os.getenv("REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS", "").split(",")
-    if value.strip().isdigit()
-}
 MAX_ACTIVE_PROMPTS_PER_USER = 5
 TOP_PROMPTS_LIMIT = 10
 FEED_PUBLIC_IMAGE_MAX_ITEMS = 300
@@ -875,7 +863,6 @@ async def init_db():
                 preferred_video_model TEXT DEFAULT 'v3_std',
                 preferred_i2v_model TEXT DEFAULT 'v3_std',
                 image_service TEXT DEFAULT 'nanobanana',
-                referral_purchase_notifications_enabled BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -970,12 +957,6 @@ async def init_db():
         try:
             await db.execute(
                 "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
-            )
-        except aiosqlite.OperationalError:
-            pass  # Колонка уже существует
-        try:
-            await db.execute(
-                "ALTER TABLE user_settings ADD COLUMN referral_purchase_notifications_enabled BOOLEAN DEFAULT 1"
             )
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
@@ -1572,47 +1553,6 @@ async def process_referral(
                 referred["has_completed_payment"],
             )
             return False
-        if referral_code in REFERRAL_ANTIFRAUD_BLOCK_CODES or referrer["id"] in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
-            logger.warning(
-                "Referral blocked by antifraud blocklist: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s",
-                referred_telegram_id,
-                referral_code,
-                referrer["id"],
-                referred["id"],
-            )
-            return False
-        hourly_cursor = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM users WHERE referred_by = ? AND created_at >= datetime('now', '-1 hour')",
-            (referrer["id"],),
-        )
-        hourly_count = int((await hourly_cursor.fetchone())["cnt"])
-        if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
-            logger.warning(
-                "Referral blocked by antifraud hourly limit: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s hourly_count=%s limit=%s",
-                referred_telegram_id,
-                referral_code,
-                referrer["id"],
-                referred["id"],
-                hourly_count,
-                REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
-            )
-            return False
-        daily_cursor = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM users WHERE referred_by = ? AND created_at >= datetime('now', '-1 day')",
-            (referrer["id"],),
-        )
-        daily_count = int((await daily_cursor.fetchone())["cnt"])
-        if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
-            logger.warning(
-                "Referral blocked by antifraud daily limit: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s daily_count=%s limit=%s",
-                referred_telegram_id,
-                referral_code,
-                referrer["id"],
-                referred["id"],
-                daily_count,
-                REFERRAL_ANTIFRAUD_MAX_PER_DAY,
-            )
-            return False
         if await _referral_chain_contains(
             db,
             start_user_id=referrer["id"],
@@ -1735,8 +1675,7 @@ async def credit_referral_commission(
 
         ref1_id = user["referred_by"]
         ref1_tier_cursor = await db.execute(
-            "SELECT telegram_id, partner_total_revenue_rub, referred_by FROM users WHERE id = ?",
-            (ref1_id,),
+            "SELECT partner_total_revenue_rub, referred_by FROM users WHERE id = ?", (ref1_id,)
         )
         ref1_row = await ref1_tier_cursor.fetchone()
         ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
@@ -1752,8 +1691,7 @@ async def credit_referral_commission(
             ref2_id = ref1_row["referred_by"]
             level2_bonus = round(base_value * level2_percent / 100.0, 2)
             ref2_tier_cursor = await db.execute(
-                "SELECT telegram_id, partner_total_revenue_rub FROM users WHERE id = ?",
-                (ref2_id,),
+                "SELECT partner_total_revenue_rub FROM users WHERE id = ?", (ref2_id,)
             )
             ref2_row = await ref2_tier_cursor.fetchone()
             ref2_revenue = float(ref2_row["partner_total_revenue_rub"] or 0) if ref2_row else 0.0
@@ -1775,18 +1713,8 @@ async def credit_referral_commission(
             "mode": "partner",
             "value": level1_bonus,
             "percent": bonus_percent,
-            "referrer_user_id": ref1_id,
-            "referrer_telegram_id": (
-                int(ref1_row["telegram_id"]) if ref1_row and ref1_row["telegram_id"] else None
-            ),
             "level2_value": level2_bonus,
             "level2_percent": level2_percent,
-            "level2_referrer_user_id": ref2_id if level2_bonus > 0 else None,
-            "level2_referrer_telegram_id": (
-                int(ref2_row["telegram_id"])
-                if level2_bonus > 0 and ref2_row and ref2_row["telegram_id"]
-                else None
-            ),
         }
 
 
@@ -2717,100 +2645,6 @@ async def get_partner_available_withdrawal(telegram_id: int) -> float:
     return round(max(0.0, float(user.partner_balance_rub or 0) - pending_sum), 2)
 
 
-async def exchange_partner_balance_to_credits(
-    telegram_id: int, requested_amount_rub: float, rub_per_credit: float
-) -> dict:
-    """Мгновенно обменивает часть партнёрского баланса на бананы."""
-    requested_amount_rub = round(float(requested_amount_rub or 0), 2)
-    rub_per_credit = float(rub_per_credit or 0)
-    if requested_amount_rub <= 0:
-        return {"ok": False, "reason": "invalid_amount"}
-    if rub_per_credit <= 0:
-        return {"ok": False, "reason": "invalid_rate"}
-
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        await db.execute("BEGIN IMMEDIATE")
-
-        user_cursor = await db.execute(
-            "SELECT id, telegram_id, credits, partner_balance_rub, prompt_repeat_balance_rub, partner_agreed_at FROM users WHERE telegram_id = ?",
-            (telegram_id,),
-        )
-        user_row = await user_cursor.fetchone()
-        if not user_row:
-            await db.rollback()
-            return {"ok": False, "reason": "user_not_found"}
-
-        try:
-            pending_cursor = await db.execute(
-                """
-                SELECT COALESCE(SUM(amount_rub), 0) AS pending_sum
-                FROM partner_withdrawals
-                WHERE user_id = ? AND status = 'requested'
-                """,
-                (user_row["id"],),
-            )
-            pending_row = await pending_cursor.fetchone()
-            pending_sum = float(pending_row["pending_sum"] or 0) if pending_row else 0.0
-        except aiosqlite.OperationalError:
-            pending_sum = 0.0
-
-        current_partner_balance = float(user_row["partner_balance_rub"] or 0)
-        available_rub = round(max(0.0, current_partner_balance - pending_sum), 2)
-        credits_to_add = int(requested_amount_rub / rub_per_credit)
-        debit_amount_rub = round(credits_to_add * rub_per_credit, 2)
-
-        if not user_row["partner_agreed_at"]:
-            await db.rollback()
-            return {"ok": False, "reason": "not_partner"}
-
-        if credits_to_add < 1:
-            await db.rollback()
-            return {"ok": False, "reason": "too_small", "available_rub": available_rub}
-
-        if debit_amount_rub > available_rub:
-            await db.rollback()
-            return {
-                "ok": False,
-                "reason": "insufficient_balance",
-                "available_rub": available_rub,
-                "requested_amount_rub": requested_amount_rub,
-            }
-
-        await db.execute(
-            """
-            UPDATE users
-            SET credits = credits + ?,
-                partner_balance_rub = partner_balance_rub - ?,
-                prompt_repeat_balance_rub = MIN(
-                    COALESCE(prompt_repeat_balance_rub, 0),
-                    MAX(COALESCE(partner_balance_rub, 0) - ?, 0)
-                ),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE telegram_id = ?
-            """,
-            (credits_to_add, debit_amount_rub, debit_amount_rub, telegram_id),
-        )
-        await db.commit()
-
-    logger.info(
-        "Partner balance exchanged to credits: user=%s rub=%s credits=%s rate=%s",
-        telegram_id,
-        debit_amount_rub,
-        credits_to_add,
-        rub_per_credit,
-    )
-    return {
-        "ok": True,
-        "credits_added": credits_to_add,
-        "debited_rub": debit_amount_rub,
-        "requested_amount_rub": requested_amount_rub,
-        "available_rub_before": available_rub,
-        "available_rub_after": round(max(0.0, available_rub - debit_amount_rub), 2),
-        "rate_rub_per_credit": rub_per_credit,
-    }
-
-
 async def create_partner_withdrawal(
     telegram_id: int,
     amount_rub: float,
@@ -3323,13 +3157,7 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
     for row in rows:
         local_path = resolve_local_upload_path(str(row[0] or ""))
         if local_path:
-            abs_path = os.path.abspath(local_path)
-            referenced_paths.add(abs_path)
-            base_path, _ext = os.path.splitext(abs_path)
-            for sibling_ext in (".png", ".jpg", ".jpeg", ".webp"):
-                sibling_path = base_path + sibling_ext
-                if os.path.exists(sibling_path):
-                    referenced_paths.add(os.path.abspath(sibling_path))
+            referenced_paths.add(os.path.abspath(local_path))
 
     now = time.time()
     removed_count = 0
@@ -3613,7 +3441,7 @@ async def get_referral_stats(telegram_id: int) -> dict:
         user = await get_or_create_user(telegram_id)
 
         cursor = await db.execute(
-            "SELECT COUNT(*) as count FROM referrals WHERE referrer_id = ?",
+            "SELECT COUNT(*) as count, COALESCE(SUM(bonus_credits), 0) as total_bonus FROM referrals WHERE referrer_id = ?",
             (user.id,),
         )
         row = await cursor.fetchone()
@@ -3621,8 +3449,7 @@ async def get_referral_stats(telegram_id: int) -> dict:
         return {
             "referral_code": user.referral_code or "",
             "referrals_count": row["count"] or 0,
-            # referral_earned хранит именно бонус пригласившему (+3🍌 за каждого)
-            "referral_earned": user.referral_earned or 0,
+            "referral_earned": row["total_bonus"] or 0,
         }
 
 
@@ -4862,27 +4689,62 @@ def _feed_public_limit_for_type(generation_type: str) -> int:
 
 
 async def cleanup_public_feed_limits() -> dict[str, int]:
-    """Report how much the public feed exceeds soft limits without mutating publication flags."""
+    """Keep the public feed bounded by media type, pruning low-score old posts."""
     stats = {"image": 0, "video": 0}
     async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT gt.type, COUNT(*) AS total
+            SELECT gt.*,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count
             FROM generation_tasks gt
             WHERE gt.type IN ('image', 'video')
               AND gt.status = 'completed'
               AND gt.result_url IS NOT NULL
               AND gt.is_public_feed = 1
-            GROUP BY gt.type
             """
         )
         rows = await cursor.fetchall()
 
-    totals = {str(row['type']): int(row['total'] or 0) for row in rows}
-    for generation_type in ('image', 'video'):
-        limit = _feed_public_limit_for_type(generation_type)
-        stats[generation_type] = max(0, int(totals.get(generation_type, 0)) - limit)
+        ids_to_prune: list[int] = []
+        for generation_type in ("image", "video"):
+            type_rows = [row for row in rows if row["type"] == generation_type]
+            limit = _feed_public_limit_for_type(generation_type)
+            if len(type_rows) <= limit:
+                continue
+            ranked_rows = sorted(
+                type_rows,
+                key=lambda row: (
+                    _calculate_feed_score(row),
+                    _feed_activity_time_for_sort(row),
+                    int(row["id"] or 0),
+                ),
+                reverse=True,
+            )
+            prune_rows = ranked_rows[limit:]
+            stats[generation_type] = len(prune_rows)
+            ids_to_prune.extend(int(row["id"]) for row in prune_rows)
+
+        if ids_to_prune:
+            for index in range(0, len(ids_to_prune), 200):
+                chunk = ids_to_prune[index : index + 200]
+                placeholders = ",".join("?" for _ in chunk)
+                await db.execute(
+                    f"""
+                    UPDATE generation_tasks
+                    SET is_public_feed = 0,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id IN ({placeholders})
+                    """,
+                    chunk,
+                )
+            await db.commit()
+
     return stats
 
 
@@ -5630,22 +5492,6 @@ async def set_maintenance_mode(
     )
 
 
-async def is_channel_subscription_required() -> bool:
-    return (await get_bot_setting("required_channel_subscription", "0")) == "1"
-
-
-async def set_channel_subscription_required(
-    enabled: bool,
-    *,
-    updated_by_telegram_id: int | None = None,
-) -> bool:
-    return await set_bot_setting(
-        "required_channel_subscription",
-        "1" if enabled else "0",
-        updated_by_telegram_id=updated_by_telegram_id,
-    )
-
-
 async def is_user_banned(telegram_id: int) -> bool:
     """Проверяет, заблокирован ли пользователь на уровне бота."""
     try:
@@ -5863,7 +5709,6 @@ async def _ensure_user_settings_table(db):
             preferred_video_model TEXT DEFAULT 'v3_std',
             preferred_i2v_model TEXT DEFAULT 'v3_std',
             image_service TEXT DEFAULT 'nanobanana',
-            referral_purchase_notifications_enabled BOOLEAN DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -5873,12 +5718,6 @@ async def _ensure_user_settings_table(db):
     try:
         await db.execute(
             "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
-        )
-    except aiosqlite.OperationalError:
-        pass  # Колонка уже существует
-    try:
-        await db.execute(
-            "ALTER TABLE user_settings ADD COLUMN referral_purchase_notifications_enabled BOOLEAN DEFAULT 1"
         )
     except aiosqlite.OperationalError:
         pass  # Колонка уже существует
@@ -5897,8 +5736,7 @@ async def get_user_settings(telegram_id: int) -> dict:
         user = await get_or_create_user(telegram_id)
 
         cursor = await db.execute(
-            """SELECT preferred_model, preferred_video_model, preferred_i2v_model, image_service,
-                      referral_purchase_notifications_enabled
+            """SELECT preferred_model, preferred_video_model, preferred_i2v_model, image_service 
                FROM user_settings WHERE user_id = ?""",
             (user.id,),
         )
@@ -5914,12 +5752,6 @@ async def get_user_settings(telegram_id: int) -> dict:
                     if "image_service" in row.keys()
                     else "nanobanana"
                 ),
-                "referral_purchase_notifications_enabled": (
-                    bool(row["referral_purchase_notifications_enabled"])
-                    if "referral_purchase_notifications_enabled" in row.keys()
-                    and row["referral_purchase_notifications_enabled"] is not None
-                    else True
-                ),
             }
 
         # Если настроек нет, возвращаем значения по умолчанию
@@ -5928,7 +5760,6 @@ async def get_user_settings(telegram_id: int) -> dict:
             "preferred_video_model": "v3_std",
             "preferred_i2v_model": "v3_std",
             "image_service": "nanobanana",
-            "referral_purchase_notifications_enabled": True,
         }
 
 
@@ -5938,7 +5769,6 @@ async def save_user_settings(
     preferred_video_model: str = None,
     preferred_i2v_model: str = None,
     image_service: str = None,
-    referral_purchase_notifications_enabled: Optional[bool] = None,
 ) -> bool:
     """Сохраняет настройки пользователя в БД"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -5971,9 +5801,6 @@ async def save_user_settings(
             if image_service is not None:
                 updates.append("image_service = ?")
                 params.append(image_service)
-            if referral_purchase_notifications_enabled is not None:
-                updates.append("referral_purchase_notifications_enabled = ?")
-                params.append(1 if referral_purchase_notifications_enabled else 0)
 
             if updates:
                 params.append(user.id)
@@ -5989,18 +5816,14 @@ async def save_user_settings(
             # Создаём новую запись с переданными значениями
             await db.execute(
                 """INSERT INTO user_settings 
-                   (user_id, preferred_model, preferred_video_model, preferred_i2v_model, image_service,
-                    referral_purchase_notifications_enabled) 
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (user_id, preferred_model, preferred_video_model, preferred_i2v_model, image_service) 
+                   VALUES (?, ?, ?, ?, ?)""",
                 (
                     user.id,
                     preferred_model or "flash",
                     preferred_video_model or "v3_std",
                     preferred_i2v_model or "v3_std",
                     image_service or "nanobanana",
-                    1
-                    if referral_purchase_notifications_enabled is None
-                    else 1 if referral_purchase_notifications_enabled else 0,
                 ),
             )
             await db.commit()

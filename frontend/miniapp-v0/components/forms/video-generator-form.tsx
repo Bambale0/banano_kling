@@ -57,6 +57,7 @@ interface VideoGeneratorFormProps {
     duration: number
     sourceFeedGenId?: number | null
     grokMode: string
+    grokResolution: string
     veoGenerationType: string
     veoTranslation: boolean
     veoResolution: string
@@ -112,6 +113,7 @@ export function VideoGeneratorForm({
   const [selectedRatio, setSelectedRatio] = useState('16:9')
   const [selectedDuration, setSelectedDuration] = useState(5)
   const [grokMode, setGrokMode] = useState('normal')
+  const [grokResolution, setGrokResolution] = useState('480p')
   const [veoGenerationType, setVeoGenerationType] = useState('TEXT_2_VIDEO')
   const [veoTranslation, setVeoTranslation] = useState(true)
   const [veoResolution, setVeoResolution] = useState('720p')
@@ -164,6 +166,9 @@ export function VideoGeneratorForm({
   const isOmniVideo = selectedModel === 'gemini_omni_video' || (isGeminiOmni && !isOmniAudio && !isOmniCharacter)
   const qualityForModel = (item?: VideoModel) => {
     if (!item) return undefined
+    if (item.grok_resolutions?.length) {
+      return item.grok_resolutions.includes(grokResolution) ? grokResolution : item.grok_resolutions[0]
+    }
     if (item.veo_resolutions?.length) {
       return item.veo_resolutions.includes(veoResolution) ? veoResolution : item.veo_resolutions[0]
     }
@@ -320,6 +325,9 @@ export function VideoGeneratorForm({
     if (model.grok_modes?.length && !model.grok_modes.includes(grokMode)) {
       setGrokMode(model.grok_modes[0])
     }
+    if (model.grok_resolutions?.length && !model.grok_resolutions.includes(grokResolution)) {
+      setGrokResolution(model.grok_resolutions[0])
+    }
     if (model.veo_generation_types?.length && !model.veo_generation_types.includes(veoGenerationType)) {
       setVeoGenerationType(model.veo_generation_types[0])
     }
@@ -341,7 +349,7 @@ export function VideoGeneratorForm({
     if (!model.supports_omni_audio_ids) setOmniAudioIds('')
     if (!model.supports_omni_character_ids) setOmniCharacterIds('')
     if (!model.supports_omni_character_audio_ids) setOmniCharacterAudioIds('')
-  }, [model, grokMode, veoGenerationType, veoResolution, omniResolution, omniBaseVoice])
+  }, [model, grokMode, grokResolution, veoGenerationType, veoResolution, omniResolution, omniBaseVoice])
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -353,6 +361,7 @@ export function VideoGeneratorForm({
       duration: submitDuration,
       sourceFeedGenId,
       grokMode,
+      grokResolution,
       veoGenerationType,
       veoTranslation,
       veoResolution,
@@ -372,7 +381,7 @@ export function VideoGeneratorForm({
       omniCharacterAudioIds: parsedOmniCharacterAudioIds,
       prompt,
       startImage: isOmniAudio ? null : startImage[0]?.url || null,
-      references: isOmniAudio || isOmniCharacter ? [] : photoReferences.map(r => r.url),
+      references: isOmniAudio || isOmniCharacter || (model?.max_image_references ?? 8) === 0 ? [] : photoReferences.map(r => r.url),
       videoReferences: isOmniVideo || selectedScenario === 'video' ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
@@ -444,6 +453,11 @@ export function VideoGeneratorForm({
             {model?.grok_modes?.length ? (
               <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
                 Grok modes: {model.grok_modes.join(' / ')}
+              </span>
+            ) : null}
+            {model?.grok_resolutions?.length ? (
+              <span className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground">
+                Grok 1.5: {model.grok_resolutions.join(' / ')}
               </span>
             ) : null}
             {model?.supports_negative_prompt ? (
@@ -534,6 +548,29 @@ export function VideoGeneratorForm({
                   )}
                 >
                   {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {model?.grok_resolutions?.length ? (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Качество Grok 1.5</label>
+            <div className="flex gap-2">
+              {model.grok_resolutions.map((resolution) => (
+                <button
+                  key={resolution}
+                  type="button"
+                  onClick={() => setGrokResolution(resolution)}
+                  className={cn(
+                    'flex-1 rounded-xl border px-3 py-2 text-xs font-medium transition-all duration-200',
+                    grokResolution === resolution
+                      ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                      : 'border-border/50 bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                  )}
+                >
+                  {resolution}
                 </button>
               ))}
             </div>
@@ -894,7 +931,7 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {!isOmniAudio && !isOmniCharacter ? (
+        {!isOmniAudio && !isOmniCharacter && (model?.max_image_references ?? 8) > 0 ? (
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">
               Фото-референсы
@@ -991,7 +1028,9 @@ export function VideoGeneratorForm({
             <p className="text-muted-foreground mt-1">
               {model?.grok_modes?.length
                 ? `Grok: ${grokMode}`
-                : model?.veo_generation_types?.length
+                : model?.grok_resolutions?.length
+                  ? `Grok 1.5: ${grokResolution}`
+                  : model?.veo_generation_types?.length
                   ? `Veo: ${veoGenerationType}`
                   : isOmniVideo
                     ? `Качество: ${omniResolution}`

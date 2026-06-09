@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiosqlite
 from yookassa import Configuration, Payment
@@ -100,7 +100,11 @@ class YooKassaService:
             logger.exception("YooKassa payment lookup failed: %s", exc)
             return None
 
-    async def poll_pending_transactions(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def poll_pending_transactions(
+        self,
+        limit: int = 100,
+        complete_order: Optional[Callable[[str], Awaitable[Dict[str, Any]]]] = None,
+    ) -> List[Dict[str, Any]]:
         """Reconcile pending YooKassa transactions by querying YooKassa API.
 
         This will look for transactions in the local DB with provider='yookassa' and
@@ -120,7 +124,7 @@ class YooKassaService:
         async with aiosqlite.connect(DATABASE_PATH) as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
-                "SELECT id, order_id, user_id, payment_id, credits FROM transactions WHERE provider = 'yookassa' AND status = 'pending' AND payment_id IS NOT NULL LIMIT ?",
+                "SELECT id, order_id, user_id, payment_id, credits, amount_rub FROM transactions WHERE provider = 'yookassa' AND status = 'pending' AND payment_id IS NOT NULL LIMIT ?",
                 (limit,),
             )
             rows = await cursor.fetchall()
@@ -130,6 +134,7 @@ class YooKassaService:
             payment_id = row["payment_id"]
             user_id = row["user_id"]
             credits = row["credits"]
+            amount_rub = row["amount_rub"]
 
             try:
                 payment = await self.get_payment(payment_id)
@@ -155,12 +160,40 @@ class YooKassaService:
 
             # treat paid/succeeded as completed
             if paid or status in ("succeeded", "paid", "captured"):
-                # credit user
-                telegram_id = await db.get_telegram_id_by_user_id(user_id)
-                if telegram_id:
-                    await db.add_credits(telegram_id, credits)
-                    await db.mark_user_paid(telegram_id)
-                await db.update_transaction_status(order_id, "completed")
+                if complete_order:
+                    completion = await complete_order(order_id)
+                    action = (
+                        "already_completed"
+                        if completion.get("already_completed")
+                        else "completed"
+                    )
+                    logger.info(
+                        "Reconciled YooKassa payment %s -> %s (order=%s)",
+                        payment_id,
+                        action,
+                        order_id,
+                    )
+                    results.append(
+                        {
+                            "order_id": order_id,
+                            "payment_id": payment_id,
+                            "action": action,
+                            "completion": completion,
+                        }
+                    )
+                    continue
+
+                transaction = await db.get_transaction_by_order(order_id)
+                updated = await db.update_transaction_status(order_id, "completed")
+                if updated:
+                    telegram_id = await db.get_telegram_id_by_user_id(user_id)
+                    if telegram_id:
+                        await db.add_credits(telegram_id, credits)
+                        await db.credit_first_payment_referral_bonus(
+                            telegram_id, credits, amount_rub
+                        )
+                    if transaction:
+                        await db.record_promo_redemption(transaction)
                 logger.info(
                     "Reconciled YooKassa payment %s -> completed (order=%s)",
                     payment_id,
@@ -170,7 +203,7 @@ class YooKassaService:
                     {
                         "order_id": order_id,
                         "payment_id": payment_id,
-                        "action": "completed",
+                        "action": "completed" if updated else "already_completed",
                     }
                 )
                 continue

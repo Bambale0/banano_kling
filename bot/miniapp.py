@@ -48,6 +48,7 @@ from bot.database import (
     get_user_feed_generations,
     get_user_stats,
     increment_feed_share,
+    is_channel_subscription_required,
     like_feed_generation,
     like_prompt,
     list_saved_references,
@@ -100,6 +101,10 @@ from bot.services.media_input_utils import (
     resolve_local_upload_path,
 )
 from bot.services.reference_storage_service import save_reference_file
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_USERNAME,
+    check_required_channel_subscription,
+)
 from bot.services.preset_manager import preset_manager
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
@@ -222,12 +227,22 @@ VIDEO_MODELS = (
     {
         "id": "grok_imagine",
         "label": "Grok Imagine",
-        "description": "Длинные ролики из фото",
+        "description": "Видео из фото с режимами Normal/Fun/Spicy",
         "durations": [6, 10, 20, 30],
         "ratios": ["16:9", "9:16", "1:1", "3:2", "2:3"],
         "supports": ["imgtxt"],
         "grok_modes": ["normal", "fun", "spicy"],
-        "max_image_references": 9,
+        "max_image_references": 6,
+    },
+    {
+        "id": "grok_imagine_v15",
+        "label": "Grok Imagine 1.5 NEW🔥🔥🔥",
+        "description": "Видео 1-15 секунд из одного стартового фото",
+        "durations": list(range(1, 16)),
+        "ratios": ["auto", "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"],
+        "supports": ["imgtxt"],
+        "grok_resolutions": ["480p", "720p"],
+        "max_image_references": 0,
     },
     {
         "id": "seedance_2",
@@ -674,6 +689,13 @@ async def _get_user_context(app: web.Application, init_data: str) -> tuple[int, 
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
+    if await is_channel_subscription_required():
+        result = await check_required_channel_subscription(app["bot"], telegram_id)
+        if not result.ok:
+            raise PermissionError(
+                f"Подпишитесь на @{REQUIRED_CHANNEL_USERNAME}, чтобы пользоваться ботом."
+            )
+
     user = await get_or_create_user(telegram_id)
     try:
         await update_user_profile(
@@ -938,6 +960,7 @@ async def _launch_video_generation_task(
     video_references: list[str],
     audio_url: str | None = None,
     grok_mode: str = "normal",
+    grok_resolution: str = "480p",
     veo_generation_type: str = "TEXT_2_VIDEO",
     veo_translation: bool = True,
     veo_resolution: str = "720p",
@@ -1037,12 +1060,22 @@ async def _launch_video_generation_task(
         )
     elif model == "grok_imagine":
         result = await grok_service.generate_image_to_video(
-            image_urls=[image_url] + image_references[:6],
+            image_urls=([image_url] if image_url else []) + image_references[:6],
             prompt=prompt,
             mode=grok_mode,
             duration=duration,
+            resolution="720p",
             aspect_ratio=normalized_ratio,
-            callBackUrl=callback_url,
+            callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+        )
+    elif model == "grok_imagine_v15":
+        result = await grok_service.generate_image_to_video_v15(
+            image_urls=[image_url] if image_url else [],
+            prompt=prompt,
+            duration=duration,
+            resolution=grok_resolution,
+            aspect_ratio=normalized_ratio,
+            callBackUrl=(config.kie_notification_url if config.WEBHOOK_HOST else None),
         )
     elif model == "seedance_2":
         seedance_reference_images: list[str] = []
@@ -1167,6 +1200,14 @@ async def _launch_video_generation_task(
                 "v_reference_videos": video_references,
                 "audio_url": audio_url,
                 "grok_mode": grok_mode,
+                "grok_resolution": (
+                    grok_resolution if model == "grok_imagine_v15" else ""
+                ),
+                "resolution": (
+                    grok_resolution
+                    if model == "grok_imagine_v15"
+                    else "720p" if model == "grok_imagine" else ""
+                ),
                 "veo_generation_type": veo_generation_type,
                 "veo_translation": veo_translation,
                 "veo_resolution": veo_resolution,
@@ -1269,6 +1310,14 @@ async def _launch_video_generation_task(
             "v_reference_videos": video_references,
             "audio_url": audio_url,
             "grok_mode": grok_mode,
+            "grok_resolution": (
+                grok_resolution if model == "grok_imagine_v15" else ""
+            ),
+            "resolution": (
+                grok_resolution
+                if model == "grok_imagine_v15"
+                else "720p" if model == "grok_imagine" else ""
+            ),
             "veo_generation_type": veo_generation_type,
             "veo_translation": veo_translation,
             "veo_resolution": veo_resolution,
@@ -1316,7 +1365,7 @@ async def _send_main_menu(app: web.Application, telegram_id: int):
     await app["bot"].send_message(
         telegram_id,
         text,
-        reply_markup=get_main_menu_keyboard(user.credits),
+        reply_markup=get_main_menu_keyboard(user.credits, telegram_id),
         parse_mode="HTML",
     )
 
@@ -1527,7 +1576,7 @@ async def _send_history(app: web.Application, telegram_id: int):
     await app["bot"].send_message(
         telegram_id,
         text,
-        reply_markup=get_main_menu_keyboard(user.credits),
+        reply_markup=get_main_menu_keyboard(user.credits, telegram_id),
         parse_mode="HTML",
     )
 
@@ -2020,7 +2069,7 @@ async def miniapp_prompts(request: web.Request) -> web.Response:
         tag = str(body.get("tag", "") or "").strip()
         category = str(body.get("category", "") or "").strip() or None
         page = max(int(body.get("page", 1) or 1), 1)
-        limit = min(max(int(body.get("limit", 40) or 40), 1), 100)
+        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
 
         _telegram_id, ctx = await _get_user_context(request.app, init_data)
         user = ctx["user"]
@@ -2837,6 +2886,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         if not audio_url and audio_references:
             audio_url = str(audio_references[0] or "") or None
         grok_mode = str(body.get("grok_mode", "normal") or "normal")
+        grok_resolution = str(body.get("grok_resolution", "480p") or "480p")
         veo_generation_type = str(
             body.get("veo_generation_type", "TEXT_2_VIDEO") or "TEXT_2_VIDEO"
         )
@@ -2914,6 +2964,27 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         effective_model = _resolve_gemini_omni_model(model, generation_type)
         if effective_model in {"gemini_omni_audio", "gemini_omni_character"}:
             duration = 6
+
+        if effective_model == "grok_imagine_v15":
+            normalized_grok_ratio = _normalize_video_ratio(aspect_ratio)
+            if normalized_grok_ratio not in model_meta["ratios"]:
+                return web.json_response(
+                    {"ok": False, "error": "Недопустимый формат для Grok Imagine 1.5"},
+                    status=400,
+                )
+            if grok_resolution not in model_meta.get("grok_resolutions", []):
+                return web.json_response(
+                    {"ok": False, "error": "Недопустимое качество для Grok Imagine 1.5"},
+                    status=400,
+                )
+            if image_references:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "Grok Imagine 1.5 принимает только одно стартовое фото без дополнительных референсов",
+                    },
+                    status=400,
+                )
 
         if generation_type == "video" and not video_model_supports_reference_videos(effective_model):
             return web.json_response(
@@ -3083,6 +3154,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             video_references=video_references,
             audio_url=audio_url,
             grok_mode=grok_mode,
+            grok_resolution=grok_resolution,
             veo_generation_type=veo_generation_type,
             veo_translation=veo_translation,
             veo_resolution=veo_resolution,

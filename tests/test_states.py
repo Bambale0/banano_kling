@@ -62,3 +62,4 @@ def test_batch_generation_states():
 def test_image_analyzer_states():
     """Test ImageAnalyzerStates enum"""
     assert ImageAnalyzerStates.waiting_for_photo
+    assert ImageAnalyzerStates.waiting_for_video_prompt

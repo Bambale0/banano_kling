@@ -10,6 +10,15 @@ from bot.services.kling_service import KlingService
 
 logger = logging.getLogger(__name__)
 
+VEO_SUPPORTED_DURATIONS = (4, 6, 8)
+
+
+def _normalize_veo_duration(duration: int) -> int:
+    value = int(duration)
+    if value in VEO_SUPPORTED_DURATIONS:
+        return value
+    return min(VEO_SUPPORTED_DURATIONS, key=lambda item: (abs(item - value), item))
+
 
 class VeoService(KlingService):
     """Wrapper for Veo 3.1 endpoints hosted by Kie.ai."""
@@ -31,7 +40,7 @@ class VeoService(KlingService):
         payload = {
             "prompt": prompt,
             "model": model,
-            "duration": max(2, min(int(duration), 10)),
+            "duration": _normalize_veo_duration(duration),
             "aspect_ratio": aspect_ratio,
             "enableTranslation": enable_translation,
             "resolution": resolution,

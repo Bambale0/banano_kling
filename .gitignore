@@ -28,6 +28,8 @@ env/
 logs
 # Environment variables / Secrets
 .env
+.env.*
+!.env.example
 *.env.local
 venv/
 # Database
@@ -44,6 +46,7 @@ tests/live/*
 # Logs
 logs/
 *.log
+reports/
 
 # Cache
 .cache/

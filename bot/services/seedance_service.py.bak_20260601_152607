@@ -46,8 +46,9 @@ class SeedanceService(KlingService):
             if not uploaded:
                 missing_urls.append(original_url)
                 continue
-            # Stable public /uploads PNG URLs are valid provider inputs for Seedance.
-            # Do not mark them as failed just because they still point to this app host.
+            if is_local_upload_source(safe_url) and is_local_upload_source(uploaded):
+                failed_upload_urls.append(original_url)
+                continue
             effective_urls.append(uploaded)
 
         if len(uploaded_image_urls) < len(safe_image_urls):

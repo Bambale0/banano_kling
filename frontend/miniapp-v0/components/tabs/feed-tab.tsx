@@ -102,7 +102,7 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source, limit: 40 })
+        const feed = await fetchFeed({ source, limit: 300 })
         if (!ignore) setItems(feed)
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить ленту'))

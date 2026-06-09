@@ -3,6 +3,7 @@ import html
 import mimetypes
 import re
 import uuid
+from math import floor
 from urllib.parse import urlparse
 
 import aiosqlite
@@ -20,6 +21,7 @@ from bot.database import (
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
     create_partner_withdrawal,
+    exchange_partner_balance_to_credits,
     get_partner_available_withdrawal,
     get_or_create_user,
     get_approved_prompts,
@@ -36,6 +38,7 @@ from bot.database import (
     get_user_settings,
     get_user_stats,
     increment_feed_share,
+    is_channel_subscription_required,
     like_feed_generation,
     like_prompt,
     process_referral,
@@ -56,9 +59,15 @@ from bot.keyboards import (
     get_more_menu_keyboard,
     get_partner_consent_keyboard,
     get_partner_program_keyboard,
+    get_required_subscription_keyboard,
     get_referral_keyboard,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_USERNAME,
+    SUBSCRIPTION_CHECK_CALLBACK,
+    check_required_channel_subscription,
+)
 from bot.states import AdminStates, GenerationStates, PaymentStates
 
 logger = logging.getLogger(__name__)
@@ -306,12 +315,13 @@ def _build_balance_text(stats: dict) -> str:
 def _build_settings_text() -> str:
     return (
         "⚙️ <b>Настройки</b>\n"
-        "Здесь можно выбрать модели по умолчанию.\n\n"
+        "Здесь можно выбрать модели по умолчанию и уведомления.\n\n"
         "<b>Что можно настроить</b>\n"
         "• фото\n"
         "• видео из текста\n"
         "• видео из фото\n"
-        "• основной сервис для картинок\n\n"
+        "• основной сервис для картинок\n"
+        "• уведомления о покупках рефералов\n\n"
         "<i>Текущий выбор отмечен в кнопках ниже.</i>"
     )
 
@@ -2171,6 +2181,66 @@ async def send_prompt_to_use(callback: types.CallbackQuery):
     await _safe_callback_answer(callback, "Prompt отправлен")
 
 
+@router.callback_query(F.data == SUBSCRIPTION_CHECK_CALLBACK)
+async def check_required_subscription(callback: types.CallbackQuery, state: FSMContext):
+    """Re-check required channel subscription and open the main menu."""
+    subscription_required = await is_channel_subscription_required()
+    if subscription_required:
+        result = await check_required_channel_subscription(
+            callback.bot,
+            callback.from_user.id,
+            use_cache=False,
+        )
+    else:
+        result = None
+
+    if result and not result.ok:
+        text = (
+            "🔐 Доступ к боту открыт только подписчикам канала "
+            f"@{REQUIRED_CHANNEL_USERNAME}.\n\n"
+            "Подпишитесь на канал и нажмите «Проверить подписку»."
+        )
+        try:
+            await callback.message.edit_text(
+                text,
+                reply_markup=get_required_subscription_keyboard(),
+            )
+        except Exception as e:
+            if _should_log_edit_warning(e):
+                logger.warning("Cannot edit subscription gate message: %s", e)
+            await callback.message.answer(
+                text,
+                reply_markup=get_required_subscription_keyboard(),
+            )
+        await _safe_callback_answer(
+            callback,
+            "Подписка пока не найдена",
+            show_alert=True,
+        )
+        return
+
+    await state.clear()
+    user = await get_or_create_user(callback.from_user.id)
+    welcome_text = _build_main_menu_text(user.credits)
+    _set_user_menu(callback.from_user.id, "main_menu")
+
+    try:
+        await callback.message.edit_text(
+            welcome_text,
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        if _should_log_edit_warning(e):
+            logger.warning("Cannot edit subscription success message: %s", e)
+        await callback.message.answer(
+            welcome_text,
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
+            parse_mode="HTML",
+        )
+    await _safe_callback_answer(callback, "✅ Подписка подтверждена")
+
+
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start"""
@@ -2205,7 +2275,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 await message.answer(
                     f"✅ <b>Оплата уже обработана!</b>"
                     f"🍌 Ваш баланс: <code>{user.credits}</code> бананов",
-                    reply_markup=get_main_menu_keyboard(user.credits),
+                    reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                     parse_mode="HTML",
                 )
                 return
@@ -2213,7 +2283,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 state = await _resolve_payment_state(transaction)
 
                 if state.get("paid"):
-                    await _complete_transaction(order_id)
+                    await _complete_transaction(order_id, bot=message.bot)
 
                     user = await get_or_create_user(message.from_user.id)
 
@@ -2222,7 +2292,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                         f"🍌 Начислено: <code>{transaction.credits}</code> бананов\n"
                         f"💰 Сумма: <code>{transaction.amount_rub}</code> ₽\n"
                         f"💎 Ваш баланс: <code>{user.credits}</code> бананов",
-                        reply_markup=get_main_menu_keyboard(user.credits),
+                        reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                         parse_mode="HTML",
                     )
                     return
@@ -2232,7 +2302,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     await message.answer(
                         "⚠️ <b>Оплата не подтверждена</b>\n"
                         "Похоже, платёж отменён или истёк. Попробуй создать новый.",
-                        reply_markup=get_main_menu_keyboard(user.credits),
+                        reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                         parse_mode="HTML",
                     )
                     return
@@ -2240,14 +2310,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 await message.answer(
                     "⏳ <b>Оплата в обработке...</b>"
                     "Пожалуйста, подождите. Кредиты будут начислены в течение нескольких минут.",
-                    reply_markup=get_main_menu_keyboard(user.credits),
+                    reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                     parse_mode="HTML",
                 )
                 return
         else:
             await message.answer(
                 "❌ <b>Транзакция не найдена</b>" "Пожалуйста, свяжитесь с поддержкой.",
-                reply_markup=get_main_menu_keyboard(user.credits),
+                reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
                 parse_mode="HTML",
             )
             return
@@ -2256,7 +2326,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await message.answer(
             "❌ <b>Оплата не была завершена</b>"
             "Вы можете попробовать снова в любое время.",
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
             parse_mode="HTML",
         )
         return
@@ -2318,7 +2388,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     try:
         await message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
             parse_mode="HTML",
         )
     except TelegramBadRequest as e:
@@ -2436,7 +2506,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -2446,7 +2516,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
         # Отправляем новое сообщение
         await callback.message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
 
@@ -2678,6 +2748,10 @@ async def partner_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 
+def _partner_exchange_rate_rub_per_credit() -> float:
+    return preset_manager.get_partner_exchange_rub_per_credit()
+
+
 @router.callback_query(F.data == "partner_withdraw")
 async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
     """Запускает сценарий создания заявки на вывод."""
@@ -2717,6 +2791,138 @@ async def partner_withdraw(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "partner_exchange")
+async def partner_exchange(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает сценарий обмена партнёрского баланса в бананы."""
+    stats = await get_partner_overview(callback.from_user.id)
+    available_amount = await get_partner_available_withdrawal(callback.from_user.id)
+    rub_per_credit = _partner_exchange_rate_rub_per_credit()
+
+    if not stats.get("is_partner", False):
+        await callback.answer("Сначала активируйте партнёрскую программу", show_alert=True)
+        return
+
+    if available_amount < rub_per_credit:
+        await callback.message.edit_text(
+            "🍌 <b>Обмен в бананы</b>\n\n"
+            f"Сейчас доступно: <code>{available_amount:.2f}</code> ₽\n"
+            f"Текущий курс: <code>{rub_per_credit:g}</code> ₽ → <code>1</code> 🍌\n\n"
+            "Пока суммы недостаточно даже для 1 банана.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    max_credits = floor(available_amount / rub_per_credit)
+    max_debit = max_credits * rub_per_credit
+    await state.set_state(PaymentStates.waiting_partner_exchange_amount)
+    await state.update_data(
+        partner_exchange_available=available_amount,
+        partner_exchange_rate=rub_per_credit,
+    )
+    await callback.message.edit_text(
+        "🍌 <b>Обмен в бананы</b>\n\n"
+        f"Доступно для обмена: <code>{available_amount:.2f}</code> ₽\n"
+        f"Курс: <code>{rub_per_credit:g}</code> ₽ → <code>1</code> 🍌\n"
+        f"Максимум сейчас: <code>{max_credits}</code> 🍌 за <code>{max_debit:.2f}</code> ₽\n\n"
+        "Отправьте сумму в рублях, которую хотите обменять.\n"
+        "Если сумма не кратна курсу, я округлю вниз до целого числа бананов.",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(PaymentStates.waiting_partner_exchange_amount)
+async def partner_exchange_amount(message: types.Message, state: FSMContext):
+    """Обменивает партнёрский баланс в бананы по текущему курсу."""
+    raw_amount = (message.text or "").strip().replace(",", ".")
+    try:
+        requested_amount = round(float(raw_amount), 2)
+    except ValueError:
+        await message.answer(
+            "❌ Неверная сумма. Введите число, например <code>150</code>.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    rub_per_credit = float(
+        data.get("partner_exchange_rate") or _partner_exchange_rate_rub_per_credit()
+    )
+    available_amount = await get_partner_available_withdrawal(message.from_user.id)
+
+    if requested_amount <= 0:
+        await message.answer(
+            "❌ Сумма должна быть больше нуля.",
+            reply_markup=get_back_keyboard("menu_partner"),
+        )
+        return
+
+    if requested_amount > available_amount:
+        await message.answer(
+            "❌ Сумма больше доступного остатка.\n\n"
+            f"Сейчас можно обменять максимум: <code>{available_amount:.2f}</code> ₽.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    credits_to_add = floor(requested_amount / rub_per_credit)
+    debit_amount = round(credits_to_add * rub_per_credit, 2)
+    if credits_to_add < 1:
+        await message.answer(
+            f"❌ Минимум для обмена сейчас: <code>{rub_per_credit:g}</code> ₽ за <code>1</code> 🍌.",
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        return
+
+    result = await exchange_partner_balance_to_credits(
+        message.from_user.id, requested_amount, rub_per_credit
+    )
+    if not result.get("ok"):
+        reason = result.get("reason")
+        if reason == "insufficient_balance":
+            error_text = (
+                "❌ Недостаточно доступного остатка для обмена.\n\n"
+                f"Сейчас доступно: <code>{result.get('available_rub', available_amount):.2f}</code> ₽."
+            )
+        elif reason == "too_small":
+            error_text = (
+                f"❌ Минимум для обмена: <code>{rub_per_credit:g}</code> ₽ за <code>1</code> 🍌."
+            )
+        else:
+            error_text = "❌ Не удалось выполнить обмен. Попробуйте ещё раз."
+        await message.answer(
+            error_text,
+            reply_markup=get_back_keyboard("menu_partner"),
+            parse_mode="HTML",
+        )
+        await state.clear()
+        return
+
+    rounded_down_text = ""
+    if abs(debit_amount - requested_amount) >= 0.01:
+        rounded_down_text = (
+            f"\nЗапросили: <code>{requested_amount:.2f}</code> ₽\n"
+            f"Списано по курсу: <code>{debit_amount:.2f}</code> ₽"
+        )
+
+    await message.answer(
+        "✅ <b>Обмен выполнен</b>\n\n"
+        f"Начислено: <code>{result['credits_added']}</code> 🍌\n"
+        f"Списано с партнёрского баланса: <code>{result['debited_rub']:.2f}</code> ₽\n"
+        f"Остаток доступно: <code>{result['available_rub_after']:.2f}</code> ₽"
+        f"{rounded_down_text}",
+        reply_markup=get_back_keyboard("menu_partner"),
+        parse_mode="HTML",
+    )
+    await state.clear()
 
 
 @router.message(PaymentStates.waiting_partner_withdraw_requisites)
@@ -2954,6 +3160,9 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
         preferred_video_model=db_settings["preferred_video_model"],
         preferred_i2v_model=db_settings["preferred_i2v_model"],
         image_service=db_settings.get("image_service", "nanobanana"),
+        referral_purchase_notifications_enabled=db_settings.get(
+            "referral_purchase_notifications_enabled", True
+        ),
     )
 
     settings_text = _build_settings_text()
@@ -2965,6 +3174,7 @@ async def show_settings(callback: types.CallbackQuery, state: FSMContext):
             db_settings["preferred_video_model"],
             db_settings["preferred_i2v_model"],
             db_settings.get("image_service", "nanobanana"),
+            db_settings.get("referral_purchase_notifications_enabled", True),
         ),
         parse_mode="HTML",
     )
@@ -3033,7 +3243,7 @@ async def show_history(callback: types.CallbackQuery):
     try:
         await callback.message.edit_text(
             history_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -3042,7 +3252,7 @@ async def show_history(callback: types.CallbackQuery):
             logger.warning(f"Cannot edit message: {e}")
         await callback.message.answer(
             history_text,
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, callback.from_user.id),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -3129,6 +3339,7 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
+    current_ref_notifications = data.get("referral_purchase_notifications_enabled", True)
 
     await callback.message.edit_text(
         _build_settings_text(),
@@ -3137,6 +3348,7 @@ async def handle_settings_model(callback: types.CallbackQuery, state: FSMContext
             current_video_model,
             current_i2v_model,
             image_service=current_image_service,
+            referral_purchase_notifications_enabled=current_ref_notifications,
         ),
         parse_mode="HTML",
     )
@@ -3160,6 +3372,7 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
     current_model = data.get("preferred_model", "flash")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
+    current_ref_notifications = data.get("referral_purchase_notifications_enabled", True)
 
     await callback.message.edit_text(
         _build_settings_text(),
@@ -3168,6 +3381,7 @@ async def handle_settings_video_model(callback: types.CallbackQuery, state: FSMC
             video_model,
             current_i2v_model,
             image_service=current_image_service,
+            referral_purchase_notifications_enabled=current_ref_notifications,
         ),
         parse_mode="HTML",
     )
@@ -3191,6 +3405,7 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
     current_model = data.get("preferred_model", "flash")
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_image_service = data.get("image_service", "nanobanana")
+    current_ref_notifications = data.get("referral_purchase_notifications_enabled", True)
 
     await callback.message.edit_text(
         _build_settings_text(),
@@ -3199,6 +3414,7 @@ async def handle_settings_i2v_model(callback: types.CallbackQuery, state: FSMCon
             current_video_model,
             i2v_model,
             image_service=current_image_service,
+            referral_purchase_notifications_enabled=current_ref_notifications,
         ),
         parse_mode="HTML",
     )
@@ -3222,15 +3438,59 @@ async def handle_settings_service(callback: types.CallbackQuery, state: FSMConte
     current_model = data.get("preferred_model", "flash")
     current_video_model = data.get("preferred_video_model", "v3_std")
     current_i2v_model = data.get("preferred_i2v_model", "v3_std")
+    current_ref_notifications = data.get("referral_purchase_notifications_enabled", True)
 
     await callback.message.edit_text(
         _build_settings_text(),
         reply_markup=get_settings_keyboard_with_ai(
-            current_model, current_video_model, current_i2v_model, image_service=service
+            current_model,
+            current_video_model,
+            current_i2v_model,
+            image_service=service,
+            referral_purchase_notifications_enabled=current_ref_notifications,
         ),
         parse_mode="HTML",
     )
     await callback.answer("Сервис изображений обновлён")
+
+
+@router.callback_query(F.data == "settings_ref_purchase_notify_toggle")
+async def handle_settings_ref_purchase_notify_toggle(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Включает или выключает уведомления о покупках рефералов."""
+    db_settings = await get_user_settings(callback.from_user.id)
+    new_value = not db_settings.get("referral_purchase_notifications_enabled", True)
+
+    await save_user_settings(
+        callback.from_user.id,
+        referral_purchase_notifications_enabled=new_value,
+    )
+
+    refreshed_settings = {
+        **db_settings,
+        "referral_purchase_notifications_enabled": new_value,
+    }
+    await state.update_data(**refreshed_settings)
+
+    from bot.keyboards import get_settings_keyboard_with_ai
+
+    await callback.message.edit_text(
+        _build_settings_text(),
+        reply_markup=get_settings_keyboard_with_ai(
+            refreshed_settings.get("preferred_model", "flash"),
+            refreshed_settings.get("preferred_video_model", "v3_std"),
+            refreshed_settings.get("preferred_i2v_model", "v3_std"),
+            image_service=refreshed_settings.get("image_service", "nanobanana"),
+            referral_purchase_notifications_enabled=new_value,
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer(
+        "Уведомления о покупках включены"
+        if new_value
+        else "Уведомления о покупках выключены"
+    )
 
 
 @router.callback_query(F.data.startswith("back_cat_"))

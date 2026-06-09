@@ -89,6 +89,40 @@ async def test_save_user_channel_url_normalizes_and_rejects_non_telegram_links(
 
 
 @pytest.mark.asyncio
+async def test_channel_subscription_required_setting_roundtrip():
+    assert await database.is_channel_subscription_required() is False
+
+    assert await database.set_channel_subscription_required(
+        True,
+        updated_by_telegram_id=123456,
+    )
+    assert await database.is_channel_subscription_required() is True
+
+    assert await database.set_channel_subscription_required(False)
+    assert await database.is_channel_subscription_required() is False
+
+
+@pytest.mark.asyncio
+async def test_referral_purchase_notification_setting_roundtrip():
+    settings = await database.get_user_settings(555002)
+    assert settings["referral_purchase_notifications_enabled"] is True
+
+    assert await database.save_user_settings(
+        555002,
+        referral_purchase_notifications_enabled=False,
+    )
+    settings = await database.get_user_settings(555002)
+    assert settings["referral_purchase_notifications_enabled"] is False
+
+    assert await database.save_user_settings(
+        555002,
+        referral_purchase_notifications_enabled=True,
+    )
+    settings = await database.get_user_settings(555002)
+    assert settings["referral_purchase_notifications_enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_promo_code_redemption_tracks_repeatable_topup_bonus():
     user = await database.get_or_create_user(555001)
     promo = await database.create_promo_code(

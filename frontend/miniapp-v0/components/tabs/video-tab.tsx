@@ -33,6 +33,7 @@ export function VideoTab() {
     duration: number
     sourceFeedGenId?: number | null
     grokMode: string
+    grokResolution: string
     veoGenerationType: string
     veoTranslation: boolean
     veoResolution: string
@@ -72,7 +73,9 @@ export function VideoTab() {
         const model = state.videoModels.find(m => m.id === data.model)
         const quality = model?.veo_resolutions?.length
           ? data.veoResolution
-          : (data.model === 'gemini_omni' || data.model === 'gemini_omni_video') && data.scenario !== 'audio' && data.scenario !== 'character'
+          : model?.grok_resolutions?.length
+            ? data.grokResolution
+            : (data.model === 'gemini_omni' || data.model === 'gemini_omni_video') && data.scenario !== 'audio' && data.scenario !== 'character'
             ? data.omniResolution
             : undefined
         const cost = data.scenario === 'audio'

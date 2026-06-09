@@ -3,6 +3,7 @@
 import json
 import logging
 import importlib
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
@@ -13,24 +14,37 @@ from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_main_menu_keyboard,
                            get_payment_packages_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
-                           get_topup_keyboard, get_video_media_step_keyboard,
+                           get_settings_keyboard_with_ai, get_topup_keyboard,
+                           get_video_media_step_keyboard,
                            get_video_model_label,
                            get_video_model_selection_keyboard,
                            get_video_result_keyboard, get_ai_assistant_keyboard,
-                           load_prices)
+                           get_video_prompt_result_keyboard, load_prices)
 from bot.handlers.image_analyzer import (
     _audio_prompt_format,
     _clear_photo_prompt_audio_if_current,
     _format_photo_prompt_result_text,
+    _format_video_prompt_result_text,
 )
-from bot.handlers.generation import _repeat_image_keyboard
+from bot.handlers.generation import _normalize_video_duration_value, _repeat_image_keyboard
 import bot.services.photo_prompt_service as photo_prompt_module
 from bot.services.gemini_omni_service import GeminiOmniService
+import bot.services.grok_service as grok_module
+from bot.services.grok_service import GROK_V15_VIDEO_MODEL, GrokService
+import bot.services.video_prompt_service as video_prompt_module
 from bot.services.photo_prompt_service import (
     PhotoPromptService,
+    SYSTEM_PROMPT,
     _build_gpt_user_content,
     _is_fast_fallback_application_error,
 )
+from bot.services.subscription_service import SubscriptionCheckResult
+from bot.services.video_prompt_service import (
+    VIDEO_SYSTEM_PROMPT,
+    VideoPromptService,
+    _build_gpt_video_user_content,
+)
+from bot.video_reference_policy import get_max_video_image_references
 
 
 @pytest.fixture
@@ -62,6 +76,30 @@ def test_get_main_menu_keyboard():
         for row in kb.inline_keyboard
         for btn in row
     )
+
+
+def test_get_main_menu_keyboard_hides_video_prompt_for_regular_user(monkeypatch):
+    monkeypatch.setattr("bot.config.config.ADMIN_IDS_STR", "111")
+
+    kb = get_main_menu_keyboard(10, telegram_id=222)
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "photo_to_prompt" in callback_ids
+    assert "video_to_prompt" not in callback_ids
+
+
+def test_get_main_menu_keyboard_shows_video_prompt_for_admin(monkeypatch):
+    monkeypatch.setattr("bot.config.config.ADMIN_IDS_STR", "111")
+
+    kb = get_main_menu_keyboard(10, telegram_id=111)
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "photo_to_prompt" in callback_ids
+    assert "video_to_prompt" in callback_ids
 
 
 def test_get_main_menu_keyboard_contains_mini_app_button():
@@ -100,6 +138,36 @@ def test_get_admin_keyboard():
     )
     assert any(
         "admin_ai_help" == btn.callback_data for row in kb.inline_keyboard for btn in row
+    )
+    assert any(
+        "admin_required_subscription_toggle" == btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+    assert any(
+        "video_to_prompt" == btn.callback_data
+        for row in kb.inline_keyboard
+        for btn in row
+    )
+
+
+def test_get_settings_keyboard_with_ai_has_referral_purchase_toggle():
+    kb = get_settings_keyboard_with_ai(referral_purchase_notifications_enabled=True)
+    buttons = [btn for row in kb.inline_keyboard for btn in row]
+
+    assert any(
+        btn.callback_data == "settings_ref_purchase_notify_toggle"
+        and "Покупки рефералов: вкл" in btn.text
+        for btn in buttons
+    )
+
+    kb = get_settings_keyboard_with_ai(referral_purchase_notifications_enabled=False)
+    buttons = [btn for row in kb.inline_keyboard for btn in row]
+
+    assert any(
+        btn.callback_data == "settings_ref_purchase_notify_toggle"
+        and "Покупки рефералов: выкл" in btn.text
+        for btn in buttons
     )
 
 
@@ -159,6 +227,145 @@ def test_get_create_video_keyboard_for_gemini_omni_video_shows_doc_settings():
     assert "omni_seed_edit" in callback_ids
     assert "omni_audio_ids_edit" in callback_ids
     assert "omni_character_ids_edit" in callback_ids
+
+
+def test_get_create_video_keyboard_keeps_legacy_grok_modes():
+    kb = get_create_video_keyboard(current_model="grok_imagine", current_duration=6)
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "grok_mode_normal" in callback_ids
+    assert "grok_mode_fun" in callback_ids
+    assert "grok_mode_spicy" in callback_ids
+    assert "grok_resolution_480p" not in callback_ids
+
+
+def test_get_create_video_keyboard_for_grok_v15_shows_resolution_controls():
+    kb = get_create_video_keyboard(
+        current_model="grok_imagine_v15",
+        current_ratio="auto",
+        current_duration=8,
+    )
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+    assert "ratio_auto" in callback_ids
+    assert "ratio_4_3" in callback_ids
+    assert "ratio_3_4" in callback_ids
+    assert "video_dur_1" in callback_ids
+    assert "video_dur_15" in callback_ids
+    assert "grok_resolution_480p" in callback_ids
+    assert "grok_resolution_720p" in callback_ids
+    assert "grok_mode_normal" not in callback_ids
+
+
+def test_grok_v15_duration_supports_one_to_fifteen_seconds():
+    assert _normalize_video_duration_value("grok_imagine_v15", 1) == 1
+    assert _normalize_video_duration_value("grok_imagine_v15", 16) == 15
+    assert _normalize_video_duration_value("grok_imagine_v15", 8) == 8
+
+
+def test_veo_duration_controls_only_show_api_supported_values():
+    kb = get_create_video_keyboard(
+        current_model="veo3_fast",
+        current_ratio="16:9",
+        current_duration=4,
+    )
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert "video_dur_2" not in callback_ids
+    assert "video_dur_4" in callback_ids
+    assert "video_dur_6" in callback_ids
+    assert "video_dur_8" in callback_ids
+    assert "video_dur_10" not in callback_ids
+
+
+def test_veo_duration_normalizes_to_live_api_values():
+    assert _normalize_video_duration_value("veo3_fast", 2) == 4
+    assert _normalize_video_duration_value("veo3_lite", 10) == 8
+    assert _normalize_video_duration_value("veo3", 6) == 6
+
+
+def test_grok_image_reference_limits_keep_legacy_and_v15_separate():
+    assert get_max_video_image_references("grok_imagine") == 7
+    assert get_max_video_image_references("grok_imagine_v15") == 1
+
+
+def test_miniapp_exposes_legacy_and_v15_grok_models():
+    import bot.miniapp as miniapp
+
+    models = {item["id"]: item for item in miniapp.VIDEO_MODELS}
+
+    assert models["grok_imagine"]["grok_modes"] == ["normal", "fun", "spicy"]
+    assert models["grok_imagine"]["durations"] == [6, 10, 20, 30]
+    assert models["grok_imagine_v15"]["grok_resolutions"] == ["480p", "720p"]
+    assert models["grok_imagine_v15"]["durations"][0] == 1
+    assert models["grok_imagine_v15"]["durations"][-1] == 15
+
+
+@pytest.mark.asyncio
+async def test_grok_legacy_i2v_keeps_old_model_and_modes(monkeypatch):
+    service = GrokService(kie_key="test-key")
+    service._kie_post = AsyncMock(return_value={"task_id": "legacy_task"})
+    monkeypatch.setattr(
+        grok_module.kie_file_upload_service,
+        "upload_local_image_sources",
+        AsyncMock(return_value=["https://cdn.test/start.png", "https://cdn.test/ref.png"]),
+    )
+
+    result = await service.generate_image_to_video(
+        image_urls=["https://example.test/start.jpg", "https://example.test/ref.jpg"],
+        prompt="move gently",
+        mode="fun",
+        duration=20,
+        resolution="720p",
+        aspect_ratio="3:2",
+        nsfw_checker=False,
+    )
+
+    assert result == {"task_id": "legacy_task"}
+    payload = service._kie_post.call_args.args[1]
+    assert payload["model"] == "grok-imagine/image-to-video"
+    assert payload["input"]["mode"] == "fun"
+    assert payload["input"]["duration"] == 20
+    assert payload["input"]["image_urls"] == [
+        "https://cdn.test/start.png",
+        "https://cdn.test/ref.png",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_grok_v15_i2v_uses_preview_model_and_single_image(monkeypatch):
+    service = GrokService(kie_key="test-key")
+    service._kie_post = AsyncMock(return_value={"task_id": "v15_task"})
+    monkeypatch.setattr(
+        grok_module.kie_file_upload_service,
+        "upload_local_image_sources",
+        AsyncMock(return_value=["https://cdn.test/start.png"]),
+    )
+
+    result = await service.generate_image_to_video_v15(
+        image_urls=["https://example.test/start.jpg", "https://example.test/ignored.jpg"],
+        prompt="move gently",
+        duration=99,
+        resolution="1080p",
+        aspect_ratio="bad",
+        nsfw_checker=True,
+    )
+
+    assert result == {"task_id": "v15_task"}
+    payload = service._kie_post.call_args.args[1]
+    assert payload["model"] == GROK_V15_VIDEO_MODEL
+    assert payload["input"] == {
+        "prompt": "move gently",
+        "image_urls": ["https://cdn.test/start.png"],
+        "aspect_ratio": "auto",
+        "resolution": "480p",
+        "duration": 15,
+        "nsfw_checker": True,
+    }
 
 
 def test_video_model_selection_groups_gemini_omni_modes():
@@ -419,9 +626,11 @@ def test_get_image_result_keyboard_contains_repeat_and_main_menu():
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
     assert "🎬 Оживить в Grok" in button_texts
+    assert "🎬 Grok 1.5" in button_texts
     assert "🖼 В ленту" in button_texts
     assert "📚 В промпты" in button_texts
     assert "grokvid_img_123" in callback_ids
+    assert "grok15vid_img_123" in callback_ids
     assert "feedpub_img_123" in callback_ids
     assert "promptsave_img_123" in callback_ids
     assert "🔁 Повторить" in button_texts
@@ -497,6 +706,266 @@ def test_photo_prompt_audio_mime_type_maps_to_gpt_audio_format():
     assert _audio_prompt_format("audio/oga") == "ogg"
     assert _audio_prompt_format("audio/flac") == "flac"
     assert _audio_prompt_format("audio/mp4") == ""
+
+
+@pytest.mark.asyncio
+async def test_access_guard_blocks_unsubscribed_user(mocker):
+    from bot import main as main_module
+    from bot.main import AccessGuardMiddleware
+
+    middleware = AccessGuardMiddleware()
+    handler = AsyncMock(return_value="ok")
+    event = SimpleNamespace(from_user=SimpleNamespace(id=777))
+    bot = Mock()
+
+    mocker.patch.object(main_module.config, "is_admin", return_value=False)
+    mocker.patch("bot.main.is_user_banned", AsyncMock(return_value=False))
+    mocker.patch("bot.main.is_maintenance_mode_enabled", AsyncMock(return_value=False))
+    mocker.patch("bot.main.is_channel_subscription_required", AsyncMock(return_value=True))
+    mocker.patch(
+        "bot.main.check_required_channel_subscription",
+        AsyncMock(return_value=SubscriptionCheckResult(ok=False, status="left")),
+    )
+    reply = AsyncMock()
+    mocker.patch.object(middleware, "_reply_required_subscription", reply)
+
+    result = await middleware(handler, event, {"bot": bot})
+
+    assert result is None
+    handler.assert_not_awaited()
+    reply.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_access_guard_blocks_unsubscribed_admin_regular_flow(mocker):
+    from bot import main as main_module
+    from bot.main import AccessGuardMiddleware
+
+    middleware = AccessGuardMiddleware()
+    handler = AsyncMock(return_value="ok")
+    event = SimpleNamespace(from_user=SimpleNamespace(id=777), data="create_image_text_new")
+    bot = Mock()
+
+    mocker.patch.object(main_module.config, "is_admin", return_value=True)
+    mocker.patch("bot.main.is_user_banned", AsyncMock(return_value=False))
+    mocker.patch("bot.main.is_maintenance_mode_enabled", AsyncMock(return_value=False))
+    mocker.patch("bot.main.is_channel_subscription_required", AsyncMock(return_value=True))
+    subscription_check = mocker.patch(
+        "bot.main.check_required_channel_subscription",
+        AsyncMock(return_value=SubscriptionCheckResult(ok=False, status="left")),
+    )
+    reply = AsyncMock()
+    mocker.patch.object(middleware, "_reply_required_subscription", reply)
+
+    result = await middleware(handler, event, {"bot": bot})
+
+    assert result is None
+    handler.assert_not_awaited()
+    subscription_check.assert_awaited_once_with(bot, 777)
+    reply.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_access_guard_allows_admin_management_without_subscription(mocker):
+    from bot import main as main_module
+    from bot.main import AccessGuardMiddleware
+
+    middleware = AccessGuardMiddleware()
+    handler = AsyncMock(return_value="ok")
+    event = SimpleNamespace(
+        from_user=SimpleNamespace(id=777),
+        data="admin_required_subscription_toggle",
+    )
+    bot = Mock()
+    data = {"bot": bot}
+
+    mocker.patch.object(main_module.config, "is_admin", return_value=True)
+    mocker.patch("bot.main.is_user_banned", AsyncMock(return_value=False))
+    mocker.patch("bot.main.is_maintenance_mode_enabled", AsyncMock(return_value=False))
+    subscription_required = mocker.patch(
+        "bot.main.is_channel_subscription_required",
+        AsyncMock(return_value=True),
+    )
+    subscription_check = mocker.patch(
+        "bot.main.check_required_channel_subscription",
+        AsyncMock(return_value=SubscriptionCheckResult(ok=False, status="left")),
+    )
+
+    result = await middleware(handler, event, data)
+
+    assert result == "ok"
+    handler.assert_awaited_once_with(event, data)
+    subscription_required.assert_not_awaited()
+    subscription_check.assert_not_awaited()
+
+
+def test_photo_prompt_system_prompt_prefers_editorial_russian_style():
+    assert '"prompt_ru" is the main result' in SYSTEM_PROMPT
+    assert "one natural, dense editorial/photo prompt" in SYSTEM_PROMPT
+    assert "900-1600 characters" in SYSTEM_PROMPT
+    assert "Do not use forensic" in SYSTEM_PROMPT
+
+
+def test_video_prompt_system_prompt_prefers_cinematic_russian_style():
+    assert '"prompt_ru" is the main result' in VIDEO_SYSTEM_PROMPT
+    assert "photorealistic AI video generation" in VIDEO_SYSTEM_PROMPT
+    assert "camera movement" in VIDEO_SYSTEM_PROMPT
+    assert "Return only valid JSON" in VIDEO_SYSTEM_PROMPT
+
+
+def test_video_prompt_user_content_passes_video_as_input_file():
+    content = _build_gpt_video_user_content(
+        user_instruction="Analyze video",
+        video_url="https://example.com/reference.mp4",
+        filename="reference.mp4",
+    )
+
+    assert content == [
+        {"type": "input_text", "text": "Analyze video"},
+        {
+            "type": "input_file",
+            "file_url": "https://example.com/reference.mp4",
+            "filename": "reference.mp4",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_video_prompt_service_passes_video_file_to_gpt55():
+    service = VideoPromptService(api_key="test")
+    captured = {}
+
+    async def fake_gpt55(**kwargs):
+        captured.update(kwargs)
+        return {
+            "prompt_en": "A cinematic tracking shot",
+            "prompt_ru": "Кинематографичный трекинговый кадр",
+            "negative_prompt": "flicker",
+            "camera_movement_ru": "Плавный трекинг",
+            "timeline_ru": ["Стартовый средний план", "Плавное движение камеры"],
+            "visual_style_ru": "Мягкий контрастный свет",
+            "model_hint": "Gemini Omni Video",
+            "provider": "gpt-5.5",
+        }
+
+    service._analyze_with_gpt55 = AsyncMock(side_effect=fake_gpt55)
+
+    result = await service.analyze_video(
+        video_url="https://example.com/reference.mp4",
+        user_note="Сделай более модный свет",
+        duration_seconds=7,
+        filename="reference.mp4",
+    )
+
+    assert captured["video_url"] == "https://example.com/reference.mp4"
+    assert captured["filename"] == "reference.mp4"
+    assert "Additional text instruction from user" in captured["user_instruction"]
+    assert "7 seconds" in captured["user_instruction"]
+    assert result["camera_movement_ru"] == "Плавный трекинг"
+
+
+@pytest.mark.asyncio
+async def test_video_prompt_gpt55_payload_uses_input_file(monkeypatch):
+    responses = [
+        {
+            "status": 200,
+            "body": {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "prompt_en": "Tracking shot",
+                                        "prompt_ru": "Плавный трекинговый кадр",
+                                        "negative_prompt": "flicker",
+                                        "model_hint": "Gemini Omni Video",
+                                    }
+                                )
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    ]
+    payloads = []
+
+    class FakeResponse:
+        def __init__(self, item):
+            self.status = item["status"]
+            self._text = json.dumps(item["body"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return self._text
+
+    class FakeSession:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url, json=None, headers=None):
+            payloads.append(json)
+            return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(video_prompt_module.aiohttp, "ClientSession", FakeSession)
+
+    service = VideoPromptService(api_key="test")
+    result = await service._analyze_with_gpt55(
+        video_url="https://example.com/reference.mp4",
+        user_instruction="Analyze video",
+        headers={"Authorization": "Bearer test"},
+        filename="reference.mp4",
+    )
+
+    assert result["prompt_ru"] == "Плавный трекинговый кадр"
+    assert [
+        item["type"] for item in payloads[-1]["input"][1]["content"]
+    ] == ["input_text", "input_file"]
+    assert payloads[-1]["input"][1]["content"][1]["file_url"] == (
+        "https://example.com/reference.mp4"
+    )
+
+
+def test_video_prompt_result_text_is_telegram_safe_for_long_result():
+    result = {
+        "prompt_en": "A&B cinematic movement " * 500,
+        "prompt_ru": "Кинематографичное движение и модный свет " * 500,
+        "negative_prompt": "flicker, jitter, " * 300,
+        "camera_movement_ru": "Плавный трекинг камеры " * 80,
+        "timeline_ru": ["Камера движется плавно " * 80] * 6,
+        "visual_style_ru": "Неоновый контрастный свет " * 80,
+        "audio_notes_ru": "Музыка и шум пространства " * 80,
+        "model_hint": "Gemini Omni Video " * 100,
+        "provider": "gpt-5.5",
+    }
+
+    text = _format_video_prompt_result_text(result)
+
+    assert len(text) < 4096
+    assert "Промпт по видео готов" in text
+    assert "Negative prompt" in text
+
+
+def test_video_prompt_result_keyboard_restarts_video_prompt_flow():
+    kb = get_video_prompt_result_keyboard()
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert callback_ids == ["video_to_prompt", "back_main"]
 
 
 def test_photo_prompt_gpt_user_content_attaches_audio_and_image():

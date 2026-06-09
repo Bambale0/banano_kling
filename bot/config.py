@@ -77,6 +77,12 @@ class Config:
     PHOTO_PROMPT_MAX_AUDIO_BYTES: int = int(
         os.getenv("PHOTO_PROMPT_MAX_AUDIO_BYTES", str(10 * 1024 * 1024))
     )
+    VIDEO_PROMPT_MAX_VIDEO_BYTES: int = int(
+        os.getenv("VIDEO_PROMPT_MAX_VIDEO_BYTES", str(30 * 1024 * 1024))
+    )
+    VIDEO_PROMPT_MAX_DURATION_SECONDS: int = int(
+        os.getenv("VIDEO_PROMPT_MAX_DURATION_SECONDS", "60")
+    )
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
     # PIAPI_API_KEY is used by kling_service. Allow fallback to KLING_API_KEY
     # for environments that still provide the old variable name.

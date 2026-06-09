@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import html
 from datetime import datetime, timedelta
 
 
@@ -22,6 +23,7 @@ from bot.database import (
     get_or_create_user,
     get_telegram_id_by_user_id,
     get_transaction_by_order,
+    get_user_settings,
     normalize_promo_code,
     record_promo_redemption,
     update_transaction_status,
@@ -70,6 +72,100 @@ def _build_bonus_text(referral_bonus: dict[str, Any]) -> str:
     if referral_bonus.get("mode") == "banana":
         return f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
     return ""
+
+
+def _format_money(value: Any) -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
+def _user_display_parts(user: Any) -> tuple[str, str]:
+    username = str(getattr(user, "username", "") or "").strip().lstrip("@")
+    full_name = str(getattr(user, "full_name", "") or "").strip()
+    if not full_name:
+        full_name = " ".join(
+            str(value).strip()
+            for value in (
+                getattr(user, "first_name", None),
+                getattr(user, "last_name", None),
+            )
+            if value and str(value).strip()
+        )
+
+    display_name = html.escape(full_name or username or "Реферал")
+    username_line = f"\n@{html.escape(username)}" if username else ""
+    return display_name, username_line
+
+
+async def _notify_referrers_about_purchase(
+    bot: Bot | None,
+    *,
+    buyer_telegram_id: int,
+    transaction,
+    referral_bonus: dict[str, Any],
+) -> None:
+    if not bot or referral_bonus.get("mode") != "partner":
+        return
+
+    buyer = await get_or_create_user(buyer_telegram_id)
+    buyer_name, buyer_username_line = _user_display_parts(buyer)
+    amount_rub = _format_money(getattr(transaction, "amount_rub", 0))
+    credits = getattr(transaction, "credits", 0)
+
+    targets: list[dict[str, Any]] = []
+    referrer_telegram_id = referral_bonus.get("referrer_telegram_id")
+    if referrer_telegram_id and float(referral_bonus.get("value") or 0) > 0:
+        targets.append(
+            {
+                "telegram_id": int(referrer_telegram_id),
+                "title": "🛒 <b>Покупка реферала</b>",
+                "bonus_label": "Ваше начисление",
+                "bonus_value": referral_bonus.get("value"),
+            }
+        )
+
+    level2_referrer_telegram_id = referral_bonus.get("level2_referrer_telegram_id")
+    if level2_referrer_telegram_id and float(referral_bonus.get("level2_value") or 0) > 0:
+        targets.append(
+            {
+                "telegram_id": int(level2_referrer_telegram_id),
+                "title": "🛒 <b>Покупка реферала 2 уровня</b>",
+                "bonus_label": "Начисление 2 уровня",
+                "bonus_value": referral_bonus.get("level2_value"),
+            }
+        )
+
+    for target in targets:
+        target_telegram_id = target["telegram_id"]
+        try:
+            settings = await get_user_settings(target_telegram_id)
+            if not settings.get("referral_purchase_notifications_enabled", True):
+                continue
+
+            text = (
+                f"{target['title']}\n\n"
+                f"Реферал: <b>{buyer_name}</b>{buyer_username_line}\n"
+                f"Покупка: <code>{credits}</code>🍌 на <code>{amount_rub}</code> ₽\n"
+                f"{target['bonus_label']}: "
+                f"<code>{_format_money(target['bonus_value'])}</code> ₽"
+            )
+            await bot.send_message(target_telegram_id, text, parse_mode="HTML")
+        except Exception as exc:
+            if _is_ignored_telegram_error(exc):
+                logger.warning(
+                    "Skipping referral purchase notification for user %s: %s",
+                    target_telegram_id,
+                    exc,
+                )
+                continue
+            logger.exception(
+                "Failed to notify referrer %s about referral purchase order=%s",
+                target_telegram_id,
+                getattr(transaction, "order_id", "?"),
+            )
 
 
 def _build_promo_rules_text() -> str:
@@ -277,7 +373,7 @@ async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
     return stats
 
 
-async def _complete_transaction(order_id: str) -> dict[str, Any]:
+async def _complete_transaction(order_id: str, bot: Bot | None = None) -> dict[str, Any]:
     transaction = await get_transaction_by_order(order_id)
     if not transaction:
         return {"ok": False, "reason": "not_found"}
@@ -302,6 +398,12 @@ async def _complete_transaction(order_id: str) -> dict[str, Any]:
         telegram_id, transaction.credits, transaction.amount_rub
     )
     promo_bonus = await record_promo_redemption(transaction)
+    await _notify_referrers_about_purchase(
+        bot,
+        buyer_telegram_id=telegram_id,
+        transaction=transaction,
+        referral_bonus=referral_bonus,
+    )
     return {
         "ok": True,
         "already_completed": False,
@@ -453,7 +555,7 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
         f"Бананы: <code>{total_credits}</code>🍌\n"
         f"Сумма: <code>{package['price_rub']}</code>₽"
         f"{bonus_text}",
-        reply_markup=get_payment_method_keyboard(package_id, has_yookassa, has_crypto),
+        reply_markup=get_payment_method_keyboard(package_id, has_yookassa, has_crypto, has_lava),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -694,7 +796,7 @@ async def check_payment_status(callback: types.CallbackQuery):
         await callback.answer("Платёж ещё в обработке", show_alert=True)
         return
 
-    result = await _complete_transaction(order_id)
+    result = await _complete_transaction(order_id, bot=callback.bot)
     if not result.get("ok"):
         await callback.answer("Не удалось завершить оплату", show_alert=True)
         return
@@ -778,6 +880,12 @@ async def handle_cryptobot_webhook(request: web.Request):
             telegram_id, transaction.credits, transaction.amount_rub
         )
         promo_bonus = await record_promo_redemption(transaction)
+        await _notify_referrers_about_purchase(
+            request.app.get("bot"),
+            buyer_telegram_id=telegram_id,
+            transaction=transaction,
+            referral_bonus=referral_bonus,
+        )
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus
@@ -882,6 +990,12 @@ async def handle_lava_webhook(request: web.Request):
             telegram_id, transaction.credits, transaction.amount_rub
         )
         promo_bonus = await record_promo_redemption(transaction)
+        await _notify_referrers_about_purchase(
+            request.app.get("bot"),
+            buyer_telegram_id=telegram_id,
+            transaction=transaction,
+            referral_bonus=referral_bonus,
+        )
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus
@@ -1044,6 +1158,12 @@ async def handle_yookassa_webhook(request: web.Request):
             telegram_id, transaction.credits, transaction.amount_rub
         )
         promo_bonus = await record_promo_redemption(transaction)
+        await _notify_referrers_about_purchase(
+            request.app.get("bot"),
+            buyer_telegram_id=telegram_id,
+            transaction=transaction,
+            referral_bonus=referral_bonus,
+        )
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus

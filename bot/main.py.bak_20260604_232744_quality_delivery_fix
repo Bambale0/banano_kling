@@ -91,18 +91,11 @@ USER_BOT_COMMAND_SCOPES = (
 USER_BOT_COMMAND_LANGUAGES = (None, "ru")
 
 
-async def _complete_reconciled_order(order_id: str, bot: Bot) -> dict:
-    from bot.handlers.payments import _complete_transaction
-
-    return await _complete_transaction(order_id, bot=bot)
-
-
-async def _yookassa_reconcile_loop(bot: Bot) -> None:
+async def _yookassa_reconcile_loop() -> None:
     while True:
         try:
             results = await yookassa_service.poll_pending_transactions(
-                limit=YOOKASSA_RECONCILE_BATCH_SIZE,
-                complete_order=lambda order_id: _complete_reconciled_order(order_id, bot),
+                limit=YOOKASSA_RECONCILE_BATCH_SIZE
             )
             if results:
                 completed = sum(1 for item in results if item.get("action") == "completed")
@@ -1263,8 +1256,7 @@ async def on_startup(bot: Bot):
 
     try:
         reconcile_stats = await yookassa_service.poll_pending_transactions(
-            limit=YOOKASSA_RECONCILE_BATCH_SIZE,
-            complete_order=lambda order_id: _complete_reconciled_order(order_id, bot),
+            limit=YOOKASSA_RECONCILE_BATCH_SIZE
         )
         logger.info("Startup YooKassa reconcile stats: %s", reconcile_stats[:10])
     except Exception:
@@ -1281,7 +1273,7 @@ async def on_startup(bot: Bot):
         # aiogram.Bot does not expose an event loop attribute in some versions.
         # Use asyncio.create_task to schedule background tasks on the running loop.
         asyncio.create_task(_cleanup_loop())
-        asyncio.create_task(_yookassa_reconcile_loop(bot))
+        asyncio.create_task(_yookassa_reconcile_loop())
         logger.info(
             "Scheduled cleanup task for static/uploads/logs and YooKassa reconciliation"
         )
@@ -2304,11 +2296,12 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                     )
 
                 if image_bytes:
-                    await bot_instance.send_document(
+                    photo = types.BufferedInputFile(
+                        image_bytes, filename="seedream.png"
+                    )
+                    await bot_instance.send_photo(
                         chat_id=telegram_id,
-                        document=types.BufferedInputFile(
-                            image_bytes, filename=_guess_result_filename(image_url, fallback_base="generated")
-                        ),
+                        photo=photo,
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
@@ -2316,9 +2309,9 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                         ),
                     )
                 else:
-                    await bot_instance.send_document(
+                    await bot_instance.send_photo(
                         chat_id=telegram_id,
-                        document=image_url,
+                        photo=image_url,
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
@@ -2326,7 +2319,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                         ),
                     )
 
-                logger.info(f"Image original sent as document to user {telegram_id}")
+                logger.info(f"Image sent to user {telegram_id}")
             except Exception as e:
                 logger.error(f"Failed to send image: {e}")
                 # Fallback — отправляем как ссылку
@@ -2481,11 +2474,10 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                     )
 
                 if image_bytes:
-                    await bot_instance.send_document(
+                    photo = types.BufferedInputFile(image_bytes, filename="flux.png")
+                    await bot_instance.send_photo(
                         chat_id=telegram_id,
-                        document=types.BufferedInputFile(
-                            image_bytes, filename=_guess_result_filename(image_url, fallback_base="generated")
-                        ),
+                        photo=photo,
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
@@ -2493,17 +2485,15 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                         ),
                     )
                 else:
-                    await bot_instance.send_document(
+                    await bot_instance.send_photo(
                         chat_id=telegram_id,
-                        document=image_url,
+                        photo=image_url,
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
                             image_url, task_id=task_id
                         ),
                     )
-
-                logger.info(f"Novita original sent as document to user {telegram_id}")
 
                 logger.info(f"Image sent to user {telegram_id}")
             except Exception as e:

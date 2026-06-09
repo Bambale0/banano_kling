@@ -7,9 +7,18 @@ from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import config
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_URL,
+    SUBSCRIPTION_CHECK_CALLBACK,
+)
 from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _video_prompt_price_label() -> str:
+    value = float(preset_manager.get_video_prompt_cost())
+    return f"{value:g}"
 
 
 def load_prices():
@@ -34,7 +43,7 @@ except Exception:
 # =============================================================================
 
 
-def get_main_menu_keyboard(user_credits: int = 0):
+def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None):
     """Аккуратное главное меню: сценарии сверху, детали моделей внутри разделов."""
     builder = InlineKeyboardBuilder()
 
@@ -47,6 +56,7 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
+    builder.button(text=f"🎞 Промпт по видео • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt")
     builder.button(text="🖼 Лента", callback_data="menu_feed")
     builder.button(text="📚 Библиотека промптов", callback_data="menu_prompts")
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
@@ -56,9 +66,9 @@ def get_main_menu_keyboard(user_credits: int = 0):
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 2, 2, 2)
     else:
-        builder.adjust(2, 2, 2, 2, 2, 1)
+        builder.adjust(2, 2, 2, 2, 2, 2)
 
     return builder.as_markup()
 
@@ -140,9 +150,15 @@ def get_more_menu_keyboard():
     return builder.as_markup()
 
 
-def get_admin_keyboard():
+def get_admin_keyboard(subscription_required: bool | None = None):
     """Админ-панель"""
     builder = InlineKeyboardBuilder()
+    if subscription_required is None:
+        subscription_label = "🔐 Подписка на канал"
+    else:
+        subscription_label = (
+            "🔐 Подписка: ВКЛ" if subscription_required else "🔓 Подписка: ВЫКЛ"
+        )
     builder.button(text="🔄 Перезагрузить пресеты", callback_data="admin_reload")
     builder.button(text="📊 Статистика", callback_data="admin_stats")
     builder.button(text="👥 Пользователи", callback_data="admin_users")
@@ -153,9 +169,25 @@ def get_admin_keyboard():
     builder.button(text="📚 Промпты", callback_data="admin_prompts")
     builder.button(text="🤖 ИИ-админ", callback_data="admin_ai")
     builder.button(text="📘 Инструкция ИИ", callback_data="admin_ai_help")
+    builder.button(
+        text=subscription_label,
+        callback_data="admin_required_subscription_toggle",
+    )
+    builder.button(text=f"🎞 Видео → prompt • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt")
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 2, 2, 2)
+    return builder.as_markup()
+
+
+def get_required_subscription_keyboard(
+    channel_url: str = REQUIRED_CHANNEL_URL,
+) -> types.InlineKeyboardMarkup:
+    """Keyboard shown when required channel subscription is enabled."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Подписаться на канал", url=channel_url)
+    builder.button(text="✅ Проверить подписку", callback_data=SUBSCRIPTION_CHECK_CALLBACK)
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -171,6 +203,7 @@ SUPPORTED_RATIOS = {
     "v3_omni_std": ["16:9", "9:16", "1:1"],
     "v3_omni_pro": ["16:9", "9:16", "1:1"],
     "grok_imagine": ["16:9", "9:16", "1:1", "3:2", "2:3"],
+    "grok_imagine_v15": ["auto", "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"],
     "seedance_2": ["16:9", "9:16", "1:1"],
     "motion_control_v26": ["1:1"],
     "glow": ["16:9", "9:16", "1:1"],
@@ -189,6 +222,7 @@ VIDEO_MODEL_LABELS = {
     "avatar_pro": "Kling AI Avatar Pro",
     "motion_control_v26": "Kling 2.6 Motion Control",
     "grok_imagine": "Grok Imagine",
+    "grok_imagine_v15": "Grok Imagine 1.5",
     "seedance_2": "Bytedance Seedance 2.0",
     "glow": "Kling Glow",
     "veo3": "Veo 3.1 Quality",
@@ -240,8 +274,11 @@ def _video_pricing_quality(
     veo_resolution: str = "720p",
     omni_resolution: str = "720p",
     motion_quality: str = "720p",
+    grok_resolution: str = "480p",
 ) -> str | None:
     key = preset_manager.normalize_video_model_key(model)
+    if key == "grok_imagine_v15":
+        return grok_resolution
     if key.startswith("veo3"):
         return veo_resolution
     if key == "gemini_omni_video":
@@ -262,7 +299,12 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
         (
             "grok_imagine",
             "🧠 Grok Imagine",
-            preset_manager.get_video_cost("grok_imagine", 5),
+            preset_manager.get_video_cost("grok_imagine", 6),
+        ),
+        (
+            "grok_imagine_v15",
+            "🧠 Grok Imagine 1.5 NEW🔥🔥🔥",
+            preset_manager.get_video_cost("grok_imagine_v15", 8),
         ),
         (
             "seedance_2",
@@ -302,9 +344,14 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
         check = "✅ " if current_model == model_key else ""
         if model_key == "gemini_omni" and current_model.startswith("gemini_omni"):
             check = "✅ "
-        default_duration = (
-            6 if model_key.startswith("veo3") or model_key.startswith("gemini_omni") else 5
-        )
+        if model_key == "grok_imagine_v15":
+            default_duration = 8
+        elif model_key == "grok_imagine":
+            default_duration = 6
+        elif model_key.startswith("veo3") or model_key.startswith("gemini_omni"):
+            default_duration = 6
+        else:
+            default_duration = 5
         pricing_quality = (
             "720p"
             if model_key.startswith("veo3") or model_key == "gemini_omni"
@@ -393,6 +440,23 @@ def get_video_media_step_keyboard(
         builder.adjust(1, 2)
         return builder.as_markup()
 
+    if current_model in {"grok_imagine", "grok_imagine_v15"}:
+        start_status = "загружено" if has_start_image else "не загружено"
+        builder.button(
+            text=f"📷 Стартовое фото: {start_status}",
+            callback_data="ignore",
+        )
+        if current_model == "grok_imagine" and reference_image_count:
+            builder.button(
+                text=f"🧩 Доп. референсы: {reference_image_count}",
+                callback_data="ignore",
+            )
+        builder.button(text="▶️ К настройкам", callback_data="video_media_continue")
+        builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
+        builder.button(text="🏠 Главное меню", callback_data="back_main")
+        builder.adjust(1, 1, 1, 2)
+        return builder.as_markup()
+
     if current_model == "gemini_omni_video":
         image_count = (1 if has_start_image else 0) + reference_image_count
         text_check = "✅ " if current_v_type == "text" else ""
@@ -467,6 +531,7 @@ def get_create_video_keyboard(
     current_orientation: str = "video",
     current_video_model: str = None,  # Алиас для обратной совместимости
     current_grok_mode: str = "normal",
+    current_grok_resolution: str = "480p",
     current_veo_generation_type: str = "TEXT_2_VIDEO",
     current_veo_translation: bool = True,
     current_veo_resolution: str = "720p",
@@ -512,8 +577,22 @@ def get_create_video_keyboard(
     if current_model not in no_ratio_duration_models:
         supported_ratios = SUPPORTED_RATIOS.get(current_model, ["16:9", "9:16", "1:1"])
         for ratio in supported_ratios:
-            check = "✅ " if current_ratio == ratio else ""
-            label = ratio.replace(":", "∶")  # визуально лучше
+            if current_model == "grok_imagine_v15":
+                check = "● " if current_ratio == ratio else "○ "
+                ratio_label_map = {
+                    "auto": "Auto",
+                    "16:9": "16×9",
+                    "9:16": "9×16",
+                    "1:1": "1×1",
+                    "4:3": "4×3",
+                    "3:4": "3×4",
+                    "3:2": "3×2",
+                    "2:3": "2×3",
+                }
+                label = ratio_label_map.get(ratio, ratio.replace(":", "×"))
+            else:
+                check = "✅ " if current_ratio == ratio else ""
+                label = ratio.replace(":", "∶")  # визуально лучше
             ratio_buttons.append(
                 InlineKeyboardButton(
                     text=f"{check}{label}",
@@ -529,8 +608,12 @@ def get_create_video_keyboard(
             .get(current_model, {})
         )
         duration_costs = model_data_for_durations.get("duration_costs", {})
-        if current_model.startswith("veo3"):
-            available_durations = [2, 4, 6, 8, 10]
+        if current_model == "grok_imagine_v15":
+            available_durations = [5, 10, 15]
+            if current_duration not in available_durations:
+                available_durations = sorted({*available_durations, int(current_duration)})
+        elif current_model.startswith("veo3"):
+            available_durations = [4, 6, 8]
         elif current_model in {"gemini_omni", "gemini_omni_video"}:
             available_durations = [4, 6, 8, 10]
         elif duration_costs:
@@ -540,12 +623,16 @@ def get_create_video_keyboard(
 
         show_durations = True
         for dur in available_durations:
-            check = "✅ " if current_duration == dur else ""
-            builder.button(text=f"{check}{dur} сек", callback_data=f"video_dur_{dur}")
+            if current_model == "grok_imagine_v15":
+                check = "● " if current_duration == dur else "○ "
+                label = f"{dur}с"
+            else:
+                check = "✅ " if current_duration == dur else ""
+                label = f"{dur} сек"
+            builder.button(text=f"{check}{label}", callback_data=f"video_dur_{dur}")
     else:
         show_durations = False
 
-    # Grok Imagine modes
     if current_model == "grok_imagine":
         normal_check = "✅ " if current_grok_mode == "normal" else ""
         fun_check = "✅ " if current_grok_mode == "fun" else ""
@@ -553,6 +640,15 @@ def get_create_video_keyboard(
         builder.button(text=f"{normal_check}Normal", callback_data="grok_mode_normal")
         builder.button(text=f"{fun_check}Fun 🎉", callback_data="grok_mode_fun")
         builder.button(text=f"{spicy_check}Spicy 🔥", callback_data="grok_mode_spicy")
+
+    if current_model == "grok_imagine_v15":
+        for resolution in ("480p", "720p"):
+            check = "● " if current_grok_resolution == resolution else "○ "
+            label = "SD 480p" if resolution == "480p" else "HD 720p"
+            builder.button(
+                text=f"{check}{label}",
+                callback_data=f"grok_resolution_{resolution}",
+            )
 
     if current_model.startswith("veo3"):
         translate_check = "✅ " if current_veo_translation else ""
@@ -696,6 +792,7 @@ def get_create_video_keyboard(
         current_veo_resolution,
         current_omni_resolution,
         current_mode,
+        current_grok_resolution,
     )
     total_cost = preset_manager.get_video_cost_with_quality(
         current_model, current_duration, pricing_quality
@@ -713,14 +810,28 @@ def get_create_video_keyboard(
 
     widths = [2]
     if ratio_buttons:
-        widths.append(len(ratio_buttons))
+        if current_model == "grok_imagine_v15":
+            remaining_ratio_buttons = len(ratio_buttons)
+            while remaining_ratio_buttons > 0:
+                row_width = min(2, remaining_ratio_buttons)
+                widths.append(row_width)
+                remaining_ratio_buttons -= row_width
+        else:
+            widths.append(len(ratio_buttons))
     if show_durations and available_durations:
-        widths.append(len(available_durations))
+        remaining_durations = len(available_durations)
+        while remaining_durations > 0:
+            row_width = min(2 if current_model == "grok_imagine_v15" else 8, remaining_durations)
+            widths.append(row_width)
+            remaining_durations -= row_width
     grok_width = 3 if current_model == "grok_imagine" else 0
+    grok_v15_width = 2 if current_model == "grok_imagine_v15" else 0
     if current_v_type == "video":
         widths += [4, 2]
     if grok_width:
         widths += [grok_width]
+    if grok_v15_width:
+        widths += [grok_v15_width]
     if current_model.startswith("veo3"):
         widths += [1]
         if current_v_type == "imgtxt":
@@ -1130,6 +1241,15 @@ def get_photo_prompt_result_keyboard(prompt_en: str, prompt_ru: str = "", negati
     return builder.as_markup()
 
 
+def get_video_prompt_result_keyboard():
+    """Клавиатура для результата функции «Промпт по видео»."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"🆕 Новый видео-промпт • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
 def get_back_keyboard(callback_data: str = "back_main"):
     """Кнопка назад с быстрым возвратом в главное меню."""
     builder = InlineKeyboardBuilder()
@@ -1191,6 +1311,7 @@ def get_image_result_keyboard(
     builder.button(text="📥 Скачать оригинал", url=image_url)
     if task_id:
         builder.button(text="🎬 Оживить в Grok", callback_data=f"grokvid_{task_id}")
+        builder.button(text="🎬 Grok 1.5 NEW🔥🔥🔥", callback_data=f"grok15vid_{task_id}")
         builder.button(
             text="🗑 Убрать из ленты" if is_public_feed else "🖼 В ленту",
             callback_data=f"feedrm_{task_id}" if is_public_feed else f"feedpub_{task_id}",
@@ -1202,7 +1323,7 @@ def get_image_result_keyboard(
         builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
         builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 2, 2, 1)
+    builder.adjust(1, 2, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -1268,8 +1389,9 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     builder.button(text="📈 Детальная статистика", callback_data="partner_stats")
     builder.button(text="🔄 Обновить", callback_data="menu_partner")
     builder.button(text="🎟️ Вывод заработка", callback_data="partner_withdraw")
+    builder.button(text="🍌 Обменять на бананы", callback_data="partner_exchange")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1, 1, 1)
+    builder.adjust(1, 1, 1, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -1296,9 +1418,16 @@ def get_settings_keyboard(
     current_model: str = "flash",
     current_video_model: str = "v3_std",
     current_i2v_model: str = "v3_std",
+    referral_purchase_notifications_enabled: bool = True,
 ):
     """Клавиатура настроек (для совместимости)"""
     builder = InlineKeyboardBuilder()
+    notify_label = "вкл" if referral_purchase_notifications_enabled else "выкл"
+    notify_icon = "🔔" if referral_purchase_notifications_enabled else "🔕"
+    builder.button(
+        text=f"{notify_icon} Покупки рефералов: {notify_label}",
+        callback_data="settings_ref_purchase_notify_toggle",
+    )
     builder.button(text="🔙 Назад в главное меню", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -1309,6 +1438,7 @@ def get_settings_keyboard_with_ai(
     current_video_model: str = "v3_std",
     current_i2v_model: str = "v3_std",
     image_service: str = "nanobanana",
+    referral_purchase_notifications_enabled: bool = True,
 ):
     """Расширенная клавиатура настроек, которую используют callbacks настроек."""
     builder = InlineKeyboardBuilder()
@@ -1349,9 +1479,15 @@ def get_settings_keyboard_with_ai(
         check = "✅ " if current_i2v_model == model else ""
         builder.button(text=f"{check}{label}", callback_data=f"settings_i2v_{model}")
 
+    notify_label = "вкл" if referral_purchase_notifications_enabled else "выкл"
+    notify_icon = "🔔" if referral_purchase_notifications_enabled else "🔕"
+    builder.button(
+        text=f"{notify_icon} Покупки рефералов: {notify_label}",
+        callback_data="settings_ref_purchase_notify_toggle",
+    )
     builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 2, 2, 3, 3, 2)
+    builder.adjust(2, 2, 2, 3, 3, 1, 2)
     return builder.as_markup()
 
 

@@ -2,4 +2,4 @@
 2:I[7121,[],""]
 3:I[4581,[],""]
 4:[]
-0:{"rsc":["$","$1","c",{"children":[null,["$","$L2",null,{"parallelRouterKey":"children","template":["$","$L3",null,{}]}]]}],"isPartial":false,"staleTime":300,"varyParams":"$W4","buildId":"nBPom0Hr2GEtYb3mV8NJ0"}
+0:{"rsc":["$","$1","c",{"children":[null,["$","$L2",null,{"parallelRouterKey":"children","template":["$","$L3",null,{}]}]]}],"isPartial":false,"staleTime":300,"varyParams":"$W4","buildId":"gfJMQ2Z2O17RkvBjVPe1Y"}

@@ -12,6 +12,8 @@ VIDEO_REFERENCE_LIMITS = {
 }
 
 VIDEO_IMAGE_REFERENCE_LIMITS = {
+    "grok_imagine": 7,
+    "grok_imagine_v15": 1,
     "seedance_2": 9,
     "gemini_omni": 7,
     "gemini_omni_video": 7,

@@ -38,9 +38,11 @@ from bot.database import (
     get_promo_code_details,
     get_promo_code_by_id,
     get_user_stats,
+    is_channel_subscription_required,
     normalize_promo_code,
     set_maintenance_mode,
     reject_prompt,
+    set_channel_subscription_required,
     set_promo_code_active,
     set_user_banned,
 )
@@ -50,6 +52,10 @@ from bot.keyboards import (
     get_main_menu_button_keyboard,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.subscription_service import (
+    REQUIRED_CHANNEL_USERNAME,
+    clear_required_subscription_cache,
+)
 from bot.services.admin_ai_service import (
     admin_ai_service,
     normalize_plan,
@@ -113,6 +119,22 @@ ADMIN_FINANCE_SECTION_TITLES = {
     "partner_commissions": "Партнёрские начисления",
     "withdrawals": "Выводы партнёров",
 }
+
+
+def _format_admin_panel_text(stats: dict, subscription_required: bool) -> str:
+    subscription_status = "включена" if subscription_required else "выключена"
+    return f"""
+🔧 <b>Админ-панель</b>
+
+📊 <b>Статистика:</b>
+• Пользователей: <code>{stats['total_users']}</code>
+• Генераций: <code>{stats['total_generations']}</code>
+• Транзакций: <code>{stats['total_transactions']}</code>
+• Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
+• Подписка на @{REQUIRED_CHANNEL_USERNAME}: <b>{subscription_status}</b>
+
+Выберите действие:
+"""
 ADMIN_FINANCE_COLUMNS = {
     "topups": [
         ("id", "ID"),
@@ -296,6 +318,16 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
                 types.InlineKeyboardButton(
                     text="🎬 Цены видео", callback_data="admin_prices_videos"
                 ),
+            ],
+                        [
+                types.InlineKeyboardButton(
+                    text="🤝 Обмен партнёров", callback_data="admin_prices_partner_exchange"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🎞 Видео-промпт", callback_data="admin_prices_video_prompt"
+                )
             ],
             [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
         ]
@@ -984,6 +1016,24 @@ def _update_price_value(target: str, key: str, field: str, value):
             duration_costs = model.setdefault("duration_costs", {})
             old_value = duration_costs[field]
             duration_costs[field] = value
+        preset_manager.update_price_config(price_config)
+        return old_value
+
+    if target == "partner_exchange":
+        exchange_cfg = price_config.setdefault("partner_exchange", {})
+        if field != "rub_per_credit":
+            raise KeyError("partner_exchange")
+        old_value = float(exchange_cfg.get("rub_per_credit", 10))
+        exchange_cfg["rub_per_credit"] = float(value)
+        preset_manager.update_price_config(price_config)
+        return old_value
+
+    if target == "service":
+        service_prices = price_config.setdefault("service_prices", {})
+        if key != "video_prompt" or field != "cost":
+            raise KeyError("service")
+        old_value = float(service_prices.get("video_prompt", 3))
+        service_prices["video_prompt"] = float(value)
         preset_manager.update_price_config(price_config)
         return old_value
 
@@ -1998,20 +2048,14 @@ async def cmd_admin(message: types.Message):
         return
 
     stats = await get_admin_stats()
+    subscription_required = await is_channel_subscription_required()
+    text = _format_admin_panel_text(stats, subscription_required)
 
-    text = f"""
-🔧 <b>Админ-панель</b>
-
-📊 <b>Статистика:</b>
-• Пользователей: <code>{stats['total_users']}</code>
-• Генераций: <code>{stats['total_generations']}</code>
-• Транзакций: <code>{stats['total_transactions']}</code>
-• Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
-
-Выберите действие:
-"""
-
-    await message.answer(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+    await message.answer(
+        text,
+        reply_markup=get_admin_keyboard(subscription_required),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("admin_ai"))
@@ -2228,6 +2272,38 @@ async def admin_reload_presets(callback: types.CallbackQuery):
     )
 
 
+@router.callback_query(F.data == "admin_required_subscription_toggle")
+async def admin_required_subscription_toggle(callback: types.CallbackQuery):
+    """Toggle required subscription to the public prompt channel."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    current = await is_channel_subscription_required()
+    enabled = not current
+    updated = await set_channel_subscription_required(
+        enabled,
+        updated_by_telegram_id=callback.from_user.id,
+    )
+    if not updated:
+        await callback.answer("Не удалось обновить настройку", show_alert=True)
+        return
+
+    if not enabled:
+        clear_required_subscription_cache()
+
+    stats = await get_admin_stats()
+    await callback.message.edit_text(
+        _format_admin_panel_text(stats, enabled),
+        reply_markup=get_admin_keyboard(enabled),
+        parse_mode="HTML",
+    )
+    await callback.answer(
+        "Проверка подписки включена" if enabled else "Проверка подписки выключена",
+        show_alert=True,
+    )
+
+
 @router.callback_query(F.data == "admin_prices")
 async def admin_prices_menu(callback: types.CallbackQuery, state: FSMContext):
     """Меню управления ценами."""
@@ -2284,6 +2360,59 @@ async def admin_prices_videos(callback: types.CallbackQuery):
         "🎬 <b>Цены на видео</b>\n\n"
         "Цена указана за <b>1 секунду</b>. Выберите модель для редактирования.",
         reply_markup=_admin_video_prices_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_prices_partner_exchange")
+async def admin_prices_partner_exchange(callback: types.CallbackQuery, state: FSMContext):
+    """Экран настройки курса обмена партнёрского баланса в бананы."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    current_value = preset_manager.get_partner_exchange_rub_per_credit()
+    await state.set_state(AdminStates.waiting_price_value)
+    await state.update_data(
+        price_target="partner_exchange",
+        price_key="partner_exchange",
+        price_field="rub_per_credit",
+        current_price_value=current_value,
+        return_to="admin_prices_partner_exchange",
+    )
+    await callback.message.edit_text(
+        "🤝 <b>Обмен партнёрского баланса</b>\n\n"
+        f"Текущий курс: <code>{current_value:g}</code> ₽ → <code>1</code> 🍌\n\n"
+        "Отправьте новую цену одного банана в рублях.\n"
+        "Например: <code>10</code> — это 10 ₽ за 1 🍌.",
+        reply_markup=get_back_keyboard("admin_prices"),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "admin_prices_video_prompt")
+async def admin_prices_video_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Экран настройки стоимости сервиса «видео-промпт»."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    current_value = preset_manager.get_video_prompt_cost()
+    await state.set_state(AdminStates.waiting_price_value)
+    await state.update_data(
+        price_target="service",
+        price_key="video_prompt",
+        price_field="cost",
+        current_price_value=current_value,
+        return_to="admin_prices_video_prompt",
+    )
+    await callback.message.edit_text(
+        "🎞 <b>Видео-промпт</b>\n\n"
+        f"Текущая стоимость: <code>{current_value:g}</code> 🍌\n\n"
+        "Отправьте новую стоимость одним сообщением.",
+        reply_markup=get_back_keyboard("admin_prices"),
         parse_mode="HTML",
     )
 
@@ -3447,10 +3576,12 @@ async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContex
 @router.message(AdminStates.waiting_broadcast_text)
 async def admin_process_broadcast_text(message: types.Message, state: FSMContext):
     """Показывает превью рассылки"""
-    broadcast_photo_file_id = None
+    broadcast_media_type = None
+    broadcast_media_file_id = None
 
     if message.photo:
-        broadcast_photo_file_id = message.photo[-1].file_id
+        broadcast_media_type = "photo"
+        broadcast_media_file_id = message.photo[-1].file_id
         broadcast_text = (message.caption or "").strip()
 
         if len(broadcast_text) > BROADCAST_PHOTO_CAPTION_LIMIT:
@@ -3461,12 +3592,25 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
                 parse_mode="HTML",
             )
             return
+    elif message.video:
+        broadcast_media_type = "video"
+        broadcast_media_file_id = message.video.file_id
+        broadcast_text = (message.caption or "").strip()
+
+        if len(broadcast_text) > BROADCAST_PHOTO_CAPTION_LIMIT:
+            await message.answer(
+                "❌ Подпись к видео слишком длинная.\n"
+                f"Максимум: <code>{BROADCAST_PHOTO_CAPTION_LIMIT}</code> символов.",
+                reply_markup=get_back_keyboard("admin_back"),
+                parse_mode="HTML",
+            )
+            return
     elif message.text:
         broadcast_text = message.text.strip()
 
         if not broadcast_text:
             await message.answer(
-                "❌ Текст рассылки пустой. Отправьте текст или фото.",
+                "❌ Текст рассылки пустой. Отправьте текст, фото или видео.",
                 reply_markup=get_back_keyboard("admin_back"),
             )
             return
@@ -3481,24 +3625,37 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
             return
     else:
         await message.answer(
-            "❌ Для рассылки отправьте текст или фото с необязательной подписью.",
+            "❌ Для рассылки отправьте текст, фото или видео с необязательной подписью.",
             reply_markup=get_back_keyboard("admin_back"),
         )
         return
 
     await state.update_data(
         broadcast_text=broadcast_text,
-        broadcast_photo_file_id=broadcast_photo_file_id,
+        broadcast_media_type=broadcast_media_type,
+        broadcast_media_file_id=broadcast_media_file_id,
     )
 
-    if broadcast_photo_file_id:
+    if broadcast_media_type == "photo":
         await message.answer_photo(
-            photo=broadcast_photo_file_id,
+            photo=broadcast_media_file_id,
             caption=broadcast_text or None,
             parse_mode="HTML" if broadcast_text else None,
         )
         await message.answer(
             "📢 <b>Превью рассылки с фото выше.</b>\n\n"
+            "Подтверждаете отправку?",
+            reply_markup=_broadcast_confirm_keyboard(),
+            parse_mode="HTML",
+        )
+    elif broadcast_media_type == "video":
+        await message.answer_video(
+            video=broadcast_media_file_id,
+            caption=broadcast_text or None,
+            parse_mode="HTML" if broadcast_text else None,
+        )
+        await message.answer(
+            "📢 <b>Превью рассылки с видео выше.</b>\n\n"
             "Подтверждаете отправку?",
             reply_markup=_broadcast_confirm_keyboard(),
             parse_mode="HTML",
@@ -3528,11 +3685,12 @@ async def admin_execute_broadcast(
 
     data = await state.get_data()
     broadcast_text = data.get("broadcast_text")
-    broadcast_photo_file_id = data.get("broadcast_photo_file_id")
+    broadcast_media_type = data.get("broadcast_media_type")
+    broadcast_media_file_id = data.get("broadcast_media_file_id")
 
-    if not broadcast_text and not broadcast_photo_file_id:
+    if not broadcast_text and not broadcast_media_file_id:
         await callback.message.edit_text(
-            "❌ Не найден текст или фото для рассылки.",
+            "❌ Не найден текст, фото или видео для рассылки.",
             reply_markup=get_admin_keyboard(),
         )
         await state.clear()
@@ -3542,9 +3700,7 @@ async def admin_execute_broadcast(
         "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
     )
 
-    # Получаем всех пользователей
     import aiosqlite
-
     from bot.database import DATABASE_PATH
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -3557,10 +3713,17 @@ async def admin_execute_broadcast(
 
     for user in users:
         try:
-            if broadcast_photo_file_id:
+            if broadcast_media_type == "photo":
                 await bot.send_photo(
                     user["telegram_id"],
-                    photo=broadcast_photo_file_id,
+                    photo=broadcast_media_file_id,
+                    caption=broadcast_text or None,
+                    parse_mode="HTML" if broadcast_text else None,
+                )
+            elif broadcast_media_type == "video":
+                await bot.send_video(
+                    user["telegram_id"],
+                    video=broadcast_media_file_id,
                     caption=broadcast_text or None,
                     parse_mode="HTML" if broadcast_text else None,
                 )
@@ -3593,19 +3756,11 @@ async def admin_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
 
     await state.clear()
     stats = await get_admin_stats()
-
-    text = f"""
-🔧 <b>Админ-панель</b>
-
-📊 <b>Статистика:</b>
-• Пользователей: <code>{stats['total_users']}</code>
-• Генераций: <code>{stats['total_generations']}</code>
-• Транзакций: <code>{stats['total_transactions']}</code>
-• Выручка: <code>{stats['total_revenue']:.0f}</code> ₽
-
-Выберите действие:
-"""
+    subscription_required = await is_channel_subscription_required()
+    text = _format_admin_panel_text(stats, subscription_required)
 
     await callback.message.edit_text(
-        text, reply_markup=get_admin_keyboard(), parse_mode="HTML"
+        text,
+        reply_markup=get_admin_keyboard(subscription_required),
+        parse_mode="HTML",
     )

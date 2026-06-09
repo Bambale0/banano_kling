@@ -10,9 +10,52 @@ from bot.services.media_input_utils import image_sources_to_provider_safe_png_ur
 
 logger = logging.getLogger(__name__)
 
+GROK_V15_VIDEO_MODEL = "grok-imagine-video-1-5-preview"
+GROK_V15_ASPECT_RATIOS = {
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "auto",
+}
+GROK_V15_RESOLUTIONS = {"480p", "720p"}
+
 
 class GrokService(KlingService):
     """Wrapper for Grok Imagine via Kie.ai"""
+
+    @staticmethod
+    def _safe_v15_duration(duration: int) -> int:
+        try:
+            value = int(duration)
+        except (TypeError, ValueError):
+            value = 8
+        return max(1, min(15, value))
+
+    @staticmethod
+    def _safe_v15_aspect_ratio(aspect_ratio: str) -> str:
+        value = str(aspect_ratio or "auto").strip()
+        return value if value in GROK_V15_ASPECT_RATIOS else "auto"
+
+    @staticmethod
+    def _safe_v15_resolution(resolution: str) -> str:
+        value = str(resolution or "480p").strip().lower()
+        return value if value in GROK_V15_RESOLUTIONS else "480p"
+
+    async def _upload_video_reference_images(
+        self, image_urls: List[str], *, max_count: int
+    ) -> list[str]:
+        safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls[:max_count])
+        return [
+            url
+            for url in await kie_file_upload_service.upload_local_image_sources(
+                safe_image_urls
+            )
+            if isinstance(url, str) and url
+        ]
 
     async def generate_image_to_video(
         self,
@@ -25,20 +68,17 @@ class GrokService(KlingService):
         nsfw_checker: bool = False,
         callBackUrl: Optional[str] = None,
     ) -> Optional[Dict]:
-        """Generate video from images using Grok Imagine"""
-        safe_image_urls = image_sources_to_provider_safe_png_urls(image_urls[:7])  # max 7
-        uploaded_image_urls = [
-            url
-            for url in await kie_file_upload_service.upload_local_image_sources(safe_image_urls)
-            if isinstance(url, str) and url
-        ]
+        """Generate video from images using the legacy Grok Imagine i2v model."""
+        uploaded_image_urls = await self._upload_video_reference_images(
+            image_urls,
+            max_count=7,
+        )
         if image_urls and not uploaded_image_urls:
             logger.error("Grok image-to-video create_task aborted: no usable reference images")
             return None
         logger.info(
-            "Grok image-to-video payload prepared: refs=%s transport=%s",
+            "Grok image-to-video payload prepared: refs=%s",
             len(uploaded_image_urls),
-            "kie_file_upload_urls" if uploaded_image_urls != safe_image_urls else "image_input_urls",
         )
         input_data = {
             "image_urls": uploaded_image_urls,
@@ -55,6 +95,48 @@ class GrokService(KlingService):
         }
         if callBackUrl:
             payload["callBackUrl"] = callBackUrl
+        return await self._kie_post("/api/v1/jobs/createTask", payload)
+
+    async def generate_image_to_video_v15(
+        self,
+        image_urls: List[str],
+        prompt: str = "",
+        duration: int = 8,
+        resolution: str = "480p",
+        aspect_ratio: str = "auto",
+        nsfw_checker: bool = False,
+        callBackUrl: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Generate video from one image using Grok Imagine Video 1.5 Preview."""
+        uploaded_image_urls = await self._upload_video_reference_images(
+            image_urls,
+            max_count=1,
+        )
+        if image_urls and not uploaded_image_urls:
+            logger.error("Grok 1.5 create_task aborted: no usable start image")
+            return None
+
+        input_data = {
+            "prompt": str(prompt or "").strip()[:4096],
+            "image_urls": uploaded_image_urls[:1],
+            "aspect_ratio": self._safe_v15_aspect_ratio(aspect_ratio),
+            "resolution": self._safe_v15_resolution(resolution),
+            "duration": self._safe_v15_duration(duration),
+            "nsfw_checker": bool(nsfw_checker),
+        }
+        payload = {
+            "model": GROK_V15_VIDEO_MODEL,
+            "input": input_data,
+        }
+        if callBackUrl:
+            payload["callBackUrl"] = callBackUrl
+        logger.info(
+            "Grok 1.5 video payload prepared: refs=%s duration=%s resolution=%s ratio=%s",
+            len(uploaded_image_urls),
+            input_data["duration"],
+            input_data["resolution"],
+            input_data["aspect_ratio"],
+        )
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 
     async def generate_image_to_image(

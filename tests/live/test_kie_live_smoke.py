@@ -213,6 +213,7 @@ async def _create_kling_glow(api_key: str) -> dict:
         prompt="Live smoke test: glow preset on the sample character",
         model="glow",
         image_url=PUBLIC_MOTION_IMAGE_URL,
+        video_urls=[PUBLIC_MOTION_VIDEO_URL],
     )
 
 
@@ -322,6 +323,20 @@ async def _create_grok_i2v(api_key: str) -> dict | None:
     )
 
 
+async def _create_grok_i2v_v15(api_key: str) -> dict | None:
+    from bot.services.grok_service import GrokService
+
+    service = GrokService(kie_key=api_key)
+    return await service.generate_image_to_video_v15(
+        image_urls=[PUBLIC_IMAGE_URL],
+        prompt="Live smoke test: subtle camera movement only",
+        duration=8,
+        resolution="480p",
+        aspect_ratio="auto",
+        nsfw_checker=False,
+    )
+
+
 async def _create_veo3_fast(api_key: str) -> dict | None:
     from bot.services.veo_service import VeoService
 
@@ -329,7 +344,7 @@ async def _create_veo3_fast(api_key: str) -> dict | None:
     return await service.generate_video(
         prompt="Live smoke test: a pencil rolls gently on a clean table",
         model="veo3_fast",
-        duration=2,
+        duration=4,
         aspect_ratio="16:9",
         enable_translation=False,
         resolution="720p",
@@ -343,7 +358,7 @@ async def _create_veo3_lite(api_key: str) -> dict | None:
     return await service.generate_video(
         prompt="Live smoke test: a pencil rolls gently on a clean table",
         model="veo3_lite",
-        duration=2,
+        duration=4,
         aspect_ratio="16:9",
         enable_translation=False,
         resolution="720p",
@@ -357,7 +372,7 @@ async def _create_veo3_quality(api_key: str) -> dict | None:
     return await service.generate_video(
         prompt="Live smoke test: a pencil rolls gently on a clean table",
         model="veo3",
-        duration=2,
+        duration=4,
         aspect_ratio="16:9",
         enable_translation=False,
         resolution="720p",
@@ -405,6 +420,18 @@ async def _create_gemini_omni_video(api_key: str) -> dict:
     )
 
 
+async def _analyze_video_prompt(api_key: str) -> dict:
+    from bot.services.video_prompt_service import VideoPromptService
+
+    service = VideoPromptService(api_key=api_key)
+    return await service.analyze_video(
+        video_url=PUBLIC_MOTION_VIDEO_URL,
+        user_note="Live smoke test: describe this clip for generating a similar short video.",
+        duration_seconds=5,
+        filename="live_smoke_reference.mp4",
+    )
+
+
 LIVE_CASES: dict[str, Callable[[str], Awaitable[dict | None]]] = {
     "kling_3_std": _create_kling_3_std,
     "kling_3_pro": _create_kling_3_pro,
@@ -424,12 +451,17 @@ LIVE_CASES: dict[str, Callable[[str], Awaitable[dict | None]]] = {
     "seedream_45_edit": _create_seedream_45_edit,
     "grok_i2i": _create_grok_i2i,
     "grok_i2v": _create_grok_i2v,
+    "grok_i2v_v15": _create_grok_i2v_v15,
     "veo3_fast": _create_veo3_fast,
     "veo3_lite": _create_veo3_lite,
     "veo3_quality": _create_veo3_quality,
     "wan27_image": _create_wan27_image,
     "wan27_image_pro": _create_wan27_image_pro,
     "gemini_omni_video": _create_gemini_omni_video,
+}
+
+LIVE_ANALYSIS_CASES: dict[str, Callable[[str], Awaitable[dict | None]]] = {
+    "video_prompt_analysis": _analyze_video_prompt,
 }
 
 
@@ -467,3 +499,16 @@ async def test_kie_create_task_live_smoke(case_name: str, kie_api_key: ApiKey):
 
     assert task_id, f"{case_name} did not return a task id: {result!r}"
     assert not (isinstance(result, dict) and result.get("error")), result
+
+
+@pytest.mark.parametrize("case_name", sorted(LIVE_ANALYSIS_CASES))
+async def test_kie_analysis_live_smoke(case_name: str, kie_api_key: ApiKey):
+    _require_case(case_name)
+
+    result = await LIVE_ANALYSIS_CASES[case_name](kie_api_key.value)
+
+    assert isinstance(result, dict), result
+    assert not result.get("error"), result
+    assert len(str(result.get("prompt_ru") or "")) > 80, result
+    assert len(str(result.get("prompt_en") or "")) > 80, result
+    assert str(result.get("provider") or "") in {"gpt-5.5", "gpt-5.5-frames"}, result

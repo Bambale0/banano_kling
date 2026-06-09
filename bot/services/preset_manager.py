@@ -38,6 +38,8 @@ CANONICAL_VIDEO_ALIASES = {
     "kling-v3-pro": "v3_pro",
     "v26_pro": "v26_pro",
     "grok_imagine": "grok_imagine",
+    "grok_imagine_v15": "grok_imagine_v15",
+    "grok-imagine-video-1-5-preview": "grok_imagine_v15",
     "seedance_2": "seedance_2",
     "bytedance/seedance-2": "seedance_2",
     "glow": "glow",
@@ -67,6 +69,8 @@ CANONICAL_VIDEO_ALIASES = {
 
 DEFAULT_IMAGE_COST = 3
 DEFAULT_VIDEO_COST = 8
+DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT = 10
+DEFAULT_VIDEO_PROMPT_COST = 3
 
 
 @dataclass
@@ -190,6 +194,16 @@ class PresetManager:
     def get_price_config(self) -> Dict:
         return deepcopy(self._price_config)
 
+    def get_partner_exchange_rub_per_credit(self) -> float:
+        exchange_cfg = self._price_config.get("partner_exchange", {}) or {}
+        value = exchange_cfg.get("rub_per_credit", DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT)
+        return float(value or DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT)
+
+    def get_video_prompt_cost(self) -> float:
+        service_prices = self._price_config.get("service_prices", {}) or {}
+        value = service_prices.get("video_prompt", DEFAULT_VIDEO_PROMPT_COST)
+        return float(value or DEFAULT_VIDEO_PROMPT_COST)
+
     def get_package(self, package_id: str) -> Optional[Dict]:
         for pkg in self.get_packages():
             if pkg["id"] == package_id:
@@ -227,6 +241,17 @@ class PresetManager:
             return ""
         return CANONICAL_VIDEO_ALIASES.get(model.lower(), model.lower())
 
+    def _clamp_video_duration(
+        self, duration: int, model_config: Dict | None = None
+    ) -> int:
+        """Clamp duration using model-specific bounds when the price config has them."""
+        model_config = model_config or {}
+        min_duration = int(model_config.get("duration_min", 3) or 3)
+        max_duration = int(model_config.get("duration_max", 30) or 30)
+        if min_duration > max_duration:
+            min_duration, max_duration = max_duration, min_duration
+        return max(min_duration, min(max_duration, int(duration)))
+
     def _format_cost(self, value):
         """Округляем до ближайшего 0.5 для поддержки дробных кредитов."""
         v = float(value)
@@ -252,25 +277,32 @@ class PresetManager:
         duration_costs = self._costs_reference().get("video_duration_costs", {})
 
         key = self.normalize_video_model_key(model)
-        duration = max(3, min(30, int(duration)))
+        model_config = video_models.get(key) or {}
+        duration = self._clamp_video_duration(duration, model_config)
 
         if key in video_models:
-            model_config = video_models[key] or {}
             specific = model_config.get("duration_costs", {})
             if str(duration) in specific:
-                return int(specific[str(duration)])
+                return self._format_cost(specific[str(duration)])
             base = model_config.get("base") or model_config.get("cost")
             if base is not None:
-                default_dur = 6 if key.startswith("veo3") or key.startswith("gemini_omni") else 5
+                default_dur = int(
+                    model_config.get("default_duration")
+                    or (
+                        6
+                        if key.startswith("veo3") or key.startswith("gemini_omni")
+                        else 5
+                    )
+                )
                 per_sec = base / default_dur
                 raw = duration * per_sec
-                return int(raw) if raw == int(raw) else round(raw * 2) / 2
+                return self._format_cost(raw)
 
         if key in legacy_keys:
             return int(legacy_keys[key])
 
         if str(duration) in duration_costs:
-            return int(duration_costs[str(duration)])
+            return self._format_cost(duration_costs[str(duration)])
 
         return DEFAULT_VIDEO_COST
 
@@ -295,10 +327,9 @@ class PresetManager:
                 }
                 if quality_key in quality_lookup:
                     per_sec = quality_lookup[quality_key]
-                    duration = max(3, min(30, int(duration)))
+                    duration = self._clamp_video_duration(duration, model_config)
                     raw = per_sec * duration
-                    cost = int(raw) if raw == int(raw) else round(raw * 2) / 2
-                    return self._format_cost(cost)
+                    return self._format_cost(raw)
         return self.get_video_cost(model, duration)
 
     def get_video_quality_costs(self, model: str) -> Dict[str, float]:

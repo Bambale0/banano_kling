@@ -283,6 +283,79 @@ def test_commission_awarded_every_payment(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.asyncio
+async def test_complete_transaction_notifies_referrer_about_purchase():
+    from bot import database
+    from bot.handlers.payments import _complete_transaction
+
+    referrer = await database.get_or_create_user(4101)
+    referred = await database.get_or_create_user(4102)
+    await database.process_referral(referred.telegram_id, referrer.referral_code)
+    await database.update_user_profile(
+        referred.telegram_id,
+        username="buyer_user",
+        first_name="Buyer",
+        last_name="User",
+    )
+    referred = await database.get_or_create_user(referred.telegram_id)
+
+    await database.create_transaction(
+        order_id="notify-referrer-order",
+        user_id=referred.id,
+        payment_id="notify-referrer-payment",
+        provider="yookassa",
+        credits=50,
+        amount_rub=160,
+        status="pending",
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    result = await _complete_transaction("notify-referrer-order", bot=bot)
+
+    assert result["ok"] is True
+    assert result["already_completed"] is False
+    bot.send_message.assert_awaited_once()
+    target_id, text = bot.send_message.await_args.args[:2]
+    assert target_id == referrer.telegram_id
+    assert "Покупка реферала" in text
+    assert "@buyer_user" in text
+    assert "Buyer User" in text
+    assert "<code>50</code>🍌" in text
+    assert "<code>48</code> ₽" in text
+
+
+@pytest.mark.asyncio
+async def test_complete_transaction_respects_disabled_referrer_purchase_notifications():
+    from bot import database
+    from bot.handlers.payments import _complete_transaction
+
+    referrer = await database.get_or_create_user(4201)
+    referred = await database.get_or_create_user(4202)
+    await database.process_referral(referred.telegram_id, referrer.referral_code)
+    await database.save_user_settings(
+        referrer.telegram_id,
+        referral_purchase_notifications_enabled=False,
+    )
+
+    await database.create_transaction(
+        order_id="silent-referrer-order",
+        user_id=referred.id,
+        payment_id="silent-referrer-payment",
+        provider="yookassa",
+        credits=25,
+        amount_rub=100,
+        status="pending",
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    result = await _complete_transaction("silent-referrer-order", bot=bot)
+
+    assert result["ok"] is True
+    bot.send_message.assert_not_awaited()
+    updated_referrer = await database.get_or_create_user(referrer.telegram_id)
+    assert updated_referrer.partner_balance_rub == 30
+
+
 def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")

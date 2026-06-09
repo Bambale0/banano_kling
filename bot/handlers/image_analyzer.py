@@ -3,6 +3,7 @@
 import asyncio
 import html
 import logging
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -14,9 +15,12 @@ from bot.keyboards import (
     get_back_keyboard,
     get_main_menu_button_keyboard,
     get_photo_prompt_result_keyboard,
+    get_video_prompt_result_keyboard,
 )
 from bot.services.photo_prompt_service import photo_prompt_service
+from bot.services.video_prompt_service import video_prompt_service
 from bot.services.media_input_utils import resolve_local_upload_path
+from bot.services.preset_manager import preset_manager
 from bot.states import ImageAnalyzerStates
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,25 @@ GPT_AUDIO_PROMPT_FORMATS = {
     "audio/flac": "flac",
     "audio/x-flac": "flac",
 }
+
+VIDEO_PROMPT_MIME_TYPES = (
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+    "video/x-m4v",
+)
+
+VIDEO_PROMPT_EXTENSIONS = {
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "video/x-m4v": "m4v",
+}
+
+
+def _video_prompt_cost() -> str:
+    value = float(preset_manager.get_video_prompt_cost())
+    return f"{value:g}"
 
 
 def _clip_text(text: str, limit: int) -> str:
@@ -99,10 +122,10 @@ def _format_photo_prompt_result_text(result: dict) -> str:
         provider_note = f"\n\n<i>Fallback: {html.escape(provider)}</i>"
 
     has_voice_context = bool(voice_summary or voice_description or gemini_omni_prompt)
-    prompt_ru_limit = 680 if has_voice_context else 900
-    prompt_en_limit = 980 if has_voice_context else 1400
-    negative_limit = 320 if has_voice_context else 450
-    model_hint_limit = 360 if has_voice_context else 500
+    prompt_ru_limit = 680 if has_voice_context else 1600
+    prompt_en_limit = 850 if has_voice_context else 950
+    negative_limit = 300 if has_voice_context else 350
+    model_hint_limit = 320 if has_voice_context else 360
 
     voice_note = ""
     if voice_summary or voice_description:
@@ -145,6 +168,59 @@ def _format_photo_prompt_result_text(result: dict) -> str:
     )
 
 
+def _format_video_prompt_result_text(result: dict) -> str:
+    prompt_ru = (result.get("prompt_ru") or "").strip()
+    prompt_en = (result.get("prompt_en") or "").strip()
+    negative_prompt = (result.get("negative_prompt") or "").strip()
+    camera_movement = (result.get("camera_movement_ru") or "").strip()
+    visual_style = (result.get("visual_style_ru") or "").strip()
+    audio_notes = (result.get("audio_notes_ru") or "").strip()
+    model_hint = (result.get("model_hint") or "").strip()
+    provider = (result.get("provider") or "").strip()
+    timeline = result.get("timeline_ru") or []
+
+    provider_note = ""
+    if provider:
+        provider_note = f"\n\n<i>Модель анализа: {html.escape(provider)}</i>"
+
+    timeline_lines = []
+    if isinstance(timeline, list):
+        timeline_lines = [
+            "• " + _escape_clip_text(str(item), 120)
+            for item in timeline[:6]
+            if str(item or "").strip()
+        ]
+    timeline_note = ""
+    if timeline_lines:
+        timeline_note = "\n\n<b>Динамика:</b>\n" + "\n".join(timeline_lines)
+
+    audio_note = ""
+    if audio_notes:
+        audio_note = (
+            "\n\n<b>Звук:</b>\n"
+            f"{_escape_clip_text(audio_notes, 220)}"
+        )
+
+    return (
+        "✅ <b>Промпт по видео готов</b>\n\n"
+        "<b>Prompt RU:</b>\n"
+        f"<pre>{_escape_clip_text(prompt_ru or '—', 950)}</pre>\n\n"
+        "<b>Prompt EN:</b>\n"
+        f"<pre>{_escape_clip_text(prompt_en or '—', 680)}</pre>\n\n"
+        "<b>Камера:</b>\n"
+        f"{_escape_clip_text(camera_movement or '—', 220)}"
+        f"{timeline_note}\n\n"
+        "<b>Стиль:</b>\n"
+        f"{_escape_clip_text(visual_style or '—', 220)}"
+        f"{audio_note}\n\n"
+        "<b>Negative prompt:</b>\n"
+        f"<pre>{_escape_clip_text(negative_prompt or '—', 220)}</pre>\n\n"
+        "<b>Рекомендация:</b>\n"
+        f"{_escape_clip_text(model_hint or '—', 220)}"
+        f"{provider_note}"
+    )
+
+
 def _audio_prompt_media(message: Message):
     if message.voice:
         return message.voice
@@ -168,6 +244,53 @@ def _audio_prompt_mime_type(message: Message) -> str:
 def _audio_prompt_format(mime_type: str) -> str:
     value = (mime_type or "").strip().lower()
     return GPT_AUDIO_PROMPT_FORMATS.get(value, "")
+
+
+def _video_prompt_media(message: Message):
+    if message.video:
+        return message.video
+    if message.document:
+        return message.document
+    return None
+
+
+def _video_prompt_mime_type(message: Message) -> str:
+    media = _video_prompt_media(message)
+    if message.video:
+        return getattr(media, "mime_type", None) or "video/mp4"
+    if message.document:
+        return getattr(media, "mime_type", None) or ""
+    return ""
+
+
+def _video_prompt_file_ext(message: Message) -> str:
+    mime_type = _video_prompt_mime_type(message).lower()
+    if mime_type in VIDEO_PROMPT_EXTENSIONS:
+        return VIDEO_PROMPT_EXTENSIONS[mime_type]
+
+    filename = str(getattr(_video_prompt_media(message), "file_name", "") or "")
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    if suffix in {"mp4", "mov", "webm", "m4v"}:
+        return suffix
+    return "mp4"
+
+
+def _video_prompt_filename(message: Message) -> str:
+    media = _video_prompt_media(message)
+    filename = str(getattr(media, "file_name", "") or "").strip()
+    if filename:
+        return filename
+    return f"reference_video.{_video_prompt_file_ext(message)}"
+
+
+def _is_video_prompt_document(message: Message) -> bool:
+    if not message.document:
+        return False
+    mime_type = _video_prompt_mime_type(message).lower()
+    if mime_type.startswith("video/"):
+        return True
+    filename = str(getattr(message.document, "file_name", "") or "").lower()
+    return Path(filename).suffix.lower() in {".mp4", ".mov", ".webm", ".m4v"}
 
 
 async def _download_audio_prompt(message: Message) -> tuple[bytes, str, str]:
@@ -343,6 +466,65 @@ async def _send_photo_prompt_result(
     )
 
 
+async def _send_video_prompt_result(
+    message: Message,
+    result: dict,
+    *,
+    filename: str = "video_prompt_full.txt",
+    document_caption: str = "📝 Полный video prompt: RU + EN + motion notes",
+) -> None:
+    prompt_en = (result.get("prompt_en") or "").strip()
+    prompt_ru = (result.get("prompt_ru") or "").strip()
+    negative_prompt = (result.get("negative_prompt") or "").strip()
+    timeline = result.get("timeline_ru") or []
+    timeline_text = "\n".join(f"- {item}" for item in timeline) if timeline else "—"
+    text = _format_video_prompt_result_text(result)
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=get_video_prompt_result_keyboard(),
+    )
+
+    full_prompt_text = (
+        "PROMPT RU\n"
+        "---------\n"
+        f"{prompt_ru or '—'}\n\n"
+        "PROMPT EN\n"
+        "---------\n"
+        f"{prompt_en or '—'}\n\n"
+        "CAMERA / FRAMING\n"
+        "----------------\n"
+        f"{result.get('camera_movement_ru') or '—'}\n\n"
+        "TIMELINE\n"
+        "--------\n"
+        f"{timeline_text}\n\n"
+        "STYLE / LIGHT / COLOR\n"
+        "---------------------\n"
+        f"{result.get('visual_style_ru') or '—'}\n\n"
+        "AUDIO NOTES\n"
+        "-----------\n"
+        f"{result.get('audio_notes_ru') or '—'}\n\n"
+        "NEGATIVE PROMPT\n"
+        "---------------\n"
+        f"{negative_prompt or '—'}\n\n"
+        "KEY DETAILS\n"
+        "-----------\n"
+        f"{chr(10).join('- ' + str(item) for item in (result.get('key_details') or [])) or '—'}\n\n"
+        "РЕКОМЕНДАЦИЯ\n"
+        "------------\n"
+        f"{result.get('model_hint') or '—'}\n"
+    )
+    await message.answer_document(
+        document=BufferedInputFile(
+            full_prompt_text.encode("utf-8"),
+            filename=filename,
+        ),
+        caption=document_caption,
+    )
+
+
 @router.callback_query(F.data == "photo_to_prompt")
 async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -370,6 +552,45 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         if not (isinstance(e, TelegramBadRequest) and "there is no text in the message to edit" in str(e).lower()):
             logger.warning("Cannot edit message in photo_to_prompt_handler: %s", e)
+        await callback.message.answer(
+            text,
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "video_to_prompt")
+async def video_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(ImageAnalyzerStates.waiting_for_video_prompt)
+
+    max_mb = max(1, config.VIDEO_PROMPT_MAX_VIDEO_BYTES // (1024 * 1024))
+    max_seconds = config.VIDEO_PROMPT_MAX_DURATION_SECONDS
+    text = (
+        "🎞 <b>Промпт по видео</b>\n\n"
+        f"Стоимость: <code>{_video_prompt_cost()}</code> 🍌\n\n"
+        "Отправьте короткое видео как обычное видео или файлом.\n"
+        "GPT-5.5 получит сам видеофайл и соберёт подробный prompt для генерации похожего ролика.\n\n"
+        "В результате вы получите:\n"
+        "• подробный prompt на русском\n"
+        "• английскую версию для video-моделей\n"
+        "• описание камеры и динамики\n"
+        "• negative prompt\n"
+        "• рекомендацию модели\n\n"
+        f"<i>Тестовый лимит: до {max_mb}MB и до {max_seconds} секунд.</i>"
+    )
+
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        if not (isinstance(e, TelegramBadRequest) and "there is no text in the message to edit" in str(e).lower()):
+            logger.warning("Cannot edit message in video_to_prompt_handler: %s", e)
         await callback.message.answer(
             text,
             reply_markup=get_back_keyboard("back_main"),
@@ -563,6 +784,102 @@ async def analyze_photo(message: Message, state: FSMContext):
             reply_markup=get_main_menu_button_keyboard(),
         )
         await state.clear()
+
+
+@router.message(
+    ImageAnalyzerStates.waiting_for_video_prompt,
+    F.video | F.document,
+)
+async def analyze_video_prompt(message: Message, state: FSMContext):
+    if not (message.video or _is_video_prompt_document(message)):
+        await message.answer(
+            "Пожалуйста, отправьте видео в формате mp4, mov, webm или m4v.",
+            reply_markup=get_back_keyboard("back_main"),
+        )
+        return
+
+    media = _video_prompt_media(message)
+    file_size = getattr(media, "file_size", 0) or 0
+    max_bytes = config.VIDEO_PROMPT_MAX_VIDEO_BYTES
+    if file_size and file_size > max_bytes:
+        max_mb = max(1, max_bytes // (1024 * 1024))
+        await message.answer(
+            f"❌ Видео слишком большое. Тестовый лимит: до {max_mb}MB.",
+            reply_markup=get_back_keyboard("back_main"),
+        )
+        return
+
+    duration = int(getattr(media, "duration", 0) or 0)
+    max_seconds = config.VIDEO_PROMPT_MAX_DURATION_SECONDS
+    if duration and duration > max_seconds:
+        await message.answer(
+            f"❌ Видео слишком длинное. Тестовый лимит: до {max_seconds} секунд.",
+            reply_markup=get_back_keyboard("back_main"),
+        )
+        return
+
+    processing = await message.answer("🎞 Анализирую видео и собираю prompt…")
+
+    try:
+        file = await message.bot.get_file(media.file_id)
+        video_io = await message.bot.download_file(file.file_path)
+        video_bytes = video_io.read()
+        if len(video_bytes) > max_bytes:
+            max_mb = max(1, max_bytes // (1024 * 1024))
+            await _safe_edit_or_answer(
+                processing,
+                message,
+                f"❌ Видео слишком большое. Тестовый лимит: до {max_mb}MB.",
+                reply_markup=get_back_keyboard("back_main"),
+            )
+            return
+
+        from bot.handlers.generation import save_uploaded_file
+
+        file_ext = _video_prompt_file_ext(message)
+        video_url = save_uploaded_file(video_bytes, file_ext)
+        if not video_url:
+            await _safe_edit_or_answer(
+                processing,
+                message,
+                "❌ Не удалось сохранить видео. Попробуйте другой файл.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
+            return
+
+        result = await video_prompt_service.analyze_video(
+            video_url=video_url,
+            user_note=(message.caption or "").strip(),
+            duration_seconds=duration,
+            filename=_video_prompt_filename(message),
+            video_bytes=video_bytes,
+        )
+
+        try:
+            await processing.delete()
+        except Exception:
+            pass
+
+        await _send_video_prompt_result(message, result)
+        await state.clear()
+
+    except Exception as e:
+        logger.exception("Video to prompt analysis failed")
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            _clip_text(f"❌ Не удалось разобрать видео: {e}", 700),
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        await state.clear()
+
+
+@router.message(ImageAnalyzerStates.waiting_for_video_prompt)
+async def video_prompt_wrong_input(message: Message):
+    await message.answer(
+        "Пожалуйста, отправьте короткое видео или видеофайл mp4/mov/webm/m4v.",
+        reply_markup=get_back_keyboard("back_main"),
+    )
 
 
 @router.message(ImageAnalyzerStates.waiting_for_photo)

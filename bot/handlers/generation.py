@@ -1193,12 +1193,25 @@ async def retry_image_with_new_prompt(callback: types.CallbackQuery, state: FSMC
         await callback.answer("Отправь новый промпт — рефы и настройки сохранены")
 
 
-_GROK_IMAGE_VIDEO_RATIOS = {"16:9", "9:16", "1:1", "3:2", "2:3"}
+_GROK_LEGACY_VIDEO_RATIOS = {"16:9", "9:16", "1:1", "3:2", "2:3"}
+_GROK_V15_VIDEO_RATIOS = {
+    "auto",
+    "16:9",
+    "9:16",
+    "1:1",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+}
+_GROK_VIDEO_MODELS = {"grok_imagine", "grok_imagine_v15"}
 
 
-def _grok_video_ratio_from_image_task(task) -> str:
+def _grok_video_ratio_from_image_task(task, model: str = "grok_imagine") -> str:
     ratio = str(getattr(task, "aspect_ratio", "") or "").strip()
-    return ratio if ratio in _GROK_IMAGE_VIDEO_RATIOS else "16:9"
+    if model == "grok_imagine_v15":
+        return ratio if ratio in _GROK_V15_VIDEO_RATIOS else "auto"
+    return ratio if ratio in _GROK_LEGACY_VIDEO_RATIOS else "16:9"
 
 
 def _publication_confirm_keyboard(confirm_data: str):
@@ -1317,7 +1330,7 @@ async def animate_image_result_with_grok(
         v_type="imgtxt",
         v_model="grok_imagine",
         v_duration=6,
-        v_ratio=_grok_video_ratio_from_image_task(task),
+        v_ratio=_grok_video_ratio_from_image_task(task, "grok_imagine"),
     )
     await state.update_data(
         v_image_url=task.result_url,
@@ -1330,6 +1343,38 @@ async def animate_image_result_with_grok(
     )
     await _show_video_creation_screen(callback, state)
     await callback.answer("Фото передано в Grok. Напишите промпт движения.")
+
+
+@router.callback_query(F.data.startswith("grok15vid_"))
+async def animate_image_result_with_grok_v15(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Передаёт готовую картинку в Grok Imagine 1.5 как стартовый кадр."""
+    task_id = callback.data.replace("grok15vid_", "", 1)
+    task, error_message = await _owned_completed_image_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Не удалось открыть Grok 1.5.", show_alert=True)
+        return
+
+    await state.clear()
+    await _init_default_video_state(
+        state,
+        v_type="imgtxt",
+        v_model="grok_imagine_v15",
+        v_duration=8,
+        v_ratio=_grok_video_ratio_from_image_task(task, "grok_imagine_v15"),
+    )
+    await state.update_data(
+        v_image_url=task.result_url,
+        reference_images=[],
+        v_reference_videos=[],
+        video_flow_step="configure",
+        source_image_task_id=task.task_id,
+        source_image_generation_id=task.id,
+        grok_resolution="480p",
+    )
+    await _show_video_creation_screen(callback, state)
+    await callback.answer("Фото передано в Grok 1.5. Напишите промпт движения.")
 
 
 @router.callback_query(F.data.startswith("feedpub_"))
@@ -1886,7 +1931,24 @@ async def show_main_vid_veo3_lite(callback: types.CallbackQuery, state: FSMConte
 @router.callback_query(F.data == "main_vid_grok")
 async def show_main_vid_grok(callback: types.CallbackQuery, state: FSMContext):
     await _open_video_model_from_main(
-        callback, state, model="grok_imagine", duration=6, ratio="16:9"
+        callback,
+        state,
+        model="grok_imagine",
+        v_type="imgtxt",
+        duration=6,
+        ratio="16:9",
+    )
+
+
+@router.callback_query(F.data == "main_vid_grok_v15")
+async def show_main_vid_grok_v15(callback: types.CallbackQuery, state: FSMContext):
+    await _open_video_model_from_main(
+        callback,
+        state,
+        model="grok_imagine_v15",
+        v_type="imgtxt",
+        duration=8,
+        ratio="auto",
     )
 
 
@@ -2101,6 +2163,7 @@ async def _init_default_video_state(
         v_image_url=None,
         user_prompt="",
         grok_mode="normal",
+        grok_resolution="480p",
         veo_generation_type=(
             "FIRST_AND_LAST_FRAMES_2_VIDEO"
             if v_type == "imgtxt" and v_model.startswith("veo3")
@@ -2228,6 +2291,7 @@ async def _show_video_creation_screen(
     avatar_audio_url = data.get("avatar_audio_url")
     user_prompt = data.get("user_prompt", "")
     grok_mode = data.get("grok_mode", "normal")
+    grok_resolution = data.get("grok_resolution", "480p")
     veo_generation_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
     veo_translation = data.get("veo_translation", True)
     veo_resolution = data.get("veo_resolution", "720p")
@@ -2254,6 +2318,7 @@ async def _show_video_creation_screen(
     current_duration = data.get("v_duration", current_duration)
     current_ratio = data.get("v_ratio", current_ratio)
     grok_mode = data.get("grok_mode", grok_mode)
+    grok_resolution = data.get("grok_resolution", grok_resolution)
     veo_generation_type = data.get("veo_generation_type", veo_generation_type)
     veo_translation = data.get("veo_translation", veo_translation)
     veo_resolution = data.get("veo_resolution", veo_resolution)
@@ -2356,6 +2421,8 @@ async def _show_video_creation_screen(
 
     if current_model == "grok_imagine":
         settings_lines.append(f"   🧠 Режим Grok: <code>{grok_mode}</code>")
+    if current_model == "grok_imagine_v15":
+        settings_lines.append(f"   🖥 Качество Grok: <code>{grok_resolution}</code>")
     if current_model == "v26_pro":
         settings_lines.append(
             f"   🚫 Negative: <code>{kling_negative_prompt or 'off'}</code>"
@@ -2528,6 +2595,7 @@ def _build_video_creation_keyboard(data: dict):
         current_mode=data.get("v_mode", "720p"),
         current_orientation=data.get("v_orientation", "video"),
         current_grok_mode=data.get("grok_mode", "normal"),
+        current_grok_resolution=data.get("grok_resolution", "480p"),
         current_veo_generation_type=data.get("veo_generation_type", "TEXT_2_VIDEO"),
         current_veo_translation=data.get("veo_translation", True),
         current_veo_resolution=data.get("veo_resolution", "720p"),
@@ -2549,11 +2617,13 @@ def _build_video_creation_keyboard(data: dict):
 def _get_supported_video_durations(model: str) -> list[int]:
     """Return supported durations for the Telegram video flow."""
     if model.startswith("veo3"):
-        return [2, 4, 6, 8, 10]
+        return [4, 6, 8]
     if model in {"gemini_omni", "gemini_omni_video"}:
         return [4, 6, 8, 10]
     if model in {"gemini_omni_audio", "gemini_omni_character"}:
         return [6]
+    if model == "grok_imagine_v15":
+        return list(range(1, 16))
     if model in {"avatar_std", "avatar_pro", "motion_control_v26", "motion_control_v30"}:
         return [5]
 
@@ -2659,6 +2729,8 @@ def _build_video_run_summary(
 
     if v_model == "grok_imagine":
         parts.append(f"🧠 <code>{data.get('grok_mode', 'normal')}</code>")
+    if v_model == "grok_imagine_v15":
+        parts.append(f"🖥 <code>{data.get('grok_resolution', '480p')}</code>")
     if v_model == "v26_pro":
         negative = data.get("kling_negative_prompt", "")
         parts.append(f"🎚 <code>{float(data.get('kling_cfg_scale', 0.5)):.1f}</code>")
@@ -3130,17 +3202,32 @@ async def _show_video_media_screen(
         )
         next_state = GenerationStates.waiting_for_video_prompt
     elif current_v_type == "imgtxt":
-        body = (
-            "<b>Шаг 2. Тип и медиа</b>\n"
-            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
-            + (
+        if current_model == "grok_imagine_v15":
+            media_hint = (
+                "Выбран режим <b>Фото + Текст → Видео</b>.\n"
+                "Для Grok Imagine 1.5 нужно одно стартовое фото."
+            )
+        elif current_model == "grok_imagine":
+            media_hint = (
+                "Выбран режим <b>Фото + Текст → Видео</b>.\n"
+                "Сначала отправьте стартовое фото. После него можно добавить "
+                "дополнительные фото-референсы для старого Grok."
+            )
+        elif current_model == "v26_pro":
+            media_hint = (
                 "Выбран режим <b>Фото + Текст → Видео</b>.\n"
                 "Для Kling 2.5 Turbo нужно только одно стартовое фото."
-                if current_model == "v26_pro"
-                else "Выбран режим <b>Фото + Текст → Видео</b>.\n"
+            )
+        else:
+            media_hint = (
+                "Выбран режим <b>Фото + Текст → Видео</b>.\n"
                 "Сначала отправьте стартовое фото.\n"
                 "При желании потом можно добавить ещё фото-референсы."
             )
+        body = (
+            "<b>Шаг 2. Тип и медиа</b>\n"
+            f"Модель: <code>{get_video_model_label(current_model)}</code>\n\n"
+            + media_hint
         )
         next_state = GenerationStates.waiting_for_video_prompt
     elif current_v_type == "video":
@@ -3621,6 +3708,12 @@ async def handle_v_type_text(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     current_model = data.get("v_model", "v26_pro")
 
+    if current_model in _GROK_VIDEO_MODELS:
+        await state.update_data(v_type="imgtxt")
+        await _show_video_media_screen(callback, state)
+        await callback.answer("Grok Imagine работает через стартовое фото")
+        return
+
     updates = {"v_type": "text"}
     if current_model.startswith("veo3"):
         updates["veo_generation_type"] = "TEXT_2_VIDEO"
@@ -3650,6 +3743,11 @@ async def handle_v_type_video(callback: types.CallbackQuery, state: FSMContext):
     """Выбор типа генерации: видео+текст."""
     data = await state.get_data()
     current_model = data.get("v_model")
+    if current_model in _GROK_VIDEO_MODELS:
+        await state.update_data(v_type="imgtxt")
+        await _show_video_media_screen(callback, state)
+        await callback.answer("Grok Imagine принимает фото, а не видео-референс")
+        return
     selected_model = choose_video_reference_model(current_model)
     updates = {"v_type": "video", "v_duration": 5, "v_model": selected_model}
     await state.update_data(**updates)
@@ -3723,6 +3821,18 @@ async def handle_grok_mode(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer(f"Режим Grok: {mode.title()}")
 
 
+@router.callback_query(F.data.startswith("grok_resolution_"))
+async def handle_grok_resolution(callback: types.CallbackQuery, state: FSMContext):
+    """Set Grok Imagine Video 1.5 resolution."""
+    resolution = callback.data.replace("grok_resolution_", "")
+    if resolution not in {"480p", "720p"}:
+        await callback.answer()
+        return
+    await state.update_data(grok_resolution=resolution)
+    await _show_video_creation_screen(callback, state)
+    await callback.answer(f"Качество Grok: {resolution}")
+
+
 async def _apply_video_model_selection(
     callback: types.CallbackQuery, state: FSMContext, model: str
 ):
@@ -3744,9 +3854,23 @@ async def _apply_video_model_selection(
     current_duration = data.get("v_duration", 5)
     current_ratio = data.get("v_ratio", "16:9")
 
-    # Set default grok_mode for grok_imagine
     if model == "grok_imagine":
-        await state.update_data(grok_mode="normal")
+        current_v_type = "imgtxt"
+        current_ratio = (
+            current_ratio if current_ratio in _GROK_LEGACY_VIDEO_RATIOS else "16:9"
+        )
+        await state.update_data(
+            grok_mode="normal",
+            v_reference_videos=[],
+        )
+    elif model == "grok_imagine_v15":
+        current_v_type = "imgtxt"
+        current_ratio = current_ratio if current_ratio in _GROK_V15_VIDEO_RATIOS else "auto"
+        await state.update_data(
+            grok_resolution=data.get("grok_resolution", "480p"),
+            reference_images=[],
+            v_reference_videos=[],
+        )
     elif model == "v26_pro":
         await state.update_data(
             kling_negative_prompt=data.get("kling_negative_prompt", ""),
@@ -3815,8 +3939,10 @@ async def _apply_video_model_selection(
         current_v_type = "text"
     if model.startswith("veo3") and current_v_type == "video":
         current_v_type = "text"
+    if model in _GROK_VIDEO_MODELS:
+        current_v_type = "imgtxt"
 
-    updates = {"v_model": model, "v_type": current_v_type}
+    updates = {"v_model": model, "v_type": current_v_type, "v_ratio": current_ratio}
     if data.get("video_flow_step") == "select_model":
         updates["video_flow_step"] = "media"
     await state.update_data(**updates)
@@ -3923,6 +4049,15 @@ async def handle_video_ratio_4_3(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
+@router.callback_query(F.data == "ratio_3_4")
+async def handle_video_ratio_3_4(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата 3:4"""
+    await state.update_data(v_ratio="3:4")
+    await _show_video_creation_screen(callback, state)
+    await callback.answer()
+    await state.set_state(GenerationStates.waiting_for_video_prompt)
+
+
 @router.callback_query(F.data == "ratio_3_2")
 async def handle_video_ratio_3_2(callback: types.CallbackQuery, state: FSMContext):
     """Выбор формата 3:2"""
@@ -3947,10 +4082,11 @@ async def handle_video_ratio_2_3(callback: types.CallbackQuery, state: FSMContex
     await state.set_state(GenerationStates.waiting_for_video_prompt)
 
 
-@router.callback_query(F.data == "ratio_Auto")
+@router.callback_query(F.data.in_({"ratio_Auto", "ratio_auto"}))
 async def handle_video_ratio_auto(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор автоматического формата для Veo"""
-    await state.update_data(v_ratio="Auto")
+    """Выбор автоматического формата для моделей, где он поддерживается."""
+    ratio = "Auto" if callback.data == "ratio_Auto" else "auto"
+    await state.update_data(v_ratio=ratio)
     await _show_video_creation_screen(callback, state)
     await callback.answer()
     await state.set_state(GenerationStates.waiting_for_video_prompt)
@@ -3966,7 +4102,7 @@ async def handle_video_duration(callback: types.CallbackQuery, state: FSMContext
         await callback.answer()
         return
 
-    if duration < 2 or duration > 30:
+    if duration < 1 or duration > 30:
         await callback.answer()
         return
 
@@ -5351,9 +5487,10 @@ async def process_photo_for_video_prompt_state(
             await _show_video_creation_screen(message, state, edit=False)
         return
 
-    if current_model == "v26_pro" and v_image_url:
+    if current_model in {"v26_pro", "grok_imagine_v15"} and v_image_url:
+        model_label = get_video_model_label(current_model)
         await message.answer(
-            "Для Kling 2.5 Turbo можно использовать только одно стартовое фото."
+            f"Для {model_label} можно использовать только одно стартовое фото."
         )
         return
 
@@ -5645,6 +5782,7 @@ async def run_no_preset_video_from_message(
     v_ratio = data.get("v_ratio", "16:9")
     v_image_url = data.get("v_image_url")
     v_video_url = data.get("v_video_url")
+    grok_resolution = data.get("grok_resolution", "480p")
     veo_generation_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
     veo_translation = data.get("veo_translation", True)
     veo_resolution = data.get("veo_resolution", "720p")
@@ -5898,18 +6036,36 @@ async def run_no_preset_video_from_message(
                 await state.clear()
                 return
 
-            # Pass start image + references (max 7 total for Grok)
-            grok_image_urls = [image_url] + image_refs[:6]
-            grok_duration = v_duration  # Supports 6,20,30 sec
-            grok_mode = data.get("grok_mode", "normal")
             result = await grok_service.generate_image_to_video(
-                image_urls=grok_image_urls,
+                image_urls=[image_url] + image_refs[:6],
                 prompt=prompt,
-                mode=grok_mode,
-                duration=grok_duration,
+                mode=data.get("grok_mode", "normal"),
+                duration=v_duration,
+                resolution="720p",
                 aspect_ratio=v_ratio,
                 callBackUrl=(
-                    config.kling_notification_url if config.WEBHOOK_HOST else None
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
+                ),
+            )
+        elif v_model == "grok_imagine_v15":
+            if not image_url:
+                await message.answer(
+                    "❌ Grok Imagine 1.5 требует стартовое изображение."
+                )
+                if not is_admin:
+                    await add_credits(message.from_user.id, cost)
+                await processing_msg.delete()
+                await state.clear()
+                return
+
+            result = await grok_service.generate_image_to_video_v15(
+                image_urls=[image_url],
+                prompt=prompt,
+                duration=v_duration,
+                resolution=grok_resolution,
+                aspect_ratio=v_ratio,
+                callBackUrl=(
+                    config.kie_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
         elif v_model == "seedance_2":
@@ -6100,6 +6256,14 @@ async def run_no_preset_video_from_message(
                     "v_reference_videos": video_urls or [],
                     "avatar_audio_url": avatar_audio_url,
                     "grok_mode": data.get("grok_mode", "normal"),
+                    "grok_resolution": (
+                        grok_resolution if v_model == "grok_imagine_v15" else ""
+                    ),
+                    "resolution": (
+                        grok_resolution
+                        if v_model == "grok_imagine_v15"
+                        else "720p" if v_model == "grok_imagine" else ""
+                    ),
                     "veo_generation_type": veo_generation_type,
                     "veo_translation": veo_translation,
                     "veo_resolution": veo_resolution,
@@ -6763,7 +6927,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     if user.credits < total_cost:
         await message.answer(
             f"❌ Недостаточно бананов! Нужно: <code>{total_cost}</code>🍌",
-            reply_markup=get_main_menu_keyboard(user.credits),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
             parse_mode="HTML",
         )
         return
@@ -6827,23 +6991,21 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 immediate_success_count += 1
                 result_bytes = launch_result["result_bytes"]
                 saved_url = launch_result["saved_url"]
-                await message.answer_photo(
-                    photo=types.BufferedInputFile(
+                await message.answer_document(
+                    document=types.BufferedInputFile(
                         result_bytes, filename=f"generated_{index + 1}.png"
                     ),
                     caption=(
                         "✅ <b>Изображение готово</b>\n"
                         f"• Вариант: <code>{index + 1}/{img_count}</code>\n"
                         f"• Модель: <code>{model_label}</code>\n"
-                        f"• Списано: <code>{unit_cost}</code>🍌"
+                        f"• Списано: <code>{unit_cost}</code>🍌\n"
+                        "• Отправлено без сжатия"
                     ),
                     parse_mode="HTML",
                     reply_markup=get_image_result_keyboard(
                         saved_url, task_id=launch_result["task_id"]
                     ),
-                )
-                await _send_original_document(
-                    message.answer_document, result_bytes, saved_url
                 )
                 current_local_task_id = None
             else:
