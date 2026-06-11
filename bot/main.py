@@ -1,10 +1,13 @@
 import asyncio
+import hashlib
+import hmac
 import html
 import json
 import logging
 import os
 import sys
 import time
+from urllib.parse import parse_qsl
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +23,7 @@ from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BotCommand, Update
+from aiogram.types import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from aiohttp import web
 
 from bot.config import config
@@ -44,6 +47,7 @@ from bot.handlers import (
 )
 from bot.handlers.payments import handle_cryptobot_webhook, handle_tbank_webhook
 from bot.services.preset_manager import preset_manager
+from bot.tma_api import setup_tma_routes
 
 # Настройка логирования
 logging.basicConfig(
@@ -65,6 +69,27 @@ USER_BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="earn", description="Партнёрская программа"),
     BotCommand(command="clear", description="Очистить чат GPT 5.5"),
 )
+
+TMA_ACTIONS: dict[str, tuple[str, str]] = {
+    "back_main": ("Главное меню", "back_main"),
+    "photo_to_prompt": ("Фото -> промпт", "photo_to_prompt"),
+    "prompt_builder": ("Создать промпт", "gpt55_improve_prompt"),
+    "create_photo": ("Создать фото", "create_image_refs_new"),
+    "multi_photo": ("Мульти фото", "quick_mix_photo"),
+    "create_video": ("Создать видео", "create_video_new"),
+    "animate_photo": ("Оживить фото", "quick_animate_photo"),
+    "motion_control": ("Motion Control", "motion_control"),
+    "gemini_omni": ("Gemini Omni", "gemini_omni_menu"),
+    "feed": ("Лента работ", "menu_feed"),
+    "feed_like": ("Лайк в ленте", "menu_feed"),
+    "feed_repeat": ("Повтор генерации", "menu_feed"),
+    "feed_edit": ("Редактирование промпта", "gpt55_improve_prompt"),
+    "gpt55": ("GPT 5.5", "menu_gpt55"),
+    "profile": ("Профиль", "menu_balance"),
+    "partner": ("Партнёрка", "menu_partner"),
+    "topup": ("Пополнить баланс", "menu_topup"),
+    "admin": ("Админка", "admin_stats"),
+}
 
 
 TERMINAL_SUCCESS_STATUSES = {"success", "completed", "succeeded", "finished"}
@@ -127,6 +152,40 @@ def _verify_ai_webhook_request(request: web.Request, provider: str) -> bool:
         candidate and hmac.compare_digest(str(candidate), secret)
         for candidate in candidates
     )
+
+
+def _validate_tma_init_data(init_data: str) -> dict | None:
+    """Validate Telegram WebApp initData and return parsed fields."""
+    if not init_data or not config.BOT_TOKEN:
+        return None
+
+    parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    received_hash = parsed.pop("hash", "")
+    if not received_hash:
+        return None
+
+    data_check_string = "\n".join(
+        f"{key}={value}" for key, value in sorted(parsed.items())
+    )
+    secret_key = hmac.new(
+        b"WebAppData",
+        config.BOT_TOKEN.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    calculated_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(calculated_hash, received_hash):
+        return None
+
+    if parsed.get("user"):
+        try:
+            parsed["user"] = json.loads(parsed["user"])
+        except json.JSONDecodeError:
+            return None
+    return parsed
 
 
 class AccessControlMiddleware(BaseMiddleware):
@@ -349,6 +408,120 @@ async def _schedule_recurring_payments_loop(bot: Bot) -> None:
         logger.info("Scheduled recurring payments loop")
     except Exception:
         logger.exception("Failed to schedule recurring payments loop")
+
+
+async def handle_tma_action(request: web.Request) -> web.Response:
+    """HTTP bridge for Telegram Mini App actions.
+
+    The Mini App cannot directly trigger aiogram callback handlers over HTTP.
+    This endpoint validates/normalizes a UI action and returns enough metadata
+    for the client to either send WebApp data to Telegram or open a bot deep link.
+    """
+    try:
+        if request.method == "OPTIONS":
+            return web.Response(status=204)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        action = str(payload.get("action") or "").strip()
+        label, callback_data = TMA_ACTIONS.get(action, TMA_ACTIONS["back_main"])
+        init_data = (
+            request.headers.get("x-telegram-init-data")
+            or str(payload.get("initData") or "")
+        )
+        init_payload = _validate_tma_init_data(init_data)
+        telegram_user = (
+            init_payload.get("user")
+            if isinstance(init_payload, dict)
+            and isinstance(init_payload.get("user"), dict)
+            else None
+        )
+        telegram_id = int(telegram_user.get("id") or 0) if telegram_user else 0
+
+        bot: Bot | None = request.app.get("bot")
+        bot_username = ""
+        if bot:
+            try:
+                me = await bot.get_me()
+                bot_username = me.username or ""
+            except Exception:
+                logger.exception("Failed to resolve bot username for TMA action")
+
+        start_payload = f"tma_{action}" if action in TMA_ACTIONS else "tma_back_main"
+        deep_link = (
+            f"https://t.me/{bot_username}?start={start_payload}"
+            if bot_username
+            else ""
+        )
+
+        delivered = False
+        if telegram_id and bot:
+            if action == "admin" and not config.is_admin(telegram_id):
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "action": action,
+                        "error": "forbidden",
+                        "message": "Админ-панель доступна только администраторам.",
+                    },
+                    status=403,
+                )
+
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=f"Открыть: {label}",
+                            callback_data=callback_data,
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="🏠 Главное меню",
+                            callback_data="back_main",
+                        )
+                    ],
+                ]
+            )
+            try:
+                await bot.send_message(
+                    telegram_id,
+                    (
+                        f"🧩 <b>Boom Studio:</b> {html.escape(label)}\n\n"
+                        "Нажмите кнопку ниже, чтобы открыть нужный сценарий."
+                    ),
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                )
+                delivered = True
+            except Exception as exc:
+                logger.exception("Failed to deliver TMA action to user: %s", exc)
+
+        return web.json_response(
+            {
+                "ok": True,
+                "action": action,
+                "label": label,
+                "callback_data": callback_data,
+                "deep_link": deep_link,
+                "delivered": delivered,
+                "authenticated": bool(telegram_id),
+                "message": (
+                    f"Команда «{label}» отправлена в бот."
+                    if delivered
+                    else f"Команда «{label}» принята. Откройте сценарий в Telegram."
+                ),
+            }
+        )
+    except Exception as exc:
+        logger.exception("TMA action error: %s", exc)
+        return web.json_response(
+            {"ok": False, "error": "internal_error"},
+            status=500,
+        )
 
 
 async def _register_user_bot_commands(bot: Bot) -> None:
@@ -2012,6 +2185,10 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     # Health check endpoint
     async def health_check(request: web.Request) -> web.Response:
         return web.Response(text="OK")
+
+    app.router.add_post("/api/tma/action", handle_tma_action)
+    app.router.add_options("/api/tma/action", handle_tma_action)
+    setup_tma_routes(app)
 
     app.router.add_get("/health", health_check)
 

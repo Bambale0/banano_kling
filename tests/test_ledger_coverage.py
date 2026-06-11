@@ -57,13 +57,25 @@ async def test_first_payment_partner_bonus_is_idempotent(tmp_path, monkeypatch):
         6006, transaction_credits=50, transaction_amount_rub=100
     )
 
-    assert first == {"mode": "partner", "value": 45.0, "percent": 45}
+    assert first == {
+        "mode": "partner",
+        "value": 30.0,
+        "percent": 30,
+        "levels": [
+            {
+                "telegram_id": 5005,
+                "level": 1,
+                "value": 30.0,
+                "percent": 30,
+            }
+        ],
+    }
     assert second == {"mode": "none", "value": 0, "percent": 0}
 
     overview = await db.get_partner_overview(5005)
-    assert overview["balance_rub"] == 45.0
+    assert overview["balance_rub"] == 30.0
     assert overview["total_revenue_rub"] == 100.0
     rows = await db.get_credit_transactions(5005)
     assert [(r["amount"], r["reason"], r["external_id"]) for r in rows] == [
-        (4500, "referral_first_payment_partner_bonus", "first_payment_partner:6006")
+        (3000, "referral_first_payment_partner_bonus", "first_payment_partner:6006:level1")
     ]

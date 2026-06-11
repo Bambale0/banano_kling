@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import re
@@ -57,6 +58,32 @@ start_router = Router()
 router = Router()
 
 TELEGRAM_HTML_MESSAGE_LIMIT = 3900
+
+MINI_APP_ACTIONS = {
+    "photo_to_prompt": ("📷 Фото → Промпт", "photo_to_prompt"),
+    "prompt_builder": ("✍️ Создать промпт", "gpt55_improve_prompt"),
+    "create_photo": ("🖼 Создать фото", "create_image_refs_new"),
+    "multi_photo": ("🌈 Мульти фото", "quick_mix_photo"),
+    "create_video": ("🎬 Создать видео", "create_video_new"),
+    "animate_photo": ("⚡ Оживить фото", "quick_animate_photo"),
+    "motion_control": ("🎯 Motion Control", "motion_control"),
+    "gemini_omni": ("🔷 Gemini Omni", "gemini_omni_menu"),
+    "feed": ("📚 Лента работ", "menu_feed"),
+    "gpt55": ("🧠 GPT 5.5", "menu_gpt55"),
+    "profile": ("👤 Профиль", "menu_balance"),
+    "partner": ("💼 Партнёрка", "menu_partner"),
+    "topup": ("🪙 Пополнить", "menu_topup"),
+    "admin": ("👑 Админка", "admin_stats"),
+}
+
+
+def _build_mini_app_action_keyboard(action: str, label: str, callback_data: str):
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text=f"Открыть: {label}", callback_data=callback_data)],
+            [types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main")],
+        ]
+    )
 
 
 # Состояния для ИИ-ассистента
@@ -544,6 +571,22 @@ async def cmd_start(message: types.Message, command: CommandObject | None = None
             )
         return
 
+    elif args and args[0].startswith("tma_"):
+        action = args[0].replace("tma_", "", 1)
+        label, callback_data = MINI_APP_ACTIONS.get(
+            action, MINI_APP_ACTIONS["back_main"]
+        )
+        if action == "admin" and not config.is_admin(message.from_user.id):
+            await message.answer("Админ-панель доступна только администраторам.")
+            return
+        await message.answer(
+            f"🧩 <b>Boom Studio:</b> {label}\n\n"
+            "Нажмите кнопку ниже, чтобы открыть нужный сценарий.",
+            reply_markup=_build_mini_app_action_keyboard(action, label, callback_data),
+            parse_mode="HTML",
+        )
+        return
+
     referral_bonus_text = ""
     if args and args[0].startswith("ref_"):
         referral_code = args[0].replace("ref_", "", 1)
@@ -879,7 +922,7 @@ async def render_partner_program(target, user_id: int):
     )
 
     tier = stats.get("tier", "basic")
-    percent = stats.get("percent", 45)
+    percent = stats.get("percent", 30)
     recent_lines = []
     for item in withdrawals:
         status_title = item.get("status_title") or item.get("status") or "unknown"
@@ -903,12 +946,13 @@ async def render_partner_program(target, user_id: int):
         f"💸 Уже выведено: <code>{stats.get('withdrawn_rub', 0)}</code> ₽\n"
         f"🏷 Уровень: <code>{tier}</code> · <code>{percent}%</code>\n\n"
         "<b>Ставки партнёрской программы:</b>\n"
-        "• 45% — базовая начальная ставка с каждого пополнения\n"
-        "• 50% — от 300 000 ₽ оборота рефералов с каждого пополнения\n\n"
+        "• 1 уровень — 30% с первой оплаты прямого реферала\n"
+        "• 2 уровень — 10% с первой оплаты реферала вашего реферала\n"
+        "• 3 уровень — 3% с первой оплаты третьей линии\n\n"
         "<b>Как это работает:</b>\n"
         "• пользователь переходит по вашей ссылке\n"
         "• регистрируется и закрепляется за вами\n"
-        "• после первой оплаты начисляется вознаграждение\n"
+        "• после первой оплаты вознаграждение распределяется до 3 уровней\n"
         "• активным партнёрам начисляется денежный бонус в ₽\n\n"
         f"🪙 Курс для использования в боте: <code>{config.PARTNER_RUB_PER_CREDIT} ₽ = 1 BoomCoin</code>\n\n"
         "<b>Последние заявки на вывод:</b>\n"
@@ -1706,6 +1750,32 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 # ИИ-ассистент: обработка сообщений без FSM
 # Позволяет отправлять вопросы ИИ напрямую из главного меню или настройках
 # =============================================================================
+
+
+@router.message(StateFilter(None), F.web_app_data)
+async def handle_mini_app_action(message: types.Message, state: FSMContext):
+    """Принимает действия из Telegram Mini App и переводит их в bot flows."""
+    raw_data = getattr(message.web_app_data, "data", "") or ""
+    try:
+        payload = json.loads(raw_data)
+    except json.JSONDecodeError:
+        payload = {"action": raw_data}
+
+    action = str(payload.get("action") or "").strip()
+    label, callback_data = MINI_APP_ACTIONS.get(
+        action, ("🏠 Главное меню", "back_main")
+    )
+
+    if action == "admin" and not config.is_admin(message.from_user.id):
+        await message.answer("Админ-панель доступна только администраторам.")
+        return
+
+    await message.answer(
+        f"🧩 <b>Mini App:</b> {label}\n\n"
+        "Нажмите кнопку ниже, чтобы продолжить в текущем сценарии бота.",
+        reply_markup=_build_mini_app_action_keyboard(action, label, callback_data),
+        parse_mode="HTML",
+    )
 
 
 @router.message(StateFilter(None), F.text)

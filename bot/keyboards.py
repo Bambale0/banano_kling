@@ -68,26 +68,32 @@ def get_main_menu_keyboard(user_credits: int = 0, user_id: int | None = None):
     """Главное меню бота - согласно ux.md"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🧠 GPT 5.5", callback_data="menu_gpt55")
-    if user_id is not None and config.is_admin(user_id) and config.MINI_APP_URL:
+    row_sizes: list[int] = []
+    if config.MINI_APP_URL:
         builder.button(
-            text="🧩 Mini App",
+            text="🧩 Мини апп",
             web_app=WebAppInfo(url=config.MINI_APP_URL),
         )
-    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
+        builder.button(text="🧠 Чат GPT", callback_data="menu_gpt55")
+        row_sizes.append(2)
+    else:
+        builder.button(text="🧠 Чат GPT", callback_data="menu_gpt55")
+        row_sizes.append(1)
+
     builder.button(text="🖼 Создать фото", callback_data="create_image_refs_new")
-    builder.button(text="📚 Каталог промптов", callback_data="menu_feed")
+    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🌈 Микс фото", callback_data="quick_mix_photo")
-    builder.button(text="🎯 Motion Control", callback_data="motion_control")
+    builder.button(text="📚 Каталог промптов", callback_data="menu_feed")
     builder.button(text="🔷 Gemini Omni", callback_data="gemini_omni_menu")
-    builder.button(text="✍️ Улучшить промпт", callback_data="gpt55_improve_prompt")
-    builder.button(text="📷 Фото → Промпт", callback_data="photo_to_prompt")
+    builder.button(text="🎯 MC", callback_data="motion_control")
+    builder.button(text="📷 Фото-промпт", callback_data="photo_to_prompt")
+    builder.button(text="✍️ Улучшить Промпт", callback_data="gpt55_improve_prompt")
     builder.button(text="🪙 Мой баланс", callback_data="menu_balance")
-    builder.button(text="💰 Купить BoomCoin", callback_data="menu_topup")
-    builder.button(text="💼 Партнёрам", callback_data="menu_partner")
+    builder.button(text="💰 Купить коины", callback_data="menu_topup")
+    builder.button(text="💼 Партнерам", callback_data="menu_partner")
     builder.button(text="🆘 Поддержка", callback_data="menu_support")
 
-    builder.adjust(1, 2, 2, 2, 2, 2, 2)
+    builder.adjust(*row_sizes, 2, 2, 2, 2, 2, 2)
 
     return builder.as_markup()
 

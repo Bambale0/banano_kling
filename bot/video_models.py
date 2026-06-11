@@ -43,6 +43,7 @@ VIDEO_MODEL_CONFIGS = {
     "gemini_omni": {
         "label": "🔷 Gemini Omni",
         "v_types": ["text", "imgtxt", "video"],
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16"],
         "durations": [4, 6, 8, 10],
         "defaults": {"resolution": "720p", "seed": None},
@@ -51,6 +52,7 @@ VIDEO_MODEL_CONFIGS = {
     "v3_std": {
         "label": "⚡ Kling 3 Std",
         "v_types": ["text", "imgtxt"],
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [3, 5, 10, 15],
         "defaults": {"sound": True},
@@ -59,6 +61,7 @@ VIDEO_MODEL_CONFIGS = {
     "v3_pro": {
         "label": "💎 Kling 3 Pro",
         "v_types": ["text", "imgtxt"],
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [3, 5, 10, 15],
         "defaults": {"sound": True},
@@ -67,6 +70,8 @@ VIDEO_MODEL_CONFIGS = {
     "seedance2": {
         "label": "🌱 Seedance 2.0",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10, 15],
         "defaults": {
@@ -85,6 +90,8 @@ VIDEO_MODEL_CONFIGS = {
     "grok_imagine": {
         "label": "🧠 Grok Imagine",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1", "3:2", "2:3"],
         "durations": [6, 10, 20, 30],
         "defaults": {"mode": "normal", "resolution": "720p", "nsfw_checker": False},
@@ -97,6 +104,7 @@ VIDEO_MODEL_CONFIGS = {
     "runway": {
         "label": "🎥 Runway AI",
         "v_types": ["text", "imgtxt"],
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10],
         "defaults": {"quality": "720p"},
@@ -105,6 +113,8 @@ VIDEO_MODEL_CONFIGS = {
     "aleph": {
         "label": "🔮 Aleph Video",
         "v_types": ["video"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "durations": [5, 10],
         "defaults": {},
@@ -113,6 +123,8 @@ VIDEO_MODEL_CONFIGS = {
     "glow": {
         "label": "✨ Kling Glow",
         "v_types": ["video"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10],
         "defaults": {
@@ -129,6 +141,7 @@ VIDEO_MODEL_CONFIGS = {
     "veo3_fast": {
         "label": "🎬 Veo 3.1 Fast",
         "v_types": ["text", "imgtxt"],
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16"],
         "durations": [],
         "defaults": {"resolution": "1080p", "enable_translation": True},
@@ -140,6 +153,7 @@ VIDEO_MODEL_CONFIGS = {
     "veo3": {
         "label": "🎬 Veo 3.1 Pro",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9", "9:16"],
         "durations": [],
         "defaults": {"resolution": "1080p", "enable_translation": True},
@@ -151,6 +165,7 @@ VIDEO_MODEL_CONFIGS = {
     "veo3_lite": {
         "label": "🎬 Veo 3.1 Lite",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9", "9:16"],
         "durations": [],
         "defaults": {"resolution": "720p", "enable_translation": True},
@@ -162,6 +177,8 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_23_pro": {
         "label": "🌊 Hailuo 2.3 I2V Pro",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [6, 10],
         "defaults": {"resolution": "768P", "nsfw_checker": False},
@@ -170,6 +187,8 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_23_std": {
         "label": "🌊 Hailuo 2.3 I2V Std",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [6, 10],
         "defaults": {"resolution": "768P", "nsfw_checker": False},
@@ -178,6 +197,7 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_pro": {
         "label": "🌊 Hailuo 02 T2V Pro",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9"],
         "durations": [],
         "defaults": {"prompt_optimizer": False, "nsfw_checker": False},
@@ -186,6 +206,7 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_std": {
         "label": "🌊 Hailuo 02 T2V Std",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9"],
         "durations": [6, 10],
         "defaults": {"prompt_optimizer": False, "nsfw_checker": False},
@@ -194,6 +215,8 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_i2v_pro": {
         "label": "🌊 Hailuo 02 I2V Pro",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [],
         "defaults": {"prompt_optimizer": False, "nsfw_checker": False},
@@ -202,6 +225,8 @@ VIDEO_MODEL_CONFIGS = {
     "hailuo_i2v_std": {
         "label": "🌊 Hailuo 02 I2V Std",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [6, 10],
         "defaults": {
@@ -218,6 +243,7 @@ VIDEO_MODEL_CONFIGS = {
     "happyhorse_t2v": {
         "label": "🐴 HappyHorse T2V",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10, 15],
         "defaults": {"resolution": "1080p", "seed": None},
@@ -226,6 +252,8 @@ VIDEO_MODEL_CONFIGS = {
     "happyhorse_i2v": {
         "label": "🐴 HappyHorse I2V",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [5, 10, 15],
         "defaults": {"resolution": "1080p", "seed": None},
@@ -234,6 +262,8 @@ VIDEO_MODEL_CONFIGS = {
     "happyhorse_ref2v": {
         "label": "🐴 HappyHorse Ref2V",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10, 15],
         "defaults": {"resolution": "1080p", "seed": None},
@@ -242,6 +272,8 @@ VIDEO_MODEL_CONFIGS = {
     "happyhorse_edit": {
         "label": "🐴 HappyHorse Edit",
         "v_types": ["video"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["16:9"],
         "durations": [],
         "defaults": {"resolution": "1080p", "audio_setting": "auto", "seed": None},
@@ -253,6 +285,7 @@ VIDEO_MODEL_CONFIGS = {
     "wan_27_t2v": {
         "label": "🌊 Wan 2.7 Video",
         "v_types": ["text"],
+        "supports_refs": False,
         "aspect_ratios": ["16:9", "9:16", "1:1"],
         "durations": [5, 10],
         "defaults": {
@@ -271,6 +304,8 @@ VIDEO_MODEL_CONFIGS = {
     "wan_27_i2v": {
         "label": "🌊 Wan 2.7 I2V",
         "v_types": ["imgtxt"],
+        "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": [],
         "durations": [5, 10],
         "defaults": {

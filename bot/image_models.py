@@ -28,6 +28,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "💎 Banana Pro",
         "cost_key": "nano-banana-pro",
         "requires_refs": False,
+        "supports_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -46,6 +47,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "🪙 Banana 2",
         "cost_key": "banana_2",
         "requires_refs": False,
+        "supports_refs": True,
         "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "auto",
@@ -64,6 +66,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "🧠 GPT Image 2",
         "cost_key": "gpt_image_2",
         "requires_refs": False,
+        "supports_refs": True,
         "aspect_ratios": [
             "auto",
             "1:1",
@@ -104,6 +107,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "✨ Grok Imagine T2I",
         "cost_key": "grok_t2i",
         "requires_refs": False,
+        "supports_refs": False,
         "aspect_ratios": ["1:1", "16:9", "9:16", "3:2", "2:3"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -122,6 +126,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "✨ Grok Img→Img",
         "cost_key": "grok_i2i",
         "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "3:2", "2:3"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -138,6 +143,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "🧑 Ideogram Character",
         "cost_key": "ideogram_character",
         "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -161,6 +167,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "🔥 Seedream 5.0 Lite",
         "cost_key": "seedream_5_lite",
         "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",
@@ -180,6 +187,7 @@ IMAGE_MODEL_CONFIGS = {
         "settings_label": "🖌 Seedream 4.5 Edit",
         "cost_key": "seedream_edit",
         "requires_refs": True,
+        "supports_refs": True,
         "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "1:1",

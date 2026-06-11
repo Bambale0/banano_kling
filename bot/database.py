@@ -31,6 +31,7 @@ def _get_master_partner_telegram_id() -> int:
 
 
 MASTER_PARTNER_TELEGRAM_ID = _get_master_partner_telegram_id()
+PARTNER_LEVEL_PERCENTS: tuple[int, ...] = (30, 10, 3)
 
 
 async def _migrate_promo_redemptions_schema(db: aiosqlite.Connection) -> None:
@@ -1102,60 +1103,91 @@ async def credit_first_payment_referral_bonus(
         if not user or not user["referred_by"] or user["has_paid"]:
             return {"mode": "none", "value": 0, "percent": 0}
 
-        ref_cursor = await db.execute(
-            "SELECT id, telegram_id, partner_agreed_at, partner_tier, partner_total_revenue_rub FROM users WHERE id = ?",
-            (user["referred_by"],),
-        )
-        referrer = await ref_cursor.fetchone()
-        if not referrer:
+        chain: list[aiosqlite.Row] = []
+        current_referrer_id = user["referred_by"]
+        for _level in PARTNER_LEVEL_PERCENTS:
+            ref_cursor = await db.execute(
+                "SELECT id, telegram_id, referred_by, partner_agreed_at, partner_tier, partner_total_revenue_rub FROM users WHERE id = ?",
+                (current_referrer_id,),
+            )
+            referrer = await ref_cursor.fetchone()
+            if not referrer:
+                break
+            chain.append(referrer)
+            current_referrer_id = referrer["referred_by"]
+            if not current_referrer_id:
+                break
+
+        if not chain:
             return {"mode": "none", "value": 0, "percent": 0}
 
         result = {"mode": "none", "value": 0, "percent": 0}
-        if referrer["partner_agreed_at"]:
-            current_total = float(referrer["partner_total_revenue_rub"] or 0)
-            percent = get_partner_percent_by_total(current_total)
+        partner_results: list[dict] = []
+        if chain[0]["partner_agreed_at"]:
             base_value = (
                 float(transaction_amount_rub)
                 if transaction_amount_rub is not None
                 else float(transaction_credits)
             )
-            bonus_rub = round(base_value * percent / 100.0, 2)
-            next_total = current_total + (
-                float(transaction_amount_rub)
-                if transaction_amount_rub is not None
-                else 0.0
-            )
-            inserted_bonus = await _record_credit_transaction(
-                db,
-                referrer["id"],
-                int(round(bonus_rub * 100)),
-                "referral_first_payment_partner_bonus",
-                f"first_payment_partner:{telegram_id}",
-                {
-                    "referred_user_id": user["id"],
-                    "transaction_amount_rub": transaction_amount_rub,
-                    "bonus_rub": bonus_rub,
-                    "percent": percent,
-                },
-            )
-            if inserted_bonus:
-                await db.execute(
-                    "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (
-                        float(transaction_amount_rub or 0),
-                        bonus_rub,
-                        get_partner_tier_by_total(next_total),
-                        referrer["id"],
-                    ),
+            for level, (referrer, percent) in enumerate(
+                zip(chain, PARTNER_LEVEL_PERCENTS, strict=False),
+                start=1,
+            ):
+                if not referrer["partner_agreed_at"]:
+                    continue
+                current_total = float(referrer["partner_total_revenue_rub"] or 0)
+                bonus_rub = round(base_value * percent / 100.0, 2)
+                next_total = current_total + (
+                    float(transaction_amount_rub)
+                    if transaction_amount_rub is not None
+                    else 0.0
                 )
-                result = {"mode": "partner", "value": bonus_rub, "percent": percent}
+                inserted_bonus = await _record_credit_transaction(
+                    db,
+                    referrer["id"],
+                    int(round(bonus_rub * 100)),
+                    "referral_first_payment_partner_bonus",
+                    f"first_payment_partner:{telegram_id}:level{level}",
+                    {
+                        "referred_user_id": user["id"],
+                        "transaction_amount_rub": transaction_amount_rub,
+                        "bonus_rub": bonus_rub,
+                        "percent": percent,
+                        "level": level,
+                    },
+                )
+                if inserted_bonus:
+                    await db.execute(
+                        "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, partner_balance_rub = partner_balance_rub + ?, partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (
+                            float(transaction_amount_rub or 0),
+                            bonus_rub,
+                            get_partner_tier_by_total(next_total),
+                            referrer["id"],
+                        ),
+                    )
+                    partner_results.append(
+                        {
+                            "telegram_id": referrer["telegram_id"],
+                            "level": level,
+                            "value": bonus_rub,
+                            "percent": percent,
+                        }
+                    )
+            if partner_results:
+                result = {
+                    "mode": "partner",
+                    "value": round(sum(item["value"] for item in partner_results), 2),
+                    "percent": PARTNER_LEVEL_PERCENTS[0],
+                    "levels": partner_results,
+                }
         else:
             banana_bonus = max(
                 1, round(float(transaction_credits) * bonus_percent / 100)
             )
             inserted_bonus = await _record_credit_transaction(
                 db,
-                referrer["id"],
+                chain[0]["id"],
                 banana_bonus,
                 "referral_first_payment_bonus",
                 f"first_payment:{telegram_id}",
@@ -1164,11 +1196,11 @@ async def credit_first_payment_referral_bonus(
             if inserted_bonus:
                 await db.execute(
                     "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (banana_bonus, banana_bonus, referrer["id"]),
+                    (banana_bonus, banana_bonus, chain[0]["id"]),
                 )
                 await db.execute(
                     "UPDATE referrals SET bonus_credits = bonus_credits + ? WHERE referrer_id = ? AND referred_id = ?",
-                    (banana_bonus, referrer["id"], user["id"]),
+                    (banana_bonus, chain[0]["id"], user["id"]),
                 )
             result = {"mode": "banana", "value": banana_bonus, "percent": bonus_percent}
 
@@ -1182,21 +1214,16 @@ async def credit_first_payment_referral_bonus(
 
 def get_partner_percent_by_tier(tier: str) -> int:
     """Процент партнёрского вознаграждения по текущему уровню."""
-    tier = (tier or "basic").lower()
-    if tier == "gold":
-        return 50
-    return 45
+    return PARTNER_LEVEL_PERCENTS[0]
 
 
 def get_partner_percent_by_total(total_revenue_rub: float) -> int:
     """Процент партнёрского вознаграждения по обороту рефералов."""
-    return 50 if float(total_revenue_rub or 0) >= 300_000 else 45
+    return PARTNER_LEVEL_PERCENTS[0]
 
 
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
     """Возвращает уровень партнёра по обороту рефералов."""
-    if total_revenue_rub >= 300_000:
-        return "gold"
     return "basic"
 
 
@@ -2125,8 +2152,8 @@ async def activate_user_subscription(
     priority: bool = False,
 ) -> dict:
     """Activates a paid subscription and returns the stored subscription."""
-    if days <= 0 or image_limit <= 0:
-        raise ValueError("subscription days and image_limit must be positive")
+    if days <= 0 or (image_limit <= 0 and video_limit <= 0):
+        raise ValueError("subscription days and at least one usage limit must be positive")
 
     user = await get_or_create_user(telegram_id)
     expires_at = datetime.utcnow() + timedelta(days=days)
@@ -2928,27 +2955,72 @@ async def increment_feed_share(task_id: str) -> Optional[int]:
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             """UPDATE generation_tasks 
                SET status = 'completed', result_url = ?, completed_at = CURRENT_TIMESTAMP 
                WHERE task_id = ?""",
             (result_url, task_id),
         )
+        cursor = await db.execute(
+            "SELECT * FROM generation_tasks WHERE task_id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
         await db.commit()
+        if row:
+            await _notify_tma_task_update(dict(row))
         return True
 
 
 async def fail_generation_task(task_id: str) -> bool:
     """Отмечает задачу как завершённую с ошибкой."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
         await db.execute(
             """UPDATE generation_tasks
                SET status = 'failed', completed_at = CURRENT_TIMESTAMP
                WHERE task_id = ?""",
             (task_id,),
         )
+        cursor = await db.execute(
+            "SELECT * FROM generation_tasks WHERE task_id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
         await db.commit()
+        if row:
+            await _notify_tma_task_update(dict(row))
         return True
+
+
+async def _notify_tma_task_update(row: dict) -> None:
+    try:
+        from bot.tma_realtime import notify_task_update
+
+        await notify_task_update(
+            int(row.get("telegram_id") or 0),
+            {
+                "task_id": row.get("task_id"),
+                "telegram_id": row.get("telegram_id"),
+                "type": row.get("type"),
+                "preset_id": row.get("preset_id"),
+                "model": row.get("model"),
+                "duration": row.get("duration"),
+                "aspect_ratio": row.get("aspect_ratio"),
+                "prompt": row.get("prompt"),
+                "cost": row.get("cost"),
+                "status": row.get("status"),
+                "result_url": row.get("result_url"),
+                "reference_images": row.get("reference_images"),
+                "created_at": row.get("created_at"),
+                "is_public_feed": row.get("is_public_feed"),
+                "likes_count": row.get("likes_count"),
+                "shares_count": row.get("shares_count"),
+            },
+        )
+    except Exception:
+        logger.exception("Failed to notify TMA task update for %s", row.get("task_id"))
 
 
 async def add_generation_history(

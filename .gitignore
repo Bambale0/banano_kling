@@ -69,3 +69,10 @@ temp/
 static/
 static/uploads/
 *.conf0
+
+# Telegram Mini App frontend
+tma/node_modules/
+tma/dist/
+tma/*.tsbuildinfo
+tma/vite.config.js
+tma/vite.config.d.ts

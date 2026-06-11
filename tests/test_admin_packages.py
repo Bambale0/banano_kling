@@ -125,6 +125,49 @@ async def test_service_sets_single_popular_package(temp_db, service):
 
 
 @pytest.mark.asyncio
+async def test_service_creates_and_keeps_custom_package(temp_db, service):
+    result = await service.create_package(
+        {
+            "id": "video_pack",
+            "name": "Видео пакет",
+            "kind": "subscription",
+            "period": "месяц",
+            "price_rub": 1900,
+            "credits": 0,
+            "bonus_credits": 0,
+            "subscription_days": 30,
+            "image_limit": 0,
+            "video_limit": 12,
+            "includes_pro": False,
+        }
+    )
+
+    assert result.ok
+    packages = await service.list_packages()
+    by_id = {package["id"]: package for package in packages}
+
+    assert set(by_id) == {"mini", "pro", "video_pack"}
+    assert by_id["video_pack"]["name"] == "Видео пакет"
+    assert by_id["video_pack"]["kind"] == "subscription"
+    assert by_id["video_pack"]["period"] == "месяц"
+    assert by_id["video_pack"]["credits"] == 0
+    assert by_id["video_pack"]["video_limit"] == 12
+
+
+@pytest.mark.asyncio
+async def test_service_updates_package_text_fields(temp_db, service):
+    assert (await service.set_text_field("mini", "name", "Старт")).ok
+    assert (await service.set_text_field("mini", "kind", "credits")).ok
+    assert (await service.set_text_field("mini", "period", "разово")).ok
+
+    package = await service.get_package("mini")
+
+    assert package["name"] == "Старт"
+    assert package["kind"] == "credits"
+    assert package["period"] == "разово"
+
+
+@pytest.mark.asyncio
 async def test_service_ignores_stale_package_overrides_without_matching_ids(
     temp_db, service
 ):

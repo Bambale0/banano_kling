@@ -35,42 +35,41 @@ def test_load_prices(mock_prices):
             assert prices["packages"] == mock_prices["packages"]
 
 
-def test_get_main_menu_keyboard():
+def test_get_main_menu_keyboard(monkeypatch):
+    monkeypatch.setattr("bot.keyboards.config.MINI_APP_URL", "https://example.com/mini")
     kb = get_main_menu_keyboard(10)
     assert kb.inline_keyboard
     rows = [[btn.callback_data for btn in row] for row in kb.inline_keyboard]
+    texts = [[btn.text for btn in row] for row in kb.inline_keyboard]
     callback_data = [
         btn.callback_data
         for row in kb.inline_keyboard
         for btn in row
         if btn.callback_data
     ]
-    assert any(
-        "create_video_new" in btn.callback_data
-        for row in kb.inline_keyboard
-        for btn in row
-    )
-    assert any(
-        "menu_feed" in btn.callback_data
-        for row in kb.inline_keyboard
-        for btn in row
-    )
+    assert "create_video_new" in callback_data
+    assert "menu_feed" in callback_data
     assert "recurring_status" not in callback_data
     assert ["menu_partner", "menu_support"] in rows
+    assert texts == [
+        ["🧩 Мини апп", "🧠 Чат GPT"],
+        ["🖼 Создать фото", "🎬 Создать видео"],
+        ["🌈 Микс фото", "📚 Каталог промптов"],
+        ["🔷 Gemini Omni", "🎯 MC"],
+        ["📷 Фото-промпт", "✍️ Улучшить Промпт"],
+        ["🪙 Мой баланс", "💰 Купить коины"],
+        ["💼 Партнерам", "🆘 Поддержка"],
+    ]
 
 
-def test_main_menu_mini_app_button_is_admin_only(monkeypatch):
+def test_main_menu_mini_app_button_is_available_with_url(monkeypatch):
     monkeypatch.setattr("bot.keyboards.config.ADMIN_IDS_STR", "123")
     monkeypatch.setattr("bot.keyboards.config.MINI_APP_URL", "https://example.com/mini")
 
     user_kb = get_main_menu_keyboard(10, user_id=456)
     admin_kb = get_main_menu_keyboard(10, user_id=123)
 
-    assert not any(
-        getattr(btn, "web_app", None)
-        for row in user_kb.inline_keyboard
-        for btn in row
-    )
+    assert any(getattr(btn, "web_app", None) for row in user_kb.inline_keyboard for btn in row)
     mini_buttons = [
         btn
         for row in admin_kb.inline_keyboard
@@ -78,7 +77,7 @@ def test_main_menu_mini_app_button_is_admin_only(monkeypatch):
         if getattr(btn, "web_app", None)
     ]
     assert len(mini_buttons) == 1
-    assert mini_buttons[0].text == "🧩 Mini App"
+    assert mini_buttons[0].text == "🧩 Мини апп"
     assert mini_buttons[0].web_app.url == "https://example.com/mini"
 
 

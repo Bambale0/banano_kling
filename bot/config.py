@@ -98,6 +98,12 @@ class Config:
 
     # Telegram Mini App
     MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
+    MINI_APP_MODE: str = os.getenv("MINI_APP_MODE", "production").lower()
+    MINI_APP_PRODUCTION_LIMIT: int = _get_env_int("MINI_APP_PRODUCTION_LIMIT", 500)
+    TMA_INIT_DATA_MAX_AGE_SECONDS: int = _get_env_int(
+        "TMA_INIT_DATA_MAX_AGE_SECONDS",
+        24 * 3600,
+    )
 
     # База данных
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")

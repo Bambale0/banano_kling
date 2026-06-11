@@ -40,6 +40,17 @@ def test_gpt55_extract_text_uses_message_output_only():
     assert service._extract_text(data) == "visible answer"
 
 
+def test_gpt55_stream_delta_parser_accepts_responses_and_chat_events():
+    service = GPT55Service()
+
+    assert service._extract_stream_delta(
+        {"type": "response.output_text.delta", "delta": "Привет"}
+    ) == "Привет"
+    assert service._extract_stream_delta(
+        {"choices": [{"delta": {"content": " world"}}]}
+    ) == " world"
+
+
 def test_format_subscription_limits_shows_remaining_package_limits():
     text = _format_subscription_limits(
         {

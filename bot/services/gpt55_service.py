@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import aiohttp
 
@@ -86,19 +86,17 @@ class GPT55Service:
                 return data
         return None
 
-    async def ask(
+    def _build_payload(
         self,
         user_content: list[dict],
-        history: list[dict] | None = None,
-        reasoning_effort: str = "high",
-        web_search: bool = True,
-    ) -> Optional[str]:
-        if not config.KIE_AI_API_KEY:
-            logger.error("KIE_AI_API_KEY is not configured for GPT 5.5")
-            return None
-
+        history: list[dict] | None,
+        reasoning_effort: str,
+        web_search: bool,
+        *,
+        stream: bool,
+    ) -> dict:
         system_prompt = (
-            "Ты GPT 5.5 внутри Telegram-бота Banana Boom. Отвечай на русском, "
+            "Ты GPT 5.5 внутри Telegram-бота BOOM Studio. Отвечай на русском, "
             "если пользователь не попросил другой язык. Помогай с любыми задачами: "
             "текст, код, анализ, промпты, изображения и файлы. Учитывай предыдущий "
             "контекст диалога. Если используешь web search, кратко отделяй проверенные "
@@ -116,12 +114,112 @@ class GPT55Service:
 
         payload = {
             "model": self.MODEL,
-            "stream": False,
+            "stream": stream,
             "input": input_items,
             "reasoning": {"effort": reasoning_effort},
         }
         if web_search:
             payload["tools"] = [{"type": "web_search"}]
+        return payload
+
+    def _extract_stream_delta(self, data: dict) -> str:
+        if isinstance(data.get("delta"), str):
+            return data["delta"]
+        if isinstance(data.get("text"), str) and str(data.get("type", "")).endswith(
+            ".delta"
+        ):
+            return data["text"]
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            delta = (choices[0] or {}).get("delta") or {}
+            content = delta.get("content")
+            if isinstance(content, str):
+                return content
+        return ""
+
+    async def stream(
+        self,
+        user_content: list[dict],
+        history: list[dict] | None = None,
+        reasoning_effort: str = "high",
+        web_search: bool = True,
+    ) -> AsyncIterator[str]:
+        if not config.KIE_AI_API_KEY:
+            logger.error("KIE_AI_API_KEY is not configured for GPT 5.5")
+            return
+
+        payload = self._build_payload(
+            user_content,
+            history,
+            reasoning_effort,
+            web_search,
+            stream=True,
+        )
+        headers = {
+            "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+
+        session = await self._get_session()
+        async with session.post(
+            f"{config.KIE_BASE_URL}{self.ENDPOINT}", headers=headers, json=payload
+        ) as response:
+            logger.info(
+                "Kie.ai GPT 5.5 stream status=%s content-type=%s",
+                response.status,
+                response.headers.get("content-type", "none"),
+            )
+            if response.status != 200:
+                return
+
+            content_type = response.headers.get("content-type", "")
+            if "text/event-stream" not in content_type:
+                response_text = await response.text()
+                data = self._parse_response_text(response_text)
+                if data:
+                    text = self._extract_text(data)
+                    if text:
+                        yield text
+                return
+
+            buffer = ""
+            async for chunk in response.content.iter_chunked(4096):
+                buffer += chunk.decode("utf-8", errors="ignore")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    raw_payload = line.removeprefix("data:").strip()
+                    if not raw_payload or raw_payload == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(raw_payload)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = self._extract_stream_delta(event)
+                    if delta:
+                        yield delta
+
+    async def ask(
+        self,
+        user_content: list[dict],
+        history: list[dict] | None = None,
+        reasoning_effort: str = "high",
+        web_search: bool = True,
+    ) -> Optional[str]:
+        if not config.KIE_AI_API_KEY:
+            logger.error("KIE_AI_API_KEY is not configured for GPT 5.5")
+            return None
+
+        payload = self._build_payload(
+            user_content,
+            history,
+            reasoning_effort,
+            web_search,
+            stream=False,
+        )
 
         headers = {
             "Authorization": f"Bearer {config.KIE_AI_API_KEY}",

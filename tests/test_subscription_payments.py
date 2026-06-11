@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from bot.database import (
+    consume_subscription_usage,
     create_transaction,
     disable_recurring_subscription,
     get_active_subscription,
@@ -82,6 +83,54 @@ async def test_subscription_payment_uses_admin_package_overrides(temp_db):
     assert subscription["package_id"] == "boom"
     assert subscription["image_limit"] == 77
     assert subscription["video_limit"] == 2
+
+
+@pytest.mark.asyncio
+async def test_video_only_subscription_package_activates_and_consumes_video(temp_db):
+    assert (
+        await admin_package_config_service.create_package(
+            {
+                "id": "video12",
+                "name": "Видео 12",
+                "kind": "subscription",
+                "price_rub": 1900,
+                "credits": 0,
+                "bonus_credits": 0,
+                "subscription_days": 30,
+                "image_limit": 0,
+                "video_limit": 12,
+            }
+        )
+    ).ok
+    user = await get_or_create_user(123456)
+    order_id = "123456_1000_video12"
+    assert await create_transaction(
+        order_id,
+        user.id,
+        "payment-video-only",
+        "tbank",
+        0,
+        1900.0,
+    )
+
+    assert await _complete_transaction(order_id)
+
+    subscription = await get_active_subscription(123456)
+    assert subscription is not None
+    assert subscription["package_id"] == "video12"
+    assert subscription["image_limit"] == 0
+    assert subscription["video_limit"] == 12
+
+    ok, reason, usage = await consume_subscription_usage(
+        123456,
+        usage_type="video",
+        model="v3_std",
+        external_id="video-task-1",
+    )
+
+    assert ok, reason
+    assert usage["used"] == 1
+    assert usage["limit"] == 12
 
 
 @pytest.mark.asyncio

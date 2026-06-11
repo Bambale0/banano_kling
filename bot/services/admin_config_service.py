@@ -11,6 +11,9 @@ from bot.services.preset_manager import preset_manager
 
 PACKAGE_SETTINGS_KEY = "admin_payment_packages"
 PACKAGE_OVERRIDE_FIELDS = {
+    "name",
+    "kind",
+    "period",
     "price_rub",
     "credits",
     "bonus_credits",
@@ -58,6 +61,33 @@ class AdminPackageConfigService:
         if price_rub <= 0:
             return PackageUpdateResult(False, error="price_must_be_positive")
         return await self._update_package(package_id, {"price_rub": price_rub})
+
+    async def create_package(self, package: dict[str, Any]) -> PackageUpdateResult:
+        normalized = self._normalize_package(package)
+        if not normalized["id"]:
+            return PackageUpdateResult(False, error="id_required")
+        if not normalized["name"]:
+            return PackageUpdateResult(False, error="name_required")
+        if normalized["price_rub"] <= 0:
+            return PackageUpdateResult(False, error="price_must_be_positive")
+        packages = await self._load_packages()
+        if any(item.get("id") == normalized["id"] for item in packages):
+            return PackageUpdateResult(False, error="package_exists")
+        packages.append(normalized)
+        await self._save_packages(packages)
+        return PackageUpdateResult(True, package=copy.deepcopy(normalized))
+
+    async def set_text_field(
+        self, package_id: str, field: str, value: str
+    ) -> PackageUpdateResult:
+        if field not in {"name", "kind", "period", "photo_limit_text", "video_limit_text"}:
+            return PackageUpdateResult(False, error="unsupported_text_field")
+        value = str(value or "").strip()
+        if field == "name" and not value:
+            return PackageUpdateResult(False, error="name_required")
+        if field == "kind" and value not in {"credits", "subscription"}:
+            return PackageUpdateResult(False, error="bad_kind")
+        return await self._update_package(package_id, {field: value})
 
     async def set_bonus(
         self, package_id: str, bonus_credits: int
@@ -222,6 +252,10 @@ class AdminPackageConfigService:
                     if field in stored_by_id[package_id]:
                         merged_package[field] = stored_by_id[package_id][field]
             merged.append(self._normalize_package(merged_package))
+        for package in stored_packages:
+            package_id = package.get("id")
+            if package_id and package_id not in default_by_id:
+                merged.append(self._normalize_package(copy.deepcopy(package)))
         return merged
 
     @staticmethod
