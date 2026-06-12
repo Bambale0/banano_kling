@@ -68,12 +68,26 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     is_public_feed BOOLEAN DEFAULT FALSE,
     likes_count INTEGER DEFAULT 0,
     shares_count INTEGER DEFAULT 0,
-    source_feed_task_id TEXT
+    source_feed_task_id TEXT,
+    published_at TIMESTAMPTZ,
+    feed_status TEXT DEFAULT 'approved'
 );
 
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_status ON generation_tasks(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_task_id ON generation_tasks(task_id);
-CREATE INDEX IF NOT EXISTS idx_generation_tasks_public_feed ON generation_tasks(is_public_feed, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_generation_tasks_public_feed ON generation_tasks(is_public_feed, feed_status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS feed_interactions (
+    id BIGSERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    telegram_id BIGINT NOT NULL,
+    action TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(task_id, telegram_id, action)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_interactions_task_action
+    ON feed_interactions(task_id, action);
 
 CREATE TABLE IF NOT EXISTS generation_history (
     id BIGSERIAL PRIMARY KEY,

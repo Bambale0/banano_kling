@@ -41,6 +41,7 @@ from bot.video_models import VIDEO_MODEL_CONFIGS
 
 logger = logging.getLogger(__name__)
 TMA_MIX_PHOTO_MODELS = ("banana_2", "grok_i2i", "gpt_image_2")
+TMA_MAX_IMAGE_VARIATIONS = 6
 
 
 def _clean_tma_prompt(value: str) -> str:
@@ -278,7 +279,6 @@ def _telegram_id(user: dict) -> int:
 def _public_task(task: Any) -> dict:
     return {
         "task_id": task.task_id,
-        "telegram_id": task.telegram_id,
         "type": task.type,
         "preset_id": task.preset_id,
         "model": task.model,
@@ -293,6 +293,8 @@ def _public_task(task: Any) -> dict:
         "is_public_feed": task.is_public_feed,
         "likes_count": task.likes_count,
         "shares_count": task.shares_count,
+        "published_at": getattr(task, "published_at", None),
+        "feed_status": getattr(task, "feed_status", "approved"),
     }
 
 
@@ -535,50 +537,6 @@ async def _generations(limit: int = 80) -> list[dict]:
 async def _feed(limit: int = 40) -> list[dict]:
     limit = max(1, min(int(limit or 40), 1000))
     tasks = await database.get_feed_tasks(limit=limit)
-    if len(tasks) < limit:
-        fallback_rows = await _query_all(
-            """
-            SELECT *
-            FROM generation_tasks
-            WHERE type = 'image'
-              AND status = 'completed'
-              AND result_url IS NOT NULL
-              AND result_url != ''
-            ORDER BY COALESCE(completed_at, created_at) DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        seen = {task.task_id for task in tasks}
-        for row in fallback_rows:
-            if row["task_id"] in seen:
-                continue
-            tasks.append(
-                database.GenerationTask(
-                    id=row["id"],
-                    user_id=row["user_id"],
-                    task_id=row["task_id"],
-                    type=row["type"],
-                    preset_id=row["preset_id"],
-                    model=row["model"],
-                    duration=row["duration"],
-                    aspect_ratio=row["aspect_ratio"],
-                    prompt=row["prompt"],
-                    cost=row["cost"],
-                    status=row["status"],
-                    telegram_id=row["telegram_id"],
-                    result_url=row["result_url"],
-                    reference_images=row["reference_images"] if "reference_images" in row.keys() else None,
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    is_public_feed=bool(row["is_public_feed"]) if "is_public_feed" in row.keys() else False,
-                    likes_count=int(row["likes_count"] or 0) if "likes_count" in row.keys() else 0,
-                    shares_count=int(row["shares_count"] or 0) if "shares_count" in row.keys() else 0,
-                    source_feed_task_id=row["source_feed_task_id"] if "source_feed_task_id" in row.keys() else None,
-                )
-            )
-            seen.add(row["task_id"])
-            if len(tasks) >= limit:
-                break
     telegram_ids = [int(task.telegram_id or 0) for task in tasks if task.telegram_id]
     users_by_telegram_id: dict[int, dict] = {}
     if telegram_ids:
@@ -595,10 +553,13 @@ async def _feed(limit: int = 40) -> list[dict]:
     return [
         {
             "task_id": task.task_id,
-            "telegram_id": task.telegram_id,
             "username": users_by_telegram_id.get(int(task.telegram_id or 0), {}).get("username"),
             "first_name": users_by_telegram_id.get(int(task.telegram_id or 0), {}).get("first_name"),
             "last_name": users_by_telegram_id.get(int(task.telegram_id or 0), {}).get("last_name"),
+            "author_code": "creator-"
+            + hashlib.sha256(
+                str(task.telegram_id or task.user_id or task.task_id).encode("utf-8")
+            ).hexdigest()[:8],
             "type": task.type,
             "preset_id": task.preset_id,
             "model": task.model,
@@ -607,6 +568,7 @@ async def _feed(limit: int = 40) -> list[dict]:
             "likes_count": task.likes_count,
             "shares_count": task.shares_count,
             "created_at": task.created_at,
+            "published_at": task.published_at,
             "is_public_feed": task.is_public_feed,
         }
         for task in tasks
@@ -853,6 +815,7 @@ async def _can_start_generation(
     *,
     usage_type: str,
     model: str,
+    count: int = 1,
 ) -> bool:
     if config.is_admin(telegram_id):
         return True
@@ -865,7 +828,8 @@ async def _can_start_generation(
         return False
     limit_key = "image_limit" if usage_type == "image" else "video_limit"
     used_key = "images_used" if usage_type == "image" else "videos_used"
-    return int(subscription.get(limit_key) or 0) > int(subscription.get(used_key) or 0)
+    remaining = int(subscription.get(limit_key) or 0) - int(subscription.get(used_key) or 0)
+    return remaining >= max(1, int(count or 1))
 
 
 async def handle_tma_app_generation(request: web.Request) -> web.Response:
@@ -962,73 +926,73 @@ async def handle_tma_app_generation(request: web.Request) -> web.Response:
         if model_cfg.get("requires_refs") and not refs:
             return _json({"ok": False, "error": "refs_required"}, status=400)
         cost = int(preset_manager.get_generation_cost(model_cfg.get("cost_key") or model))
-        if not await _can_start_generation(telegram_id, cost, usage_type="image", model=model):
+        try:
+            img_count = int(payload.get("count") or payload.get("img_count") or 1)
+        except (TypeError, ValueError):
+            img_count = 1
+        img_count = max(1, min(img_count, TMA_MAX_IMAGE_VARIATIONS))
+        total_cost = cost * img_count
+        if not await _can_start_generation(telegram_id, total_cost, usage_type="image", model=model, count=img_count):
             return _json({"ok": False, "error": "insufficient_balance"}, status=402)
-        if model == "banana_2":
-            result = await nano_banana_2_service.generate_image(
+        model_options = normalize_image_options(
+            model,
+            {"aspect_ratio": aspect_ratio, **options},
+        )
+        tasks = []
+        for index in range(img_count):
+            result = await _run_tma_image_model(
+                model,
                 prompt,
-                aspect_ratio=aspect_ratio,
-                resolution=str(options.get("resolution") or "4K"),
-                image_input=refs,
-                output_format=str(options.get("output_format") or "png"),
-                callback_url=callback_url,
+                refs,
+                model_options,
+                callback_url,
             )
-        elif model == "gpt_image_2":
-            result = await gpt_image_service.generate_image(
-                prompt,
-                image_urls=refs,
-                aspect_ratio=aspect_ratio,
-                nsfw_checker=bool(options.get("nsfw_checker", False)),
-                callback_url=callback_url,
+            job_task_id = str((result or {}).get("task_id") or "")
+            if not job_task_id:
+                continue
+            charged, source, usage_id = await _charge_generation(
+                telegram_id,
+                usage_type="image",
+                model=model,
+                task_id=job_task_id,
+                cost=cost,
+                metadata={
+                    "flow": flow,
+                    "model": model,
+                    "count": img_count,
+                    "variation": index + 1,
+                },
             )
-        elif model == "grok_t2i":
-            result = await grok_service.generate_text_to_image(
-                prompt,
-                aspect_ratio=aspect_ratio,
-                enable_pro=bool(options.get("enable_pro", False)),
-                nsfw_checker=bool(options.get("nsfw_checker", False)),
-                callback_url=callback_url,
-            )
-        elif model == "grok_i2i":
-            result = await grok_service.generate_image_to_image(
-                refs[0] if refs else "",
+            if not charged:
+                continue
+            await database.add_generation_task(
+                user_id=user_row.id,
+                telegram_id=telegram_id,
+                task_id=job_task_id,
+                type="image",
+                preset_id=flow,
+                model=model,
+                duration=None,
+                aspect_ratio=str(model_options.get("aspect_ratio") or aspect_ratio),
                 prompt=prompt,
-                nsfw_checker=bool(options.get("nsfw_checker", False)),
-                callback_url=callback_url,
+                cost=cost,
+                reference_images=json.dumps(refs, ensure_ascii=False),
+                billing_source=source,
+                subscription_usage_id=usage_id,
             )
-        elif model == "ideogram_character":
-            result = await ideogram_service.generate_character(
-                prompt,
-                reference_image_urls=refs,
-                aspect_ratio=aspect_ratio,
-                rendering_speed=str(options.get("rendering_speed") or "BALANCED"),
-                style=str(options.get("style") or "AUTO"),
-                expand_prompt=bool(options.get("expand_prompt", True)),
-                nsfw_checker=bool(options.get("nsfw_checker", False)),
-                callback_url=callback_url,
-            )
-        elif model in {"seedream_5_lite", "seedream_edit"}:
-            result = await seedream_lite_service.generate_image(
-                prompt,
-                model=str(model_cfg.get("api_model") or "seedream/4.5"),
-                image_urls=refs,
-                aspect_ratio=aspect_ratio,
-                quality=str(options.get("quality") or "basic"),
-                callback_url=callback_url,
-            )
-        else:
-            result = await nano_banana_pro_service.generate_image(
-                prompt,
-                aspect_ratio=aspect_ratio,
-                resolution=str(options.get("resolution") or "4K"),
-                image_input=refs,
-                output_format=str(options.get("output_format") or "png"),
-                callback_url=callback_url,
-            )
-        task_id = str((result or {}).get("task_id") or "")
-        usage_type = "image"
-        duration = None
-        task_type = "image"
+            task = await _query_one("SELECT * FROM generation_tasks WHERE task_id = ?", (job_task_id,))
+            if task:
+                tasks.append(task)
+        if not tasks:
+            return _json({"ok": False, "error": "provider_failed"}, status=502)
+        return _json(
+            {
+                "ok": True,
+                "tasks": tasks,
+                "task": tasks[0],
+                "stats": await database.get_user_stats(telegram_id),
+            }
+        )
     elif flow in {"video_text", "image_to_video", "video_edit", "motion_control", "gemini_omni"}:
         model = str(payload.get("model") or "v3_std")
         model_cfg = VIDEO_MODEL_CONFIGS.get(model, VIDEO_MODEL_CONFIGS["v3_std"])
@@ -1512,10 +1476,10 @@ async def handle_tma_app_feed_action(request: web.Request) -> web.Response:
     payload = await _read_json(request)
     action = str(payload.get("action") or "")
     if action == "like":
-        value = await database.like_feed_task(task_id)
+        value = await database.like_feed_task(task_id, telegram_id)
         ok = value is not None
     elif action == "share":
-        value = await database.increment_feed_share(task_id)
+        value = await database.increment_feed_share(task_id, telegram_id)
         ok = value is not None
     elif action == "publish":
         ok, reason = await database.share_task_to_feed(task_id, telegram_id)

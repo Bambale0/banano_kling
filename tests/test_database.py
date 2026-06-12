@@ -57,6 +57,7 @@ async def test_init_db(temp_db):
             "generation_tasks",
             "generation_history",
             "user_settings",
+            "feed_interactions",
             "referrals",
             "partner_withdrawals",
             "batch_jobs",
@@ -488,11 +489,17 @@ async def test_feed_publish_filters_and_metrics(temp_db):
     public_task = await get_public_feed_task("img_task")
     assert public_task is not None
     assert public_task.prompt == "hidden prompt"
-    assert await like_feed_task("img_task") == 1
-    assert await increment_feed_share("img_task") == 1
+    assert await like_feed_task("img_task", 123456) == 1
+    assert await like_feed_task("img_task", 123456) == 1
+    assert await like_feed_task("img_task", 654321) == 2
+    assert await increment_feed_share("img_task", 123456) == 1
+    assert await increment_feed_share("img_task", 123456) == 1
+    assert await increment_feed_share("img_task", 654321) == 2
 
     feed_tasks = await get_feed_tasks()
     assert [task.task_id for task in feed_tasks] == ["img_task"]
+    assert feed_tasks[0].published_at is not None
+    assert feed_tasks[0].feed_status == "approved"
 
     assert await remove_task_from_feed("img_task", 123456)
     assert await get_public_feed_task("img_task") is None

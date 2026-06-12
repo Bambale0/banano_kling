@@ -159,6 +159,8 @@ class GenerationTask:
     likes_count: int = 0
     shares_count: int = 0
     source_feed_task_id: Optional[str] = None
+    published_at: Optional[datetime] = None
+    feed_status: str = "approved"
     billing_source: str = "credits"
     subscription_usage_id: Optional[int] = None
 
@@ -285,6 +287,8 @@ async def init_db():
                 likes_count INTEGER DEFAULT 0,
                 shares_count INTEGER DEFAULT 0,
                 source_feed_task_id TEXT,
+                published_at TIMESTAMP,
+                feed_status TEXT DEFAULT 'approved',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
@@ -353,6 +357,18 @@ async def init_db():
             pass
         try:
             await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN published_at TIMESTAMP"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE generation_tasks ADD COLUMN feed_status TEXT DEFAULT 'approved'"
+            )
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute(
                 "ALTER TABLE generation_tasks ADD COLUMN billing_source TEXT DEFAULT 'credits'"
             )
         except aiosqlite.OperationalError:
@@ -363,6 +379,25 @@ async def init_db():
             )
         except aiosqlite.OperationalError:
             pass
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feed_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                telegram_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, telegram_id, action)
+            )
+        """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feed_interactions_task_action ON feed_interactions(task_id, action)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_generation_tasks_public_feed ON generation_tasks(is_public_feed, feed_status, created_at)"
+        )
 
         # Миграция: добавляем provider в transactions
         try:
@@ -2777,6 +2812,16 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             source_feed_task_id=(
                 row["source_feed_task_id"] if "source_feed_task_id" in row.keys() else None
             ),
+            published_at=(
+                datetime.fromisoformat(row["published_at"])
+                if "published_at" in row.keys() and row["published_at"]
+                else None
+            ),
+            feed_status=(
+                row["feed_status"]
+                if "feed_status" in row.keys() and row["feed_status"]
+                else "approved"
+            ),
             billing_source=(
                 row["billing_source"]
                 if "billing_source" in row.keys() and row["billing_source"]
@@ -2817,7 +2862,13 @@ async def share_task_to_feed(task_id: str, telegram_id: int) -> tuple[bool, str]
                 return False, "foreign_source"
 
         await db.execute(
-            "UPDATE generation_tasks SET is_public_feed = 1 WHERE task_id = ? AND telegram_id = ?",
+            """
+            UPDATE generation_tasks
+            SET is_public_feed = 1,
+                feed_status = 'approved',
+                published_at = COALESCE(published_at, CURRENT_TIMESTAMP)
+            WHERE task_id = ? AND telegram_id = ?
+            """,
             (task_id, telegram_id),
         )
         await db.commit()
@@ -2828,7 +2879,11 @@ async def remove_task_from_feed(task_id: str, telegram_id: int) -> bool:
     """Removes an owned task from the public feed without deleting the task."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
-            "UPDATE generation_tasks SET is_public_feed = 0 WHERE task_id = ? AND telegram_id = ?",
+            """
+            UPDATE generation_tasks
+            SET is_public_feed = 0
+            WHERE task_id = ? AND telegram_id = ?
+            """,
             (task_id, telegram_id),
         )
         await db.commit()
@@ -2844,13 +2899,14 @@ async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
             SELECT *
             FROM generation_tasks
             WHERE is_public_feed = 1
+              AND COALESCE(feed_status, 'approved') = 'approved'
               AND type = 'image'
               AND status = 'completed'
               AND result_url IS NOT NULL
               AND result_url != ''
             ORDER BY
               (COALESCE(likes_count, 0) + COALESCE(shares_count, 0) * 3) DESC,
-              COALESCE(completed_at, created_at) DESC
+              COALESCE(published_at, completed_at, created_at) DESC
             LIMIT ?
             """,
             (limit,),
@@ -2879,6 +2935,16 @@ async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
                     likes_count=int(row["likes_count"] or 0),
                     shares_count=int(row["shares_count"] or 0),
                     source_feed_task_id=row["source_feed_task_id"] if "source_feed_task_id" in row.keys() else None,
+                    published_at=(
+                        datetime.fromisoformat(row["published_at"])
+                        if "published_at" in row.keys() and row["published_at"]
+                        else None
+                    ),
+                    feed_status=(
+                        row["feed_status"]
+                        if "feed_status" in row.keys() and row["feed_status"]
+                        else "approved"
+                    ),
                 )
             )
         return tasks
@@ -2890,6 +2956,7 @@ async def get_public_feed_task(task_id: str) -> Optional[GenerationTask]:
     if (
         task
         and task.is_public_feed
+        and task.feed_status == "approved"
         and task.type == "image"
         and task.status == "completed"
         and task.result_url
@@ -2898,15 +2965,66 @@ async def get_public_feed_task(task_id: str) -> Optional[GenerationTask]:
     return None
 
 
-async def like_feed_task(task_id: str) -> Optional[int]:
+async def _feed_counter_value(db: aiosqlite.Connection, task_id: str, column: str) -> Optional[int]:
+    cursor = await db.execute(
+        f"SELECT {column} FROM generation_tasks WHERE task_id = ?",
+        (task_id,),
+    )
+    row = await cursor.fetchone()
+    return int(row[0] or 0) if row else None
+
+
+async def _record_feed_interaction(
+    db: aiosqlite.Connection,
+    task_id: str,
+    telegram_id: Optional[int],
+    action: str,
+) -> Optional[bool]:
+    if not telegram_id:
+        return True
+    visible_cursor = await db.execute(
+        """
+        SELECT 1
+        FROM generation_tasks
+        WHERE task_id = ?
+          AND is_public_feed = 1
+          AND COALESCE(feed_status, 'approved') = 'approved'
+          AND type = 'image'
+          AND status = 'completed'
+          AND result_url IS NOT NULL
+        """,
+        (task_id,),
+    )
+    if not await visible_cursor.fetchone():
+        return None
+    cursor = await db.execute(
+        """
+        INSERT OR IGNORE INTO feed_interactions (task_id, telegram_id, action)
+        VALUES (?, ?, ?)
+        """,
+        (task_id, int(telegram_id), action),
+    )
+    return cursor.rowcount > 0
+
+
+async def like_feed_task(task_id: str, telegram_id: Optional[int] = None) -> Optional[int]:
     """Increments feed likes and returns the new value."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        interaction = await _record_feed_interaction(db, task_id, telegram_id, "like")
+        if interaction is None:
+            await db.commit()
+            return None
+        if interaction is False:
+            value = await _feed_counter_value(db, task_id, "likes_count")
+            await db.commit()
+            return value
         cursor = await db.execute(
             """
             UPDATE generation_tasks
             SET likes_count = COALESCE(likes_count, 0) + 1
             WHERE task_id = ?
               AND is_public_feed = 1
+              AND COALESCE(feed_status, 'approved') = 'approved'
               AND type = 'image'
               AND status = 'completed'
               AND result_url IS NOT NULL
@@ -2916,24 +3034,29 @@ async def like_feed_task(task_id: str) -> Optional[int]:
         if cursor.rowcount == 0:
             await db.commit()
             return None
-        value_cursor = await db.execute(
-            "SELECT likes_count FROM generation_tasks WHERE task_id = ?",
-            (task_id,),
-        )
-        row = await value_cursor.fetchone()
+        value = await _feed_counter_value(db, task_id, "likes_count")
         await db.commit()
-        return int(row[0] or 0) if row else None
+        return value
 
 
-async def increment_feed_share(task_id: str) -> Optional[int]:
+async def increment_feed_share(task_id: str, telegram_id: Optional[int] = None) -> Optional[int]:
     """Increments feed share counter and returns the new value."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        interaction = await _record_feed_interaction(db, task_id, telegram_id, "share")
+        if interaction is None:
+            await db.commit()
+            return None
+        if interaction is False:
+            value = await _feed_counter_value(db, task_id, "shares_count")
+            await db.commit()
+            return value
         cursor = await db.execute(
             """
             UPDATE generation_tasks
             SET shares_count = COALESCE(shares_count, 0) + 1
             WHERE task_id = ?
               AND is_public_feed = 1
+              AND COALESCE(feed_status, 'approved') = 'approved'
               AND type = 'image'
               AND status = 'completed'
               AND result_url IS NOT NULL
@@ -2943,13 +3066,9 @@ async def increment_feed_share(task_id: str) -> Optional[int]:
         if cursor.rowcount == 0:
             await db.commit()
             return None
-        value_cursor = await db.execute(
-            "SELECT shares_count FROM generation_tasks WHERE task_id = ?",
-            (task_id,),
-        )
-        row = await value_cursor.fetchone()
+        value = await _feed_counter_value(db, task_id, "shares_count")
         await db.commit()
-        return int(row[0] or 0) if row else None
+        return value
 
 
 async def complete_video_task(task_id: str, result_url: str) -> bool:

@@ -65,6 +65,7 @@ type CreateDraft = {
   model?: string
   aspect_ratio?: string
   duration?: string
+  count?: string
 }
 
 type AppState = {
@@ -397,11 +398,11 @@ const roleLabel = (role: unknown, lang: Lang) => (String(role) === 'assistant' ?
 const authorName = (row: Record<string, unknown>) => {
   if (row.username) return `@${String(row.username)}`
   const fullName = [row.first_name, row.last_name].filter(Boolean).join(' ').trim()
-  return fullName || `пользователь ${String(row.telegram_id || '').slice(-6)}`
+  return fullName || String(row.author_code || 'creator')
 }
 const authorInitial = (row: Record<string, unknown>) => authorName(row).replace('@', '').trim().slice(0, 1).toUpperCase() || 'U'
 const authorHue = (row: Record<string, unknown>) => {
-  const seed = String(row.telegram_id || row.username || row.task_id || '0')
+  const seed = String(row.author_code || row.username || row.task_id || '0')
   return Array.from(seed).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360
 }
 
@@ -1133,6 +1134,10 @@ function generationCost(data: AppState, flow: string, model: string, duration: s
   return Number(imageCosts[model] ?? imageCosts[key] ?? 0)
 }
 
+function supportsImageVariations(flow: string) {
+  return ['image', 'image_edit', 'upscale'].includes(flow)
+}
+
 function modelCostHint(data: AppState, flow: string, model: string, cfg: Record<string, unknown>) {
   if (flow === 'motion_control') return ''
   if (videoFlows.includes(flow)) {
@@ -1227,6 +1232,7 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
     model: initialModel,
     aspect_ratio: draftFlow ? firstAspectRatio(data, draftFlow, initialModel) : '1:1',
     duration: draftFlow ? firstDuration(data, draftFlow, initialModel) : '5',
+    count: initialDraft?.count || '1',
     options: draftFlow ? defaultOptionsForModel(data, draftFlow, initialModel) : {} as Record<string, unknown>,
   })
   const [refs, setRefs] = useState<string[]>([])
@@ -1249,6 +1255,7 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
       model: nextModel,
       aspect_ratio: initialDraft?.aspect_ratio || firstAspectRatio(data, nextFlow, nextModel),
       duration: initialDraft?.duration || firstDuration(data, nextFlow, nextModel),
+      count: initialDraft?.count || current.count || '1',
       options: defaultOptionsForModel(data, nextFlow, nextModel),
     }))
   }, [initialFlow, initialDraft, data.settings.preferred_video_model, data.settings.image_service])
@@ -1264,6 +1271,8 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
   const showReferences = flowNeedsReferences(selectedFlow) || modelSupportsReferences(currentCfg)
   const showPrompt = flowNeedsPrompt(selectedFlow)
   const currentCost = generationCost(data, selectedFlow, currentModel, form.duration, currentCfg)
+  const generationCount = supportsImageVariations(selectedFlow) ? Math.max(1, Math.min(Number(form.count || 1), 6)) : 1
+  const totalCost = currentCost * generationCount
   const formOptions = form.options as Record<string, unknown>
   const openFlow = (flow: string) => {
     const nextModel = modelOptionsFromConfig(data, flow)[0]?.id || defaultModelForFlow(flow, data)
@@ -1278,6 +1287,7 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
       model: nextModel,
       aspect_ratio: firstAspectRatio(data, flow, nextModel),
       duration: firstDuration(data, flow, nextModel),
+      count: '1',
       options: defaultOptionsForModel(data, flow, nextModel),
     })
   }
@@ -1427,6 +1437,9 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
           {isVideo && durationValues.length ? (
             <ChoiceGroup label={t('durationChoice')} options={optionItems(durationValues, (value) => `${value} сек`)} value={form.duration} onChange={(value) => set('duration', value)} />
           ) : null}
+          {supportsImageVariations(selectedFlow) ? (
+            <ChoiceGroup label={t('variations')} options={optionItems([1, 2, 3, 4, 5, 6], (value) => `${value}×`)} value={String(generationCount)} onChange={(value) => set('count', value)} />
+          ) : null}
           {Object.entries(modelSpecificOptions)
             .filter(([key]) => !['aspect_ratio'].includes(key))
             .map(([key, values]) => (
@@ -1457,7 +1470,7 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
               onChange={(value) => setOption('face_preservation', value)}
             />
           ) : null}
-          {currentCost ? <PriceSummary lang={lang} cost={currentCost} balance={data.stats.credits} /> : null}
+          {totalCost ? <PriceSummary lang={lang} cost={totalCost} balance={data.stats.credits} /> : null}
         </section>
       ) : null}
       <section className="panel create-workspace-panel">
@@ -1537,12 +1550,12 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
               <button
                 onClick={() =>
                   mutate(
-                    () => postAction('/api/tma/app/generation', { ...form, flow: selectedFlow, model: currentModel, duration: Number(form.duration || 5), references: refs }),
+                    () => postAction('/api/tma/app/generation', { ...form, flow: selectedFlow, model: currentModel, duration: Number(form.duration || 5), count: generationCount, references: refs }),
                     t('taskSent'),
                   )
                 }
               >
-                <Play size={16} /> {currentCost ? `${t('run')} · ${fmtNum(currentCost, lang)} ${t('boomcoins')}` : t('run')}
+                <Play size={16} /> {totalCost ? `${t('run')} · ${fmtNum(totalCost, lang)} ${t('boomcoins')}` : t('run')}
               </button>
             </div>
             {uploadError ? <div className="form-error">{uploadError}</div> : null}
@@ -1827,6 +1840,7 @@ function createDraftFromFeedRow(row: Record<string, unknown>): CreateDraft {
     model: row.model ? String(row.model) : undefined,
     aspect_ratio: row.aspect_ratio ? String(row.aspect_ratio) : undefined,
     duration: row.duration ? String(row.duration) : undefined,
+    count: '1',
   }
 }
 

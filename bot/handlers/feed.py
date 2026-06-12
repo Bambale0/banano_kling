@@ -1,5 +1,6 @@
 import io
 import html
+import hashlib
 import logging
 from urllib.parse import urlparse
 
@@ -34,7 +35,9 @@ MAX_PREVIEW_SIDE = 1600
 
 
 def _feed_caption(task) -> str:
-    author = f"user {task.telegram_id}" if task.telegram_id else "anon"
+    seed = str(task.telegram_id or task.user_id or task.task_id or "anon")
+    author_code = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
+    author = f"creator {author_code}"
     model = task.model or task.preset_id or "image"
     ratio = task.aspect_ratio or "auto"
     return (
@@ -322,7 +325,7 @@ async def like_feed_card(callback: types.CallbackQuery):
     except ValueError:
         index = 0
 
-    likes = await like_feed_task(task_id)
+    likes = await like_feed_task(task_id, callback.from_user.id)
     if likes is None:
         await callback.answer("Пост уже недоступен", show_alert=True)
         return
@@ -338,7 +341,7 @@ async def share_feed_card(callback: types.CallbackQuery):
         await callback.answer("Пост уже недоступен", show_alert=True)
         return
 
-    await increment_feed_share(task_id)
+    await increment_feed_share(task_id, callback.from_user.id)
     link = await _feed_deep_link(callback.bot, task_id)
     await callback.message.answer(
         "📤 <b>Ссылка на пост</b>\n\n"

@@ -85,7 +85,7 @@ def get_main_menu_keyboard(user_credits: int = 0, user_id: int | None = None):
     builder.button(text="🌈 Микс фото", callback_data="quick_mix_photo")
     builder.button(text="📚 Каталог промптов", callback_data="menu_feed")
     builder.button(text="🔷 Gemini Omni", callback_data="gemini_omni_menu")
-    builder.button(text="🎯 MC", callback_data="motion_control")
+    builder.button(text="🎯 Moution Control", callback_data="motion_control")
     builder.button(text="📷 Фото-промпт", callback_data="photo_to_prompt")
     builder.button(text="✍️ Улучшить Промпт", callback_data="gpt55_improve_prompt")
     builder.button(text="🪙 Мой баланс", callback_data="menu_balance")

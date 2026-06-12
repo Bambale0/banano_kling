@@ -245,6 +245,36 @@ async def test_tma_app_bootstrap_allows_regular_user(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tma_feed_only_returns_public_items(tmp_path, monkeypatch):
+    import bot.database as database
+    import bot.tma_api as tma_api
+
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "tma-feed.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(111111, username="creator")
+    await database.add_generation_task(
+        user.id,
+        111111,
+        "private_img",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        prompt="private prompt",
+    )
+    await database.complete_video_task("private_img", "https://example.com/private.jpg")
+
+    assert await tma_api._feed(limit=10) == []
+
+    assert await database.share_task_to_feed("private_img", 111111) == (True, "ok")
+    rows = await tma_api._feed(limit=10)
+
+    assert [row["task_id"] for row in rows] == ["private_img"]
+    assert rows[0]["username"] == "creator"
+    assert "telegram_id" not in rows[0]
+    assert rows[0]["author_code"].startswith("creator-")
+
+
+@pytest.mark.asyncio
 async def test_tma_prompt_builder_returns_prompt_in_app(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "BOT_TOKEN", "123456:test-token")
     monkeypatch.setattr(config, "ADMIN_IDS_STR", "999999")
