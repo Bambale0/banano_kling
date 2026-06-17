@@ -56,6 +56,7 @@ from bot.handlers.payments import (
     handle_cryptobot_webhook,
     handle_lava_webhook,
     handle_yookassa_webhook,
+    reconcile_lava_pending_transactions,
 )
 from bot.miniapp import setup_miniapp_routes
 from bot.keyboards import get_required_subscription_keyboard
@@ -75,6 +76,8 @@ ACTIVE_LOG_FILENAMES = {"bot.log"}
 
 YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
+LAVA_RECONCILE_INTERVAL_SECONDS = 5 * 60
+LAVA_RECONCILE_BATCH_SIZE = 50
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Главное меню"),
@@ -122,6 +125,32 @@ async def _yookassa_reconcile_loop(bot: Bot) -> None:
         except Exception:
             logger.exception("YooKassa reconcile loop failed")
         await asyncio.sleep(YOOKASSA_RECONCILE_INTERVAL_SECONDS)
+
+
+async def _lava_reconcile_loop(bot: Bot) -> None:
+    while True:
+        try:
+            results = await reconcile_lava_pending_transactions(
+                limit=LAVA_RECONCILE_BATCH_SIZE,
+                bot=bot,
+            )
+            if results:
+                completed = sum(1 for item in results if item.get("action") == "completed")
+                failed = sum(1 for item in results if item.get("action") == "failed")
+                still_pending = sum(1 for item in results if item.get("action") == "still_pending")
+                errors = sum(1 for item in results if item.get("error"))
+                logger.info(
+                    "Lava reconcile tick: checked=%s completed=%s failed=%s pending=%s errors=%s",
+                    len(results),
+                    completed,
+                    failed,
+                    still_pending,
+                    errors,
+                )
+        except Exception:
+            logger.exception("Lava reconcile loop failed")
+        await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
+
 
 def _configure_logging() -> None:
     if os.environ.get("BANANO_DISABLE_FILE_LOGGING") == "1":
@@ -1271,6 +1300,15 @@ async def on_startup(bot: Bot):
         logger.exception("Failed startup YooKassa reconciliation")
 
     try:
+        lava_reconcile_stats = await reconcile_lava_pending_transactions(
+            limit=LAVA_RECONCILE_BATCH_SIZE,
+            bot=bot,
+        )
+        logger.info("Startup Lava reconcile stats: %s", lava_reconcile_stats[:10])
+    except Exception:
+        logger.exception("Failed startup Lava reconciliation")
+
+    try:
         stale_task_stats = await cleanup_stale_local_generation_tasks()
         logger.info("Startup stale local generation cleanup stats: %s", stale_task_stats)
     except Exception:
@@ -1282,8 +1320,9 @@ async def on_startup(bot: Bot):
         # Use asyncio.create_task to schedule background tasks on the running loop.
         asyncio.create_task(_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
+        asyncio.create_task(_lava_reconcile_loop(bot))
         logger.info(
-            "Scheduled cleanup task for static/uploads/logs and YooKassa reconciliation"
+            "Scheduled cleanup task for static/uploads/logs and payment reconciliation"
         )
     except Exception:
         logger.exception("Failed to schedule background tasks")

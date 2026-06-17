@@ -1,4 +1,3 @@
-import asyncio
 import csv
 import io
 import json
@@ -3317,28 +3316,22 @@ async def admin_partners_menu(callback: types.CallbackQuery, state: FSMContext):
             callback.from_user.id,
             exc,
         )
-
-    user_id = callback.from_user.id
-
-    async def _send_partners_menu() -> None:
-        try:
-            await state.clear()
-            stats = await get_admin_partner_stats()
-            await callback.bot.send_message(
-                user_id,
-                _format_admin_partners_text(stats),
-                reply_markup=_admin_partners_keyboard(stats.get("top_partners", [])),
-                parse_mode="HTML",
-            )
-        except Exception:
-            logger.exception("admin_partners failed for %s", user_id)
-            await callback.bot.send_message(
-                user_id,
-                "❌ Не удалось открыть партнёров. Ошибку уже поймал в лог.",
-                reply_markup=get_back_keyboard("admin_back"),
-            )
-
-    asyncio.create_task(_send_partners_menu())
+    try:
+        await state.clear()
+        stats = await get_admin_partner_stats()
+        await _safe_admin_edit(
+            callback,
+            _format_admin_partners_text(stats),
+            reply_markup=_admin_partners_keyboard(stats.get("top_partners", [])),
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("admin_partners failed for %s", callback.from_user.id)
+        await callback.bot.send_message(
+            callback.from_user.id,
+            "❌ Не удалось открыть партнёров. Ошибку уже поймал в лог.",
+            reply_markup=get_back_keyboard("admin_back"),
+        )
 
 
 @router.callback_query(F.data == "admin_partner_withdrawals")

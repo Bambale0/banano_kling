@@ -152,15 +152,65 @@ class LavaService:
         return next((item for item in candidates if item), None)
 
     @staticmethod
-    def is_success_webhook(payload: Dict[str, Any]) -> bool:
-        return (
-            payload.get("eventType") == "payment.success"
-            and payload.get("status") == "completed"
-        )
+    def _find_first(payload: Any, keys: tuple[str, ...]) -> Optional[str]:
+        if isinstance(payload, dict):
+            for key in keys:
+                value = payload.get(key)
+                if value not in (None, ""):
+                    return str(value)
+            for value in payload.values():
+                found = LavaService._find_first(value, keys)
+                if found:
+                    return found
+        elif isinstance(payload, list):
+            for value in payload:
+                found = LavaService._find_first(value, keys)
+                if found:
+                    return found
+        return None
 
     @staticmethod
-    def webhook_contract_id(payload: Dict[str, Any]) -> Optional[str]:
-        value = payload.get("contractId")
+    def webhook_event_type(payload: Dict[str, Any]) -> str:
+        return (
+            LavaService._find_first(payload, ("eventType", "event_type"))
+            or ""
+        ).lower()
+
+    @staticmethod
+    def webhook_status(payload: Dict[str, Any]) -> str:
+        return (
+            LavaService._find_first(payload, ("status", "contractStatus", "contract_status"))
+            or ""
+        ).lower()
+
+    @classmethod
+    def is_success_webhook(cls, payload: Dict[str, Any]) -> bool:
+        event_type = cls.webhook_event_type(payload)
+        status = cls.webhook_status(payload)
+        return event_type == "payment.success" or status in {
+            "completed",
+            "success",
+            "succeeded",
+            "paid",
+        }
+
+    @classmethod
+    def is_failed_webhook(cls, payload: Dict[str, Any]) -> bool:
+        event_type = cls.webhook_event_type(payload)
+        status = cls.webhook_status(payload)
+        return event_type == "payment.failed" or status in {
+            "cancelled",
+            "canceled",
+            "failed",
+            "expired",
+        }
+
+    @classmethod
+    def webhook_contract_id(cls, payload: Dict[str, Any]) -> Optional[str]:
+        value = cls._find_first(
+            payload,
+            ("contractId", "contract_id", "invoiceId", "invoice_id"),
+        )
         return str(value) if value else None
 
     async def close(self):

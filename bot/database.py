@@ -3260,8 +3260,15 @@ async def prune_saved_references_for_user(
     return removed_count
 
 
-async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND) -> int:
+async def cleanup_saved_references(
+    keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
+    *,
+    max_age_days: int = 14,
+    min_keep_per_kind: int = 1,
+) -> int:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
+    safe_min_keep = max(1, min(int(min_keep_per_kind or 1), safe_keep_latest))
+    safe_max_age_days = max(0, int(max_age_days or 0))
     removed_count = 0
     removable_urls: list[str] = []
     telegram_ids: set[int] = set()
@@ -3291,6 +3298,44 @@ async def cleanup_saved_references(keep_latest: int = SAVED_REFERENCES_MAX_PER_K
             removable_urls.extend(deletable_urls)
             if group["telegram_id"]:
                 telegram_ids.add(int(group["telegram_id"]))
+
+        if safe_max_age_days > 0:
+            age_modifier = f"-{safe_max_age_days} days"
+            old_rows_cursor = await db.execute(
+                """
+                WITH ranked AS (
+                    SELECT sr.id, sr.file_url, u.telegram_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY sr.user_id, sr.kind
+                               ORDER BY datetime(COALESCE(sr.last_used_at, sr.created_at)) DESC, sr.id DESC
+                           ) AS rn
+                    FROM saved_references sr
+                    JOIN users u ON u.id = sr.user_id
+                    WHERE datetime(COALESCE(sr.last_used_at, sr.created_at)) < datetime('now', ?)
+                )
+                SELECT id, file_url, telegram_id
+                FROM ranked
+                WHERE rn > ?
+                """,
+                (age_modifier, safe_min_keep),
+            )
+            old_rows = await old_rows_cursor.fetchall()
+            if old_rows:
+                await db.executemany(
+                    "DELETE FROM saved_references WHERE id = ?",
+                    [(int(row["id"]),) for row in old_rows],
+                )
+                removed_count += len(old_rows)
+                removable_urls.extend(
+                    str(row["file_url"] or "")
+                    for row in old_rows
+                    if row["file_url"]
+                )
+                telegram_ids.update(
+                    int(row["telegram_id"])
+                    for row in old_rows
+                    if row["telegram_id"]
+                )
 
         await db.commit()
 

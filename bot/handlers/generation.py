@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import subprocess
 import time
 import uuid
 from datetime import datetime
@@ -100,6 +101,49 @@ from bot.video_reference_policy import (
 logger = logging.getLogger(__name__)
 router = Router()
 _reference_upload_locks: dict[int, asyncio.Lock] = {}
+IMAGE_REFERENCE_DOCUMENT_MIME_TYPES = ("image/jpeg", "image/png", "image/webp")
+IMAGE_REFERENCE_MIN_SIDE_PX = 300
+AVATAR_AUDIO_MAX_SECONDS = 60
+BANANA_IMAGE_ASPECT_RATIOS = (
+    "1:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "16:9",
+    "21:9",
+)
+
+
+def _default_image_flow_data(
+    *,
+    reference_images: list[str] | None = None,
+    img_flow_step: str = "select_model",
+) -> dict:
+    return {
+        "generation_type": "image",
+        "img_service": "banana_pro",
+        "img_ratio": "1:1",
+        "img_count": 1,
+        "img_quality": "2K",
+        "img_nsfw_checker": False,
+        "nsfw_enabled": False,
+        "reference_images": list(reference_images or []),
+        "img_flow_step": img_flow_step,
+        "preset_id": "new",
+    }
+
+
+def _image_file_ext_from_mime(mime_type: str | None) -> str:
+    return {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+    }.get(mime_type or "", "png")
+
 
 def _parse_omni_ids(raw: str, *, max_count: int | None = None) -> list[str]:
     """Parse comma/space separated Gemini Omni reusable asset ids."""
@@ -239,6 +283,70 @@ async def _persist_reusable_media_reference(
     return save_uploaded_file(file_data, file_ext)
 
 
+async def _save_reference_image_from_message(
+    message: types.Message,
+    *,
+    original_filename_prefix: str = "reference",
+) -> tuple[Optional[str], Optional[str]]:
+    """Download, validate and persist a Telegram image as a reusable reference."""
+    if message.photo:
+        media = message.photo[-1]
+        file_ext = "jpg"
+    elif (
+        message.document
+        and message.document.mime_type in IMAGE_REFERENCE_DOCUMENT_MIME_TYPES
+    ):
+        media = message.document
+        file_ext = _image_file_ext_from_mime(message.document.mime_type)
+    else:
+        return None, "Пожалуйста, отправьте фото JPEG, PNG или WEBP."
+
+    try:
+        file = await message.bot.get_file(media.file_id)
+        image_bytes = await message.bot.download_file(file.file_path)
+        image_data = image_bytes.read()
+    except Exception:
+        logger.exception(
+            "Failed to download reference image for user_id=%s",
+            getattr(message.from_user, "id", None),
+        )
+        return None, "❌ Не удалось скачать изображение. Попробуйте ещё раз."
+
+    try:
+        with Image.open(io.BytesIO(image_data)) as img:
+            width, height = img.size
+        if (
+            width < IMAGE_REFERENCE_MIN_SIDE_PX
+            or height < IMAGE_REFERENCE_MIN_SIDE_PX
+        ):
+            return (
+                None,
+                f"❌ Изображение слишком маленькое (мин {IMAGE_REFERENCE_MIN_SIDE_PX}px).",
+            )
+    except Exception:
+        logger.exception(
+            "Image validation failed for user_id=%s",
+            getattr(message.from_user, "id", None),
+        )
+        return None, "❌ Не удалось обработать изображение. Попробуйте другое."
+
+    content_type = "image/jpeg" if file_ext == "jpg" else f"image/{file_ext}"
+    original_filename = getattr(media, "file_name", None) or (
+        f"{original_filename_prefix}_{media.file_id}.{file_ext}"
+    )
+    image_url = await _persist_reusable_image_reference(
+        message.from_user.id,
+        image_data,
+        file_ext,
+        original_filename=original_filename,
+        content_type=content_type,
+    )
+
+    if not image_url:
+        return None, "❌ Не удалось сохранить фото. Попробуйте ещё раз."
+    return image_url, None
+
+
 @router.message(CommandStart(), StateFilter("*"))
 async def cmd_start_interrupt(message: types.Message, state: FSMContext):
     """/start interrupts any active FSM state and redirects to main menu handler"""
@@ -279,7 +387,7 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
     if img_service == "banana_2":
         return "nano-banana-2"
     if img_service in {"banana_pro", "nanobanana"}:
-        return "google/gemini-3-pro-image"
+        return "nano-banana-pro"
     if img_service == "seedream_edit":
         return "seedream/4.5-edit"
     if img_service == "flux_pro":
@@ -295,6 +403,42 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
     if img_service == "wan_27":
         return "wan/2-7-image-pro"
     return img_service
+
+
+def _infer_image_aspect_ratio_from_prompt(prompt: str) -> Optional[str]:
+    """Infer a single explicit aspect ratio mentioned in the prompt."""
+    normalized = (prompt or "").replace("∶", ":")
+    if not normalized:
+        return None
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for left, right in re.findall(r"(?<!\d)(\d{1,2})\s*:\s*(\d{1,2})(?!\d)", normalized):
+        ratio = f"{left}:{right}"
+        if ratio in BANANA_IMAGE_ASPECT_RATIOS and ratio not in seen:
+            found.append(ratio)
+            seen.add(ratio)
+
+    return found[0] if len(found) == 1 else None
+
+
+def _resolve_image_aspect_ratio(img_service: str, img_ratio: str, prompt: str) -> str:
+    """Keep provider aspect_ratio aligned with a single explicit ratio in the prompt."""
+    ratio = str(img_ratio or "1:1").replace("∶", ":").strip() or "1:1"
+    if img_service not in {"banana_pro", "banana_2", "nanobanana"}:
+        return ratio
+
+    prompt_ratio = _infer_image_aspect_ratio_from_prompt(prompt)
+    if prompt_ratio and ratio in {"1:1", "auto"} and prompt_ratio != ratio:
+        logger.info(
+            "Image aspect ratio inferred from prompt for %s: %s -> %s",
+            img_service,
+            ratio,
+            prompt_ratio,
+        )
+        return prompt_ratio
+
+    return ratio
 
 
 def _get_max_image_references(img_service: str | None) -> int:
@@ -784,6 +928,7 @@ async def _start_image_generation_task(
             "runtime_img_service": runtime_img_service,
             "error": policy_error,
         }
+    img_ratio = _resolve_image_aspect_ratio(runtime_img_service, img_ratio, prompt)
     reference_images, missing_reference_images = _available_reference_images(
         reference_images
     )
@@ -1020,14 +1165,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
     user_credits = await get_user_credits(callback.from_user.id)
 
     # Инициализируем опции по умолчанию
-    await state.update_data(
-        generation_type="image",
-        img_service="banana_pro",  # модель изображения по умолчанию
-        img_ratio="1:1",
-        img_count=1,
-        reference_images=[],  # Инициализируем пустой список референсов
-        preset_id="new",  # Для нового UX - указываем, что это "new" режим
-    )
+    await state.update_data(**_default_image_flow_data(img_flow_step="upload_refs"))
 
     # Показываем экран загрузки референсов (ШАГ 1)
     text = (
@@ -1062,17 +1200,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "create_image_text_new")
 async def show_create_image_text_menu(callback: types.CallbackQuery, state: FSMContext):
     """Пошаговый вход в фото: модель -> референсы -> настройки."""
-    await state.update_data(
-        generation_type="image",
-        img_service="banana_pro",
-        img_ratio="1:1",
-        img_count=1,
-        img_quality="2K",
-        img_nsfw_checker=False,
-        reference_images=[],
-        img_flow_step="select_model",
-        preset_id="new",
-    )
+    await state.update_data(**_default_image_flow_data(img_flow_step="select_model"))
     await _show_image_model_selection_screen(callback, state)
     await callback.answer()
 
@@ -2950,9 +3078,15 @@ async def _show_image_references_screen(
     await state.set_state(GenerationStates.uploading_reference_images)
 
 
-async def _show_image_creation_screen(message_or_callback, state: FSMContext):
+async def _show_image_creation_screen(
+    message_or_callback,
+    state: FSMContext,
+    *,
+    edit: bool = True,
+    intro_text: str = "",
+):
     data = await state.get_data()
-    text = _build_image_creation_text(data)
+    text = f"{intro_text}{_build_image_creation_text(data)}"
     reply_markup = get_create_image_keyboard(
         current_service=data.get("img_service", "banana_pro"),
         current_ratio=data.get("img_ratio", "1:1"),
@@ -2965,13 +3099,26 @@ async def _show_image_creation_screen(message_or_callback, state: FSMContext):
 
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
-            await message_or_callback.message.edit_text(
+            if edit:
+                await message_or_callback.message.edit_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode="HTML",
+                )
+            else:
+                await message_or_callback.message.answer(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode="HTML",
+                )
+        elif edit:
+            await message_or_callback.edit_text(
                 text,
                 reply_markup=reply_markup,
                 parse_mode="HTML",
             )
         else:
-            await message_or_callback.edit_text(
+            await message_or_callback.answer(
                 text,
                 reply_markup=reply_markup,
                 parse_mode="HTML",
@@ -4247,6 +4394,22 @@ async def handle_img_ratio_9_16(callback: types.CallbackQuery, state: FSMContext
 async def handle_img_ratio_4_3(callback: types.CallbackQuery, state: FSMContext):
     """Выбор формата изображения 4:3"""
     await state.update_data(img_ratio="4:3")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ratio_4_5")
+async def handle_img_ratio_4_5(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения 4:5"""
+    await state.update_data(img_ratio="4:5")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "img_ratio_5_4")
+async def handle_img_ratio_5_4(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор формата изображения 5:4"""
+    await state.update_data(img_ratio="5:4")
     await _show_image_creation_screen(callback, state)
     await callback.answer()
 
@@ -5702,6 +5865,47 @@ async def handle_video_prompt_text(message: types.Message, state: FSMContext):
     await run_no_preset_video_from_message(message, state, prompt)
 
 
+def _detect_avatar_audio_duration_seconds(message: types.Message, audio_data: bytes, file_ext: str) -> int | None:
+    if message.audio and message.audio.duration:
+        return int(message.audio.duration)
+    if message.voice and message.voice.duration:
+        return int(message.voice.duration)
+
+    temp_path = f"/tmp/avatar_audio_{uuid.uuid4().hex}.{file_ext}"
+    try:
+        with open(temp_path, "wb") as fh:
+            fh.write(audio_data)
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                temp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        value = (result.stdout or "").strip()
+        if not value:
+            return None
+        return int(float(value))
+    except Exception:
+        logger.exception("Failed to detect avatar audio duration")
+        return None
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
 @router.message(
     GenerationStates.waiting_for_video_prompt,
     F.audio
@@ -5753,6 +5957,20 @@ async def process_avatar_audio_upload(message: types.Message, state: FSMContext)
         "audio/ogg": "ogg",
     }
     file_ext = ext_map.get(mime_type, "mp3")
+    audio_duration_seconds = _detect_avatar_audio_duration_seconds(
+        message, audio_data, file_ext
+    )
+    if audio_duration_seconds is None:
+        await message.answer(
+            "❌ Не удалось определить длительность аудио. Отправьте файл до 1 минуты."
+        )
+        return
+    if audio_duration_seconds > AVATAR_AUDIO_MAX_SECONDS:
+        await message.answer(
+            "❌ Для Kling Avatar аудио должно быть не длиннее 1 минуты."
+        )
+        return
+
     audio_url = save_uploaded_file(audio_data, file_ext)
     if not audio_url:
         await message.answer("❌ Не удалось сохранить аудио.")
@@ -6339,6 +6557,50 @@ async def ignore_callback(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.message(
+    StateFilter(None, "AIAssistantStates:waiting_for_message"),
+    F.photo
+    | (F.document & F.document.mime_type.in_(IMAGE_REFERENCE_DOCUMENT_MIME_TYPES)),
+)
+async def start_image_creation_from_idle_reference(
+    message: types.Message,
+    state: FSMContext,
+):
+    """Start image creation from a photo sent while no flow is active."""
+    user_id = message.from_user.id
+    async with _get_reference_upload_lock(user_id):
+        await state.clear()
+        image_url, error_message = await _save_reference_image_from_message(
+            message,
+            original_filename_prefix="quick_reference",
+        )
+        if not image_url:
+            await message.answer(
+                error_message or "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
+            return
+
+        await state.update_data(
+            **_default_image_flow_data(
+                reference_images=[image_url],
+                img_flow_step="configure",
+            )
+        )
+
+    await _show_image_creation_screen(
+        message,
+        state,
+        edit=False,
+        intro_text="✅ <b>Фото принято как референс.</b>\n\n",
+    )
+    logger.info(
+        "Started image creation from idle reference: user_id=%s reference_url=%s",
+        user_id,
+        image_url,
+    )
+
+
 @router.message(GenerationStates.uploading_reference_images, F.photo)
 async def upload_reference_image_for_any_image_flow(
     message: types.Message, state: FSMContext
@@ -6359,21 +6621,15 @@ async def upload_reference_image_for_any_image_flow(
             return
 
         try:
-            photo = message.photo[-1]
-            file = await message.bot.get_file(photo.file_id)
-            downloaded = await message.bot.download_file(file.file_path)
-            image_bytes = downloaded.read()
-
-            public_url = await _persist_reusable_image_reference(
-                message.from_user.id,
-                image_bytes,
-                "jpg",
-                original_filename=f"telegram_photo_{photo.file_id}.jpg",
-                content_type="image/jpeg",
+            public_url, error_message = await _save_reference_image_from_message(
+                message,
+                original_filename_prefix="telegram_photo",
             )
             if not public_url:
                 await message.answer(
-                    "Не удалось сохранить фото. Попробуйте другое изображение."
+                    error_message
+                    or "Не удалось сохранить фото. Попробуйте другое изображение.",
+                    reply_markup=get_main_menu_button_keyboard(),
                 )
                 return
 
@@ -6745,16 +7001,13 @@ async def process_reference_video_upload(message: types.Message, state: FSMConte
 @router.message(
     GenerationStates.uploading_reference_images,
     F.photo
-    | (
-        F.document & F.document.mime_type.in_(["image/jpeg", "image/png", "image/webp"])
-    ),
+    | (F.document & F.document.mime_type.in_(IMAGE_REFERENCE_DOCUMENT_MIME_TYPES)),
 )
 async def process_reference_photo_upload(message: types.Message, state: FSMContext):
     """Handles reference photo uploads during image creation."""
     async with _get_reference_upload_lock(message.from_user.id):
         data = await state.get_data()
         reference_images = list(data.get("reference_images") or [])
-        v_type = data.get("v_type")
         img_service = data.get("img_service")
         max_refs = _get_max_image_references(img_service) if img_service else 9
 
@@ -6766,57 +7019,9 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
             )
             return
 
-        # Get the highest quality photo or document
-        if message.photo:
-            photo = message.photo[-1]
-        else:
-            photo = message.document
-
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-
-        # Validate image size required by the video model.
-        try:
-
-            img = Image.open(io.BytesIO(image_data))
-            width, height = img.size
-            if width < 300 or height < 300:
-                await message.answer(
-                    "❌ Изображение слишком маленькое (мин 300px).",
-                    reply_markup=get_main_menu_button_keyboard(),
-                )
-                return
-
-        except Exception as e:
-            logger.error(f"Image validation failed: {e}")
-            await message.answer(
-                "❌ Не удалось обработать изображение. Попробуйте другое.",
-                reply_markup=get_main_menu_button_keyboard(),
-            )
-            return
-
-        # Save and get URL
-        if message.photo:
-            file_ext = "jpg"
-        else:
-            mime_type = message.document.mime_type
-            if mime_type == "image/jpeg":
-                file_ext = "jpg"
-            elif mime_type == "image/png":
-                file_ext = "png"
-            elif mime_type == "image/webp":
-                file_ext = "webp"
-            else:
-                file_ext = "png"
-
-        content_type = "image/jpeg" if file_ext == "jpg" else f"image/{file_ext}"
-        image_url = await _persist_reusable_image_reference(
-            message.from_user.id,
-            image_data,
-            file_ext,
-            original_filename=f"reference_{photo.file_id}.{file_ext}",
-            content_type=content_type,
+        image_url, error_message = await _save_reference_image_from_message(
+            message,
+            original_filename_prefix="reference",
         )
 
         if image_url:
@@ -6856,7 +7061,7 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
             logger.info(f"Reference photo {current_count} added: {image_url}")
         else:
             await message.answer(
-                "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
+                error_message or "❌ Не удалось сохранить фото. Попробуйте ещё раз.",
                 reply_markup=get_main_menu_button_keyboard(),
             )
 

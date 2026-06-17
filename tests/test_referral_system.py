@@ -356,6 +356,143 @@ async def test_complete_transaction_respects_disabled_referrer_purchase_notifica
     assert updated_referrer.partner_balance_rub == 30
 
 
+@pytest.mark.asyncio
+async def test_lava_reconcile_completes_paid_pending_transaction(monkeypatch):
+    from bot import database
+    from bot.handlers import payments
+
+    user = await database.get_or_create_user(4301)
+    initial_credits = user.credits
+    await database.create_transaction(
+        order_id="lava-paid-order",
+        user_id=user.id,
+        payment_id="lava-paid-invoice",
+        provider="lava",
+        credits=50,
+        amount_rub=500,
+        status="pending",
+    )
+    monkeypatch.setattr(payments.lava_service, "api_key", "test")
+    monkeypatch.setattr(
+        payments.lava_service,
+        "get_invoice",
+        AsyncMock(return_value={"status": "COMPLETED"}),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    results = await payments.reconcile_lava_pending_transactions(limit=10, bot=bot)
+
+    assert results == [
+        {
+            "order_id": "lava-paid-order",
+            "payment_id": "lava-paid-invoice",
+            "status": "completed",
+            "action": "completed",
+        }
+    ]
+    updated_user = await database.get_or_create_user(user.telegram_id)
+    assert updated_user.credits == initial_credits + 50
+    transaction = await database.get_transaction_by_order("lava-paid-order")
+    assert transaction.status == "completed"
+    bot.send_message.assert_awaited_once()
+    assert "Оплата Lava успешно обработана" in bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_lava_reconcile_marks_failed_pending_transaction(monkeypatch):
+    from bot import database
+    from bot.handlers import payments
+
+    user = await database.get_or_create_user(4302)
+    initial_credits = user.credits
+    await database.create_transaction(
+        order_id="lava-failed-order",
+        user_id=user.id,
+        payment_id="lava-failed-invoice",
+        provider="lava",
+        credits=50,
+        amount_rub=500,
+        status="pending",
+    )
+    monkeypatch.setattr(payments.lava_service, "api_key", "test")
+    monkeypatch.setattr(
+        payments.lava_service,
+        "get_invoice",
+        AsyncMock(return_value={"status": "FAILED"}),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    results = await payments.reconcile_lava_pending_transactions(limit=10, bot=bot)
+
+    assert results == [
+        {
+            "order_id": "lava-failed-order",
+            "payment_id": "lava-failed-invoice",
+            "status": "failed",
+            "action": "failed",
+        }
+    ]
+    updated_user = await database.get_or_create_user(user.telegram_id)
+    assert updated_user.credits == initial_credits
+    transaction = await database.get_transaction_by_order("lava-failed-order")
+    assert transaction.status == "failed"
+    bot.send_message.assert_not_awaited()
+
+
+def test_lava_webhook_payload_helpers_accept_success_and_failed_variants():
+    from bot.services.lava_service import LavaService
+
+    assert LavaService.is_success_webhook(
+        {"eventType": "payment.success", "status": "success"}
+    )
+    assert LavaService.is_success_webhook(
+        {"payload": {"invoiceId": "invoice-1", "status": "COMPLETED"}}
+    )
+    assert LavaService.is_failed_webhook(
+        {"eventType": "payment.failed", "status": "failed"}
+    )
+    assert LavaService.webhook_contract_id(
+        {"payload": {"invoiceId": "invoice-1"}}
+    ) == "invoice-1"
+
+
+@pytest.mark.asyncio
+async def test_lava_webhook_completes_transaction_by_order_id():
+    from bot import database
+    from bot.handlers.payments import handle_lava_webhook
+
+    user = await database.get_or_create_user(4303)
+    initial_credits = user.credits
+    await database.create_transaction(
+        order_id="lava-webhook-order",
+        user_id=user.id,
+        payment_id="lava-webhook-invoice",
+        provider="lava",
+        credits=75,
+        amount_rub=700,
+        status="pending",
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    request = SimpleNamespace(
+        read=AsyncMock(
+            return_value=(
+                b'{"eventType":"payment.success","status":"success",'
+                b'"clientUtm":{"order_id":"lava-webhook-order"}}'
+            )
+        ),
+        app={"bot": bot},
+    )
+
+    response = await handle_lava_webhook(request)
+
+    assert response.status == 200
+    updated_user = await database.get_or_create_user(user.telegram_id)
+    assert updated_user.credits == initial_credits + 75
+    transaction = await database.get_transaction_by_order("lava-webhook-order")
+    assert transaction.status == "completed"
+    bot.send_message.assert_awaited_once()
+
+
 def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")

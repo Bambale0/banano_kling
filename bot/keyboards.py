@@ -316,16 +316,6 @@ def get_video_model_selection_keyboard(current_model: str = "v3_pro"):
             "🔷 Gemini Omni",
             preset_manager.get_video_cost("gemini_omni_video", 6),
         ),
-        (
-            "avatar_std",
-            "🗣 Avatar Standard",
-            preset_manager.get_video_cost("avatar_std", 5),
-        ),
-        (
-            "avatar_pro",
-            "🎙 Avatar Pro",
-            preset_manager.get_video_cost("avatar_pro", 5),
-        ),
         ("veo3", "🎥 Veo 3.1 Quality", preset_manager.get_video_cost("veo3", 6)),
         (
             "veo3_fast",
@@ -1018,7 +1008,18 @@ def get_create_image_keyboard(
         else (
             ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
             if current_service == "seedream_edit"
-            else ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]
+            else [
+                "1:1",
+                "16:9",
+                "9:16",
+                "4:3",
+                "3:4",
+                "4:5",
+                "5:4",
+                "3:2",
+                "2:3",
+                "21:9",
+            ]
         )
     )
     ratio_buttons = []

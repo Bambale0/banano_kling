@@ -373,6 +373,105 @@ async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
     return stats
 
 
+async def reconcile_lava_pending_transactions(
+    *,
+    limit: int = 50,
+    bot: Bot | None = None,
+) -> list[dict[str, Any]]:
+    """Poll Lava for pending invoices and complete paid transactions."""
+    import aiosqlite
+
+    from bot.database import DATABASE_PATH
+
+    if not lava_service.enabled:
+        return []
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (
+            await db.execute(
+                """
+                SELECT order_id, payment_id
+                FROM transactions
+                WHERE provider = 'lava' AND status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        ).fetchall()
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        order_id = row["order_id"]
+        payment_id = row["payment_id"]
+        item: dict[str, Any] = {"order_id": order_id, "payment_id": payment_id}
+        try:
+            invoice = await lava_service.get_invoice(payment_id)
+            status = str((invoice or {}).get("status") or "").lower()
+            item["status"] = status or "unknown"
+
+            if status == "completed":
+                completion = await _complete_transaction(order_id, bot=bot)
+                item["action"] = (
+                    "already_completed"
+                    if completion.get("already_completed")
+                    else "completed"
+                    if completion.get("ok")
+                    else "complete_failed"
+                )
+                if not completion.get("ok"):
+                    item["reason"] = completion.get("reason")
+                elif not completion.get("already_completed") and bot:
+                    transaction = completion.get("transaction")
+                    telegram_id = completion.get("telegram_id")
+                    bonus_text = (
+                        _build_promo_bonus_text(completion.get("promo_bonus") or {})
+                        + _build_bonus_text(completion.get("referral_bonus") or {})
+                    )
+                    try:
+                        await _notify_user(
+                            bot,
+                            telegram_id,
+                            "✅ <b>Оплата Lava успешно обработана</b>\n"
+                            f"• Начислено: <code>{transaction.credits}</code> бананов\n"
+                            f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
+                            parse_mode="HTML",
+                        )
+                    except TelegramBadRequest as notify_error:
+                        if _is_ignored_telegram_error(notify_error):
+                            logger.warning(
+                                "Skipping Lava reconcile notification for user %s: %s",
+                                telegram_id,
+                                notify_error,
+                            )
+                        else:
+                            logger.error(
+                                "Failed to notify user %s after Lava reconcile: %s",
+                                telegram_id,
+                                notify_error,
+                            )
+            elif status in {"cancelled", "canceled", "failed", "expired"}:
+                item["action"] = (
+                    "failed"
+                    if await update_transaction_status(order_id, "failed")
+                    else "already_failed"
+                )
+            else:
+                item["action"] = "still_pending"
+        except Exception as exc:
+            logger.exception(
+                "Lava reconcile failed for order_id=%s payment_id=%s",
+                order_id,
+                payment_id,
+            )
+            item["action"] = "error"
+            item["error"] = str(exc)
+        results.append(item)
+
+    return results
+
+
 async def _complete_transaction(order_id: str, bot: Bot | None = None) -> dict[str, Any]:
     transaction = await get_transaction_by_order(order_id)
     if not transaction:
@@ -944,33 +1043,51 @@ async def handle_lava_webhook(request: web.Request):
 
         logger.info("Lava webhook payload: %s", data)
 
-        if not lava_service.is_success_webhook(data):
+        if not (
+            lava_service.is_success_webhook(data)
+            or lava_service.is_failed_webhook(data)
+        ):
             return web.Response(status=200)
 
         contract_id = lava_service.webhook_contract_id(data)
-        if not contract_id:
-            logger.warning("Lava webhook has no contractId")
-            return web.Response(status=200)
+        order_id = _extract_first(data, ("order_id", "orderId"))
 
         import aiosqlite
 
         from bot.database import DATABASE_PATH
 
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
-                (contract_id, "lava"),
-            )
-            row = await cursor.fetchone()
+        if order_id:
+            transaction = await get_transaction_by_order(str(order_id))
+            if transaction and transaction.provider != "lava":
+                transaction = None
+        else:
+            transaction = None
 
-        if not row:
-            logger.warning("Lava transaction not found for contractId=%s", contract_id)
+        if not transaction and contract_id:
+            async with aiosqlite.connect(DATABASE_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
+                    (contract_id, "lava"),
+                )
+                row = await cursor.fetchone()
+
+            if row:
+                order_id = row["order_id"]
+                transaction = await get_transaction_by_order(order_id)
+
+        if not transaction:
+            logger.warning(
+                "Lava transaction not found for order_id=%s contract_id=%s",
+                order_id,
+                contract_id,
+            )
             return web.Response(status=200)
 
-        order_id = row["order_id"]
-        transaction = await get_transaction_by_order(order_id)
-        if not transaction:
+        order_id = transaction.order_id
+        if lava_service.is_failed_webhook(data):
+            if await update_transaction_status(order_id, "failed"):
+                logger.info("Lava webhook marked order %s as failed", order_id)
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
