@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,6 +37,7 @@ from aiohttp import web
 from bot.config import config
 from bot.database import (
     cleanup_orphaned_reference_files,
+    _merge_task_id_aliases,
     cleanup_saved_references,
     cleanup_stale_local_generation_tasks,
     init_db,
@@ -601,21 +603,82 @@ async def _send_full_prompt_message(bot_instance: Bot, telegram_id: int, task, r
 
 
 async def _download_remote_bytes(url: str, timeout_seconds: int = 30) -> bytes | None:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
     try:
         import aiohttp
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        }
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=timeout_seconds) as resp:
                 if resp.status != 200:
                     raise RuntimeError(f"Download failed: {resp.status}")
                 return await resp.read()
     except Exception as e:
+        logger.warning(f"aiohttp download failed for {url}: {e}")
+
+    try:
+        import asyncio
+        import requests
+
+        def _download_via_requests() -> bytes:
+            resp = requests.get(url, timeout=timeout_seconds, headers=headers)
+            if resp.status_code != 200:
+                raise RuntimeError(f"Download failed: {resp.status_code}")
+            return resp.content
+
+        return await asyncio.to_thread(_download_via_requests)
+    except Exception as e:
         logger.error(f"Failed to download remote file {url}: {e}")
         return None
+
+
+def _is_local_static_result_url(url: str) -> bool:
+    candidate = str(url or "").strip()
+    if not candidate:
+        return False
+    base_url = str(getattr(config, "static_base_url", "") or "").rstrip("/")
+    return bool(base_url) and candidate.startswith(f"{base_url}/uploads/")
+
+
+def _guess_storage_extension(result_url: str, task_type: str = "image") -> str:
+    candidate = Path(urlparse(str(result_url or "")).path).suffix.lower().lstrip(".")
+    if candidate in {"jpg", "jpeg", "png", "webp", "gif", "bmp", "mp4", "mov", "webm", "mkv", "avi", "m4v"}:
+        return candidate
+    return "mp4" if str(task_type or "").lower() == "video" else "png"
+
+
+async def _persist_result_url_if_needed(result_url: str | None, *, task_type: str = "image") -> str | None:
+    candidate = str(result_url or "").strip()
+    if not candidate or not candidate.startswith(("http://", "https://")):
+        return result_url
+    if _is_local_static_result_url(candidate):
+        return candidate
+    if not getattr(config, "PERSIST_PROVIDER_RESULTS", False):
+        return candidate
+
+    file_bytes = await _download_remote_bytes(
+        candidate,
+        timeout_seconds=90 if str(task_type or "").lower() == "video" else 30,
+    )
+    if not file_bytes:
+        return candidate
+
+    try:
+        from bot.handlers.generation import save_uploaded_file
+
+        saved_url = save_uploaded_file(
+            file_bytes,
+            _guess_storage_extension(candidate, task_type=task_type),
+        )
+        if saved_url:
+            logger.info("Persisted result url locally: %s -> %s", candidate, saved_url)
+            return saved_url
+    except Exception:
+        logger.exception("Failed to persist result url locally: %s", candidate)
+
+    return candidate
 
 
 def _build_preview_photo_bytes(image_bytes: bytes, max_photo_size: int = 10 * 1024 * 1024) -> bytes | None:
@@ -670,9 +733,9 @@ def _guess_result_filename(result_url: str, fallback_base: str = "original") -> 
     return name
 
 
-async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: str, image_bytes: bytes | None = None) -> None:
+async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: str, image_bytes: bytes | None = None) -> bool:
     if not result_url:
-        return
+        return False
     filename = _guess_result_filename(result_url)
     try:
         if image_bytes:
@@ -681,14 +744,16 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
                 document=types.BufferedInputFile(image_bytes, filename=filename),
                 caption="📎 Исходник файлом",
             )
-            return
+            return True
         await bot_instance.send_document(
             chat_id=telegram_id,
             document=result_url,
             caption="📎 Исходник файлом",
         )
+        return True
     except Exception as e:
         logger.error(f"Failed to send original file to {telegram_id}: {e}")
+        return False
 
 
 def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> bool:
@@ -921,6 +986,12 @@ def _html_fragment(value, limit: int | None = None) -> str:
     return html.escape(text)
 
 
+def _task_callback_id(task, fallback_task_id: str | None = None) -> str:
+    if task and getattr(task, "id", None):
+        return str(task.id)
+    return str(fallback_task_id or "")
+
+
 def _build_plain_result_link_text(
     *,
     media_label: str,
@@ -1065,6 +1136,7 @@ async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str
     retry_request_data = dict(request_data)
     retry_request_data["auto_retry_attempt"] = retry_attempt + 1
     retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
+    retry_request_data = _merge_task_id_aliases(retry_request_data, failed_task_id, new_task_id)
 
     import aiosqlite
     from bot.database import DATABASE_PATH
@@ -1152,6 +1224,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     retry_request_data = dict(request_data)
     retry_request_data["auto_retry_attempt"] = retry_attempt + 1
     retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
+    retry_request_data = _merge_task_id_aliases(retry_request_data, failed_task_id, new_task_id)
 
     import aiosqlite
     from bot.database import DATABASE_PATH
@@ -1585,6 +1658,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kling_success_code200"
                     )
                     if telegram_id:
+                        video_url = await _persist_result_url_if_needed(
+                            video_url,
+                            task_type=task.type if task else "video",
+                        )
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
                             caption = f"✅ <b>Видео ({_html_fragment(model_display)}) готово!</b>\\n\\nID: <code>{_html_fragment(task_id)}</code>"
@@ -1603,7 +1680,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption += f"\\n\\n🎯 Пресет: {_html_fragment(task.preset_id)}"
                             video_kb = get_video_result_keyboard(
                                 video_url,
-                                task_id=task_id,
+                                task_id=_task_callback_id(task, task_id),
                                 model=task.model if task else model_display,
                                 is_public_feed=task.is_public_feed if task else False,
                             )
@@ -1690,6 +1767,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         task, context="kie_legacy"
                     )
                     if telegram_id:
+                        video_url = await _persist_result_url_if_needed(
+                            video_url,
+                            task_type=task.type if task else "video",
+                        )
                         bot_instance = Bot(token=config.BOT_TOKEN)
                         try:
                             if status in {"success", "completed"} and video_url:
@@ -1732,7 +1813,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                                 video_kb = get_video_result_keyboard(
                                     video_url,
-                                    task_id=task_id,
+                                    task_id=_task_callback_id(task, task_id),
                                     model=task.model if task else model_display,
                                     is_public_feed=task.is_public_feed if task else False,
                                 )
@@ -1959,6 +2040,11 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             else:
                 caption += f"\\n\\n🎯 Пресет: {_html_fragment(task.preset_id)}"
 
+            video_url = await _persist_result_url_if_needed(
+                video_url,
+                task_type=task.type if task else "video",
+            )
+
             # Отправляем видео пользователю
             bot_instance = Bot(token=config.BOT_TOKEN)
             video_kb = None
@@ -1968,7 +2054,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
                 video_kb = get_video_result_keyboard(
                     video_url,
-                    task_id=task_id,
+                    task_id=_task_callback_id(task, task_id),
                     model=task.model if task else model_display,
                     is_public_feed=task.is_public_feed if task else False,
                 )
@@ -2321,6 +2407,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
 
             from bot.keyboards import get_image_result_keyboard
             reference_preview_urls = _extract_reference_image_urls(task)
+            image_url = await _persist_result_url_if_needed(image_url, task_type="image")
 
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
@@ -2351,7 +2438,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
                 else:
@@ -2361,7 +2448,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
 
@@ -2374,7 +2461,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                         chat_id=telegram_id,
                         text=f"🖼️ Ваше изображение готово!{image_url}",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
                 except Exception as fallback_error:
@@ -2498,6 +2585,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
 
             from bot.keyboards import get_image_result_keyboard
             reference_preview_urls = _extract_reference_image_urls(task)
+            image_url = await _persist_result_url_if_needed(image_url, task_type="image")
 
             # Обновляем задачу в БД
             await complete_video_task(task_id, image_url)
@@ -2528,7 +2616,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
                 else:
@@ -2538,7 +2626,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                         caption=_build_single_result_caption(_with_original_link(caption, image_url), task, reference_preview_urls),
                         parse_mode="HTML",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
 
@@ -2553,7 +2641,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                         chat_id=telegram_id,
                         text=f"🖼️ Ваше изображение (FLUX.2 Pro) готово!{image_url}",
                         reply_markup=get_image_result_keyboard(
-                            image_url, task_id=task_id
+                            image_url, task_id=_task_callback_id(task, task_id)
                         ),
                     )
                 except Exception as fallback_error:
@@ -2648,6 +2736,8 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 else f"✅ <b>Ваше видео WanX готово!</b>🎯 Пресет: {task.preset_id}"
             )
 
+            video_url = await _persist_result_url_if_needed(video_url, task_type="video")
+
             bot_instance = Bot(token=config.BOT_TOKEN)
             try:
                 from bot.keyboards import get_video_result_keyboard
@@ -2660,7 +2750,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                     supports_streaming=True,
                     reply_markup=get_video_result_keyboard(
                         video_url,
-                        task_id=task_id,
+                        task_id=_task_callback_id(task, task_id),
                         model=task.model if task else None,
                         is_public_feed=task.is_public_feed if task else False,
                     ),
@@ -2677,7 +2767,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                         text=f"🎬 Ваше видео WanX готово!{video_url}",
                         reply_markup=get_video_result_keyboard(
                             video_url,
-                            task_id=task_id,
+                            task_id=_task_callback_id(task, task_id),
                             model=task.model if task else None,
                             is_public_feed=task.is_public_feed if task else False,
                         ),
@@ -2927,6 +3017,11 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 f"Found {service_name} task for user {task.user_id}, telegram_id: {telegram_id}, preset: {task.preset_id}"
             )
 
+            result_url = await _persist_result_url_if_needed(
+                result_url,
+                task_type=task.type if task else ("video" if is_video else "image"),
+            )
+
             reference_preview_urls = _extract_reference_image_urls(
                 task,
                 webhook_data=webhook_data,
@@ -2980,12 +3075,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             kb_link = (
                 get_video_result_keyboard(
                     result_url,
-                    task_id=task_id,
+                    task_id=_task_callback_id(task, task_id),
                     model=task.model if task else None,
                     is_public_feed=task.is_public_feed if task else False,
                 )
                 if is_video
-                else get_image_result_keyboard(result_url, task_id=task_id)
+                else get_image_result_keyboard(result_url, task_id=_task_callback_id(task, task_id))
             )
 
             bot_instance = Bot(token=config.BOT_TOKEN)
@@ -2994,11 +3089,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if is_video:
                     video_kb = get_video_result_keyboard(
                         result_url,
-                        task_id=task_id,
+                        task_id=_task_callback_id(task, task_id),
                         model=task.model if task else None,
                         is_public_feed=task.is_public_feed if task else False,
                     )
-                    # Try URL first
                     try:
                         await bot_instance.send_video(
                             chat_id=telegram_id,
@@ -3009,12 +3103,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             reply_markup=video_kb,
                         )
                         logger.info(
-                            f"{service_name} video sent via URL to user {telegram_id}"
+                            "%s video sent via URL to user %s",
+                            service_name,
+                            telegram_id,
                         )
                         sent_media = True
                     except Exception as e:
                         logger.warning(
-                            f"Video URL send failed ({e}), trying file upload"
+                            "Video URL send failed (%s), trying file upload",
+                            e,
                         )
                         tmp_file = None
                         try:
@@ -3073,44 +3170,36 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 logger.error(
                                     f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
                                 )
-                        await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
                     preview_sent = False
-                    try:
-                        if image_bytes:
-                            await bot_instance.send_document(
-                                chat_id=telegram_id,
-                                document=types.BufferedInputFile(
-                                    image_bytes,
-                                    filename=_guess_result_filename(result_url, fallback_base="generated"),
-                                ),
-                                caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
-                                parse_mode="HTML",
-                                reply_markup=kb_link,
-                            )
-                            logger.info(
-                                f"{service_name} original image sent as document to user {telegram_id}"
-                            )
-                        else:
-                            await bot_instance.send_document(
-                                chat_id=telegram_id,
-                                document=result_url,
-                                caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
-                                parse_mode="HTML",
-                                reply_markup=kb_link,
-                            )
-                            logger.info(
-                                f"{service_name} original image URL sent as document to user {telegram_id}"
-                            )
-                        preview_sent = True
-                    except Exception as doc_send_e:
-                        logger.info(
-                            f"Original document send failed ({doc_send_e}), trying photo fallback"
-                        )
+                    preview_caption = _build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls)
+                    if image_bytes:
+                        preview_bytes = _build_preview_photo_bytes(image_bytes)
+                        if preview_bytes:
+                            try:
+                                photo = types.BufferedInputFile(
+                                    preview_bytes, filename="generated_preview.jpg"
+                                )
+                                await bot_instance.send_photo(
+                                    chat_id=telegram_id,
+                                    photo=photo,
+                                    caption=preview_caption,
+                                    parse_mode="HTML",
+                                    reply_markup=kb_link,
+                                )
+                                logger.info(
+                                    f"{service_name} image preview sent as file-photo to user {telegram_id}"
+                                )
+                                preview_sent = True
+                            except Exception as preview_file_e:
+                                logger.info(
+                                    f"Preview file-photo send failed ({preview_file_e}), trying URL photo"
+                                )
+                    if not preview_sent:
                         try:
                             await bot_instance.send_photo(
                                 chat_id=telegram_id,
                                 photo=result_url,
-                                caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
+                                caption=preview_caption,
                                 parse_mode="HTML",
                                 reply_markup=kb_link,
                             )
@@ -3120,30 +3209,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             preview_sent = True
                         except Exception as url_send_e:
                             logger.info(
-                                f"Image URL send failed ({url_send_e}), trying direct download"
+                                f"Image URL send failed ({url_send_e})"
                             )
-                            if image_bytes:
-                                preview_bytes = _build_preview_photo_bytes(image_bytes)
-                                if preview_bytes:
-                                    photo = types.BufferedInputFile(
-                                        preview_bytes, filename="generated_preview.jpg"
-                                    )
-                                    await bot_instance.send_photo(
-                                        chat_id=telegram_id,
-                                        photo=photo,
-                                        caption=_build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls),
-                                        parse_mode="HTML",
-                                        reply_markup=kb_link,
-                                    )
-                                    logger.info(
-                                        f"{service_name} image preview sent as file-photo to user {telegram_id}"
-                                    )
-                                    preview_sent = True
 
-                    if preview_sent:
+                    original_sent = await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
+
+                    if preview_sent or original_sent:
                         sent_media = True
                     else:
-                        logger.warning(f"No image bytes and no preview sent for {service_name}")
+                        logger.warning(f"No image preview or original sent for {service_name}")
 
                 if sent_media:
                     await complete_video_task(task_id, result_url)
@@ -3267,7 +3341,9 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     if task and task.type == "image":
                         from bot.keyboards import get_failed_image_retry_keyboard
 
-                        reply_markup = get_failed_image_retry_keyboard(task_id)
+                        reply_markup = get_failed_image_retry_keyboard(
+                            _task_callback_id(task, task_id)
+                        )
                     await bot_instance.send_message(
                         chat_id=telegram_id,
                         text=error_msg,

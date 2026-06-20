@@ -78,10 +78,12 @@ class TestConfig:
 
     def test_static_base_url_default(self):
         cfg = Config()
+        cfg.STATIC_BASE_URL = ""
         cfg.WEBHOOK_HOST = ""
         assert cfg.static_base_url == "https://dev.chillcreative.ru"
 
     def test_static_base_url_webhook(self):
         cfg = Config()
+        cfg.STATIC_BASE_URL = ""
         cfg.WEBHOOK_HOST = "https://custom.com"
         assert cfg.static_base_url == "https://custom.com"

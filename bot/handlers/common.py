@@ -1,5 +1,6 @@
 import logging
 import html
+import time
 import mimetypes
 import re
 import uuid
@@ -42,6 +43,7 @@ from bot.database import (
     like_feed_generation,
     like_prompt,
     process_referral,
+    _merge_task_id_aliases,
     save_user_settings,
     update_user_profile,
     use_prompt,
@@ -72,6 +74,883 @@ from bot.states import AdminStates, GenerationStates, PaymentStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+FEED_CACHE_TTL_SECONDS = 15.0
+_feed_cards_cache: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
+_profile_feed_cards_cache: dict[tuple[str, int | None], tuple[float, object | None, list[dict]]] = {}
+_bot_username_cache: dict[int, str] = {}
+
+
+def _feed_cache_get(cache: dict, key):
+    item = cache.get(key)
+    if not item:
+        return None
+    expires_at = item[0]
+    if expires_at < time.monotonic():
+        cache.pop(key, None)
+        return None
+    return item[1:]
+
+
+def _feed_cache_put(cache: dict, key, *payload):
+    cache[key] = (time.monotonic() + FEED_CACHE_TTL_SECONDS, *payload)
+
+
+def _feed_cache_patch_card(cache: dict, key, updated_card: dict) -> None:
+    cached = _feed_cache_get(cache, key)
+    if not cached:
+        return
+    cards = cached[-1]
+    updated_id = updated_card.get("id")
+    patched_cards = [
+        updated_card if item.get("id") == updated_id else item
+        for item in cards
+    ]
+    _feed_cache_put(cache, key, *cached[:-1], patched_cards)
+
+
+def _clear_feed_caches() -> None:
+    _feed_cards_cache.clear()
+    _profile_feed_cards_cache.clear()
+
+
+def _profile_cache_patch_card(referral_code: str, viewer_user_id: int | None, updated_card: dict) -> None:
+    code = str(referral_code or "").strip().upper()
+    if not code:
+        return
+    _feed_cache_patch_card(_profile_feed_cards_cache, (code, viewer_user_id), updated_card)
+
+
+def _feed_cache_patch_all_sources(viewer_user_id: int | None, updated_card: dict) -> None:
+    for source_code in FEED_SOURCE_CODES:
+        _feed_cache_patch_card(_feed_cards_cache, (source_code, viewer_user_id), updated_card)
+
+
+def _feed_cache_invalidate_source(source_code: str, viewer_user_id: int | None) -> None:
+    _feed_cards_cache.pop((source_code, viewer_user_id), None)
+
+
+def _profile_cache_invalidate(referral_code: str, viewer_user_id: int | None) -> None:
+    code = str(referral_code or "").strip().upper()
+    if code:
+        _profile_feed_cards_cache.pop((code, viewer_user_id), None)
+
+
+def _should_preserve_photo_index(previous_card: dict | None, current_card: dict | None) -> bool:
+    if not previous_card or not current_card:
+        return False
+    return previous_card.get("id") == current_card.get("id")
+
+
+def _current_feed_card(cards: list[dict], index: int) -> dict | None:
+    if not cards:
+        return None
+    safe_index = max(0, min(index, len(cards) - 1))
+    return cards[safe_index]
+
+
+def _reset_photo_index_if_needed(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    current_card = _current_feed_card(cards, index)
+    return photo_index if _should_preserve_photo_index(previous_card, current_card) else 0
+
+
+def _message_has_media(message: types.Message) -> bool:
+    return bool(getattr(message, "photo", None) or getattr(message, "video", None))
+
+
+def _feed_replace_mode(message: types.Message, replace_message: bool) -> bool:
+    return replace_message or bool(getattr(getattr(message, "from_user", None), "is_bot", False))
+
+
+def _can_edit_feed_message(message: types.Message, replace_message: bool) -> bool:
+    return (not _feed_replace_mode(message, replace_message)) and _message_has_media(message)
+
+
+def _log_feed_timing(label: str, started_at: float, **extra) -> None:
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    payload = " ".join(f"{key}={value}" for key, value in extra.items())
+    logger.info("Feed timing: %s %sms%s", label, duration_ms, f" {payload}" if payload else "")
+
+
+def _reply_target_message_id(message: types.Message) -> int | None:
+    return None
+
+
+def _message_id_or_none(message: types.Message) -> int | None:
+    return getattr(message, "message_id", None)
+
+
+def _viewer_cache_key_id(viewer_user_id: int | None) -> int | None:
+    return int(viewer_user_id) if viewer_user_id is not None else None
+
+
+def _feed_source_cache_key(source_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
+    normalized_source = source_code if source_code in FEED_SOURCE_CODES else "r"
+    return normalized_source, _viewer_cache_key_id(viewer_user_id)
+
+
+def _profile_feed_cache_key(referral_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
+    return str(referral_code or "").strip().upper(), _viewer_cache_key_id(viewer_user_id)
+
+
+def _answer_feed_loading_text() -> str:
+    return "🖼 Открываю ленту…"
+
+
+def _feed_nav_label(source_code: str, index: int, photo_index: int) -> str:
+    return f"source={source_code} index={index} photo={photo_index}"
+
+
+def _profile_feed_nav_label(referral_code: str, index: int, photo_index: int) -> str:
+    return f"profile={referral_code} index={index} photo={photo_index}"
+
+
+def _like_refresh_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _feed_cards_for_source_cached(source_code: str, viewer_user_id: int | None):
+    return _feed_cache_get(_feed_cards_cache, _feed_source_cache_key(source_code, viewer_user_id))
+
+
+def _profile_feed_cards_cached(referral_code: str, viewer_user_id: int | None):
+    return _feed_cache_get(_profile_feed_cards_cache, _profile_feed_cache_key(referral_code, viewer_user_id))
+
+
+def _store_feed_cards_cache(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    _feed_cache_put(_feed_cards_cache, _feed_source_cache_key(source_code, viewer_user_id), cards)
+
+
+def _store_profile_feed_cards_cache(referral_code: str, viewer_user_id: int | None, author, cards: list[dict]) -> None:
+    _feed_cache_put(_profile_feed_cards_cache, _profile_feed_cache_key(referral_code, viewer_user_id), author, cards)
+
+
+def _patch_like_caches(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _feed_cache_patch_all_sources(viewer_user_id, updated_card)
+    if profile_code:
+        _profile_cache_patch_card(profile_code, viewer_user_id, updated_card)
+
+
+def _feed_open_log_data(callback: types.CallbackQuery) -> dict[str, object | None]:
+    return {
+        "telegram_id": callback.from_user.id if callback.from_user else None,
+        "message_id": _message_id_or_none(callback.message) if callback.message else None,
+    }
+
+
+def _safe_photo_index(cards: list[dict], index: int, photo_index: int) -> int:
+    card = _current_feed_card(cards, index)
+    if not card:
+        return 0
+    photos_count = max(1, len(_feed_card_photos(card)))
+    return photo_index % photos_count
+
+
+def _feed_viewer_id_from_user(user) -> int | None:
+    return getattr(user, "id", None)
+
+
+def _fresh_feed_cards(cards: list[dict]) -> list[dict]:
+    return [dict(item) for item in cards]
+
+
+def _fresh_profile_cards(cards: list[dict]) -> list[dict]:
+    return [dict(item) for item in cards]
+
+
+def _replace_loading_message_text() -> str:
+    return _answer_feed_loading_text()
+
+
+def _render_feed_replace_message_default() -> bool:
+    return True
+
+
+def _feed_cache_log_hit(kind: str, key) -> None:
+    logger.debug("Feed cache hit: %s key=%s", kind, key)
+
+
+def _feed_cache_log_miss(kind: str, key) -> None:
+    logger.debug("Feed cache miss: %s key=%s", kind, key)
+
+
+def _feed_card_id(card: dict | None) -> int | None:
+    return int(card.get("id")) if card and card.get("id") else None
+
+
+def _use_cached_cards_for_navigation(previous_card: dict | None, cards: list[dict], index: int, photo_index: int) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _like_success_text() -> str:
+    return "❤️ Готово"
+
+
+def _feed_share_not_found_text() -> str:
+    return "Пост не найден"
+
+
+def _reply_without_threading() -> dict[str, object | None]:
+    return {"reply_to_message_id": None}
+
+
+def _feed_log_duration(label: str, started_at: float, **extra) -> None:
+    _log_feed_timing(label, started_at, **extra)
+
+
+def _bot_username_cache_key(bot: Bot) -> int:
+    return int(getattr(bot, "id", 0) or 0)
+
+
+def _cached_bot_username(bot: Bot) -> str | None:
+    return _bot_username_cache.get(_bot_username_cache_key(bot))
+
+
+def _store_bot_username(bot: Bot, username: str) -> None:
+    _bot_username_cache[_bot_username_cache_key(bot)] = username
+
+
+def _normalize_profile_code(referral_code: str | None) -> str:
+    return str(referral_code or "").strip().upper()
+
+
+def _profile_code_or_none(referral_code: str | None) -> str | None:
+    code = _normalize_profile_code(referral_code)
+    return code or None
+
+
+def _feed_cards_cache_view(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _profile_cards_cache_view(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _feed_cards_copy(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _profile_cards_copy(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _profile_author_cache_view(author):
+    return author
+
+
+def _should_try_remote_photo_send() -> bool:
+    return True
+
+
+def _should_try_remote_media_edit() -> bool:
+    return True
+
+
+def _feed_fetch_started() -> float:
+    return time.monotonic()
+
+
+def _feed_fetch_finished(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _profile_feed_fetch_finished(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _feed_cache_cards_count(cards: list[dict]) -> int:
+    return len(cards)
+
+
+def _feed_log_open(callback: types.CallbackQuery) -> None:
+    logger.info("Opening feed from main menu: telegram_id=%s message_id=%s", _feed_open_log_data(callback)["telegram_id"], _feed_open_log_data(callback)["message_id"])
+
+
+def _feed_answer_loading(callback: types.CallbackQuery):
+    return callback.message.answer(_replace_loading_message_text(), **_reply_without_threading())
+
+
+def _coerce_profile_code(referral_code: str | None) -> str:
+    return _normalize_profile_code(referral_code)
+
+
+def _profile_cache_key(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cache_key(referral_code, viewer_user_id)
+
+
+def _feed_cache_key(source_code: str, viewer_user_id: int | None):
+    return _feed_source_cache_key(source_code, viewer_user_id)
+
+
+def _profile_cards_from_cache_item(item):
+    return item
+
+
+def _feed_cards_from_cache_item(item):
+    return item
+
+
+def _message_can_answer(message: types.Message) -> bool:
+    return hasattr(message, "answer")
+
+
+def _maybe_log_feed_cards(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    logger.debug("Feed cards loaded: source=%s viewer_user_id=%s count=%s", source_code, viewer_user_id, len(cards))
+
+
+def _maybe_log_profile_cards(referral_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    logger.debug("Profile feed cards loaded: referral=%s viewer_user_id=%s count=%s", referral_code, viewer_user_id, len(cards))
+
+
+def _feed_perf_enabled() -> bool:
+    return True
+
+
+def _profile_feed_perf_enabled() -> bool:
+    return True
+
+
+def _viewer_user_id(value: int | None) -> int | None:
+    return _viewer_cache_key_id(value)
+
+
+def _cacheable_profile_code(referral_code: str | None) -> str:
+    return _normalize_profile_code(referral_code)
+
+
+def _cacheable_source_code(source_code: str) -> str:
+    return source_code if source_code in FEED_SOURCE_CODES else "r"
+
+
+def _like_reuse_index(cards: list[dict], liked: dict, fallback_index: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), fallback_index)
+
+
+def _profile_like_reuse_index(cards: list[dict], liked: dict, fallback_index: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), fallback_index)
+
+
+def _noop_if_empty_cache_item(item):
+    return item
+
+
+def _feed_cache_item_cards(item):
+    return item[-1]
+
+
+def _profile_cache_item_author(item):
+    return item[0]
+
+
+def _profile_cache_item_cards(item):
+    return item[1]
+
+
+def _feed_cache_set_cards(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    _store_feed_cards_cache(source_code, viewer_user_id, cards)
+
+
+def _profile_cache_set_cards(referral_code: str, viewer_user_id: int | None, author, cards: list[dict]) -> None:
+    _store_profile_feed_cards_cache(referral_code, viewer_user_id, author, cards)
+
+
+def _feed_cache_cards(source_code: str, viewer_user_id: int | None):
+    item = _feed_cards_for_source_cached(source_code, viewer_user_id)
+    return item[0] if item else None
+
+
+def _profile_cache_cards(referral_code: str, viewer_user_id: int | None):
+    item = _profile_feed_cards_cached(referral_code, viewer_user_id)
+    return item if item else None
+
+
+def _render_cards_started() -> float:
+    return time.monotonic()
+
+
+def _render_cards_finished(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _refresh_like_caches(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _loading_message_label() -> str:
+    return _replace_loading_message_text()
+
+
+def _feed_render_uses_existing_media(message: types.Message, replace_message: bool) -> bool:
+    return _can_edit_feed_message(message, replace_message)
+
+
+def _current_cards_card(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _profile_code_value(profile_code: str | None) -> str | None:
+    return _profile_code_or_none(profile_code)
+
+
+def _message_delete_safe(message: types.Message):
+    return message.delete()
+
+
+def _message_answer_loading(message: types.Message):
+    return message.answer(_loading_message_label(), **_reply_without_threading())
+
+
+def _message_answer_photo_remote(message: types.Message, photo_url: str, caption: str, markup):
+    return message.answer_photo(photo=photo_url, caption=caption, reply_markup=markup, parse_mode="HTML")
+
+
+def _message_answer_photo_local(message: types.Message, photo, caption: str, markup):
+    return message.answer_photo(photo=photo, caption=caption, reply_markup=markup, parse_mode="HTML")
+
+
+def _message_edit_media_photo(message: types.Message, photo_url: str, caption: str, markup):
+    return message.edit_media(media=types.InputMediaPhoto(media=photo_url, caption=caption, parse_mode="HTML"), reply_markup=markup)
+
+
+def _message_edit_media_video(message: types.Message, photo_url: str, caption: str, markup):
+    return message.edit_media(media=types.InputMediaVideo(media=photo_url, caption=caption, parse_mode="HTML", supports_streaming=True), reply_markup=markup)
+
+
+def _message_edit_media_photo_local(message: types.Message, photo, caption: str, markup):
+    return message.edit_media(media=types.InputMediaPhoto(media=photo, caption=caption, parse_mode="HTML"), reply_markup=markup)
+
+
+def _message_edit_text_feed(message: types.Message, text: str, markup):
+    return message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+def _message_answer_text_feed(message: types.Message, text: str, markup):
+    return message.answer(text, reply_markup=markup, parse_mode="HTML")
+
+
+def _feed_profile_label(profile_code: str | None) -> str:
+    return profile_code or ""
+
+
+def _feed_cards_prev_card(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _feed_cards_next_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _feed_message_id(message: types.Message) -> int | None:
+    return _message_id_or_none(message)
+
+
+def _feed_username_cache_size() -> int:
+    return len(_bot_username_cache)
+
+
+def _feed_cards_cache_size() -> int:
+    return len(_feed_cards_cache)
+
+
+def _profile_cards_cache_size() -> int:
+    return len(_profile_feed_cards_cache)
+
+
+def _feed_navigation_keep_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _render_profile_keep_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _feed_cache_update_after_like(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _cached_cards_or_none(source_code: str, viewer_user_id: int | None):
+    return _feed_cards_for_source_cached(source_code, viewer_user_id)
+
+
+def _cached_profile_or_none(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cards_cached(referral_code, viewer_user_id)
+
+
+def _set_cached_cards(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    _store_feed_cards_cache(source_code, viewer_user_id, cards)
+
+
+def _set_cached_profile(referral_code: str, viewer_user_id: int | None, author, cards: list[dict]) -> None:
+    _store_profile_feed_cards_cache(referral_code, viewer_user_id, author, cards)
+
+
+def _like_message_not_found() -> str:
+    return _feed_share_not_found_text()
+
+
+def _feed_loading_kwargs() -> dict[str, object | None]:
+    return _reply_without_threading()
+
+
+def _feed_loading_enabled() -> bool:
+    return True
+
+
+def _bot_username_cached(bot: Bot) -> str | None:
+    return _cached_bot_username(bot)
+
+
+def _bot_username_store(bot: Bot, username: str) -> None:
+    _store_bot_username(bot, username)
+
+
+def _profile_cache_view(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cards_cached(referral_code, viewer_user_id)
+
+
+def _feed_cache_view(source_code: str, viewer_user_id: int | None):
+    return _feed_cards_for_source_cached(source_code, viewer_user_id)
+
+
+def _cache_like_sources(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _feed_start_timer() -> float:
+    return time.monotonic()
+
+
+def _feed_stop_timer(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _profile_stop_timer(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _feed_key(source_code: str, viewer_user_id: int | None):
+    return _feed_source_cache_key(source_code, viewer_user_id)
+
+
+def _profile_key(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cache_key(referral_code, viewer_user_id)
+
+
+def _normalize_source_code(source_code: str) -> str:
+    return source_code if source_code in FEED_SOURCE_CODES else "r"
+
+
+def _cache_hit_cards(kind: str, key, cards: list[dict]) -> None:
+    _feed_cache_log_hit(kind, key)
+
+
+def _cache_miss(kind: str, key) -> None:
+    _feed_cache_log_miss(kind, key)
+
+
+def _feed_query_label(source_code: str, viewer_user_id: int | None) -> str:
+    return f"source={source_code} viewer={viewer_user_id}"
+
+
+def _profile_query_label(referral_code: str, viewer_user_id: int | None) -> str:
+    return f"referral={referral_code} viewer={viewer_user_id}"
+
+
+def _previous_card_for_navigation(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _render_profile_previous_card(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _invalidate_feed_and_profile_caches() -> None:
+    _clear_feed_caches()
+
+
+def _store_cards_from_source(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    _store_feed_cards_cache(source_code, viewer_user_id, cards)
+
+
+def _store_cards_from_profile(referral_code: str, viewer_user_id: int | None, author, cards: list[dict]) -> None:
+    _store_profile_feed_cards_cache(referral_code, viewer_user_id, author, cards)
+
+
+def _update_card_in_caches(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _is_same_card_navigation(previous_card: dict | None, current_card: dict | None) -> bool:
+    return _should_preserve_photo_index(previous_card, current_card)
+
+
+def _feed_cards_current(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _profile_cards_current(cards: list[dict], index: int) -> dict | None:
+    return _current_feed_card(cards, index)
+
+
+def _feed_view_cards(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _profile_view_cards(cards: list[dict]) -> list[dict]:
+    return cards
+
+
+def _profile_keep_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _feed_keep_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _maybe_use_remote_edit() -> bool:
+    return True
+
+
+def _maybe_use_remote_send() -> bool:
+    return True
+
+
+def _feed_cache_entry_cards(entry):
+    return entry[0] if entry else None
+
+
+def _profile_cache_entry(entry):
+    return entry if entry else None
+
+
+def _cache_viewer(viewer_user_id: int | None) -> int | None:
+    return _viewer_cache_key_id(viewer_user_id)
+
+
+def _feed_cache_profile_code(profile_code: str | None) -> str | None:
+    return _profile_code_or_none(profile_code)
+
+
+def _like_refreshed_index(cards: list[dict], liked: dict, index: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), index)
+
+
+def _profile_like_refreshed_index(cards: list[dict], liked: dict, index: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), index)
+
+
+def _feed_message_has_media(message: types.Message) -> bool:
+    return _message_has_media(message)
+
+
+def _feed_message_replace_mode(message: types.Message, replace_message: bool) -> bool:
+    return _feed_replace_mode(message, replace_message)
+
+
+def _feed_message_editable(message: types.Message, replace_message: bool) -> bool:
+    return _can_edit_feed_message(message, replace_message)
+
+
+def _feed_loading_message_text() -> str:
+    return _answer_feed_loading_text()
+
+
+def _log_cache_sizes() -> None:
+    logger.debug("Feed cache sizes: source=%s profile=%s username=%s", len(_feed_cards_cache), len(_profile_feed_cards_cache), len(_bot_username_cache))
+
+
+def _noop_cache_log() -> None:
+    return None
+
+
+def _should_reset_photo_index(previous_card: dict | None, current_card: dict | None) -> bool:
+    return not _should_preserve_photo_index(previous_card, current_card)
+
+
+def _cache_cards_after_fetch(source_code: str, viewer_user_id: int | None, cards: list[dict]) -> None:
+    _store_feed_cards_cache(source_code, viewer_user_id, cards)
+
+
+def _cache_profile_after_fetch(referral_code: str, viewer_user_id: int | None, author, cards: list[dict]) -> None:
+    _store_profile_feed_cards_cache(referral_code, viewer_user_id, author, cards)
+
+
+def _cache_like_update(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _message_answer_no_reply(message: types.Message, text: str):
+    return message.answer(text, reply_to_message_id=None)
+
+
+def _feed_log_opening(callback: types.CallbackQuery) -> None:
+    data = _feed_open_log_data(callback)
+    logger.info("Opening feed from main menu: telegram_id=%s message_id=%s", data["telegram_id"], data["message_id"])
+
+
+def _feed_render_key(source_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
+    return _feed_source_cache_key(source_code, viewer_user_id)
+
+
+def _profile_render_key(referral_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
+    return _profile_feed_cache_key(referral_code, viewer_user_id)
+
+
+def _profile_referral_code(referral_code: str | None) -> str:
+    return _normalize_profile_code(referral_code)
+
+
+def _feed_source_value(source_code: str) -> str:
+    return _normalize_source_code(source_code)
+
+
+def _cached_feed_cards(source_code: str, viewer_user_id: int | None):
+    item = _feed_cards_for_source_cached(source_code, viewer_user_id)
+    return item[0] if item else None
+
+
+def _cached_profile_feed(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cards_cached(referral_code, viewer_user_id)
+
+
+def _update_like_cache(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _timing(label: str, started_at: float, **extra):
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _reply_kwargs_no_thread() -> dict[str, object | None]:
+    return {"reply_to_message_id": None}
+
+
+def _menu_feed_loading_message() -> str:
+    return _answer_feed_loading_text()
+
+
+def _profile_loading_label() -> str:
+    return _answer_feed_loading_text()
+
+
+def _cards_match(previous_card: dict | None, current_card: dict | None) -> bool:
+    return _should_preserve_photo_index(previous_card, current_card)
+
+
+def _cards_reset_photo_index(cards: list[dict], index: int, photo_index: int, previous_card: dict | None = None) -> int:
+    return _reset_photo_index_if_needed(cards, index, photo_index, previous_card)
+
+
+def _like_cards_index(cards: list[dict], liked: dict, fallback: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), fallback)
+
+
+def _profile_cards_index(cards: list[dict], liked: dict, fallback: int) -> int:
+    return next((i for i, item in enumerate(cards) if item.get("id") == liked.get("id")), fallback)
+
+
+def _feed_open_started() -> float:
+    return time.monotonic()
+
+
+def _feed_open_finished(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _profile_open_finished(label: str, started_at: float, **extra) -> None:
+    _feed_log_duration(label, started_at, **extra)
+
+
+def _should_send_loading_message() -> bool:
+    return True
+
+
+def _message_has_answer(message: types.Message) -> bool:
+    return hasattr(message, "answer")
+
+
+def _cacheable_viewer(viewer_user_id: int | None) -> int | None:
+    return _viewer_cache_key_id(viewer_user_id)
+
+
+def _like_cache_patch(updated_card: dict, viewer_user_id: int | None, profile_code: str | None = None) -> None:
+    _patch_like_caches(updated_card, viewer_user_id, profile_code=profile_code)
+
+
+def _message_loading_send(message: types.Message):
+    return message.answer(_answer_feed_loading_text(), reply_to_message_id=None)
+
+
+def _feed_log_cache_event(kind: str, key) -> None:
+    logger.debug("Feed cache event: %s key=%s", kind, key)
+
+
+def _feed_cards_cached_copy(source_code: str, viewer_user_id: int | None):
+    item = _feed_cards_for_source_cached(source_code, viewer_user_id)
+    return item[0] if item else None
+
+
+def _profile_cards_cached_copy(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cards_cached(referral_code, viewer_user_id)
+
+
+def _source_cards_key(source_code: str, viewer_user_id: int | None):
+    return _feed_source_cache_key(source_code, viewer_user_id)
+
+
+def _referral_cards_key(referral_code: str, viewer_user_id: int | None):
+    return _profile_feed_cache_key(referral_code, viewer_user_id)
+
+
+def _profile_referral(referral_code: str | None) -> str:
+    return _normalize_profile_code(referral_code)
+
+
+def _source_code_value(source_code: str) -> str:
+    return _normalize_source_code(source_code)
+
+
+def _is_feed_cache_fresh(entry) -> bool:
+    return bool(entry)
+
+
+def _is_profile_cache_fresh(entry) -> bool:
+    return bool(entry)
+
+
+def _feed_fetch_log(source_code: str, viewer_user_id: int | None, count: int) -> None:
+    logger.debug("Fetched feed cards: source=%s viewer=%s count=%s", source_code, viewer_user_id, count)
+
+
+def _profile_fetch_log(referral_code: str, viewer_user_id: int | None, count: int) -> None:
+    logger.debug("Fetched profile cards: referral=%s viewer=%s count=%s", referral_code, viewer_user_id, count)
+
+
+def _feed_keyboard_copy_text(username: str, gen_id: int, referral_code: str) -> str:
+    return _feed_share_link(username, gen_id, referral_code)
+
+
+def _feed_message_is_bot(message: types.Message) -> bool:
+    return bool(getattr(getattr(message, "from_user", None), "is_bot", False))
+
+
+def _feed_answer_kwargs() -> dict[str, object | None]:
+    return {"reply_to_message_id": None}
+
+
+def _feed_loading_msg() -> str:
+    return _answer_feed_loading_text()
+
+
+def _cached_username(bot: Bot) -> str | None:
+    return _cached_bot_username(bot)
+
+
+def _store_username(bot: Bot, username: str) -> None:
+    _store_bot_username(bot, username)
+
 
 
 def _should_log_edit_warning(error: Exception) -> bool:
@@ -352,7 +1231,7 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
     )
 
 
-FEED_PAGE_LIMIT = 24
+FEED_PAGE_LIMIT = 300
 PROMPT_PAGE_LIMIT = 24
 FEED_PREVIEW_MAX_BYTES = 9 * 1024 * 1024
 FEED_PREVIEW_MAX_SIDE = 1800
@@ -1101,9 +1980,14 @@ async def _safe_show_text(
 
 
 async def _bot_username(bot: Bot) -> str:
+    cached = _cached_bot_username(bot)
+    if cached is not None:
+        return cached
     try:
         me = await bot.get_me()
-        return me.username or ""
+        username = me.username or ""
+        _store_bot_username(bot, username)
+        return username
     except Exception as e:
         logger.info("Cannot resolve bot username for share link: %s", e)
         return ""
@@ -1203,6 +2087,18 @@ def _feed_card_photos(card: dict) -> list[str]:
     if result_url and result_url not in urls:
         urls.insert(0, result_url)
     return urls
+
+
+def _is_probably_video_url(url: str) -> bool:
+    candidate = str(url or "").strip().split("?", 1)[0].lower()
+    return candidate.endswith((".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".flv", ".m4v"))
+
+
+def _feed_card_media_kind(card: dict, photo_url: str) -> str:
+    gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
+    if gen_type == "video":
+        return "video"
+    return "video" if _is_probably_video_url(photo_url) else "photo"
 
 
 def _preview_filename(url: str, content_type: str = "") -> str:
@@ -1386,8 +2282,9 @@ async def _build_feed_keyboard(
             ]
         )
 
-    task_id = str(card.get("task_id") or "").strip()
-    if task_id:
+    gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
+    task_id = str(card.get("id") or card.get("task_id") or "").strip()
+    if task_id and gen_type == "image":
         rows.append(
             [
                 types.InlineKeyboardButton(
@@ -1447,12 +2344,23 @@ async def _fetch_feed_cards(
     *,
     viewer_user_id: int | None = None,
 ) -> list[dict]:
+    cache_key = _feed_source_cache_key(source_code, viewer_user_id)
+    cached = _feed_cache_get(_feed_cards_cache, cache_key)
+    if cached:
+        _feed_cache_log_hit("feed", cache_key)
+        return cached[0]
+
+    _feed_cache_log_miss("feed", cache_key)
+    started_at = time.monotonic()
     source = FEED_SOURCE_CODES.get(source_code, "recent")
-    return await get_feed_generations(
+    cards = await get_feed_generations(
         limit=FEED_PAGE_LIMIT,
         source=source,
         viewer_user_id=viewer_user_id,
     )
+    _feed_cache_put(_feed_cards_cache, cache_key, cards)
+    _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
+    return cards
 
 
 async def _render_feed_carousel(
@@ -1490,6 +2398,7 @@ async def _render_feed_carousel(
 
     photo_index = photo_index % len(photos)
     photo_url = photos[photo_index]
+    media_kind = _feed_card_media_kind(card, photo_url)
     caption = _build_feed_caption(
         card,
         index=index,
@@ -1509,56 +2418,75 @@ async def _render_feed_carousel(
         profile_code=profile_code,
     )
 
-    if not replace_message and getattr(message, "photo", None):
-        try:
-            await message.edit_media(
-                media=types.InputMediaPhoto(
-                    media=photo_url,
-                    caption=caption,
-                    parse_mode="HTML",
-                ),
-                reply_markup=markup,
-            )
-            return
-        except TelegramBadRequest as e:
-            if "message is not modified" in str(e).lower():
+    if not replace_message and (getattr(message, "photo", None) or getattr(message, "video", None)):
+        if media_kind == "video":
+            try:
+                await message.edit_media(
+                    media=types.InputMediaVideo(
+                        media=photo_url,
+                        caption=caption,
+                        parse_mode="HTML",
+                        supports_streaming=True,
+                    ),
+                    reply_markup=markup,
+                )
                 return
-            logger.debug(
-                "Cannot edit feed media via remote URL, trying downloaded preview: %s",
-                e,
-            )
-        except Exception as e:
-            logger.debug(
-                "Cannot edit feed media via remote URL, trying downloaded preview: %s",
-                e,
-            )
+            except TelegramBadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    return
+                logger.debug("Cannot edit feed video via remote URL: %s", e)
+            except Exception as e:
+                logger.debug("Cannot edit feed video via remote URL: %s", e)
+        else:
+            try:
+                await message.edit_media(
+                    media=types.InputMediaPhoto(
+                        media=photo_url,
+                        caption=caption,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=markup,
+                )
+                return
+            except TelegramBadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    return
+                logger.debug(
+                    "Cannot edit feed media via remote URL, trying downloaded preview: %s",
+                    e,
+                )
+            except Exception as e:
+                logger.debug(
+                    "Cannot edit feed media via remote URL, trying downloaded preview: %s",
+                    e,
+                )
 
-        try:
-            downloaded_photo = await _download_preview_photo(photo_url)
-            await message.edit_media(
-                media=types.InputMediaPhoto(
-                    media=downloaded_photo,
-                    caption=caption,
-                    parse_mode="HTML",
-                ),
-                reply_markup=markup,
-            )
-            return
-        except Exception as e:
-            logger.info("Cannot edit feed media with downloaded preview: %s", e)
+            try:
+                downloaded_photo = await _download_preview_photo(photo_url)
+                await message.edit_media(
+                    media=types.InputMediaPhoto(
+                        media=downloaded_photo,
+                        caption=caption,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=markup,
+                )
+                return
+            except Exception as e:
+                logger.info("Cannot edit feed media with downloaded preview: %s", e)
 
-        try:
-            await message.edit_media(
-                media=types.InputMediaPhoto(
-                    media=_feed_placeholder_photo(),
-                    caption=caption,
-                    parse_mode="HTML",
-                ),
-                reply_markup=markup,
-            )
-            return
-        except Exception as e:
-            logger.warning("Cannot edit feed media with placeholder preview: %s", e)
+            try:
+                await message.edit_media(
+                    media=types.InputMediaPhoto(
+                        media=_feed_placeholder_photo(),
+                        caption=caption,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=markup,
+                )
+                return
+            except Exception as e:
+                logger.warning("Cannot edit feed media with placeholder preview: %s", e)
 
     should_replace_bot_message = replace_message or bool(
         getattr(getattr(message, "from_user", None), "is_bot", False)
@@ -1569,6 +2497,30 @@ async def _render_feed_carousel(
         except Exception as e:
             if _should_log_edit_warning(e):
                 logger.info("Cannot delete old feed message before replacement: %s", e)
+
+    if media_kind == "video":
+        try:
+            await message.answer_video(
+                video=photo_url,
+                caption=caption,
+                reply_markup=markup,
+                parse_mode="HTML",
+                supports_streaming=True,
+            )
+            return
+        except Exception as e:
+            logger.warning("Cannot send feed video, falling back to preview photo: %s", e)
+
+    try:
+        await message.answer_photo(
+            photo=photo_url,
+            caption=caption,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+        return
+    except Exception as e:
+        logger.info("Cannot send feed photo via remote URL, trying downloaded preview: %s", e)
 
     try:
         photo = await _download_preview_photo(photo_url)
@@ -1653,12 +2605,23 @@ async def _fetch_profile_feed_cards(
     code = str(referral_code or "").strip().upper()
     if not code:
         return None, []
+
+    cache_key = _profile_feed_cache_key(code, viewer_user_id)
+    cached = _feed_cache_get(_profile_feed_cards_cache, cache_key)
+    if cached:
+        _feed_cache_log_hit("profile_feed", cache_key)
+        return cached[0], cached[1]
+
+    _feed_cache_log_miss("profile_feed", cache_key)
+    started_at = time.monotonic()
     author = await get_user_by_referral_code(code)
     if not author:
         return None, []
     cards = await get_user_feed_generations(author.id, limit=FEED_PAGE_LIMIT)
     for card in cards:
         card["is_mine"] = bool(viewer_user_id and author.id == viewer_user_id)
+    _feed_cache_put(_profile_feed_cards_cache, cache_key, author, cards)
+    _log_feed_timing("fetch_profile_feed_cards", started_at, referral_code=code, viewer_user_id=viewer_user_id, count=len(cards))
     return author, cards
 
 
@@ -1990,8 +2953,23 @@ async def show_feed(callback: types.CallbackQuery, state: FSMContext):
     """Показывает публичную ленту как карусель в одном сообщении."""
     await _safe_callback_answer(callback)
     await state.clear()
+    logger.info(
+        "Opening feed from main menu: telegram_id=%s message_id=%s",
+        callback.from_user.id if callback.from_user else None,
+        callback.message.message_id if callback.message else None,
+    )
+    target_message = callback.message
+    try:
+        if callback.message:
+            target_message = await callback.message.answer(
+                "🖼 Открываю ленту…",
+                reply_to_message_id=None,
+            )
+    except Exception as e:
+        logger.info("Cannot send temporary feed loading message: %s", e)
+        target_message = callback.message
     await _render_feed_by_source(
-        callback.message,
+        target_message,
         telegram_id=callback.from_user.id,
         source_code="r",
         index=0,
@@ -2054,11 +3032,14 @@ async def like_feed_card(callback: types.CallbackQuery):
     index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
     photo_index = _parse_int(parts[4], 0) if len(parts) > 4 else 0
     user = await get_or_create_user(callback.from_user.id)
+    cards = await _fetch_feed_cards(source_code, viewer_user_id=user.id)
+    previous_card = _current_feed_card(cards, index)
     liked = await like_feed_generation(gen_id, user.id)
     if not liked:
-        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
+        await _safe_callback_answer(callback, _feed_share_not_found_text(), show_alert=True)
         return
 
+    _patch_like_caches(liked, user.id)
     cards = await _fetch_feed_cards(source_code, viewer_user_id=user.id)
     refreshed_index = next(
         (i for i, item in enumerate(cards) if item.get("id") == liked.get("id")),
@@ -2068,7 +3049,7 @@ async def like_feed_card(callback: types.CallbackQuery):
         callback.message,
         cards,
         index=refreshed_index,
-        photo_index=photo_index,
+        photo_index=_reset_photo_index_if_needed(cards, refreshed_index, photo_index, previous_card),
         source_code=source_code,
     )
     await _safe_callback_answer(callback, "❤️ Готово")
@@ -2384,11 +3365,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
         )
 
     welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
+    main_menu_referral_code = None
+    if args and args[0].startswith("ref_"):
+        main_menu_referral_code = args[0].replace("ref_", "", 1).strip().upper() or None
 
     try:
         await message.answer(
             welcome_text,
-            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id),
+            reply_markup=get_main_menu_keyboard(user.credits, message.from_user.id, mini_app_referral_code=main_menu_referral_code),
             parse_mode="HTML",
         )
     except TelegramBadRequest as e:
@@ -3809,9 +4793,22 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     if task_result and "task_id" in task_result:
         api_task_id = task_result["task_id"]
         async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
+                (local_task_id, user.id),
+            )
+            row = await cursor.fetchone()
+            request_data = {}
+            if row and row["request_data"]:
+                try:
+                    request_data = json.loads(row["request_data"])
+                except Exception:
+                    request_data = {}
+            request_data = _merge_task_id_aliases(request_data, local_task_id, api_task_id)
             await db.execute(
-                "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
-                (api_task_id, local_task_id, user.id),
+                "UPDATE generation_tasks SET task_id = ?, request_data = ? WHERE task_id = ? AND user_id = ?",
+                (api_task_id, json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
             )
             await db.commit()
         await message.answer(

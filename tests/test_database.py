@@ -34,7 +34,7 @@ async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
     conn.execute.assert_awaited_once()
     sql, params = conn.execute.await_args.args
     assert "UPDATE generation_tasks" in sql
-    assert params == ("completed", "http://result.url", "task-ok")
+    assert params == ("completed", "http://result.url", "task-ok", "task-ok")
     conn.commit.assert_awaited_once()
 
 
@@ -48,7 +48,7 @@ async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
     assert result is True
     sql, params = conn.execute.await_args.args
     assert "UPDATE generation_tasks" in sql
-    assert params == ("failed", None, "task-fail")
+    assert params == ("failed", None, "task-fail", "task-fail")
     conn.commit.assert_awaited_once()
 
 
@@ -62,6 +62,61 @@ async def test_get_master_partner_user_uses_master_telegram_id(monkeypatch):
 
     assert user is expected_user
     get_or_create_user.assert_awaited_once_with(database.MASTER_PARTNER_TELEGRAM_ID)
+
+
+@pytest.mark.asyncio
+async def test_get_task_by_id_accepts_numeric_generation_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "tasks.db"))
+
+    await database.init_db()
+    user = await database.get_or_create_user(123001)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "provider-task-123",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Prompt",
+        cost=2,
+    )
+    await database.complete_video_task("provider-task-123", "https://example.com/result.png")
+
+    by_task_id = await database.get_task_by_id("provider-task-123")
+    by_numeric_id = await database.get_task_by_id(str(by_task_id.id))
+
+    assert by_task_id is not None
+    assert by_numeric_id is not None
+    assert by_numeric_id.id == by_task_id.id
+    assert by_numeric_id.task_id == "provider-task-123"
+
+
+@pytest.mark.asyncio
+async def test_complete_video_task_accepts_task_id_alias(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "tasks.db"))
+
+    await database.init_db()
+    user = await database.get_or_create_user(123002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "provider-task-456",
+        "video",
+        "miniapp_video",
+        model="grok_imagine",
+        aspect_ratio="9:16",
+        prompt="Prompt",
+        cost=9,
+        request_data={"task_id_aliases": ["local-task-456"]},
+    )
+
+    await database.complete_video_task("local-task-456", "https://example.com/result.mp4")
+    task = await database.get_task_by_id("provider-task-456")
+
+    assert task is not None
+    assert task.status == "completed"
+    assert task.result_url == "https://example.com/result.mp4"
 
 
 @pytest.mark.asyncio

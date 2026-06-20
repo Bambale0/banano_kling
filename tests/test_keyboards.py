@@ -27,6 +27,7 @@ from bot.handlers.image_analyzer import (
     _format_video_prompt_result_text,
 )
 from bot.handlers.generation import _normalize_video_duration_value, _repeat_image_keyboard
+import bot.handlers.common as common_module
 import bot.services.photo_prompt_service as photo_prompt_module
 from bot.services.gemini_omni_service import GeminiOmniService
 import bot.services.grok_service as grok_module
@@ -78,7 +79,7 @@ def test_get_main_menu_keyboard():
     )
 
 
-def test_get_main_menu_keyboard_hides_video_prompt_for_regular_user(monkeypatch):
+def test_get_main_menu_keyboard_shows_video_prompt_for_regular_user(monkeypatch):
     monkeypatch.setattr("bot.config.config.ADMIN_IDS_STR", "111")
 
     kb = get_main_menu_keyboard(10, telegram_id=222)
@@ -87,7 +88,7 @@ def test_get_main_menu_keyboard_hides_video_prompt_for_regular_user(monkeypatch)
     ]
 
     assert "photo_to_prompt" in callback_ids
-    assert "video_to_prompt" not in callback_ids
+    assert "video_to_prompt" in callback_ids
 
 
 def test_get_main_menu_keyboard_shows_video_prompt_for_admin(monkeypatch):
@@ -688,6 +689,57 @@ def test_get_video_result_keyboard_allows_author_removal_from_feed():
     ]
     assert "🗑 Убрать из ленты" in button_texts
     assert "feedrm_vid_123" in callback_ids
+
+
+@pytest.mark.asyncio
+async def test_feed_keyboard_repeats_only_images(monkeypatch):
+    monkeypatch.setattr(
+        common_module,
+        "_bot_username",
+        AsyncMock(return_value="test_bot"),
+    )
+    base_card = {
+        "id": 123,
+        "task_id": "provider_task",
+        "author_referral_code": "ABC123",
+        "likes_count": 0,
+    }
+
+    image_kb = await common_module._build_feed_keyboard(
+        bot=SimpleNamespace(),
+        card={**base_card, "gen_type": "image"},
+        index=0,
+        total=1,
+        photo_index=0,
+        photos_count=1,
+        source_code="r",
+    )
+    image_callbacks = [
+        btn.callback_data
+        for row in image_kb.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
+    assert "repeat_image_123" in image_callbacks
+
+    video_kb = await common_module._build_feed_keyboard(
+        bot=SimpleNamespace(),
+        card={**base_card, "id": 124, "gen_type": "video"},
+        index=0,
+        total=1,
+        photo_index=0,
+        photos_count=1,
+        source_code="r",
+    )
+    video_callbacks = [
+        btn.callback_data
+        for row in video_kb.inline_keyboard
+        for btn in row
+        if btn.callback_data
+    ]
+    assert not any(
+        callback_id.startswith("repeat_image_") for callback_id in video_callbacks
+    )
 
 
 def test_photo_prompt_service_detects_fast_fallback_body_500():

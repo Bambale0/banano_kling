@@ -5,8 +5,9 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 
 import aiosqlite
 
@@ -29,9 +30,35 @@ REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS = {
 }
 MAX_ACTIVE_PROMPTS_PER_USER = 5
 TOP_PROMPTS_LIMIT = 10
-FEED_PUBLIC_IMAGE_MAX_ITEMS = 300
-FEED_PUBLIC_VIDEO_MAX_ITEMS = 100
+FEED_PUBLIC_IMAGE_MAX_ITEMS = 1500
+FEED_PUBLIC_VIDEO_MAX_ITEMS = 400
+FEED_PUBLIC_RECENT_GRACE_HOURS = 168
+FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS = 900
+FEED_EPHEMERAL_RESULT_TTL_HOURS = int(os.getenv("FEED_EPHEMERAL_RESULT_TTL_HOURS", "72"))
+FEED_EPHEMERAL_RESULT_HOSTS = {
+    host.strip().lower().lstrip(".")
+    for host in os.getenv("FEED_EPHEMERAL_RESULT_HOSTS", "tempfile.aiquickdraw.com").split(",")
+    if host.strip()
+}
 FEED_PUBLIC_TYPES = {"image", "video"}
+_last_public_feed_cleanup_at = 0.0
+_public_feed_cleanup_lock: asyncio.Lock | None = None
+
+
+def _get_public_feed_cleanup_lock() -> asyncio.Lock:
+    global _public_feed_cleanup_lock
+    if _public_feed_cleanup_lock is None:
+        _public_feed_cleanup_lock = asyncio.Lock()
+    return _public_feed_cleanup_lock
+
+
+def _public_feed_cleanup_due() -> bool:
+    return (time.monotonic() - _last_public_feed_cleanup_at) >= FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS
+
+
+def _mark_public_feed_cleanup_done() -> None:
+    global _last_public_feed_cleanup_at
+    _last_public_feed_cleanup_at = time.monotonic()
 
 PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "other"}
 PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
@@ -512,6 +539,9 @@ async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_source_feed ON generation_tasks(source_feed_gen_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_parent_status ON generation_tasks(parent_generation_id, status)"
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_user_prompts_status ON user_prompts(status, is_public, created_at DESC)"
@@ -2201,6 +2231,7 @@ async def get_admin_partner_details(
                     "credits": Credits(row["credits"] or 0),
                     "has_paid": bool(row["has_paid"]),
                     "created_at": row["created_at"],
+                    "referral_created_at": row["referral_created_at"],
                     "spent_rub": round(row["spent_rub"] or 0, 2),
                     "payments_count": row["payments_count"] or 0,
                     "subrefs_count": row["subrefs_count"] or 0,
@@ -2208,6 +2239,103 @@ async def get_admin_partner_details(
                 for row in referral_rows
             ],
         }
+
+
+async def get_admin_partner_payment_report(
+    telegram_id: int,
+    referrals_limit: int = 5000,
+    payments_limit: int = 5000,
+) -> Optional[dict]:
+    """Возвращает XLS-детализацию оплат прямых рефералов партнёра."""
+    safe_referrals_limit = max(1, min(int(referrals_limit or 5000), 20000))
+    safe_payments_limit = max(1, min(int(payments_limit or 5000), 20000))
+
+    details = await get_admin_partner_details(
+        telegram_id,
+        referrals_limit=safe_referrals_limit,
+    )
+    if not details:
+        return None
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        summary_cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS payments_count,
+                COALESCE(SUM(t.amount_rub), 0) AS paid_rub,
+                COALESCE(SUM(t.credits), 0) AS paid_credits
+            FROM users partner
+            JOIN referrals r ON r.referrer_id = partner.id
+            JOIN users referred ON referred.id = r.referred_id
+            JOIN transactions t ON t.user_id = referred.id
+            WHERE partner.telegram_id = ?
+              AND referred.referred_by = r.referrer_id
+              AND t.status = 'completed'
+              AND datetime(t.created_at) >= datetime(r.created_at)
+            """,
+            (telegram_id,),
+        )
+        summary_row = await summary_cursor.fetchone()
+
+        payments_cursor = await db.execute(
+            """
+            SELECT
+                t.id AS transaction_id,
+                t.created_at,
+                t.order_id,
+                t.payment_id,
+                t.provider,
+                t.credits,
+                t.amount_rub,
+                referred.id AS referred_user_id,
+                referred.telegram_id AS referred_telegram_id,
+                referred.referral_code AS referred_code,
+                r.created_at AS referral_created_at
+            FROM users partner
+            JOIN referrals r ON r.referrer_id = partner.id
+            JOIN users referred ON referred.id = r.referred_id
+            JOIN transactions t ON t.user_id = referred.id
+            WHERE partner.telegram_id = ?
+              AND referred.referred_by = r.referrer_id
+              AND t.status = 'completed'
+              AND datetime(t.created_at) >= datetime(r.created_at)
+            ORDER BY datetime(t.created_at) DESC, t.id DESC
+            LIMIT ?
+            """,
+            (telegram_id, safe_payments_limit),
+        )
+        payment_rows = await payments_cursor.fetchall()
+
+    return {
+        **details,
+        "limits": {
+            "referrals": safe_referrals_limit,
+            "payments": safe_payments_limit,
+        },
+        "payments_summary": {
+            "payments_count": summary_row["payments_count"] or 0,
+            "paid_rub": round(float(summary_row["paid_rub"] or 0), 2),
+            "paid_credits": summary_row["paid_credits"] or 0,
+        },
+        "payments": [
+            {
+                "transaction_id": row["transaction_id"],
+                "created_at": row["created_at"],
+                "order_id": row["order_id"] or "",
+                "payment_id": row["payment_id"] or "",
+                "provider": row["provider"] or "",
+                "credits": row["credits"] or 0,
+                "amount_rub": round(float(row["amount_rub"] or 0), 2),
+                "referred_user_id": row["referred_user_id"],
+                "referred_telegram_id": row["referred_telegram_id"],
+                "referred_code": row["referred_code"] or "",
+                "referral_created_at": row["referral_created_at"],
+            }
+            for row in payment_rows
+        ],
+    }
 
 
 def _sqlite_rows_to_dicts(rows: list[aiosqlite.Row]) -> list[dict]:
@@ -4136,6 +4264,23 @@ async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
         return row["telegram_id"] if row else None
 
 
+def _merge_task_id_aliases(request_data: Optional[dict | str], *task_ids: Any) -> Optional[dict | str]:
+    if not isinstance(request_data, dict):
+        return request_data
+    payload = dict(request_data)
+    raw_aliases = payload.get("task_id_aliases") or []
+    if isinstance(raw_aliases, str):
+        raw_aliases = [raw_aliases]
+    aliases: list[str] = []
+    for value in [*raw_aliases, *task_ids]:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    if aliases:
+        payload["task_id_aliases"] = aliases
+    return payload
+
+
 async def add_generation_task(
     user_id: int,
     telegram_id: int,
@@ -4154,10 +4299,11 @@ async def add_generation_task(
 ) -> bool:
     """Создаёт задачу генерации"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
+        normalized_request = _merge_task_id_aliases(request_data, task_id)
         serialized_request = (
-            json.dumps(request_data, ensure_ascii=False)
-            if isinstance(request_data, dict)
-            else request_data
+            json.dumps(normalized_request, ensure_ascii=False)
+            if isinstance(normalized_request, dict)
+            else normalized_request
         )
         result = await db.execute(
             """INSERT OR IGNORE INTO generation_tasks 
@@ -4193,14 +4339,45 @@ async def add_generation_task(
 
 
 async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
-    """Получает задачу по task_id"""
+    """Получает задачу по task_id, а для обратной совместимости — и по numeric id."""
+    lookup_value = str(task_id or "").strip()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         cursor = await db.execute(
-            "SELECT * FROM generation_tasks WHERE task_id = ?", (task_id,)
+            "SELECT * FROM generation_tasks WHERE task_id = ?", (lookup_value,)
         )
         row = await cursor.fetchone()
+
+        if not row and lookup_value.isdigit():
+            cursor = await db.execute(
+                "SELECT * FROM generation_tasks WHERE id = ?", (int(lookup_value),)
+            )
+            row = await cursor.fetchone()
+
+        if not row and lookup_value:
+            cursor = await db.execute(
+                """
+                SELECT *
+                FROM generation_tasks
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM json_each(
+                        CASE
+                            WHEN json_valid(generation_tasks.request_data)
+                            THEN generation_tasks.request_data
+                            ELSE '{}'
+                        END,
+                        '$.task_id_aliases'
+                    )
+                    WHERE CAST(value AS TEXT) = ?
+                )
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (lookup_value,),
+            )
+            row = await cursor.fetchone()
 
         if not row:
             return None
@@ -4255,13 +4432,26 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
 
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
+    lookup_value = str(task_id or "").strip()
     async with aiosqlite.connect(DATABASE_PATH) as db:
         final_status = "completed" if result_url else "failed"
         await db.execute(
             """UPDATE generation_tasks 
                SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP 
-               WHERE task_id = ?""",
-            (final_status, result_url, task_id),
+               WHERE task_id = ?
+                  OR EXISTS (
+                      SELECT 1
+                      FROM json_each(
+                          CASE
+                              WHEN json_valid(generation_tasks.request_data)
+                              THEN generation_tasks.request_data
+                              ELSE '{}'
+                          END,
+                          '$.task_id_aliases'
+                      )
+                      WHERE CAST(value AS TEXT) = ?
+                  )""",
+            (final_status, result_url, lookup_value, lookup_value),
         )
         await db.commit()
         return True
@@ -4874,6 +5064,68 @@ def _generation_result_urls(row: aiosqlite.Row) -> list[str]:
     return urls
 
 
+def _feed_row_timestamp(row: aiosqlite.Row) -> Optional[datetime]:
+    for key in ("completed_at", "updated_at", "created_at"):
+        if key in row.keys():
+            parsed = _parse_datetime(row[key])
+            if parsed:
+                return parsed
+    return None
+
+
+def _feed_result_host(url: str) -> str:
+    try:
+        return (urlparse(str(url or "")).hostname or "").strip().lower().lstrip(".")
+    except Exception:
+        return ""
+
+
+def _is_ephemeral_feed_result_url(url: str) -> bool:
+    host = _feed_result_host(url)
+    if not host:
+        return False
+    return any(host == ephemeral or host.endswith(f".{ephemeral}") for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS)
+
+
+def _is_feed_result_expired(row: aiosqlite.Row, url: str) -> bool:
+    if FEED_EPHEMERAL_RESULT_TTL_HOURS <= 0 or not _is_ephemeral_feed_result_url(url):
+        return False
+    timestamp = _feed_row_timestamp(row)
+    if not timestamp:
+        return False
+    now = datetime.now(timestamp.tzinfo) if timestamp.tzinfo else datetime.utcnow()
+    return now - timestamp > timedelta(hours=FEED_EPHEMERAL_RESULT_TTL_HOURS)
+
+
+def _is_feed_result_url_available(row: aiosqlite.Row, url: str) -> bool:
+    candidate = str(url or "").strip()
+    if not candidate.startswith(("http://", "https://")):
+        return False
+
+    try:
+        from bot.services.media_input_utils import (
+            is_local_upload_source,
+            resolve_local_upload_path,
+        )
+
+        if is_local_upload_source(candidate):
+            return bool(resolve_local_upload_path(candidate))
+    except Exception:
+        logger.exception("Failed to validate local feed result url: %s", candidate)
+        return False
+
+    return not _is_feed_result_expired(row, candidate)
+
+
+def _feed_result_urls(row: aiosqlite.Row) -> list[str]:
+    available: list[str] = []
+    for url in _generation_result_urls(row):
+        normalized = str(url or "").strip()
+        if normalized and normalized not in available and _is_feed_result_url_available(row, normalized):
+            available.append(normalized)
+    return available
+
+
 def _feed_activity_time_for_sort(row: aiosqlite.Row) -> datetime:
     values: list[datetime] = []
     for key in ("created_at", "updated_at"):
@@ -4906,29 +5158,94 @@ def _feed_public_limit_for_type(generation_type: str) -> int:
     return FEED_PUBLIC_IMAGE_MAX_ITEMS
 
 
-async def cleanup_public_feed_limits() -> dict[str, int]:
-    """Report how much the public feed exceeds soft limits without mutating publication flags."""
-    stats = {"image": 0, "video": 0}
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            """
-            SELECT gt.type, COUNT(*) AS total
-            FROM generation_tasks gt
-            WHERE gt.type IN ('image', 'video')
-              AND gt.status = 'completed'
-              AND gt.result_url IS NOT NULL
-              AND gt.is_public_feed = 1
-            GROUP BY gt.type
-            """
-        )
-        rows = await cursor.fetchall()
+async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
+    """Keep the public feed bounded by media type, pruning low-score old posts."""
+    if not force and not _public_feed_cleanup_due():
+        return {"image": 0, "video": 0}
 
-    totals = {str(row['type']): int(row['total'] or 0) for row in rows}
-    for generation_type in ('image', 'video'):
-        limit = _feed_public_limit_for_type(generation_type)
-        stats[generation_type] = max(0, int(totals.get(generation_type, 0)) - limit)
-    return stats
+    async with _get_public_feed_cleanup_lock():
+        if not force and not _public_feed_cleanup_due():
+            return {"image": 0, "video": 0}
+
+        stats = {"image": 0, "video": 0}
+        async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT gt.*,
+                       (
+                           SELECT COUNT(*)
+                           FROM generation_tasks child
+                           WHERE child.parent_generation_id = gt.id
+                             AND child.status = 'completed'
+                       ) AS remix_count
+                FROM generation_tasks gt
+                WHERE gt.type IN ('image', 'video')
+                  AND gt.status = 'completed'
+                  AND gt.result_url IS NOT NULL
+                  AND gt.is_public_feed = 1
+                """
+            )
+            rows = await cursor.fetchall()
+
+            ids_to_prune: list[int] = []
+            valid_rows: list[aiosqlite.Row] = []
+            for row in rows:
+                if _feed_result_urls(row):
+                    valid_rows.append(row)
+                    continue
+                ids_to_prune.append(int(row["id"] or 0))
+                generation_type = str(row["type"] or "")
+                if generation_type in stats:
+                    stats[generation_type] += 1
+            rows = valid_rows
+            recent_cutoff = datetime.utcnow() - timedelta(hours=FEED_PUBLIC_RECENT_GRACE_HOURS)
+            for generation_type in ("image", "video"):
+                type_rows = [row for row in rows if row["type"] == generation_type]
+                limit = _feed_public_limit_for_type(generation_type)
+                if len(type_rows) <= limit:
+                    continue
+                protected_rows = []
+                candidate_rows = []
+                for row in type_rows:
+                    activity_time = _feed_activity_time_for_sort(row)
+                    if activity_time != datetime.min and activity_time >= recent_cutoff:
+                        protected_rows.append(row)
+                    else:
+                        candidate_rows.append(row)
+                if len(protected_rows) >= limit:
+                    continue
+                ranked_rows = sorted(
+                    candidate_rows,
+                    key=lambda row: (
+                        _calculate_feed_score(row),
+                        _feed_activity_time_for_sort(row),
+                        int(row["id"] or 0),
+                    ),
+                    reverse=True,
+                )
+                keep_candidates = max(limit - len(protected_rows), 0)
+                prune_rows = ranked_rows[keep_candidates:]
+                stats[generation_type] += len(prune_rows)
+                ids_to_prune.extend(int(row["id"] or 0) for row in prune_rows)
+
+            if ids_to_prune:
+                for index in range(0, len(ids_to_prune), 200):
+                    chunk = ids_to_prune[index : index + 200]
+                    placeholders = ",".join("?" for _ in chunk)
+                    await db.execute(
+                        f"""
+                        UPDATE generation_tasks
+                        SET is_public_feed = 0,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id IN ({placeholders})
+                        """,
+                        chunk,
+                    )
+                await db.commit()
+
+        _mark_public_feed_cleanup_done()
+        return stats
 
 
 def _author_display_name(row: aiosqlite.Row) -> str:
@@ -4955,7 +5272,10 @@ def _generation_row_to_card(
     row: aiosqlite.Row,
     *,
     viewer_user_id: Optional[int] = None,
-) -> dict[str, Any]:
+) -> Optional[dict[str, Any]]:
+    feed_urls = _feed_result_urls(row)
+    if not feed_urls:
+        return None
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
     comments_count = int(row["comments_count"] or 0) if "comments_count" in row.keys() else 0
     author = _author_display_name(row)
@@ -4965,8 +5285,8 @@ def _generation_row_to_card(
         "task_id": row["task_id"],
         "model": row["model"] or row["preset_id"],
         "gen_type": row["type"],
-        "result_url": row["result_url"],
-        "result_urls": _generation_result_urls(row),
+        "result_url": feed_urls[0],
+        "result_urls": feed_urls,
         "prompt": "" if generation_prompt_hidden(row) else str(row["prompt"] or ""),
         "likes_count": int(row["likes_count"] or 0),
         "shares_count": int(row["shares_count"] or 0),
@@ -4996,7 +5316,7 @@ async def get_feed_generations(
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 40), 1), 100)
+    safe_limit = min(max(int(limit or 40), 1), 300)
     source = source if source in {"recent", "top_day", "top"} else "recent"
     where = [
         "gt.type IN ('image', 'video')",
@@ -5035,23 +5355,47 @@ async def get_feed_generations(
             ORDER BY gt.created_at DESC
             LIMIT ?
             """,
-            (safe_limit * 3 if source in {"top", "top_day"} else safe_limit,),
+            (safe_limit * 5,),
         )
         rows = await cursor.fetchall()
 
-    cards = [_generation_row_to_card(row, viewer_user_id=viewer_user_id) for row in rows]
+    cards = [
+        card
+        for row in rows
+        if (card := _generation_row_to_card(row, viewer_user_id=viewer_user_id))
+    ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
     return cards[:safe_limit]
 
 
-async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
+async def get_user_feed_generations(
+    user_id: int,
+    limit: int = 200,
+    *,
+    include_unpublished_owned: bool = False,
+) -> list[dict[str, Any]]:
     safe_limit = min(max(int(limit or 200), 1), 400)
     await cleanup_public_feed_limits()
+    where_clause = """
+            WHERE gt.user_id = ?
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND gt.is_public_feed = 1
+    """
+    if include_unpublished_owned:
+        where_clause = """
+            WHERE gt.user_id = ?
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND gt.source_feed_gen_id IS NULL
+        """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            """
+            f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
                    u.username AS author_username,
                    u.first_name AS author_first_name,
@@ -5070,18 +5414,19 @@ async def get_user_feed_generations(user_id: int, limit: int = 200) -> list[dict
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
-            WHERE gt.user_id = ?
-              AND gt.type IN ('image', 'video')
-              AND gt.status = 'completed'
-              AND gt.result_url IS NOT NULL
-              AND gt.is_public_feed = 1
+            {where_clause}
             ORDER BY gt.created_at DESC
             LIMIT ?
             """,
-            (user_id, safe_limit),
+            (user_id, safe_limit * 5),
         )
         rows = await cursor.fetchall()
-    return [_generation_row_to_card(row, viewer_user_id=user_id) for row in rows]
+    cards = [
+        card
+        for row in rows
+        if (card := _generation_row_to_card(row, viewer_user_id=user_id))
+    ]
+    return cards[:safe_limit]
 
 
 async def get_top_day_generations(limit: int = 40) -> list[dict[str, Any]]:
@@ -5130,7 +5475,9 @@ async def get_feed_generation_card(
             (param,),
         )
         row = await cursor.fetchone()
-    return _generation_row_to_card(row, viewer_user_id=viewer_user_id) if row else None
+    if not row:
+        return None
+    return _generation_row_to_card(row, viewer_user_id=viewer_user_id)
 
 
 async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, Any]]:
@@ -5210,7 +5557,7 @@ async def add_feed_comment(
         db.row_factory = aiosqlite.Row
         generation_cursor = await db.execute(
             """
-            SELECT id
+            SELECT *
             FROM generation_tasks
             WHERE id = ?
               AND type IN ('image', 'video')
@@ -5222,7 +5569,7 @@ async def add_feed_comment(
             (internal_id,),
         )
         generation = await generation_cursor.fetchone()
-        if not generation:
+        if not generation or not _feed_result_urls(generation):
             return None
 
         cursor = await db.execute(
@@ -5278,6 +5625,7 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
             or row["status"] != "completed"
             or not row["result_url"]
             or row["source_feed_gen_id"] is not None
+            or not _feed_result_urls(row)
         ):
             return None
         await db.execute(
@@ -5432,7 +5780,7 @@ async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         row = await _fetch_generation_row(db, gen_id, public_only=True)
-        if not row:
+        if not row or not _feed_result_urls(row):
             return None
         cursor = await db.execute(
             """
@@ -5455,7 +5803,7 @@ async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         row = await _fetch_generation_row(db, gen_id, public_only=True)
-        if not row:
+        if not row or not _feed_result_urls(row):
             return None
         await db.execute(
             "UPDATE generation_tasks SET shares_count = shares_count + 1 WHERE id = ?",

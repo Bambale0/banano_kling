@@ -12,9 +12,30 @@ from PIL import Image, ImageOps
 from bot.config import config
 
 
+DEFAULT_LOCAL_UPLOAD_HOSTS = {"tanyapi.chillcreative.ru"}
+
+
 def _guess_mime_type(source: str) -> str:
     mime, _ = mimetypes.guess_type(source)
     return mime or "image/png"
+
+
+def _static_upload_hosts() -> set[str]:
+    hosts: set[str] = set()
+    for value in (
+        config.static_base_url,
+        getattr(config, "WEBHOOK_HOST", ""),
+        getattr(config, "STATIC_BASE_URL", ""),
+    ):
+        parsed = urlparse(str(value or ""))
+        host = (parsed.hostname or "").strip().lower().lstrip(".")
+        if host:
+            hosts.add(host)
+    for item in os.getenv("STATIC_LOCAL_HOSTS", "").split(","):
+        host = item.strip().lower().lstrip(".")
+        if host:
+            hosts.add(host)
+    return hosts | DEFAULT_LOCAL_UPLOAD_HOSTS
 
 
 def _local_upload_candidate(source: str) -> str | None:
@@ -22,11 +43,11 @@ def _local_upload_candidate(source: str) -> str | None:
         return None
 
     parsed = urlparse(source)
-    static_base = (config.static_base_url or "").rstrip("/")
 
     path = parsed.path or source
     is_local_path = not parsed.scheme and not parsed.netloc
-    is_own_static_url = bool(static_base and source.startswith(static_base))
+    host = (parsed.hostname or "").strip().lower().lstrip(".")
+    is_own_static_url = parsed.scheme in {"http", "https"} and host in _static_upload_hosts()
 
     # Only map bare /uploads paths or this app's configured public host to local
     # files. Do not reinterpret arbitrary external https://host/uploads/... URLs.

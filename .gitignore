@@ -34,6 +34,8 @@ logs
 venv/
 # Database
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 backups/
@@ -72,6 +74,10 @@ bot.pid
 tmp/
 temp/
 *.tmp
+tmp_*.py
+*.bak
+*.bak_*
+*.bak2
 
 # Static uploads (generated content)
 static/
@@ -79,4 +85,5 @@ static/uploads/
 *.conf0
 gpt.txt
 
+ObsidianCodexVault/
 .env.postgres

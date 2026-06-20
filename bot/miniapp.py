@@ -707,7 +707,7 @@ async def _activate_start_param_referral(
         )
 
 
-async def _get_user_context(app: web.Application, init_data: str) -> tuple[int, dict]:
+async def _get_user_context(app: web.Application, init_data: str, start_param_fallback: Any = None) -> tuple[int, dict]:
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
@@ -729,11 +729,19 @@ async def _get_user_context(app: web.Application, init_data: str) -> tuple[int, 
     except Exception:
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
 
+    resolved_start_param = payload.get("start_param") or start_param_fallback
+    if start_param_fallback and not payload.get("start_param"):
+        logger.info(
+            "Mini App start_param fallback used: user_id=%s username=%s fallback=%s",
+            telegram_id,
+            telegram_user.get("username"),
+            start_param_fallback,
+        )
     await _activate_start_param_referral(
         app,
         telegram_id=telegram_id,
         telegram_user=telegram_user,
-        start_param=payload.get("start_param"),
+        start_param=resolved_start_param,
     )
     return telegram_id, {"payload": payload, "user": user}
 
@@ -817,6 +825,8 @@ async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
         payload.setdefault(key, value)
     if "gen_id" not in payload and "generation_id" in payload:
         payload["gen_id"] = payload["generation_id"]
+    if "gen_id" not in payload and "feed_id" in payload:
+        payload["gen_id"] = payload["feed_id"]
     if "prompt_id" in payload and str(payload["prompt_id"]).isdigit():
         payload["prompt_id"] = int(payload["prompt_id"])
     init_data = request.headers.get("X-Telegram-Init-Data")
@@ -908,6 +918,32 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 LIMIT 1
                 """,
                 (telegram_id, int(lookup_value)),
+            )
+            row = await cursor.fetchone()
+        if not row and lookup_value:
+            cursor = await db.execute(
+                """
+                SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
+                       result_url, result_urls, is_public_feed, is_prompt_library,
+                       source_feed_gen_id, created_at, request_data
+                FROM generation_tasks
+                WHERE telegram_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM json_each(
+                          CASE
+                              WHEN json_valid(generation_tasks.request_data)
+                              THEN generation_tasks.request_data
+                              ELSE '{}'
+                          END,
+                          '$.task_id_aliases'
+                      )
+                      WHERE CAST(value AS TEXT) = ?
+                  )
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (telegram_id, lookup_value),
             )
             row = await cursor.fetchone()
 
@@ -1758,7 +1794,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
         telegram_user = ctx["payload"]["user"]
         me = await request.app["bot"].get_me()
@@ -1847,7 +1883,9 @@ async def miniapp_action(request: web.Request) -> web.Response:
         body = await request.json()
         init_data = body.get("init_data", "")
         action = body.get("action", "")
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(
+            request.app, init_data, data.get("start_param_fallback")
+        )
 
         handler = ACTIONS.get(action)
         if not handler:
@@ -1869,7 +1907,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         file_kind = str(data.get("file_kind", "image_reference"))
         upload = data.get("file")
 
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         _ = telegram_id
 
         if file_kind not in FILE_KIND_MAP:
@@ -1959,7 +1997,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                 {"ok": False, "error": "package_id is required"}, status=400
             )
 
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         package = preset_manager.get_package(package_id)
@@ -2044,7 +2082,7 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
         preserve = str(body.get("preserve", "") or "").strip()
         goal = str(body.get("goal", "") or "").strip()
 
-        await _get_user_context(request.app, init_data)
+        await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
 
         if not image_url:
             return web.json_response(
@@ -2093,7 +2131,7 @@ async def miniapp_prompts(request: web.Request) -> web.Response:
         page = max(int(body.get("page", 1) or 1), 1)
         limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
 
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         if source == "my":
@@ -2122,7 +2160,7 @@ async def miniapp_prompt_detail(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         prompt = await get_prompt_by_id(prompt_id)
@@ -2141,7 +2179,7 @@ async def miniapp_prompt_like(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         prompt = await like_prompt(prompt_id, ctx["user"].id)
         if not prompt:
             return web.json_response(
@@ -2159,7 +2197,7 @@ async def miniapp_prompt_use(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         prompt = await use_prompt(prompt_id, ctx["user"].id)
         if not prompt:
             return web.json_response(
@@ -2177,7 +2215,7 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
         prompt = await get_prompt_by_id(prompt_id)
         if not prompt:
@@ -2196,7 +2234,7 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
         prompt_text = str(body.get("prompt_text", "") or body.get("prompt", "") or "").strip()
         if not prompt_text:
@@ -2237,7 +2275,7 @@ async def miniapp_prompt_deactivate(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         prompt = await deactivate_prompt(prompt_id, author_id=ctx["user"].id)
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
@@ -2251,7 +2289,7 @@ async def miniapp_prompt_moderate(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         prompt_id = int(body.get("prompt_id") or 0)
         action = str(body.get("action", "") or "")
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         if not config.is_admin(telegram_id):
             return web.json_response({"ok": False, "error": "Нет доступа"}, status=403)
         if action == "approve":
@@ -2273,8 +2311,8 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = min(max(int(body.get("limit", 40) or 40), 1), 100)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
             source=source,
@@ -2290,9 +2328,12 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = min(max(int(body.get("limit", 200) or 200), 1), 400)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
-        feed = await get_user_feed_generations(ctx["user"].id, limit=limit)
+        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        feed = await get_user_feed_generations(
+            ctx["user"].id,
+            limit=limit,
+        )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
         logger.exception("Mini App my feed failed")
@@ -2337,11 +2378,11 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = min(max(int(body.get("limit", 120) or 120), 1), 400)
+        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         author = await get_user_by_referral_code(referral_code)
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
@@ -2368,7 +2409,7 @@ async def miniapp_profile_channel_save(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         channel_url = str(body.get("channel_url", "") or "")
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         normalized = await save_user_channel_url(telegram_id, channel_url)
         return web.json_response({"ok": True, "channel_url": normalized})
     except ValueError as e:
@@ -2382,10 +2423,17 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        gen_id = body.get("gen_id") or body.get("task_id") or body.get("feed_id")
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await share_to_feed(gen_id, ctx["user"].id)
         if not card:
+            logger.warning(
+                "Mini App share rejected: telegram_id=%s user_id=%s gen_id=%r body_keys=%s",
+                telegram_id,
+                ctx["user"].id,
+                gen_id,
+                sorted(body.keys()),
+            )
             return web.json_response(
                 {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
                 status=403,
@@ -2401,7 +2449,7 @@ async def miniapp_feed_remove(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         removed = await remove_from_feed(gen_id, ctx["user"].id)
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
@@ -2414,7 +2462,7 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await like_feed_generation(gen_id, ctx["user"].id)
         if not card:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
@@ -2429,7 +2477,7 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await increment_feed_share(gen_id)
         if not card:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
@@ -2454,7 +2502,7 @@ async def miniapp_feed_comments(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         limit = min(max(int(body.get("limit", 80) or 80), 1), 150)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         comments = await get_feed_comments(
             gen_id,
             limit=limit,
@@ -2472,7 +2520,7 @@ async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         text = str(body.get("text", "") or "")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         comment = await add_feed_comment(gen_id, ctx["user"].id, text)
         if not comment:
             return web.json_response(
@@ -2497,7 +2545,7 @@ async def miniapp_generation_share_library(request: web.Request) -> web.Response
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         task = await share_to_library(gen_id, ctx["user"].id)
         if not task:
             return web.json_response(
@@ -2515,7 +2563,7 @@ async def miniapp_generation_remove_library(request: web.Request) -> web.Respons
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data)
+        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         removed = await remove_from_library(gen_id, ctx["user"].id)
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
@@ -2528,16 +2576,11 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
-        source = await get_generation_task_payload(gen_id)
-        if not source or not (
-            source.get("type") == "image"
-            and source.get("status") == "completed"
-            and source.get("result_url")
-            and bool(source.get("is_public_feed"))
-        ):
+        source = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
+        if not source or source.get("gen_type") != "image":
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
 
         source_prompt = str(source.get("prompt") or "").strip()
@@ -2648,7 +2691,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "")).strip()
@@ -2667,13 +2710,11 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         )
         source_feed_task = None
         if source_feed_gen_id:
-            source_feed_task = await get_generation_task_payload(source_feed_gen_id)
-            if not source_feed_task or not (
-                source_feed_task.get("type") == "image"
-                and source_feed_task.get("status") == "completed"
-                and source_feed_task.get("result_url")
-                and bool(source_feed_task.get("is_public_feed"))
-            ):
+            source_feed_task = await get_feed_generation_card(
+                source_feed_gen_id,
+                viewer_user_id=user.id,
+            )
+            if not source_feed_task or source_feed_task.get("gen_type") != "image":
                 return web.json_response(
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
@@ -2842,7 +2883,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "")).strip()
@@ -2855,17 +2896,23 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         source_feed_task = None
         source_request_data: dict[str, Any] = {}
         if source_feed_gen_id:
-            source_feed_task = await get_generation_task_payload(source_feed_gen_id)
-            if not source_feed_task or not (
-                source_feed_task.get("type") == "video"
-                and source_feed_task.get("status") == "completed"
-                and source_feed_task.get("result_url")
-                and bool(source_feed_task.get("is_public_feed"))
-            ):
+            source_feed_card = await get_feed_generation_card(
+                source_feed_gen_id,
+                viewer_user_id=user.id,
+            )
+            if not source_feed_card or source_feed_card.get("gen_type") != "video":
                 return web.json_response(
                     {"ok": False, "error": "Видео из ленты не найдено"},
                     status=404,
                 )
+            source_feed_task = await get_generation_task_payload(source_feed_gen_id)
+            if not source_feed_task:
+                return web.json_response(
+                    {"ok": False, "error": "Видео из ленты не найдено"},
+                    status=404,
+                )
+            source_feed_task["result_url"] = source_feed_card.get("result_url")
+            source_feed_task["result_urls"] = source_feed_card.get("result_urls") or []
             source_prompt = str(source_feed_task.get("prompt") or "").strip()
             if not source_prompt:
                 return web.json_response(
@@ -3244,7 +3291,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
 
         prompt = str(body.get("prompt", "") or "").strip()
@@ -3432,7 +3479,7 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
         body = await request.json()
         init_data = body.get("init_data", "")
 
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         stats = await get_partner_overview(telegram_id)
         user = await get_or_create_user(telegram_id)
         me = await request.app["bot"].get_me()
@@ -3475,7 +3522,7 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
                 {"ok": False, "error": "task_id is required"}, status=400
             )
 
-        telegram_id, _ctx = await _get_user_context(request.app, init_data)
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         detail = await _fetch_task_detail(telegram_id, task_id)
         if not detail:
             return web.json_response(
@@ -3503,7 +3550,7 @@ async def miniapp_ai_assistant(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Сообщение не может быть пустым"}, status=400
             )
 
-        telegram_id, ctx = await _get_user_context(request.app, init_data)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
         audio_bytes = None
         audio_format = ""

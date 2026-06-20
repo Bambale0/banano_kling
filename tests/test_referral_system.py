@@ -594,6 +594,71 @@ def test_partner_overview_counts_only_payments_after_referral(tmp_path, monkeypa
     asyncio.run(run())
 
 
+def test_admin_partner_payment_report_includes_only_level1_payments_after_referral(
+    tmp_path, monkeypatch
+):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "partner_report.db")
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(7107)
+        referred = await db.get_or_create_user(7108)
+        assert await db.process_referral(referred.telegram_id, referrer.referral_code)
+
+        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row
+            referral_row = await (
+                await conn.execute(
+                    """
+                    SELECT created_at
+                    FROM referrals
+                    WHERE referrer_id = ? AND referred_id = ?
+                    """,
+                    (referrer.id, referred.id),
+                )
+            ).fetchone()
+            referral_at = referral_row["created_at"]
+
+            await conn.execute(
+                """
+                INSERT INTO transactions
+                    (order_id, user_id, payment_id, provider, credits, amount_rub, status, created_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, 'completed', datetime(?, '-1 minute')),
+                    (?, ?, ?, ?, ?, ?, 'completed', datetime(?, '+1 minute'))
+                """,
+                (
+                    "partner-report-pre",
+                    referred.id,
+                    "partner-report-pre-payment",
+                    "yookassa",
+                    25,
+                    250,
+                    referral_at,
+                    "partner-report-post",
+                    referred.id,
+                    "partner-report-post-payment",
+                    "yookassa",
+                    50,
+                    500,
+                    referral_at,
+                ),
+            )
+            await conn.commit()
+
+        report = await db.get_admin_partner_payment_report(referrer.telegram_id)
+
+        assert report["payments_summary"]["payments_count"] == 1
+        assert report["payments_summary"]["paid_rub"] == 500
+        assert report["payments"][0]["order_id"] == "partner-report-post"
+        assert report["payments"][0]["referred_telegram_id"] == referred.telegram_id
+        assert report["referrals"][0]["payments_count"] == 1
+        assert report["referrals"][0]["spent_rub"] == 500
+
+    asyncio.run(run())
+
+
 def test_partner_acceptance_and_partner_bonus(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "partner.db")

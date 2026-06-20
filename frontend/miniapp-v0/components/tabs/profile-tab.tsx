@@ -65,6 +65,7 @@ export function ProfileTab() {
   const { state, viewedProfileCode, setActiveTab, setPromptPreset, setVideoPromptPreset } = useApp()
   const { user } = state
   const [items, setItems] = useState<FeedItem[]>([])
+  const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [profile, setProfile] = useState<ProfileSummary | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
@@ -157,7 +158,10 @@ export function ProfileTab() {
     }, [])
   }, [displayName, ownReferralCode, state.recentTasks, user.photoUrl])
 
-  const profileItems = isLive ? items : demoItems
+  const profileItems = useMemo(
+    () => (isLive ? items : demoItems).filter((item) => !brokenMediaIds.has(item.id)),
+    [brokenMediaIds, demoItems, isLive, items]
+  )
   const totals = useMemo(() => {
     return profileItems.reduce(
       (acc, item) => ({
@@ -188,6 +192,7 @@ export function ProfileTab() {
           const feed = await fetchMyFeed(120)
           if (!ignore) {
             setItems(feed)
+            setBrokenMediaIds(new Set())
             setProfile(null)
           }
           return
@@ -196,6 +201,7 @@ export function ProfileTab() {
         const result = await fetchProfileFeed(targetReferralCode, 120)
         if (!ignore) {
           setItems(result.feed)
+          setBrokenMediaIds(new Set())
           setProfile(result.profile)
         }
       } catch (e) {
@@ -338,6 +344,15 @@ export function ProfileTab() {
     } finally {
       setBusyId(null)
     }
+  }
+
+  function handleMediaError(item: FeedItem) {
+    setBrokenMediaIds((prev) => {
+      if (prev.has(item.id)) return prev
+      const next = new Set(prev)
+      next.add(item.id)
+      return next
+    })
   }
 
   function handleRemix(item: FeedItem) {
@@ -545,6 +560,7 @@ export function ProfileTab() {
                       muted
                       playsInline
                       preload="metadata"
+                      onError={() => handleMediaError(item)}
                       className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
                     />
                   ) : (
@@ -552,6 +568,7 @@ export function ProfileTab() {
                       src={item.result_url}
                       alt=""
                       loading="lazy"
+                      onError={() => handleMediaError(item)}
                       className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
                     />
                   )
@@ -655,11 +672,19 @@ export function ProfileTab() {
                 controls
                 autoPlay
                 playsInline
+                onError={() => {
+                  handleMediaError(previewItem)
+                  setPreviewItem(null)
+                }}
               />
             ) : (
               <img
                 src={previewItem.result_url}
                 alt=""
+                onError={() => {
+                  handleMediaError(previewItem)
+                  setPreviewItem(null)
+                }}
                 className="max-h-full w-auto max-w-full object-contain"
               />
             )

@@ -117,6 +117,12 @@ class Config:
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
     STATIC_BASE_URL: str = os.getenv("STATIC_BASE_URL", "")
+    PERSIST_PROVIDER_RESULTS: bool = os.getenv("PERSIST_PROVIDER_RESULTS", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     MINI_APP_PATH: str = os.getenv("MINI_APP_PATH", "/mini-app")
     MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
 

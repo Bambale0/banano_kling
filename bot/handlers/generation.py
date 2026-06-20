@@ -25,6 +25,7 @@ from bot.database import (
     add_credits,
     add_generation_history,
     add_generation_task,
+    _merge_task_id_aliases,
     check_can_afford,
     complete_video_task,
     credit_feed_prompt_repeat,
@@ -515,7 +516,7 @@ def _apply_safe_prompt_framing(
         r"\bкорсет\w*\b",
         r"\bбоди\b",
     }
-    preserve_garment_terms = img_service == "seedream_edit" and has_reference_images
+    preserve_garment_terms = img_service in {"seedream_edit", "banana_pro", "banana_2", "nanobanana"} and has_reference_images
 
     replacements = [
         (r"\blingerie\b", "fashion outfit"),
@@ -542,9 +543,32 @@ def _apply_safe_prompt_framing(
         (r"\bстринг\w*\b", "низ от купального образа"),
         (r"\bбикини\b", "купальный fashion-образ"),
         (r"\bкупальник\w*\b", "купальный fashion-образ"),
+        (r"\bчерн\w*\s+треугольн\w*\s+купальн\w*\s+fashion-образ\b", "черный resort fashion outfit"),
+        (r"\bтреугольн\w*\s+купальн\w*\s+fashion-образ\b", "resort fashion outfit"),
+        (r"\bчерн\w*\s+купальн\w*\s+fashion-образ\b", "черный resort fashion outfit"),
+        (r"\bкупальн\w*\s+fashion-образ\b", "resort fashion outfit"),
         (r"\bчулк\w*\b", "fashion-чулки"),
         (r"\bкорсет\w*\b", "fashion-корсет"),
         (r"\bбоди\b", "fashion-образ"),
+        (r"\bлеж(?:ит|ат|ащ\w*|а)\b", "отдыхает"),
+        (r"\bвытянут\w*\s+ног\w*,\s*отдыхающ\w*", "курортных деталей"),
+        (r"\bвытянут\w*\s+ног\w*\b", "деталей курортной композиции"),
+        (r"\bног[аиу]\b", "детали нижнего кадра"),
+        (r"\bглянцев\w*\s+естественн\w*\s+губ\w*\b", "естественные черты нижней части лица"),
+        (r"\bгуб\w*\b", "черты нижней части лица"),
+        (r"\bлини[яю]\s+челюст\w*\b", "нижняя линия лица"),
+        (r"\bчелюст\w*\b", "нижняя линия лица"),
+        (r"\bплечах\s+и\s+ключицах\b", "образе и деталях кадра"),
+        (r"\bплеч\w*\b", "верхней части образа"),
+        (r"\bключиц\w*\b", "деталях образа"),
+        (r"\bглубок\w*\s+бронзов\w*\s+загар\w*\b", "теплая бронзовая палитра"),
+        (r"\bзагорел\w*\s+кож\w*\b", "теплый бронзовый тон кожи"),
+        (r"\bзагар\w*\b", "бронзовый тон"),
+        (r"\bсолнцезащитн\w*\s+крем\w*\b", "курортного света"),
+        (r"\bглянцев\w*\s+отражени\w*\b", "мягкие световые отражения"),
+        (r"\bглянцев\w*\s+блик\w*\b", "мягкие световые блики"),
+        (r"\bглянцев\w*\s+блеск\w*\b", "естественный световой блеск"),
+        (r"\bглянцев\w*\b", "мягкий световой"),
         (r"\bбудуар\w*\b", "soft editorial"),
         (r"\bглубок\w*\s+вырез\w*\b", "аккуратный fashion-вырез"),
         (r"\bпрозрачн\w*\b", "текстурный"),
@@ -595,14 +619,15 @@ def _apply_safe_prompt_framing(
 
     if preserve_garment_terms:
         safety_prefix = (
-            "Safe, non-explicit adult fashion/editorial image. "
-            "Treat lingerie, swimwear, and fitted garments in the uploaded references as clothing/fashion garments only; "
-            "no nudity, no explicit anatomy, no sexual content, no minors. "
+            "Reference-first editorial styling. "
+            "Treat the referenced outfit, garment cut, accessories, styling, and coverage level as intentional visual details. "
+            "Preserve the clothing and how it is worn from the main reference unless the user explicitly asks to change outfit or coverage. "
+            "Focus on matching the referenced look, materials, fit, pose intent, and composition. "
         )
     else:
         safety_prefix = (
-            "Safe, non-explicit editorial image of an adult subject. "
-            "Fashion or product focused scene, no nudity, no explicit anatomy, no sexual content. "
+            "Editorial fashion or product framing. "
+            "Follow the user's requested styling, composition, lighting, and materials without inventing unnecessary wardrobe changes. "
         )
     selfie_instruction = ""
     if _prompt_requests_selfie_without_visible_device(prompt):
@@ -610,7 +635,13 @@ def _apply_safe_prompt_framing(
             "Selfie means front-camera style only; do not show a phone, mirror, "
             "visible camera, or hand holding a device unless explicitly requested. "
         )
-    if normalized.lower().startswith("safe, non-explicit editorial image"):
+    normalized_lower = normalized.lower()
+    framing_prefixes = (
+        "safe, non-explicit editorial image",
+        "editorial fashion or product framing.",
+        "editorial fashion styling.",
+    )
+    if normalized_lower.startswith(framing_prefixes):
         return f"{selfie_instruction}{normalized}"
     if normalized.startswith("EDIT REQUEST (highest priority):"):
         safety_suffix = safety_prefix.strip()
@@ -639,15 +670,31 @@ def _prompt_requests_selfie_without_visible_device(prompt: str) -> bool:
     return not any(term in text for term in explicit_device_terms)
 
 
+def _build_compact_reference_guidance(prompt: str, reference_images: list[str]) -> str:
+    prompt = (prompt or "").strip()
+    guidance_lines = [
+        "Use the uploaded image as a visual reference, not as a locked pose.",
+        "Keep the main subject recognizable from the first reference.",
+        "Preserve the outfit, garment cut, accessories, styling, and coverage level from the main reference unless the user explicitly asks to change them.",
+        "Follow the user's requested scene, pose, outfit, lighting, framing, and style.",
+        "Keep visible text out of the image unless the user explicitly asks for typography.",
+    ]
+    if len(reference_images) > 1:
+        guidance_lines.insert(
+            2,
+            "Use additional references for requested clothing, accessories, products, pose, style, colors, or scene cues; if another person appears there, use visual cues only unless the user asks for multiple people.",
+        )
+    guidance = " ".join(guidance_lines)
+    if prompt:
+        return f"EDIT REQUEST (highest priority): {prompt}\n\nReference guidance: {guidance}"
+    return f"Reference guidance: {guidance}"
+
+
 def _apply_reference_detail_preservation(
     img_service: str, prompt: str, reference_images: list[str]
 ) -> str:
     """For reference-based generation, preserve identity without suppressing edits."""
     prompt = (prompt or "").strip()
-    face_lock_prefix = (
-        "НЕ МЕНЯЙ ЧЕРТЫ ЛИЦА С ЗАГРУЖЕННОГО ФОТО.\n"
-        "Do not change the facial features from the uploaded photo.\n\n"
-    )
     if not reference_images or img_service not in {
         "banana_pro",
         "banana_2",
@@ -658,128 +705,8 @@ def _apply_reference_detail_preservation(
         "flux_pro",
     }:
         return prompt
-    has_reference_board = bool(
-        reference_images and is_reference_contact_sheet_url(reference_images[0])
-    )
-    reference_role_instruction = ""
-    if len(reference_images) > 1:
-        primary_source = (
-            "Use panel 1 of the reference board and the first separate original image after the board as the primary identity source"
-            if has_reference_board
-            else "Use the first uploaded image as the primary identity source"
-        )
-        secondary_source = (
-            "Use panel 2 and later of the reference board plus the remaining separate original images as mandatory material references"
-            if has_reference_board
-            else "Use additional uploaded images as mandatory material references"
-        )
-        board_instruction = (
-            "The first uploaded image is a reference board/contact sheet. It is not a scene to reproduce; it exists so all user references are visible together.\n"
-            if has_reference_board
-            else ""
-        )
-        reference_role_instruction = (
-            "MANDATORY MULTI-REFERENCE COMPOSITION:\n"
-            f"{board_instruction}"
-            "The uploaded image order is meaningful and every uploaded image must influence the result.\n"
-            f"{primary_source} for the main subject's recognizable identity: face, age appearance, body proportions, skin tone, and distinctive marks.\n"
-            "Hair, makeup, skin finish, outfit, pose, lighting, camera angle, and scene are editable when the prompt or secondary references ask for changes.\n"
-            f"{secondary_source} for clothing, dress, accessories, pose, product, style, color palette, or scene details.\n"
-            "If the user request is brief or does not name a specific secondary element, still transfer the most salient non-identity element from each secondary reference onto the primary subject.\n"
-            "When a secondary reference shows clothing, outfit, or a dress, transfer that garment design onto the primary person while preserving the primary person's identity.\n"
-            "Do not keep the first reference outfit when a secondary reference clearly provides the outfit or dress to use.\n"
-            "If an additional reference contains another person, do not copy that person's face or add them as a new person unless the user explicitly asks for multiple people.\n"
-            "If the user mentions the second, third, or another numbered reference, follow that reference for the named element while preserving identity from the first reference.\n"
-            "Do not ignore the second or later uploaded images."
-        )
-    if img_service == "seedream_edit":
-        if len(reference_images) > 1:
-            identity_reference = (
-                "The first uploaded image is a reference board/contact sheet, not a scene to reproduce. "
-                "Use panel 1 of that board and the first separate original image after the board as the primary identity reference, not as a locked pose. "
-                "Use panel 2 and later of the board plus the remaining separate original images as mandatory visual material references, not optional. "
-                if has_reference_board
-                else
-                "Use the first uploaded image as the primary identity reference, not as a locked pose. "
-                "All additional uploaded images are mandatory visual material references, not optional. "
-            )
-            identity_reference += (
-                "Transfer their most salient non-identity elements onto the primary person: clothing, dress "
-                "designs, accessories, pose, product, style, color palette, or scene details. If a secondary "
-                "reference shows an outfit or dress, use that outfit or dress instead of preserving the first "
-                "reference outfit. Unless the edit request explicitly asks to include those people, do not add "
-                "people from secondary references."
-            )
-        else:
-            identity_reference = "Use the uploaded image as the identity reference, not as a locked pose."
-        if not prompt:
-            return (
-                f"{face_lock_prefix}{identity_reference} Preserve the same "
-                "recognizable person and face, but allow pose, body posture, scene, "
-                "background, camera angle, framing, lighting, and styling to change."
-            )
-        return (
-            f"EDIT REQUEST (highest priority): {prompt}\n\n"
-            f"{face_lock_prefix}"
-            f"{identity_reference} "
-            "Follow the edit request even when it changes pose, body posture, action, "
-            "scene, background, camera angle, framing, lighting, styling, or outfit.\n\n"
-            "Preserve the same recognizable person: face identity, facial geometry, "
-            "skin tone and texture, hair, age appearance, body proportions, and "
-            "distinctive marks. Do not copy the original pose or composition unless "
-            "the edit request asks for it. Do not ignore requested pose, action, "
-            "location, or composition changes."
-        )
-    if reference_role_instruction:
-        identity_transfer_instruction = """
-IDENTITY LOCK:
-Use the primary reference only to keep the same recognizable person: face geometry, age appearance, skin tone, body proportions, tattoos, marks, and other distinctive identity details. Do not replace the person with a lookalike.
 
-PROMPT-LED EDITING:
-The edit request is the highest priority for editable attributes: pose, head tilt, expression, hair length, hair volume, hairstyle, hair texture, hair color, makeup, skin finish, beauty retouching, outfit, accessories, lighting, camera angle, crop, background, style, and mood. When the prompt asks for a glamorous, editorial, polished, glowing, or retouched look, apply that finish while keeping the person recognizable. Do not copy the primary reference's original pose, hairstyle, makeup, raw skin texture, outfit, lighting, or composition when the edit request or material references ask for changes. If the prompt does not mention an editable attribute, keep it close to the primary reference unless a secondary reference specifies it.
-
-SECONDARY MATERIAL LOCK:
-Reference images 2 and later are mandatory material sources. Transfer their visible requested or salient non-identity details onto the primary subject, especially dress, outfit, accessories, colors, fabrics, product details, pose, style, and scene cues. Do not copy secondary faces or create extra people unless explicitly requested.
-
-CONFLICT RULE:
-If the first reference conflicts with the prompt or a secondary reference, keep identity from the first reference and take editable details from the prompt or secondary reference. Never resolve the conflict by ignoring the edit request or secondary reference.
-
-The uploaded images are visual references, not text content. Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
-""".strip()
-        if prompt:
-            return (
-                f"EDIT REQUEST (highest priority): {prompt}\n\n"
-                f"{face_lock_prefix}"
-                f"{reference_role_instruction}\n\n"
-                f"{identity_transfer_instruction}"
-            )
-        return f"{face_lock_prefix}{reference_role_instruction}\n\n{identity_transfer_instruction}"
-    instruction = """
-REFERENCE IDENTITY GUIDANCE.
-
-Use the uploaded image as an identity reference, not as a locked pose, hairstyle, makeup, outfit, lighting, camera angle, crop, or skin-texture reference.
-
-Follow the edit request as the highest priority for editable attributes:
-- pose, body posture, head tilt, gaze, and expression
-- hair length, hair volume, waves/curls, hairstyle, texture, and color
-- makeup style and intensity
-- skin finish, glowing skin, beauty retouching, smoother editorial skin, and color grading
-- outfit, accessories, nails, styling, background, lighting, camera angle, crop, and mood
-
-For people, keep the same recognizable identity from the reference: face geometry, age appearance, skin tone, body proportions, tattoos, moles, scars, and other distinctive identity marks. A requested beauty/glamour retouch should polish skin, light, hair, and makeup without changing the person's identity into a different face.
-
-For objects or products, keep the core object identity, logos, shape, and important materials, while following the edit request for scene, style, lighting, color, and composition changes.
-
-Do not copy the original reference pose, composition, hairstyle, makeup, raw skin texture, outfit, or background when the edit request asks for something different. If an attribute is not mentioned, keep it close to the reference.
-
-Never render file names, URLs, labels, counters, prompt text, or the words "reference"/"variant" inside the image unless the user explicitly asks for visible typography.
-""".strip()
-    if prompt:
-        return (
-            f"EDIT REQUEST (highest priority): {prompt}\n\n"
-            f"{face_lock_prefix}{instruction}"
-        )
-    return f"{face_lock_prefix}{instruction}"
+    return _build_compact_reference_guidance(prompt, reference_images)
 
 
 def _build_image_variant_prompt(
@@ -1096,9 +1023,22 @@ async def _start_image_generation_task(
         from bot.database import DATABASE_PATH
 
         async with aiosqlite.connect(DATABASE_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
+                (local_task_id, user.id),
+            )
+            row = await cursor.fetchone()
+            request_data = {}
+            if row and row["request_data"]:
+                try:
+                    request_data = json.loads(row["request_data"])
+                except Exception:
+                    request_data = {}
+            request_data = _merge_task_id_aliases(request_data, local_task_id, api_task_id)
             await db.execute(
-                "UPDATE generation_tasks SET task_id = ? WHERE task_id = ? AND user_id = ?",
-                (api_task_id, local_task_id, user.id),
+                "UPDATE generation_tasks SET task_id = ?, request_data = ? WHERE task_id = ? AND user_id = ?",
+                (api_task_id, json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
             )
             await db.commit()
         logger.info(
@@ -1250,11 +1190,11 @@ async def _restore_image_task_to_state(
     include_references: bool = True,
     repeat_source_task_id: str | None = None,
 ) -> tuple[bool, str | None]:
-    if not task or task.type != "image" or not task.request_data:
+    if not task or task.type != "image":
         return False, "Не удалось найти данные задачи."
 
     try:
-        request_data = json.loads(task.request_data)
+        request_data = json.loads(task.request_data) if task.request_data else {}
     except Exception:
         return False, "Данные исходной задачи повреждены."
 
@@ -1399,7 +1339,7 @@ async def _refresh_image_result_reply_markup(
         await callback.message.edit_reply_markup(
             reply_markup=get_image_result_keyboard(
                 task.result_url,
-                task_id=task.task_id,
+                task_id=str(task.id),
                 is_public_feed=task.is_public_feed,
                 is_prompt_library=task.is_prompt_library,
             )
@@ -1421,14 +1361,14 @@ async def _refresh_feed_result_reply_markup(
     if task.type == "video":
         reply_markup = get_video_result_keyboard(
             task.result_url,
-            task_id=task.task_id,
+            task_id=str(task.id),
             model=task.model,
             is_public_feed=task.is_public_feed,
         )
     else:
         reply_markup = get_image_result_keyboard(
             task.result_url,
-            task_id=task.task_id,
+            task_id=str(task.id),
             is_public_feed=task.is_public_feed,
             is_prompt_library=task.is_prompt_library,
         )
@@ -1519,7 +1459,7 @@ async def publish_image_result_to_feed(
     await callback.message.answer(
         _publication_disclaimer_text("feed"),
         parse_mode="HTML",
-        reply_markup=_publication_confirm_keyboard(f"feedpubok_{task.task_id}"),
+        reply_markup=_publication_confirm_keyboard(f"feedpubok_{task.id}"),
     )
     await callback.answer()
 
@@ -1532,11 +1472,29 @@ async def confirm_publish_image_result_to_feed(
     task_id = callback.data.replace("feedpubok_", "", 1)
     task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
+        logger.warning(
+            "Bot feed publish rejected before share: telegram_id=%s callback_task_id=%r reason=%s",
+            callback.from_user.id if callback.from_user else None,
+            task_id,
+            error_message,
+        )
         await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
         return
 
     card = await share_to_feed(task.task_id, task.user_id)
     if not card:
+        logger.warning(
+            "Bot feed publish rejected in share_to_feed: telegram_id=%s user_id=%s callback_task_id=%r db_task_id=%r db_id=%s status=%s type=%s result_url=%s source_feed_gen_id=%s",
+            callback.from_user.id if callback.from_user else None,
+            task.user_id,
+            task_id,
+            task.task_id,
+            task.id,
+            task.status,
+            task.type,
+            bool(task.result_url),
+            task.source_feed_gen_id,
+        )
         await callback.answer("Эту генерацию нельзя опубликовать в ленту.", show_alert=True)
         return
 
@@ -1578,7 +1536,7 @@ async def save_image_result_prompt_to_library(
     await callback.message.answer(
         _publication_disclaimer_text("prompts"),
         parse_mode="HTML",
-        reply_markup=_publication_confirm_keyboard(f"promptsaveok_{task.task_id}"),
+        reply_markup=_publication_confirm_keyboard(f"promptsaveok_{task.id}"),
     )
     await callback.answer()
 
@@ -1816,12 +1774,12 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
     task_id = callback.data.replace("repeat_run_", "", 1)
     task = await get_task_by_id(task_id)
 
-    if not task or task.type != "image" or not task.request_data:
+    if not task or task.type != "image":
         await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
         return
 
     try:
-        request_data = json.loads(task.request_data)
+        request_data = json.loads(task.request_data) if task.request_data else {}
     except Exception:
         await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
         return
@@ -7720,10 +7678,11 @@ async def handle_veo_1080p_upgrade(callback: types.CallbackQuery, state: FSMCont
     if not task or not (task.model or "").startswith("veo3"):
         await callback.answer("Задача Veo не найдена", show_alert=True)
         return
+    provider_task_id = task.task_id
 
     from bot.services.veo_service import veo_service
 
-    result = await veo_service.get_1080p_video(task_id)
+    result = await veo_service.get_1080p_video(provider_task_id)
     if not result:
         await callback.answer(
             "Пока не получилось получить версию 1080p. Попробуйте ещё раз чуть позже.",
@@ -7736,7 +7695,7 @@ async def handle_veo_1080p_upgrade(callback: types.CallbackQuery, state: FSMCont
         if result_url:
             await callback.message.answer_video(
                 video=result_url,
-                caption=f"✨ <b>Veo 1080p готово</b>\n🆔 <code>{task_id}</code>",
+                caption=f"✨ <b>Veo 1080p готово</b>\n🆔 <code>{provider_task_id}</code>",
                 parse_mode="HTML",
             )
             await callback.answer("1080p готово")
@@ -7756,8 +7715,9 @@ async def handle_veo_4k_upgrade(callback: types.CallbackQuery, state: FSMContext
     if not task or not (task.model or "").startswith("veo3"):
         await callback.answer("Задача Veo не найдена", show_alert=True)
         return
+    provider_task_id = task.task_id
 
-    result = await veo_service.get_4k_video(task_id)
+    result = await veo_service.get_4k_video(provider_task_id)
     if not result:
         await callback.answer(
             "Пока не получилось запросить 4K-версию. Попробуйте ещё раз чуть позже.",
@@ -7770,7 +7730,7 @@ async def handle_veo_4k_upgrade(callback: types.CallbackQuery, state: FSMContext
     if result.get("code") == 200 and result_urls:
         await callback.message.answer_video(
             video=result_urls[0],
-            caption=f"🖥 <b>Veo 4K готово</b>\n🆔 <code>{task_id}</code>",
+            caption=f"🖥 <b>Veo 4K готово</b>\n🆔 <code>{provider_task_id}</code>",
             parse_mode="HTML",
         )
         await callback.answer("4K готово")
@@ -7794,7 +7754,7 @@ async def handle_veo_extend_request(callback: types.CallbackQuery, state: FSMCon
         await callback.answer("Задача Veo не найдена", show_alert=True)
         return
 
-    await state.update_data(veo_extend_task_id=task_id, veo_extend_model=task.model)
+    await state.update_data(veo_extend_task_id=task.task_id, veo_extend_model=task.model)
     await state.set_state(GenerationStates.waiting_for_veo_extend_prompt)
     await callback.message.answer(
         "➕ Отправьте промпт для продолжения Veo-видео.\n"

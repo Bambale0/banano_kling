@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from aiogram import types
 from aiogram.types import CopyTextButton, InlineKeyboardButton, WebAppInfo
@@ -14,6 +15,18 @@ from bot.services.subscription_service import (
 from bot.services.preset_manager import preset_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _mini_app_url_with_referral(referral_code: str | None = None) -> str:
+    base_url = str(config.mini_app_url or "").strip()
+    code = str(referral_code or "").strip().upper()
+    if not base_url or not code:
+        return base_url
+    parts = urlsplit(base_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["ref"] = code
+    query.setdefault("startapp", f"ref_{code}")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def _video_prompt_price_label() -> str:
@@ -43,14 +56,14 @@ except Exception:
 # =============================================================================
 
 
-def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None):
+def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None, mini_app_referral_code: str | None = None):
     """Аккуратное главное меню: сценарии сверху, детали моделей внутри разделов."""
     builder = InlineKeyboardBuilder()
 
     if config.mini_app_url:
         builder.button(
             text="🚀 Открыть Mini App",
-            web_app=WebAppInfo(url=config.mini_app_url),
+            web_app=WebAppInfo(url=_mini_app_url_with_referral(mini_app_referral_code) or config.mini_app_url),
         )
     builder.button(text="🖼 Создать фото", callback_data="create_image_text_new")
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
@@ -599,7 +612,12 @@ def get_create_video_keyboard(
         )
         duration_costs = model_data_for_durations.get("duration_costs", {})
         if current_model == "grok_imagine_v15":
-            available_durations = [5, 10, 15]
+            if duration_costs:
+                available_durations = sorted([int(k) for k in duration_costs.keys()])
+            else:
+                min_duration = int(model_data_for_durations.get("duration_min", 1) or 1)
+                max_duration = int(model_data_for_durations.get("duration_max", 15) or 15)
+                available_durations = list(range(min_duration, max_duration + 1))
             if current_duration not in available_durations:
                 available_durations = sorted({*available_durations, int(current_duration)})
         elif current_model.startswith("veo3"):
@@ -1312,7 +1330,7 @@ def get_image_result_keyboard(
     builder.button(text="📥 Скачать оригинал", url=image_url)
     if task_id:
         builder.button(text="🎬 Оживить в Grok", callback_data=f"grokvid_{task_id}")
-        builder.button(text="🎬 Grok 1.5 NEW🔥🔥🔥", callback_data=f"grok15vid_{task_id}")
+        builder.button(text="🎬 Grok 1.5", callback_data=f"grok15vid_{task_id}")
         builder.button(
             text="🗑 Убрать из ленты" if is_public_feed else "🖼 В ленту",
             callback_data=f"feedrm_{task_id}" if is_public_feed else f"feedpub_{task_id}",

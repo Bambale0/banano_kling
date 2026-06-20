@@ -25,6 +25,7 @@ from bot.database import (
     export_users_for_admin,
     get_admin_finance_report,
     get_admin_partner_details,
+    get_admin_partner_payment_report,
     get_admin_partner_stats,
     get_admin_promo_stats,
     get_admin_prompt_details,
@@ -74,6 +75,9 @@ ADMIN_FINANCE_PREVIEW_LIMIT = 25
 ADMIN_FINANCE_XLS_LIMIT = 5000
 ADMIN_FINANCE_XLS_FALLBACK_LIMIT = 1000
 ADMIN_FINANCE_TELEGRAM_MAX_BYTES = 45 * 1024 * 1024
+ADMIN_PARTNER_XLS_REFERRALS_LIMIT = 5000
+ADMIN_PARTNER_XLS_PAYMENTS_LIMIT = 5000
+ADMIN_PARTNER_XLS_FALLBACK_LIMIT = 1000
 ADMIN_PROMPTS_PREVIEW_LIMIT = 10
 ADMIN_PROMPT_TEXT_LIMIT = 1400
 
@@ -308,6 +312,29 @@ ADMIN_FINANCE_COLUMNS = {
         ("total_revenue_rub", "Партнёрский оборот, ₽"),
     ],
 }
+ADMIN_PARTNER_REFERRAL_XLS_COLUMNS = [
+    ("telegram_id", "Реферал Telegram ID"),
+    ("created_at", "Дата регистрации"),
+    ("referral_created_at", "Дата привязки"),
+    ("has_paid", "Платил"),
+    ("payments_count", "Оплат после привязки"),
+    ("spent_rub", "Сумма оплат после привязки, ₽"),
+    ("credits", "Текущий баланс, 🍌"),
+    ("subrefs_count", "Рефералов 2 уровня"),
+]
+ADMIN_PARTNER_PAYMENT_XLS_COLUMNS = [
+    ("transaction_id", "Transaction ID"),
+    ("created_at", "Дата оплаты"),
+    ("referred_telegram_id", "Реферал Telegram ID"),
+    ("referred_user_id", "Реферал DB ID"),
+    ("referred_code", "Код реферала"),
+    ("referral_created_at", "Дата привязки"),
+    ("amount_rub", "Сумма, ₽"),
+    ("credits", "Куплено 🍌"),
+    ("provider", "Провайдер"),
+    ("order_id", "Order ID"),
+    ("payment_id", "Payment ID"),
+]
 
 
 def _broadcast_confirm_keyboard() -> types.InlineKeyboardMarkup:
@@ -699,6 +726,10 @@ def _admin_partner_detail_keyboard(telegram_id: int) -> types.InlineKeyboardMark
                 types.InlineKeyboardButton(
                     text="🔄 Обновить",
                     callback_data=f"admin_partner_view_{telegram_id}",
+                ),
+                types.InlineKeyboardButton(
+                    text="📤 XLS по партнёру",
+                    callback_data=f"admin_partner_xls_{telegram_id}",
                 )
             ],
             [
@@ -2083,6 +2114,93 @@ def _build_admin_finance_xls(report: dict, section: str) -> tuple[bytes, str]:
     return "".join(parts).encode("utf-8"), filename
 
 
+def _xls_yes_no(value: Any) -> str:
+    return "да" if bool(value) else "нет"
+
+
+def _build_admin_partner_xls(report: dict) -> tuple[bytes, str]:
+    overview = report.get("overview") or {}
+    payments_summary = report.get("payments_summary") or {}
+    limits = report.get("limits") or {}
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    summary_rows = [
+        ("Telegram ID партнёра", report.get("telegram_id")),
+        ("Рефкод", report.get("referral_code") or "—"),
+        ("Активировал партнёрку", _xls_yes_no(report.get("is_partner"))),
+        ("Активирована", report.get("partner_agreed_at") or "—"),
+        ("1 уровень", overview.get("level1_count", 0)),
+        ("2 уровень", overview.get("level2_count", 0)),
+        ("Оплат по 1 уровню", payments_summary.get("payments_count", 0)),
+        ("Выручка по оплатам 1 уровня, ₽", payments_summary.get("paid_rub", 0)),
+        ("Куплено бананов 1 уровнем", payments_summary.get("paid_credits", 0)),
+        ("Баланс к выводу, ₽", overview.get("balance_rub", 0)),
+        ("Выведено, ₽", overview.get("withdrawn_rub", 0)),
+        ("Оборот партнёра, ₽", overview.get("total_revenue_rub", 0)),
+        ("Лимит рефералов в файле", limits.get("referrals", "")),
+        ("Лимит оплат в файле", limits.get("payments", "")),
+    ]
+
+    parts = [
+        "\ufeff<html><head><meta charset=\"utf-8\">",
+        "<style>",
+        "body{font-family:Arial,sans-serif;font-size:12px}",
+        "table{border-collapse:collapse;margin-bottom:24px}",
+        "th,td{border:1px solid #999;padding:4px;vertical-align:top}",
+        "th{background:#e8eef7;font-weight:bold}",
+        "td{mso-number-format:'\\@'}",
+        "</style></head><body>",
+        f"<h1>Отчёт по партнёру {_xls_safe(report.get('telegram_id'))}</h1>",
+        f"<p>Сформировано: {_xls_safe(generated_at)}.</p>",
+        "<h2>Сводка</h2><table><tbody>",
+    ]
+    for label, value in summary_rows:
+        parts.append(
+            f"<tr><th>{_xls_safe(label)}</th><td>{_xls_safe(value)}</td></tr>"
+        )
+    parts.append("</tbody></table>")
+
+    referrals = report.get("referrals") or []
+    parts.append("<h2>Прямые рефералы</h2><table><thead><tr>")
+    for _, label in ADMIN_PARTNER_REFERRAL_XLS_COLUMNS:
+        parts.append(f"<th>{_xls_safe(label)}</th>")
+    parts.append("</tr></thead><tbody>")
+    if not referrals:
+        parts.append(
+            f"<tr><td colspan=\"{len(ADMIN_PARTNER_REFERRAL_XLS_COLUMNS)}\">Нет прямых рефералов</td></tr>"
+        )
+    else:
+        for referral in referrals:
+            parts.append("<tr>")
+            for key, _ in ADMIN_PARTNER_REFERRAL_XLS_COLUMNS:
+                value = _xls_yes_no(referral.get(key)) if key == "has_paid" else referral.get(key)
+                parts.append(f"<td>{_xls_safe(value)}</td>")
+            parts.append("</tr>")
+    parts.append("</tbody></table>")
+
+    payments = report.get("payments") or []
+    parts.append("<h2>Оплаты 1 уровня</h2><table><thead><tr>")
+    for _, label in ADMIN_PARTNER_PAYMENT_XLS_COLUMNS:
+        parts.append(f"<th>{_xls_safe(label)}</th>")
+    parts.append("</tr></thead><tbody>")
+    if not payments:
+        parts.append(
+            f"<tr><td colspan=\"{len(ADMIN_PARTNER_PAYMENT_XLS_COLUMNS)}\">Нет оплат 1 уровня</td></tr>"
+        )
+    else:
+        for payment in payments:
+            parts.append("<tr>")
+            for key, _ in ADMIN_PARTNER_PAYMENT_XLS_COLUMNS:
+                parts.append(f"<td>{_xls_safe(payment.get(key), _xls_cell_limit(key))}</td>")
+            parts.append("</tr>")
+    parts.append("</tbody></table>")
+
+    parts.append("</body></html>")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"partner_{report.get('telegram_id')}_level1_payments_{stamp}.xls"
+    return "".join(parts).encode("utf-8"), filename
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Открывает админ-панель"""
@@ -3408,6 +3526,83 @@ async def admin_partner_lookup(callback: types.CallbackQuery, state: FSMContext)
             callback.from_user.id,
             "❌ Не удалось открыть поиск партнёра.",
             reply_markup=get_back_keyboard("admin_back"),
+        )
+
+
+@router.callback_query(F.data.startswith("admin_partner_xls_"))
+async def admin_partner_xls(callback: types.CallbackQuery, state: FSMContext):
+    """Отправляет XLS с оплатами прямых рефералов конкретного партнёра."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    try:
+        telegram_id = int(callback.data.replace("admin_partner_xls_", "", 1))
+    except (TypeError, ValueError):
+        await callback.answer("Партнёр не найден", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.answer("Готовлю XLS...")
+    report = await get_admin_partner_payment_report(
+        telegram_id,
+        referrals_limit=ADMIN_PARTNER_XLS_REFERRALS_LIMIT,
+        payments_limit=ADMIN_PARTNER_XLS_PAYMENTS_LIMIT,
+    )
+    if not report:
+        await callback.message.answer(
+            f"❌ Пользователь с ID {telegram_id} не найден.",
+            reply_markup=get_back_keyboard("admin_partners"),
+        )
+        return
+
+    file_bytes, filename = _build_admin_partner_xls(report)
+    limited_by_size = False
+    if len(file_bytes) > ADMIN_FINANCE_TELEGRAM_MAX_BYTES:
+        logger.warning(
+            "Admin partner XLS too large before send: partner=%s size=%s, retrying with limit=%s",
+            telegram_id,
+            len(file_bytes),
+            ADMIN_PARTNER_XLS_FALLBACK_LIMIT,
+        )
+        report = await get_admin_partner_payment_report(
+            telegram_id,
+            referrals_limit=ADMIN_PARTNER_XLS_FALLBACK_LIMIT,
+            payments_limit=ADMIN_PARTNER_XLS_FALLBACK_LIMIT,
+        )
+        file_bytes, filename = _build_admin_partner_xls(report)
+        limited_by_size = True
+
+    payments_summary = report.get("payments_summary") or {}
+    caption = (
+        f"📤 XLS по партнёру {telegram_id}\n"
+        f"Оплат 1 уровня: {payments_summary.get('payments_count', 0)}, "
+        f"сумма: {_money(payments_summary.get('paid_rub', 0))} ₽"
+    )
+    if limited_by_size:
+        caption += "\nФайл был уменьшен до 1000 строк, чтобы пройти лимит Telegram."
+
+    try:
+        await callback.message.answer_document(
+            BufferedInputFile(file_bytes, filename=filename),
+            caption=caption,
+        )
+    except TelegramEntityTooLarge:
+        logger.exception(
+            "Admin partner XLS is still too large: partner=%s size=%s",
+            telegram_id,
+            len(file_bytes),
+        )
+        await callback.message.answer(
+            "❌ XLS всё ещё слишком большой для Telegram. "
+            "Напишите мне — уменьшу выгрузку ещё сильнее.",
+            reply_markup=_admin_partner_detail_keyboard(telegram_id),
+        )
+    except TelegramAPIError:
+        logger.exception("Failed to send admin partner XLS: partner=%s", telegram_id)
+        await callback.message.answer(
+            "❌ Не удалось отправить XLS. Ошибка Telegram уже записана в лог.",
+            reply_markup=_admin_partner_detail_keyboard(telegram_id),
         )
 
 

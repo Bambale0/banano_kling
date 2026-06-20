@@ -69,6 +69,7 @@ export function FeedTab() {
   const { state, setActiveTab, setPromptPreset, setVideoPromptPreset, openProfile } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [items, setItems] = useState<FeedItem[]>([])
+  const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -79,18 +80,22 @@ export function FeedTab() {
   const [commentText, setCommentText] = useState('')
 
   const isLive = state.mode === 'live'
+  const visibleItems = useMemo(
+    () => items.filter((item) => !brokenMediaIds.has(item.id)),
+    [brokenMediaIds, items]
+  )
   const feedColumns = useMemo(() => {
     const columns: [FeedItem[], FeedItem[]] = [[], []]
     const heights = [0, 0.45]
 
-    items.forEach((item) => {
+    visibleItems.forEach((item) => {
       const columnIndex = heights[0] <= heights[1] ? 0 : 1
       columns[columnIndex].push(item)
       heights[columnIndex] += getPinHeightWeight(item.aspect_ratio, item.gen_type) + 0.4
     })
 
     return columns
-  }, [items])
+  }, [visibleItems])
 
   useEffect(() => {
     let ignore = false
@@ -103,7 +108,10 @@ export function FeedTab() {
       setError(null)
       try {
         const feed = await fetchFeed({ source, limit: 300 })
-        if (!ignore) setItems(feed)
+        if (!ignore) {
+          setItems(feed)
+          setBrokenMediaIds(new Set())
+        }
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить ленту'))
       } finally {
@@ -215,6 +223,15 @@ export function FeedTab() {
     openProfile(code)
   }
 
+  const handleMediaError = (item: FeedItem) => {
+    setBrokenMediaIds((prev) => {
+      if (prev.has(item.id)) return prev
+      const next = new Set(prev)
+      next.add(item.id)
+      return next
+    })
+  }
+
   const handleSubmitComment = async () => {
     const text = commentText.trim()
     if (!isLive || !commentsItem || !text) return
@@ -273,7 +290,7 @@ export function FeedTab() {
         <div className="flex justify-center py-10 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
-      ) : items.length ? (
+      ) : visibleItems.length ? (
         <div className="grid grid-cols-2 items-start gap-3 pb-28">
           {feedColumns.map((column, columnIndex) => (
             <div
@@ -299,6 +316,7 @@ export function FeedTab() {
                             muted
                             playsInline
                             preload="metadata"
+                            onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
                             className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
                           />
@@ -307,6 +325,7 @@ export function FeedTab() {
                             src={item.result_url}
                             alt=""
                             loading="lazy"
+                            onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
                             className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
                           />
@@ -440,11 +459,19 @@ export function FeedTab() {
                 controls
                 autoPlay
                 playsInline
+                onError={() => {
+                  handleMediaError(previewItem)
+                  setPreviewItem(null)
+                }}
               />
             ) : (
               <img
                 src={previewItem.result_url}
                 alt=""
+                onError={() => {
+                  handleMediaError(previewItem)
+                  setPreviewItem(null)
+                }}
                 className="max-h-full w-auto max-w-full object-contain"
               />
             )
