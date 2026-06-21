@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlparse
 
 # Добавляем родительскую директорию в путь для импортов
@@ -25,7 +25,8 @@ from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.base import BaseStorage, StateType, StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage, SimpleEventIsolation
 from aiogram.types import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
@@ -213,6 +214,75 @@ _configure_logging()
 logger = logging.getLogger(__name__)
 
 
+class FallbackFSMStorage(BaseStorage):
+    """Keep handlers responsive if Redis FSM storage fails after startup."""
+
+    def __init__(self, primary: BaseStorage, fallback: BaseStorage):
+        self._primary = primary
+        self._fallback = fallback
+        self._fallback_active = False
+
+    async def _call(self, method_name: str, *args, **kwargs):
+        if not self._fallback_active:
+            try:
+                return await getattr(self._primary, method_name)(*args, **kwargs)
+            except Exception:
+                self._fallback_active = True
+                logger.exception(
+                    "FSM Redis storage failed; switching to in-memory FSM storage"
+                )
+
+        return await getattr(self._fallback, method_name)(*args, **kwargs)
+
+    async def set_state(self, key: StorageKey, state: StateType = None) -> None:
+        await self._call("set_state", key=key, state=state)
+
+    async def get_state(self, key: StorageKey) -> str | None:
+        return await self._call("get_state", key=key)
+
+    async def set_data(self, key: StorageKey, data: Mapping[str, Any]) -> None:
+        await self._call("set_data", key=key, data=data)
+
+    async def get_data(self, key: StorageKey) -> dict[str, Any]:
+        return await self._call("get_data", key=key)
+
+    async def get_value(
+        self,
+        storage_key: StorageKey,
+        dict_key: str,
+        default: Any | None = None,
+    ) -> Any | None:
+        return await self._call(
+            "get_value",
+            storage_key=storage_key,
+            dict_key=dict_key,
+            default=default,
+        )
+
+    async def update_data(
+        self, key: StorageKey, data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return await self._call("update_data", key=key, data=data)
+
+    def create_isolation(self, **kwargs: Any):
+        if not self._fallback_active and hasattr(self._primary, "create_isolation"):
+            try:
+                return self._primary.create_isolation(**kwargs)
+            except Exception:
+                self._fallback_active = True
+                logger.exception(
+                    "FSM Redis isolation failed; switching to in-memory isolation"
+                )
+        return SimpleEventIsolation()
+
+    async def close(self) -> None:
+        for storage in (self._primary, self._fallback):
+            try:
+                await storage.close()
+            except Exception:
+                logger.exception("Failed to close FSM storage")
+
+
 class AccessGuardMiddleware(BaseMiddleware):
     """Blocks banned users, maintenance traffic and unsubscribed users."""
 
@@ -372,7 +442,7 @@ def _build_dispatcher_storage():
             key_builder=DefaultKeyBuilder(prefix=config.REDIS_PREFIX, with_bot_id=True),
         )
         logger.info("FSM storage configured via Redis: %s", config.redis_url)
-        return storage
+        return FallbackFSMStorage(storage, MemoryStorage())
     except Exception as exc:
         logger.warning("Redis FSM storage unavailable, fallback to MemoryStorage: %s", exc)
         return MemoryStorage()
