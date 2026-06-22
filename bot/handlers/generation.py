@@ -20,6 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from PIL import Image
 
+from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     add_credits,
@@ -620,6 +621,7 @@ def _apply_safe_prompt_framing(
     if preserve_garment_terms:
         safety_prefix = (
             "Reference-first editorial styling. "
+            "Treat referenced garments as clothing and design details. "
             "Treat the referenced outfit, garment cut, accessories, styling, and coverage level as intentional visual details. "
             "Preserve the clothing and how it is worn from the main reference unless the user explicitly asks to change outfit or coverage. "
             "Focus on matching the referenced look, materials, fit, pose intent, and composition. "
@@ -1018,12 +1020,9 @@ async def _start_image_generation_task(
 
     if result_status == "queued":
         api_task_id = result["task_id"]
-        import aiosqlite
 
-        from bot.database import DATABASE_PATH
-
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with db_backend.connect() as db:
+            db.row_factory = db_backend.Row
             cursor = await db.execute(
                 "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
                 (local_task_id, user.id),
@@ -1189,6 +1188,7 @@ async def _restore_image_task_to_state(
     *,
     include_references: bool = True,
     repeat_source_task_id: str | None = None,
+    hide_prompt: bool = False,
 ) -> tuple[bool, str | None]:
     if not task or task.type != "image":
         return False, "Не удалось найти данные задачи."
@@ -1230,6 +1230,7 @@ async def _restore_image_task_to_state(
             {
                 "repeat_source_task_id": repeat_source_task_id,
                 "repeat_prompt": prompt,
+                "repeat_prompt_hidden": bool(hide_prompt),
                 "repeat_unit_cost": task.cost or 0,
                 "repeat_original_ref_count": len(original_reference_images),
             }
@@ -1288,6 +1289,57 @@ def _publication_confirm_keyboard(confirm_data: str):
     builder.button(text="❌ Отмена", callback_data="ignore")
     builder.adjust(1, 1)
     return builder.as_markup()
+
+
+def _feed_publication_keyboard(
+    task_id: int | str,
+    *,
+    prompt_visible: bool = False,
+    references_visible: bool = False,
+) -> types.InlineKeyboardMarkup:
+    task_value = str(task_id)
+    prompt_flag = int(bool(prompt_visible))
+    refs_flag = int(bool(references_visible))
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"{'✅' if prompt_visible else '🔒'} Prompt",
+        callback_data=f"feedpubopt_{task_value}_{1 - prompt_flag}_{refs_flag}",
+    )
+    builder.button(
+        text=f"{'✅' if references_visible else '🔒'} Референсы",
+        callback_data=f"feedpubopt_{task_value}_{prompt_flag}_{1 - refs_flag}",
+    )
+    builder.button(
+        text="✅ Опубликовать",
+        callback_data=f"feedpubok_{task_value}_{prompt_flag}_{refs_flag}",
+    )
+    builder.button(text="❌ Отмена", callback_data="ignore")
+    builder.adjust(2, 1, 1)
+    return builder.as_markup()
+
+
+def _feed_publication_text(
+    *,
+    prompt_visible: bool = False,
+    references_visible: bool = False,
+) -> str:
+    prompt_state = "открыт" if prompt_visible else "скрыт"
+    refs_state = "открыты" if references_visible else "скрыты"
+    return (
+        _publication_disclaimer_text("feed")
+        + "\n\n<b>Что увидят в ленте</b>\n"
+        f"• Prompt: <code>{prompt_state}</code>\n"
+        f"• Референсы: <code>{refs_state}</code>\n\n"
+        "По умолчанию оба пункта закрыты. Откройте только то, что автор разрешает показывать."
+    )
+
+
+def _parse_feed_publish_payload(value: str) -> tuple[str, bool, bool]:
+    parts = str(value or "").split("_")
+    task_id = parts[0] if parts else ""
+    prompt_visible = bool(int(parts[1])) if len(parts) > 1 and parts[1] in {"0", "1"} else False
+    references_visible = bool(int(parts[2])) if len(parts) > 2 and parts[2] in {"0", "1"} else False
+    return task_id, prompt_visible, references_visible
 
 
 def _publication_disclaimer_text(kind: str) -> str:
@@ -1457,10 +1509,40 @@ async def publish_image_result_to_feed(
         return
 
     await callback.message.answer(
-        _publication_disclaimer_text("feed"),
+        _feed_publication_text(),
         parse_mode="HTML",
-        reply_markup=_publication_confirm_keyboard(f"feedpubok_{task.id}"),
+        reply_markup=_feed_publication_keyboard(task.id),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("feedpubopt_"))
+async def update_feed_publication_options(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    payload = callback.data.replace("feedpubopt_", "", 1)
+    task_id, prompt_visible, references_visible = _parse_feed_publish_payload(payload)
+    task, error_message = await _owned_completed_feed_task(callback, task_id)
+    if not task:
+        await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_text(
+            _feed_publication_text(
+                prompt_visible=prompt_visible,
+                references_visible=references_visible,
+            ),
+            parse_mode="HTML",
+            reply_markup=_feed_publication_keyboard(
+                task.id,
+                prompt_visible=prompt_visible,
+                references_visible=references_visible,
+            ),
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.debug("Unable to update feed publication options: %s", e)
     await callback.answer()
 
 
@@ -1469,7 +1551,9 @@ async def confirm_publish_image_result_to_feed(
     callback: types.CallbackQuery, state: FSMContext
 ):
     """Публикует готовую генерацию в miniapp-ленту после подтверждения."""
-    task_id = callback.data.replace("feedpubok_", "", 1)
+    task_id, prompt_visible, references_visible = _parse_feed_publish_payload(
+        callback.data.replace("feedpubok_", "", 1)
+    )
     task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
         logger.warning(
@@ -1481,7 +1565,12 @@ async def confirm_publish_image_result_to_feed(
         await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
         return
 
-    card = await share_to_feed(task.task_id, task.user_id)
+    card = await share_to_feed(
+        task.task_id,
+        task.user_id,
+        prompt_visible=prompt_visible,
+        references_visible=references_visible,
+    )
     if not card:
         logger.warning(
             "Bot feed publish rejected in share_to_feed: telegram_id=%s user_id=%s callback_task_id=%r db_task_id=%r db_id=%s status=%s type=%s result_url=%s source_feed_gen_id=%s",
@@ -1599,6 +1688,7 @@ def _repeat_image_keyboard(task_id: str, reference_count: int = 0) -> types.Inli
 
 def _repeat_image_text(data: dict, task_id: str) -> str:
     prompt = " ".join(str(data.get("repeat_prompt") or "").split())
+    prompt_hidden = bool(data.get("repeat_prompt_hidden"))
     prompt_preview = html.escape(prompt[:500] + ("..." if len(prompt) > 500 else ""))
     img_service = data.get("img_service", "banana_pro")
     img_ratio = str(data.get("img_ratio") or "1:1")
@@ -1629,8 +1719,12 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
         f"• Референсы: {ref_note}\n"
         f"• Стоимость: <code>{unit_cost}</code>🍌\n\n"
-        "<b>Prompt</b> <i>(превью, в генерацию уйдёт полностью)</i>\n"
-        f"<pre>{prompt_preview or html.escape(task_id)}</pre>"
+        "<b>Prompt</b>\n"
+        + (
+            "<i>Скрыт автором. В генерацию уйдёт исходный prompt без показа текста.</i>"
+            if prompt_hidden
+            else f"<pre>{prompt_preview or html.escape(task_id)}</pre>"
+        )
     )
 
 
@@ -1685,6 +1779,7 @@ async def _ensure_repeat_image_state(
         state,
         include_references=bool(task and task.user_id == user.id),
         repeat_source_task_id=task_id,
+        hide_prompt=bool(task and task.is_public_feed and task.user_id != user.id),
     )
 
 
@@ -1696,11 +1791,13 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     user = await get_or_create_user(callback.from_user.id)
 
     include_references = bool(task and task.user_id == user.id)
+    hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
     restored, error_message = await _restore_image_task_to_state(
         task,
         state,
         include_references=include_references,
         repeat_source_task_id=task_id,
+        hide_prompt=hide_prompt,
     )
     if not restored:
         await callback.answer(error_message or "Не удалось открыть повтор.", show_alert=True)
@@ -1732,15 +1829,18 @@ async def repeat_image_wait_for_prompt(callback: types.CallbackQuery, state: FSM
 
     data = await state.get_data()
     current_prompt = " ".join(str(data.get("repeat_prompt") or "").split())
-    prompt_preview = html.escape(
-        current_prompt[:700] + ("..." if len(current_prompt) > 700 else "")
+    prompt_hidden = bool(data.get("repeat_prompt_hidden"))
+    prompt_preview = (
+        "<i>Скрыт автором. Новый текст можно написать своим сообщением.</i>"
+        if prompt_hidden
+        else f"<pre>{html.escape(current_prompt[:700] + ('...' if len(current_prompt) > 700 else '')) or html.escape(task_id)}</pre>"
     )
     await state.set_state(GenerationStates.waiting_for_repeat_prompt)
     await callback.message.answer(
         "✏️ <b>Новый prompt для повтора</b>\n\n"
         "Отправьте одним сообщением новый текст. Фото и настройки останутся как на экране повтора.\n\n"
         "<b>Сейчас</b>\n"
-        f"<pre>{prompt_preview or html.escape(task_id)}</pre>",
+        f"{prompt_preview}",
         parse_mode="HTML",
     )
     await callback.answer("Жду новый prompt")
@@ -1763,7 +1863,7 @@ async def handle_repeat_image_prompt_text(message: types.Message, state: FSMCont
         )
         return
 
-    await state.update_data(repeat_prompt=prompt)
+    await state.update_data(repeat_prompt=prompt, repeat_prompt_hidden=False)
     await message.answer("✅ Prompt обновлён.")
     await _show_repeat_image_screen(message, state)
 
@@ -1826,6 +1926,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             img_flow_step="configure",
             repeat_source_task_id=task_id,
             repeat_prompt=prompt,
+            repeat_prompt_hidden=bool(data.get("repeat_prompt_hidden")),
             repeat_unit_cost=task.cost or 0,
             repeat_original_ref_count=len(raw_reference_images),
             repeat_missing_ref_count=len(missing_reference_images),

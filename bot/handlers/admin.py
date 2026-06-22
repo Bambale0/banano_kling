@@ -15,6 +15,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile
 
+from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     add_credits,
@@ -3989,11 +3990,8 @@ async def admin_execute_broadcast(
         "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
     )
 
-    import aiosqlite
-    from bot.database import DATABASE_PATH
-
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute("SELECT telegram_id FROM users")
         users = await cursor.fetchall()
 

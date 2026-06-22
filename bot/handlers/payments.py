@@ -11,6 +11,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiohttp import web
 
+from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     PROMO_BONUS_BY_CREDITS,
@@ -26,6 +27,7 @@ from bot.database import (
     get_user_settings,
     normalize_promo_code,
     record_promo_redemption,
+    update_transaction_payment_id,
     update_transaction_status,
 )
 from bot.keyboards import (
@@ -34,6 +36,15 @@ from bot.keyboards import (
     get_payment_confirmation_keyboard,
     get_payment_method_keyboard,
     get_payment_packages_keyboard,
+)
+from bot.payment_utils import (
+    TELEGRAM_STARS_CURRENCY,
+    TELEGRAM_STARS_PROVIDER,
+    build_stars_invoice_payload,
+    package_bonus_credits,
+    package_stars_amount,
+    parse_stars_invoice_payload,
+    total_package_credits,
 )
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
@@ -316,14 +327,11 @@ def _is_pending_past_ttl(transaction, ttl_days: int | None = None) -> bool:
 
 
 async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
-    import aiosqlite
-
-    from bot.database import DATABASE_PATH
 
     stats = {"checked": 0, "failed": 0, "kept": 0}
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
         rows = await (await db.execute(
             "SELECT order_id, payment_id, created_at FROM transactions WHERE provider = 'cryptobot' AND status = 'pending' ORDER BY created_at ASC LIMIT ?",
             (limit,),
@@ -379,15 +387,12 @@ async def reconcile_lava_pending_transactions(
     bot: Bot | None = None,
 ) -> list[dict[str, Any]]:
     """Poll Lava for pending invoices and complete paid transactions."""
-    import aiosqlite
-
-    from bot.database import DATABASE_PATH
 
     if not lava_service.enabled:
         return []
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect() as db:
+        db.row_factory = db_backend.Row
         rows = await (
             await db.execute(
                 """
@@ -612,17 +617,23 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
     has_yookassa = yookassa_service.enabled
     has_crypto = cryptobot_service.enabled
     has_lava = lava_service.enabled and bool(config.lava_offer_id_for_package(package_id))
+    has_stars = bool(config.TELEGRAM_STARS_ENABLED)
 
-    if not has_yookassa and not has_crypto and not has_lava:
+    if not has_yookassa and not has_crypto and not has_lava and not has_stars:
         await callback.message.edit_text(
             "❌ Платёжные системы временно недоступны.\nОбратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         return
 
-    available_count = sum(1 for value in (has_yookassa, has_crypto, has_lava) if value)
+    available_count = sum(
+        1 for value in (has_yookassa, has_crypto, has_lava, has_stars) if value
+    )
     if available_count == 1:
         await callback.answer()
+        if has_stars:
+            fake = callback.model_copy(update={"data": f"buy_stars_{package_id}"})
+            return await initiate_payment(fake, state)
         if has_yookassa:
             await callback.bot.answer_callback_query(
                 callback.id, text="Перенаправляем на оплату…"
@@ -636,9 +647,10 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
         return await initiate_payment(fake, state)
 
     promo = await _get_selected_promo(state)
-    package_bonus = int(package.get("bonus_credits", 0) or 0)
+    package_bonus = package_bonus_credits(package)
     promo_bonus = _promo_bonus_for_package(promo, package)
-    total_credits = package["credits"] + package_bonus + promo_bonus
+    total_credits = total_package_credits(package, promo_bonus)
+    stars_amount = package_stars_amount(package)
     bonus_lines = []
     if package_bonus > 0:
         bonus_lines.append(f"Бонус пакета: <code>{package_bonus}</code>🍌")
@@ -652,9 +664,11 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
         f"💳 <b>Выберите способ оплаты</b>\n\n"
         f"Пакет: <b>{package['name']}</b>\n"
         f"Бананы: <code>{total_credits}</code>🍌\n"
-        f"Сумма: <code>{package['price_rub']}</code>₽"
+        f"Сумма: <code>{package['price_rub']}</code>₽ / <code>{stars_amount}</code>⭐"
         f"{bonus_text}",
-        reply_markup=get_payment_method_keyboard(package_id, has_yookassa, has_crypto, has_lava),
+        reply_markup=get_payment_method_keyboard(
+            package_id, has_yookassa, has_crypto, has_lava, has_stars=has_stars
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -670,6 +684,8 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         provider = "cryptobot"
     elif payload.startswith("lava_"):
         provider = "lava"
+    elif payload.startswith("stars_"):
+        provider = TELEGRAM_STARS_PROVIDER
     else:
         provider = config.payment_provider
 
@@ -698,6 +714,14 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         )
         return
 
+    if provider == TELEGRAM_STARS_PROVIDER and not config.TELEGRAM_STARS_ENABLED:
+        await callback.message.edit_text(
+            "Оплата Telegram Stars временно отключена. Попробуйте другой способ оплаты.",
+            reply_markup=get_back_keyboard("menu_topup"),
+            parse_mode="HTML",
+        )
+        return
+
     payload = callback.data.replace("buy_", "", 1)
     if payload.startswith("yookassa_"):
         package_id = payload.replace("yookassa_", "", 1)
@@ -705,6 +729,8 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         package_id = payload.replace("crypto_", "", 1)
     elif payload.startswith("lava_"):
         package_id = payload.replace("lava_", "", 1)
+    elif payload.startswith("stars_"):
+        package_id = payload.replace("stars_", "", 1)
     elif "_" in payload:
         package_id = payload.split("_", 1)[1]
     else:
@@ -714,16 +740,87 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Пакет не найден", show_alert=True)
         return
 
-    order_id = f"{callback.from_user.id}_{int(time.time())}_{package_id}"
+    order_id = f"{callback.from_user.id}_{int(time.time() * 1000)}_{package_id}"
 
     bot_info = await callback.bot.get_me()
     success_url = f"https://t.me/{bot_info.username}?start=success_{order_id}"
 
     promo = await _get_selected_promo(state)
-    package_bonus = int(package.get("bonus_credits", 0) or 0)
+    package_bonus = package_bonus_credits(package)
     promo_bonus = _promo_bonus_for_package(promo, package)
-    total_credits = package["credits"] + package_bonus + promo_bonus
+    total_credits = total_package_credits(package, promo_bonus)
     description = f"Покупка {total_credits} бананов ({package['name']})"
+
+    if provider == TELEGRAM_STARS_PROVIDER:
+        stars_amount = package_stars_amount(package)
+        invoice_payload = build_stars_invoice_payload(order_id, stars_amount)
+        user = await get_or_create_user(callback.from_user.id)
+        created = await create_transaction(
+            order_id=order_id,
+            user_id=user.id,
+            payment_id=f"pending:{stars_amount}",
+            provider=TELEGRAM_STARS_PROVIDER,
+            credits=total_credits,
+            amount_rub=float(package["price_rub"]),
+            status="pending",
+            promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+            promo_code=promo.code if promo and promo_bonus > 0 else None,
+            promo_bonus_credits=promo_bonus,
+        )
+        if not created:
+            await callback.message.edit_text(
+                "Не удалось создать платёж. Попробуйте выбрать пакет ещё раз.",
+                reply_markup=get_back_keyboard("menu_topup"),
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            await callback.message.answer_invoice(
+                title=f"{package['name']} · {total_credits}🍌",
+                description=description,
+                payload=invoice_payload,
+                currency=TELEGRAM_STARS_CURRENCY,
+                prices=[
+                    types.LabeledPrice(
+                        label=f"{total_credits} бананов",
+                        amount=stars_amount,
+                    )
+                ],
+                provider_token="",
+            )
+        except Exception as exc:
+            await update_transaction_status(order_id, "failed")
+            logger.exception("Failed to send Telegram Stars invoice order=%s", order_id)
+            await callback.message.edit_text(
+                "Не удалось открыть оплату Telegram Stars.\n"
+                f"Причина: <code>{html.escape(str(exc))}</code>",
+                reply_markup=get_back_keyboard("menu_topup"),
+                parse_mode="HTML",
+            )
+            return
+
+        bonus_text = ""
+        if package_bonus > 0:
+            bonus_text += f"\n• Бонус пакета: <code>{package_bonus}</code> бананов"
+        if promo and promo_bonus > 0:
+            bonus_text += (
+                f"\n• Промокод <code>{promo.code}</code>: +<code>{promo_bonus}</code> бананов"
+            )
+        elif promo:
+            bonus_text += "\n• Промокод применён, но для этой суммы бонуса нет"
+
+        await callback.message.edit_text(
+            "⭐ <b>Оплата Telegram Stars</b>\n"
+            f"• Пакет: <code>{package['name']}</code>\n"
+            f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
+            f"• К оплате: <code>{stars_amount}</code>⭐\n\n"
+            "Счёт отправлен отдельным сообщением. После оплаты бананы начислятся автоматически.",
+            reply_markup=get_back_keyboard("menu_topup"),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
 
     if provider == "lava":
         offer_id = config.lava_offer_id_for_package(package_id)
@@ -917,6 +1014,133 @@ async def check_payment_status(callback: types.CallbackQuery):
         parse_mode="HTML",
     )
 
+
+@router.pre_checkout_query()
+async def process_stars_pre_checkout(query: types.PreCheckoutQuery):
+    parsed = parse_stars_invoice_payload(query.invoice_payload)
+    if not parsed:
+        await query.bot.answer_pre_checkout_query(
+            query.id,
+            ok=False,
+            error_message="Некорректный счёт. Создайте оплату заново.",
+        )
+        return
+
+    order_id, stars_amount = parsed
+    transaction = await get_transaction_by_order(order_id)
+    if not transaction or transaction.provider != TELEGRAM_STARS_PROVIDER:
+        await query.bot.answer_pre_checkout_query(
+            query.id,
+            ok=False,
+            error_message="Транзакция не найдена. Создайте оплату заново.",
+        )
+        return
+
+    if transaction.status == "completed":
+        await query.bot.answer_pre_checkout_query(
+            query.id,
+            ok=False,
+            error_message="Эта оплата уже была обработана.",
+        )
+        return
+
+    telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
+    if telegram_id != query.from_user.id:
+        await query.bot.answer_pre_checkout_query(
+            query.id,
+            ok=False,
+            error_message="Этот счёт создан для другого пользователя.",
+        )
+        return
+
+    if query.currency != TELEGRAM_STARS_CURRENCY or query.total_amount != stars_amount:
+        logger.warning(
+            "Rejected Stars pre-checkout order=%s currency=%s amount=%s expected=%s",
+            order_id,
+            query.currency,
+            query.total_amount,
+            stars_amount,
+        )
+        await query.bot.answer_pre_checkout_query(
+            query.id,
+            ok=False,
+            error_message="Сумма счёта не совпадает. Создайте оплату заново.",
+        )
+        return
+
+    await query.bot.answer_pre_checkout_query(query.id, ok=True)
+
+
+@router.message(F.successful_payment)
+async def process_successful_stars_payment(message: types.Message):
+    payment = message.successful_payment
+    if not payment:
+        return
+
+    parsed = parse_stars_invoice_payload(payment.invoice_payload)
+    if not parsed or payment.currency != TELEGRAM_STARS_CURRENCY:
+        logger.warning(
+            "Successful payment with unsupported payload/currency payload=%s currency=%s",
+            payment.invoice_payload,
+            payment.currency,
+        )
+        return
+
+    order_id, stars_amount = parsed
+    if payment.total_amount != stars_amount:
+        logger.warning(
+            "Successful Stars payment amount mismatch order=%s amount=%s expected=%s",
+            order_id,
+            payment.total_amount,
+            stars_amount,
+        )
+
+    charge_id = payment.telegram_payment_charge_id or f"stars:{order_id}"
+    await update_transaction_payment_id(order_id, charge_id)
+
+    result = await _complete_transaction(order_id, bot=message.bot)
+    if not result.get("ok"):
+        logger.error(
+            "Failed to complete successful Stars payment order=%s reason=%s",
+            order_id,
+            result.get("reason"),
+        )
+        await message.answer(
+            "Оплата Stars прошла, но бананы не начислились автоматически. "
+            "Напишите в поддержку, мы проверим транзакцию.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return
+
+    if result.get("already_completed"):
+        await message.answer(
+            "Эта оплата уже была зачислена ранее.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return
+
+    bonus_text = (
+        _build_promo_bonus_text(result.get("promo_bonus") or {})
+        + _build_bonus_text(result.get("referral_bonus") or {})
+    )
+    transaction = result["transaction"]
+    try:
+        await create_miniapp_notification(
+            transaction.user_id,
+            f"✅ Оплата Stars обработана — {transaction.credits} бананов за {stars_amount}⭐",
+        )
+    except Exception:
+        logger.exception("Failed to create miniapp Stars notification order=%s", order_id)
+
+    await message.answer(
+        "✅ <b>Оплата Stars подтверждена</b>\n"
+        f"• Начислено: <code>{transaction.credits}</code> бананов\n"
+        f"• Списано: <code>{stars_amount}</code>⭐{bonus_text}",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: types.CallbackQuery):
     await callback.message.edit_text(
@@ -1052,10 +1276,6 @@ async def handle_lava_webhook(request: web.Request):
         contract_id = lava_service.webhook_contract_id(data)
         order_id = _extract_first(data, ("order_id", "orderId"))
 
-        import aiosqlite
-
-        from bot.database import DATABASE_PATH
-
         if order_id:
             transaction = await get_transaction_by_order(str(order_id))
             if transaction and transaction.provider != "lava":
@@ -1064,8 +1284,8 @@ async def handle_lava_webhook(request: web.Request):
             transaction = None
 
         if not transaction and contract_id:
-            async with aiosqlite.connect(DATABASE_PATH) as db:
-                db.row_factory = aiosqlite.Row
+            async with db_backend.connect() as db:
+                db.row_factory = db_backend.Row
                 cursor = await db.execute(
                     "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
                     (contract_id, "lava"),
@@ -1225,12 +1445,9 @@ async def handle_yookassa_webhook(request: web.Request):
         )
         if not order_id:
             # DB lookup by payment_id
-            import aiosqlite
 
-            from bot.database import DATABASE_PATH
-
-            async with aiosqlite.connect(DATABASE_PATH) as db_conn:
-                db_conn.row_factory = aiosqlite.Row
+            async with db_backend.connect() as db_conn:
+                db_conn.row_factory = db_backend.Row
                 cursor = await db_conn.execute(
                     "SELECT order_id FROM transactions WHERE payment_id = ? AND provider = ? LIMIT 1",
                     (payment_id, "yookassa"),

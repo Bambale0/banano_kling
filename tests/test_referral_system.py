@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import aiosqlite
+from bot import db as db_backend
 import pytest
 
 
@@ -207,7 +207,7 @@ def test_process_referral_allows_new_user_when_referrer_ancestry_is_already_cycl
         referrer = await db.get_or_create_user(3403)
         referred = await db.get_or_create_user(3404)
 
-        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
             await conn.execute(
                 "UPDATE users SET referred_by = ? WHERE id = ?",
                 (parent.id, root.id),
@@ -542,8 +542,8 @@ def test_partner_overview_counts_only_payments_after_referral(tmp_path, monkeypa
         referred = await db.get_or_create_user(7008)
         assert await db.process_referral(referred.telegram_id, referrer.referral_code)
 
-        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = db_backend.Row
             referral_row = await (
                 await conn.execute(
                     """
@@ -606,8 +606,8 @@ def test_admin_partner_payment_report_includes_only_level1_payments_after_referr
         referred = await db.get_or_create_user(7108)
         assert await db.process_referral(referred.telegram_id, referrer.referral_code)
 
-        async with aiosqlite.connect(db.DATABASE_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = db_backend.Row
             referral_row = await (
                 await conn.execute(
                     """

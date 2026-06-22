@@ -61,6 +61,14 @@ function profileInitials(firstName?: string, lastName?: string, username?: strin
   return value.toUpperCase()
 }
 
+function getPublicReferences(item: FeedItem | null) {
+  if (!item) return []
+  return [
+    ...(item.reference_images || []).map((url) => ({ type: 'image' as const, url })),
+    ...(item.reference_videos || []).map((url) => ({ type: 'video' as const, url })),
+  ].filter((item) => isHttpUrl(item.url))
+}
+
 export function ProfileTab() {
   const { state, viewedProfileCode, setActiveTab, setPromptPreset, setVideoPromptPreset } = useApp()
   const { user } = state
@@ -112,7 +120,7 @@ export function ProfileTab() {
     isOwnProfile
       ? user.profileLink ||
         (user.botUsername && ownReferralCode
-          ? `https://t.me/${user.botUsername}?start=posts_${ownReferralCode}_ref_${ownReferralCode}`
+          ? `https://t.me/${user.botUsername}?startapp=${encodeURIComponent(`profile_${ownReferralCode}_ref_${ownReferralCode}`)}`
           : '')
       : ''
   const displayChannelUrl = isOwnProfile ? ownChannelUrl : profile?.channel_url || ''
@@ -162,6 +170,7 @@ export function ProfileTab() {
     () => (isLive ? items : demoItems).filter((item) => !brokenMediaIds.has(item.id)),
     [brokenMediaIds, demoItems, isLive, items]
   )
+  const previewReferences = useMemo(() => getPublicReferences(previewItem), [previewItem])
   const totals = useMemo(() => {
     return profileItems.reduce(
       (acc, item) => ({
@@ -693,6 +702,27 @@ export function ProfileTab() {
               <ImageOff className="h-8 w-8" />
             </div>
           )}
+          {previewReferences.length ? (
+            <div className="absolute bottom-[4.5rem] left-3 right-3 flex justify-center">
+              <div className="flex max-w-full gap-2 overflow-x-auto rounded-xl border border-border/60 bg-background/80 p-2 backdrop-blur">
+                {previewReferences.map((reference, index) => (
+                  <a
+                    key={`${reference.url}_${index}`}
+                    href={reference.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
+                  >
+                    {reference.type === 'video' ? (
+                      <video src={reference.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                    ) : (
+                      <img src={reference.url} alt="" className="h-full w-full object-cover" />
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="absolute bottom-4 left-3 right-3 flex justify-center gap-2">
             <Button
               type="button"

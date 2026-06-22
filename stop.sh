@@ -6,6 +6,7 @@ set -u
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$PROJECT_DIR/bot.pid"
+SYSTEMD_SERVICE="${BANANO_SYSTEMD_SERVICE:-banano-kling.service}"
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -14,6 +15,22 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${YELLOW}=== Остановка Telegram Bot ===${NC}"
+
+if command -v systemctl >/dev/null 2>&1; then
+    SERVICE_STATE="$(systemctl show "$SYSTEMD_SERVICE" --property=LoadState --value 2>/dev/null || true)"
+    if [ "$SERVICE_STATE" = "loaded" ]; then
+        echo -e "${YELLOW}Найден systemd service: $SYSTEMD_SERVICE${NC}"
+        systemctl stop "$SYSTEMD_SERVICE"
+        rm -f "$PID_FILE"
+        if systemctl is-active --quiet "$SYSTEMD_SERVICE"; then
+            echo -e "${RED}✗ systemd service всё ещё активен после stop${NC}"
+            systemctl status "$SYSTEMD_SERVICE" --no-pager || true
+            exit 1
+        fi
+        echo -e "${GREEN}✓ Бот остановлен через systemd${NC}"
+        exit 0
+    fi
+fi
 
 is_our_bot_pid() {
     local pid="$1"

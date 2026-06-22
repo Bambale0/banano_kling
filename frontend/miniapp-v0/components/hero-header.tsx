@@ -22,7 +22,7 @@ export function HeroHeader() {
         <div className="inline-flex items-center gap-2 rounded-full border border-success/25 bg-success/10 px-3 py-1.5">
           <Wifi className="h-3.5 w-3.5 text-success" />
           <span className="text-xs font-semibold text-success">
-            {mode === 'live' ? 'Онлайн' : 'Демо'}
+            {mode === 'live' ? 'Онлайн' : 'Telegram'}
           </span>
           <span className="h-1.5 w-1.5 rounded-full bg-success" />
         </div>

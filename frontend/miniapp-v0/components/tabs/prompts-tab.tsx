@@ -46,7 +46,7 @@ export function PromptsTab() {
         const prompts = await fetchPrompts({
           source: tag ? 'tag' : source,
           tag,
-          limit: 40,
+          limit: 24,
         })
         if (!ignore) setItems(prompts)
       } catch (e) {

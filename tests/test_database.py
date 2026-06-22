@@ -4,7 +4,7 @@ import json
 import os
 from unittest.mock import AsyncMock
 
-import aiosqlite
+from bot import db as db_backend
 import pytest
 
 import bot.database as database
@@ -26,7 +26,7 @@ class FakeConnection:
 @pytest.mark.asyncio
 async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
     conn = FakeConnection()
-    monkeypatch.setattr(database.aiosqlite, "connect", lambda *_args, **_kwargs: conn)
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
 
     result = await database.complete_video_task("task-ok", "http://result.url")
 
@@ -41,7 +41,7 @@ async def test_complete_video_task_marks_completed_with_result_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_video_task_marks_failed_without_result_url(monkeypatch):
     conn = FakeConnection()
-    monkeypatch.setattr(database.aiosqlite, "connect", lambda *_args, **_kwargs: conn)
+    monkeypatch.setattr(database.db_backend, "connect", lambda *_args, **_kwargs: conn)
 
     result = await database.complete_video_task("task-fail", None)
 
@@ -362,7 +362,7 @@ async def test_pruned_saved_reference_file_is_deferred_to_orphan_cleanup(tmp_pat
             file_hash=name,
         )
 
-    async with aiosqlite.connect(database.DATABASE_PATH) as db:
+    async with db_backend.connect(database.DATABASE_PATH) as db:
         cursor = await db.execute("SELECT COUNT(*) FROM saved_references")
         refs_count = (await cursor.fetchone())[0]
 
@@ -419,6 +419,58 @@ async def test_orphaned_reference_cleanup_keeps_database_files(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_share_to_feed_controls_prompt_and_reference_visibility(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "feed_visibility.db"))
+
+    await database.init_db()
+    user = await database.get_or_create_user(332211)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "feed-visibility-task",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="private prompt",
+        cost=2,
+        request_data={
+            "reference_images": ["https://example.com/ref.png"],
+            "source_reference_images": ["https://example.com/source-ref.png"],
+        },
+    )
+    await database.complete_video_task(
+        "feed-visibility-task",
+        "https://example.com/result.png",
+    )
+
+    hidden_card = await database.share_to_feed("feed-visibility-task", user.id)
+
+    assert hidden_card is not None
+    assert hidden_card["prompt"] == ""
+    assert hidden_card["prompt_hidden"] is True
+    assert hidden_card["reference_images"] == []
+    assert hidden_card["references_hidden"] is True
+    assert hidden_card["feed_prompt_visible"] is False
+    assert hidden_card["feed_references_visible"] is False
+
+    visible_card = await database.share_to_feed(
+        "feed-visibility-task",
+        user.id,
+        prompt_visible=True,
+        references_visible=True,
+    )
+
+    assert visible_card is not None
+    assert visible_card["prompt"] == "private prompt"
+    assert visible_card["prompt_hidden"] is False
+    assert visible_card["reference_images"] == ["https://example.com/source-ref.png"]
+    assert visible_card["references_hidden"] is False
+    assert visible_card["feed_prompt_visible"] is True
+    assert visible_card["feed_references_visible"] is True
+
+
+@pytest.mark.asyncio
 async def test_cleanup_stale_local_generation_tasks_refunds_old_img_tasks(monkeypatch):
     user = await database.get_or_create_user(987654321)
 
@@ -441,7 +493,7 @@ async def test_cleanup_stale_local_generation_tasks_refunds_old_img_tasks(monkey
         cost=1.5,
     )
 
-    async with aiosqlite.connect(database.DATABASE_PATH) as db:
+    async with db_backend.connect(database.DATABASE_PATH) as db:
         await db.execute("UPDATE users SET credits = 0 WHERE id = ?", (user.id,))
         await db.execute(
             "UPDATE generation_tasks SET created_at = datetime('now', '-2 hours') WHERE task_id = ?",
@@ -453,8 +505,8 @@ async def test_cleanup_stale_local_generation_tasks_refunds_old_img_tasks(monkey
         max_age_seconds=60 * 60
     )
 
-    async with aiosqlite.connect(database.DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         stale_cursor = await db.execute(
             "SELECT status FROM generation_tasks WHERE task_id = ?",
             ("img_stale_seedream",),
@@ -474,3 +526,47 @@ async def test_cleanup_stale_local_generation_tasks_refunds_old_img_tasks(monkey
     assert stale["status"] == "failed"
     assert recent["status"] == "pending"
     assert credits["credits"] == 1.5
+
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_local_generation_tasks_uses_like_param_for_postgres(isolated_database, monkeypatch):
+    from bot import database
+
+    user = await database.get_or_create_user(555001)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        'img_pg_like_stale',
+        'image',
+        'seedream_edit',
+        model='seedream_edit',
+        cost=1.0,
+    )
+
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE generation_tasks SET created_at = datetime('now', '-2 hours') WHERE task_id = ?",
+            ('img_pg_like_stale',),
+        )
+        await db.commit()
+
+    stats = await database.cleanup_stale_local_generation_tasks(max_age_seconds=60 * 60)
+    assert stats['failed_count'] == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_saved_references_uses_count_having_expression(isolated_database):
+    from bot import database
+
+    user = await database.get_or_create_user(555002)
+    for i in range(3):
+        await database.save_user_reference(
+            telegram_id=user.telegram_id,
+            file_url=f'https://example.com/ref_{i}.png',
+            file_hash=f'hash_{i}',
+            kind='image',
+        )
+
+    removed = await database.cleanup_saved_references(keep_latest=2, max_age_days=0, min_keep_per_kind=1)
+    assert removed >= 1

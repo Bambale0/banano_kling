@@ -43,7 +43,7 @@
 - image generation через `POST /mini-app/api/generate-image`
 - video generation через `POST /mini-app/api/generate-video`
 - task detail через `POST /mini-app/api/task-detail`
-- авто-fallback в demo mode, если нет Telegram `initData`
+- блокирующий экран без демо-данных, если нет Telegram `initData`
 
 ## Что уже можно использовать в проде прямо сейчас
 

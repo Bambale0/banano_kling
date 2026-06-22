@@ -223,11 +223,12 @@ export function VideoGeneratorForm({
   const needsAvatarImage = selectedScenario === 'avatar' && startImage.length === 0
   const needsAvatarAudio = selectedScenario === 'avatar' && audioReference.length === 0
   const needsOmniVoiceName = isOmniAudio && omniVoiceName.trim().length === 0
-  
-  const isValid = prompt.trim().length > 0 && 
-    canAfford && 
-    scenarioSupported && 
-    !needsStartImage && 
+
+  const hasPrompt = prompt.trim().length > 0 || Boolean(sourceFeedGenId)
+  const isValid = hasPrompt &&
+    canAfford &&
+    scenarioSupported &&
+    !needsStartImage &&
     !needsVideoRef &&
     !needsAvatarImage &&
     !needsAvatarAudio &&
@@ -396,8 +397,8 @@ export function VideoGeneratorForm({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="glass rounded-2xl border border-cyan/20 p-4 space-y-4">
+    <div className="min-w-0 space-y-4 overflow-x-hidden">
+      <div className="glass min-w-0 space-y-4 overflow-hidden rounded-2xl border border-cyan/20 p-3 sm:p-4">
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Модель</label>
           <ModelSelect
@@ -417,25 +418,27 @@ export function VideoGeneratorForm({
           />
         </div>
 
-        <div className="rounded-2xl border border-cyan/20 bg-cyan/5 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+        <div className="min-w-0 rounded-2xl border border-cyan/20 bg-cyan/5 p-3 sm:p-4">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">{model?.label}</p>
               <p className="text-xs text-muted-foreground mt-1">{model?.description}</p>
               <p className="text-xs text-muted-foreground mt-1">
                 {isOmniAudio || isOmniCharacter ? `${cost}🍌 за ID` : `${formatPerSecondCost(perSecondCost)}🍌 за 1 секунду`}
               </p>
             </div>
-            <div className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs text-gold">
-              {isOmniAudio || isOmniCharacter ? 'ID' : `${model?.durations.join(' / ')} сек`}
+            <div className="w-fit max-w-full rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs text-gold">
+              <span className="block max-w-full truncate">
+                {isOmniAudio || isOmniCharacter ? 'ID' : `${model?.durations.join('/')} сек`}
+              </span>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex min-w-0 flex-wrap gap-2">
             {(model?.supports || []).map((scenario) => (
               <span
                 key={scenario}
-                className="rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground"
+                className="max-w-full rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs text-secondary-foreground"
               >
                 {scenario === 'text'
                   ? 'Текст → Видео'
@@ -985,7 +988,7 @@ export function VideoGeneratorForm({
               {sourceFeedGenId
                 ? prompt.trim().length > 0
                   ? 'Промпт из ленты готов к запуску'
-                  : 'Добавьте текст промпта'
+                  : 'Промпт скрыт автором, запуск доступен'
                 : scenarioSupported
                 ? 'Сценарий поддерживается выбранной моделью'
                 : 'Выбранный сценарий для модели недоступен'}

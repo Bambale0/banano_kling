@@ -1149,10 +1149,16 @@ def get_payment_method_keyboard(
     has_yookassa: bool = True,
     has_crypto: bool = True,
     has_lava: bool = False,
+    has_stars: bool = True,
     lava_price_usd: float | None = None,
 ) -> types.InlineKeyboardMarkup:
     """Выбор способа оплаты для конкретного пакета."""
     builder = InlineKeyboardBuilder()
+    if has_stars:
+        builder.button(
+            text="⭐ Telegram Stars",
+            callback_data=f"buy_stars_{package_id}",
+        )
     if has_yookassa:
         builder.button(
             text="💳 Банковская карта (YooKassa)",

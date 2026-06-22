@@ -51,7 +51,7 @@ export function ScenarioSelect({ scenarios, value, onChange }: ScenarioSelectPro
   const allScenarios: ScenarioType[] = ['text', 'imgtxt', 'video', 'audio', 'character', 'avatar']
 
   return (
-    <div className="flex gap-2">
+    <div className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-6">
       {allScenarios.map((scenario) => {
         const config = scenarioConfig[scenario]
         const Icon = config.icon
@@ -64,7 +64,7 @@ export function ScenarioSelect({ scenarios, value, onChange }: ScenarioSelectPro
             onClick={() => isAvailable && onChange(scenario)}
             disabled={!isAvailable}
             className={cn(
-              "flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl",
+              "min-h-16 min-w-0 flex flex-col items-center justify-center gap-1.5 rounded-xl p-2",
               "border transition-all duration-200",
               isSelected 
                 ? "bg-cyan/15 border-cyan/50 text-cyan" 
@@ -73,8 +73,8 @@ export function ScenarioSelect({ scenarios, value, onChange }: ScenarioSelectPro
                   : "bg-secondary/20 border-border/30 text-muted-foreground/40 cursor-not-allowed"
             )}
           >
-            <Icon className="w-4 h-4" />
-            <span className="text-[10px] font-medium text-center leading-tight">
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="max-w-full text-center text-[10px] font-medium leading-tight">
               {config.label}
             </span>
           </button>

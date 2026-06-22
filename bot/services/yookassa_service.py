@@ -3,12 +3,11 @@ import logging
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import aiosqlite
+from bot import db as db_backend
 from yookassa import Configuration, Payment
 
 from bot import database as db
 from bot.config import config
-from bot.database import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +120,8 @@ class YooKassaService:
 
         results: List[Dict[str, Any]] = []
 
-        async with aiosqlite.connect(DATABASE_PATH) as conn:
-            conn.row_factory = aiosqlite.Row
+        async with db_backend.connect() as conn:
+            conn.row_factory = db_backend.Row
             cursor = await conn.execute(
                 "SELECT id, order_id, user_id, payment_id, credits, amount_rub FROM transactions WHERE provider = 'yookassa' AND status = 'pending' AND payment_id IS NOT NULL LIMIT ?",
                 (limit,),

@@ -13,7 +13,7 @@ interface DurationSelectProps {
 export function DurationSelect({ durations, value, onChange, costs }: DurationSelectProps) {
   const formatCost = (raw: number) => Number(raw.toFixed(2)).toString()
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-4">
       {durations.map((duration) => {
         const isSelected = duration === value
         const cost = costs[duration.toString()] || 0
@@ -24,20 +24,20 @@ export function DurationSelect({ durations, value, onChange, costs }: DurationSe
             key={duration}
             onClick={() => onChange(duration)}
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg",
+              "min-w-0 justify-center flex items-center gap-1.5 px-2 py-2 rounded-lg",
               "border transition-all duration-200",
               isSelected 
                 ? "bg-cyan/15 border-cyan/50 text-cyan" 
                 : "bg-secondary/50 border-border/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
             )}
           >
-            <span className="text-xs font-medium">{duration}с</span>
+            <span className="shrink-0 text-xs font-medium">{duration}с</span>
             <span className={cn(
-              "flex items-center gap-0.5 text-[10px]",
+              "min-w-0 flex items-center gap-0.5 text-[10px]",
               isSelected ? "text-gold" : "text-gold/70"
             )}>
-              <Banana className="w-3 h-3" />
-              {formatCost(perSecondCost)}/с
+              <Banana className="h-3 w-3 shrink-0" />
+              <span className="truncate">{formatCost(perSecondCost)}/с</span>
             </span>
           </button>
         )

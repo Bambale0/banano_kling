@@ -118,13 +118,7 @@ export function MotionTab() {
 
   async function uploadImage(file: File) {
     if (state.mode !== 'live') {
-      setCharacterImage({
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: 'image',
-        size: file.size,
-      })
+      setError('Откройте Mini App через Telegram, чтобы загрузить фото.')
       return
     }
 
@@ -147,13 +141,7 @@ export function MotionTab() {
     setVideoDuration(duration)
 
     if (state.mode !== 'live') {
-      setMotionVideo({
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: '',
-        type: 'video',
-        size: file.size,
-      })
+      setError('Откройте Mini App через Telegram, чтобы загрузить видео.')
       return
     }
 
@@ -162,6 +150,11 @@ export function MotionTab() {
 
   async function handleSubmit() {
     setError(null)
+
+    if (state.mode !== 'live') {
+      setError('Откройте Mini App через Telegram, чтобы запустить Motion Control.')
+      return
+    }
 
     if (!characterImage) {
       setError('Загрузите фото персонажа')
@@ -176,44 +169,23 @@ export function MotionTab() {
     setIsSubmitting(true)
 
     try {
-      if (state.mode === 'live') {
-        const result = await generateMotion({
-          imageUrl: characterImage.url,
-          videoUrl: motionVideo.url,
-          prompt,
-          mode,
-          direction,
-          model: motionModel,
-          videoDuration,
-        })
+      const result = await generateMotion({
+        imageUrl: characterImage.url,
+        videoUrl: motionVideo.url,
+        prompt,
+        mode,
+        direction,
+        model: motionModel,
+        videoDuration,
+      })
 
-        addTask(result.task)
-        setCredits(result.credits)
-        setLastРезультат(result.task)
-        selectTask(result.task)
+      addTask(result.task)
+      setCredits(result.credits)
+      setLastРезультат(result.task)
+      selectTask(result.task)
 
-        if (result.detail) {
-          setTaskDetail(result.detail)
-        }
-      } else {
-        const cost = motionCost
-        const newTask: Task = {
-          task_id: `motion_${Date.now()}`,
-          type: 'video',
-          model: motionModel,
-          model_label: motionModelData?.label || 'Motion Control',
-          aspect_ratio: 'motion',
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          prompt_preview: prompt || 'Motion transfer',
-          cost,
-          duration: videoDuration,
-        }
-
-        addTask(newTask)
-        setCredits(Math.max(state.user.credits - cost, 0))
-        setLastРезультат(newTask)
-        selectTask(newTask)
+      if (result.detail) {
+        setTaskDetail(result.detail)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить Motion Control')

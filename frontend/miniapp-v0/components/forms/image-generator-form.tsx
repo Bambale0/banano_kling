@@ -63,7 +63,7 @@ export function ImageGeneratorForm({
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
   const needsReference = (model?.requires_reference || isFeedRemix) && references.length === 0
-  const hasPrompt = prompt.trim().length > 0
+  const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference
 
   useEffect(() => {
@@ -320,7 +320,7 @@ export function ImageGeneratorForm({
               {isFeedRemix
                 ? prompt.trim().length > 0
                   ? 'Промпт из ленты готов к запуску'
-                  : 'Добавьте текст промпта'
+                  : 'Промпт скрыт автором, запуск доступен'
                 : selectedPromptId
                   ? 'Используется промпт из библиотеки'
                   : prompt.trim().length > 0

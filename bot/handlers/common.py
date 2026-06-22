@@ -7,7 +7,7 @@ import uuid
 from math import floor
 from urllib.parse import urlparse
 
-import aiosqlite
+from bot import db as db_backend
 import aiohttp
 from aiogram import Bot, F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -33,6 +33,7 @@ from bot.database import (
     get_prompt_by_id,
     get_referral_stats,
     get_partner_withdrawal_request,
+    get_task_by_id,
     get_top_prompts,
     get_user_by_referral_code,
     get_user_feed_generations,
@@ -49,6 +50,12 @@ from bot.database import (
     use_prompt,
 )
 from bot.config import config
+from bot.miniapp_links import (
+    feed_bot_link as build_feed_bot_link,
+    feed_start_param as build_feed_start_param,
+    referral_link as build_referral_link,
+    remix_link as build_remix_link,
+)
 from bot.keyboards import (
     get_ai_assistant_keyboard,
     get_admin_keyboard,
@@ -1488,7 +1495,7 @@ def _ai_admin_extract_promo_code(raw_text: str) -> str | None:
 
 
 async def _ai_admin_user_exists(telegram_id: int) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT 1 FROM users WHERE telegram_id = ? LIMIT 1",
             (telegram_id,),
@@ -2060,15 +2067,19 @@ async def _activate_referral_code(
 
 
 def _feed_start_param(gen_id: int | str, referral_code: str | None = None) -> str:
-    code = str(referral_code or "").strip().upper()
-    base = f"feed_{gen_id}"
-    return f"{base}_ref_{code}" if code else base
+    return build_feed_start_param(gen_id, referral_code)
 
 
 def _feed_share_link(bot_username: str, gen_id: int | str, referral_code: str | None = None) -> str:
-    if not bot_username or not gen_id:
+    if not gen_id:
         return config.mini_app_url
-    return f"https://t.me/{bot_username}?start={_feed_start_param(gen_id, referral_code)}"
+    return build_feed_bot_link(bot_username, gen_id, referral_code)
+
+
+def _feed_remix_link(bot_username: str, gen_id: int | str, referral_code: str | None = None) -> str:
+    if not gen_id:
+        return config.mini_app_url
+    return build_remix_link(bot_username, gen_id, referral_code)
 
 
 def _split_feed_deeplink(value: str) -> tuple[str, str]:
@@ -2099,6 +2110,19 @@ def _feed_card_media_kind(card: dict, photo_url: str) -> str:
     if gen_type == "video":
         return "video"
     return "video" if _is_probably_video_url(photo_url) else "photo"
+
+
+def _feed_card_public_references(card: dict) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    for url in card.get("reference_images", []) or []:
+        value = str(url or "").strip()
+        if value:
+            refs.append(("photo", value))
+    for url in card.get("reference_videos", []) or []:
+        value = str(url or "").strip()
+        if value:
+            refs.append(("video", value))
+    return refs
 
 
 def _preview_filename(url: str, content_type: str = "") -> str:
@@ -2230,6 +2254,7 @@ async def _build_feed_keyboard(
 ) -> types.InlineKeyboardMarkup:
     gen_id = int(card.get("id") or 0)
     author_referral_code = str(card.get("author_referral_code") or "").strip()
+    username = await _bot_username(bot)
     prev_index = (index - 1) % total
     next_index = (index + 1) % total
     rows: list[list[types.InlineKeyboardButton]] = [
@@ -2282,13 +2307,33 @@ async def _build_feed_keyboard(
             ]
         )
 
-    gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
-    task_id = str(card.get("id") or card.get("task_id") or "").strip()
-    if task_id and gen_type == "image":
+    public_refs = _feed_card_public_references(card)
+    if public_refs:
         rows.append(
             [
                 types.InlineKeyboardButton(
-                    text="🔁 Повторить",
+                    text=f"🧩 Референсы ({len(public_refs)})",
+                    callback_data=f"bfr:{gen_id}",
+                )
+            ]
+        )
+
+    gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
+    task_id = str(card.get("id") or card.get("task_id") or "").strip()
+    if task_id and gen_type == "image":
+        if username and gen_id:
+            rows.append(
+                [
+                    types.InlineKeyboardButton(
+                        text="🚀 Повторить в Mini App",
+                        url=_feed_remix_link(username, gen_id, author_referral_code),
+                    )
+                ]
+            )
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🔁 Повторить в боте",
                     callback_data=f"repeat_image_{task_id}",
                 )
             ]
@@ -2304,7 +2349,6 @@ async def _build_feed_keyboard(
             ),
         )
     ]
-    username = await _bot_username(bot)
     if username and gen_id:
         action_row.append(
             types.InlineKeyboardButton(
@@ -2573,7 +2617,54 @@ async def _render_feed_by_source(
     )
 
 
-async def _render_feed_deeplink(message: types.Message, user, gen_id: str) -> bool:
+async def _open_repeat_screen_from_feed_deeplink(
+    message: types.Message,
+    state: FSMContext,
+    user,
+    gen_id: str,
+) -> None:
+    task = await get_task_by_id(gen_id)
+    if not task or task.type != "image" or not task.is_public_feed:
+        return
+
+    try:
+        from bot.handlers.generation import (
+            _restore_image_task_to_state,
+            _show_repeat_image_screen,
+        )
+    except Exception:
+        logger.exception("Cannot import repeat image helpers for feed deeplink")
+        return
+
+    include_references = bool(task.user_id == user.id)
+    hide_prompt = bool(task.user_id != user.id)
+    restored, error_message = await _restore_image_task_to_state(
+        task,
+        state,
+        include_references=include_references,
+        repeat_source_task_id=str(task.id),
+        hide_prompt=hide_prompt,
+    )
+    if not restored:
+        logger.info(
+            "Cannot restore feed repeat deeplink: gen_id=%s user_id=%s error=%s",
+            gen_id,
+            getattr(user, "id", None),
+            error_message,
+        )
+        return
+
+    await _show_repeat_image_screen(message, state)
+
+
+async def _render_feed_deeplink(
+    message: types.Message,
+    user,
+    gen_id: str,
+    *,
+    state: FSMContext | None = None,
+    open_repeat: bool = False,
+) -> bool:
     card = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
     if not card:
         await message.answer(
@@ -2594,6 +2685,8 @@ async def _render_feed_deeplink(message: types.Message, user, gen_id: str) -> bo
         index=index,
         source_code="r",
     )
+    if open_repeat and state is not None:
+        await _open_repeat_screen_from_feed_deeplink(message, state, user, str(card["id"]))
     return True
 
 
@@ -3091,6 +3184,38 @@ async def share_feed_card(callback: types.CallbackQuery):
     await _safe_callback_answer(callback, f"Ссылка: {link}", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("bfr:"))
+async def show_feed_references(callback: types.CallbackQuery):
+    gen_id = _parse_int((callback.data or "").replace("bfr:", "", 1), 0)
+    user = await get_or_create_user(callback.from_user.id)
+    card = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
+    refs = _feed_card_public_references(card or {})
+    if not card or not refs:
+        await _safe_callback_answer(callback, "Референсы скрыты автором", show_alert=True)
+        return
+
+    media: list[types.InputMediaPhoto | types.InputMediaVideo] = []
+    for kind, url in refs[:10]:
+        if kind == "video":
+            media.append(types.InputMediaVideo(media=url, supports_streaming=True))
+        else:
+            media.append(types.InputMediaPhoto(media=url))
+
+    try:
+        await callback.message.answer_media_group(media)
+    except Exception as e:
+        logger.info("Cannot send feed references media group: %s", e)
+        links = "\n".join(
+            f"{index}. {html.escape(url)}"
+            for index, (_kind, url) in enumerate(refs[:10], start=1)
+        )
+        await callback.message.answer(
+            f"🧩 <b>Открытые референсы</b>\n\n{links}",
+            parse_mode="HTML",
+        )
+    await _safe_callback_answer(callback, "Референсы отправлены")
+
+
 @router.callback_query(F.data == "menu_prompts")
 async def show_prompt_library(callback: types.CallbackQuery, state: FSMContext):
     """Показывает библиотеку промптов внутри Telegram-бота."""
@@ -3327,6 +3452,26 @@ async def cmd_start(message: types.Message, state: FSMContext):
             message,
             user,
             feed_gen_id,
+        )
+        return
+
+    elif args and args[0].startswith("remix_"):
+        feed_gen_id, referral_code = _split_feed_deeplink(
+            args[0].replace("remix_", "", 1)
+        )
+        referral_bonus_text = await _activate_referral_code(
+            message.bot,
+            message.from_user,
+            referral_code,
+        )
+        if referral_bonus_text:
+            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        await _render_feed_deeplink(
+            message,
+            user,
+            feed_gen_id,
+            state=state,
+            open_repeat=True,
         )
         return
 
@@ -3626,7 +3771,7 @@ async def render_partner_program(target, user_id: int):
     me = await bot.get_me()
     referral_code = user.referral_code or ""
     referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}"
+        build_referral_link(me.username, referral_code)
         if referral_code
         else "Ссылка появится после активации"
     )
@@ -3688,7 +3833,7 @@ async def accept_partner(callback: types.CallbackQuery):
     me = await callback.bot.get_me()
     referral_code = user.referral_code
     referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+        build_referral_link(me.username, referral_code) if referral_code else ""
     )
 
     await callback.message.edit_text(
@@ -3719,7 +3864,7 @@ async def partner_stats(callback: types.CallbackQuery):
     me = await callback.bot.get_me()
     referral_code = user.referral_code
     referral_link = (
-        f"https://t.me/{me.username}?start=ref_{referral_code}" if referral_code else ""
+        build_referral_link(me.username, referral_code) if referral_code else ""
     )
 
     await callback.message.edit_text(
@@ -4792,8 +4937,8 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
 
     if task_result and "task_id" in task_result:
         api_task_id = task_result["task_id"]
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with db_backend.connect(DATABASE_PATH) as db:
+            db.row_factory = db_backend.Row
             cursor = await db.execute(
                 "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
                 (local_task_id, user.id),

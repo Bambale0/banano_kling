@@ -20,6 +20,11 @@ from dotenv import load_dotenv
 load_dotenv(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 )
+load_dotenv(
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env.postgres"
+    )
+)
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -34,7 +39,9 @@ from aiogram.types import (
     Update,
 )
 from aiohttp import web
+import aiohttp
 
+from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     cleanup_orphaned_reference_files,
@@ -95,6 +102,20 @@ USER_BOT_COMMAND_SCOPES = (
     BotCommandScopeAllPrivateChats(),
 )
 USER_BOT_COMMAND_LANGUAGES = (None, "ru")
+
+
+async def _set_commands_chat_menu_button() -> None:
+    """Force Telegram's system menu button to open the bot command list."""
+    url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/setChatMenuButton"
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            url,
+            json={"menu_button": {"type": "commands"}},
+        ) as response:
+            payload = await response.json(content_type=None)
+    if not payload.get("ok"):
+        raise RuntimeError(payload.get("description") or "setChatMenuButton failed")
 
 
 async def _complete_reconciled_order(order_id: str, bot: Bot) -> dict:
@@ -399,6 +420,22 @@ def _preview_log_payload(value, limit: int = 1200) -> str:
             for key, item in obj.items():
                 key_str = str(key)
                 lowered = key_str.lower()
+                if any(
+                    marker in lowered
+                    for marker in (
+                        "authorization",
+                        "cookie",
+                        "credential",
+                        "password",
+                        "signature",
+                        "secret",
+                        "token",
+                        "api_key",
+                        "apikey",
+                    )
+                ):
+                    redacted[key_str] = "[redacted]"
+                    continue
                 if lowered in {"prompt", "negative_prompt", "system_prompt", "raw_body", "body_text", "param", "params"}:
                     if isinstance(item, str):
                         redacted[key_str] = f"[redacted:{len(item)} chars]"
@@ -1208,10 +1245,7 @@ async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str
     retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
     retry_request_data = _merge_task_id_aliases(retry_request_data, failed_task_id, new_task_id)
 
-    import aiosqlite
-    from bot.database import DATABASE_PATH
-
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect() as db:
         await db.execute(
             "UPDATE generation_tasks SET task_id = ?, request_data = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ?",
             (new_task_id, json.dumps(retry_request_data, ensure_ascii=False), failed_task_id, task.user_id),
@@ -1296,10 +1330,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
     retry_request_data = _merge_task_id_aliases(retry_request_data, failed_task_id, new_task_id)
 
-    import aiosqlite
-    from bot.database import DATABASE_PATH
-
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect() as db:
         await db.execute(
             "UPDATE generation_tasks SET task_id = ?, request_data = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ?",
             (new_task_id, json.dumps(retry_request_data, ensure_ascii=False), failed_task_id, task.user_id),
@@ -1391,7 +1422,7 @@ async def _cleanup_loop():
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
 
-async def on_startup(bot: Bot):
+async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     """Действия при старте бота"""
     logger.info("Bot starting...")
 
@@ -1414,13 +1445,22 @@ async def on_startup(bot: Bot):
         logger.exception("Failed to register user bot commands")
 
     try:
+        await _set_commands_chat_menu_button()
+        logger.info("Configured Telegram chat menu button for bot commands")
+    except Exception:
+        logger.exception("Failed to configure Telegram chat menu button")
+
+    try:
         await redis_service.get_client()
     except Exception:
         logger.exception("Redis warmup failed during startup")
 
     # Устанавливаем вебхук для Telegram (если используем webhook mode)
     if config.WEBHOOK_HOST:
-        await bot.set_webhook(config.webhook_url)
+        webhook_kwargs = {}
+        if dispatcher is not None:
+            webhook_kwargs["allowed_updates"] = dispatcher.resolve_used_update_types()
+        await bot.set_webhook(config.webhook_url, **webhook_kwargs)
         logger.info(f"Webhook set to {config.webhook_url}")
 
     # Загружаем пресеты
@@ -2033,7 +2073,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         if not task_id:
             logger.error(
                 f"Kling webhook missing task id. Top-level keys: {list(data.keys())}, "
-                + f"payload: {webhook_data}"
+                + f"payload: {_preview_log_payload(webhook_data)}"
             )
             return web.Response(status=200)
 
@@ -2366,7 +2406,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
         logger.info(f"Seedream webhook headers: {dict(request.headers)}")
 
         body = await request.text()
-        logger.info(f"Seedream webhook raw body: {repr(body)[:500]}")
+        logger.info("Seedream webhook raw body: %s", _preview_log_payload(body, limit=500))
 
         if not body:
             logger.warning("Seedream webhook received empty body")
@@ -2378,7 +2418,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Seedream webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"Seedream webhook parsed data: {data}")
+        logger.info("Seedream webhook parsed data: %s", _preview_log_payload(data))
 
         # Check event type - Novita AI sends ASYNC_TASK_RESULT
         event_type = data.get("event_type")
@@ -2583,7 +2623,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             logger.warning(f"Novita FLUX webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"Novita FLUX webhook parsed data: {data}")
+        logger.info("Novita FLUX webhook parsed data: %s", _preview_log_payload(data))
 
         # Check event type - Novita AI sends ASYNC_TASK_RESULT
         event_type = data.get("event_type")
@@ -2748,7 +2788,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             logger.warning(f"WanX webhook received invalid JSON: {e}")
             return web.Response(status=200)
 
-        logger.info(f"WanX webhook parsed data: {data}")
+        logger.info("WanX webhook parsed data: %s", _preview_log_payload(data))
 
         webhook_data = data.get("data") or data.get("payload") or data
         task_id = webhook_data.get("task_id")
@@ -3343,7 +3383,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     "не вернула картинку."
                 )
             logger.error(
-                f"{service_name} task {task_id} FAILED: failCode={fail_code}, failMsg={fail_msg}, full data: {webhook_data}"
+                "%s task %s FAILED: failCode=%s, failMsg=%s, data=%s",
+                service_name,
+                task_id,
+                fail_code,
+                fail_msg,
+                _preview_log_payload(webhook_data),
             )
 
             if task and (
@@ -3540,7 +3585,7 @@ async def main():
         await site.start()
 
         logger.info(f"Server started on port {config.WEBHOOK_PORT}")
-        await on_startup(bot)
+        await on_startup(bot, dp)
 
         # Держим бота запущенным
         await asyncio.Event().wait()

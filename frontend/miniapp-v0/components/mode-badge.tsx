@@ -28,7 +28,7 @@ export function ModeBadge({ mode }: ModeBadgeProps) {
       ) : (
         <>
           <Radio className="w-3 h-3" />
-          <span>Просмотр</span>
+          <span>Telegram</span>
         </>
       )}
     </div>

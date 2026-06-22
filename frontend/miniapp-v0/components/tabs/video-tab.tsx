@@ -4,21 +4,8 @@ import { useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { ResultCard } from '../result-card'
-import type { Task, ScenarioType, UploadedFile, VideoModel } from '@/lib/types'
+import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import { generateVideo, uploadFile } from '@/lib/api'
-
-function roundVideoCost(raw: number) {
-  return Math.round(raw * 2) / 2
-}
-
-function getVideoModelCost(model: VideoModel | undefined, duration: number, quality?: string) {
-  if (!model) return 5
-  const qualityCost = quality ? model.quality_costs?.[quality] : undefined
-  if (typeof qualityCost === 'number') {
-    return roundVideoCost(qualityCost * duration)
-  }
-  return model.costs[duration.toString()] ?? Object.values(model.costs)[0] ?? 5
-}
 
 export function VideoTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, videoPromptPreset, setVideoPromptPreset } = useApp()
@@ -57,57 +44,21 @@ export function VideoTab() {
     videoReferences: string[]
     audioReference: string | null
   }) => {
+    if (state.mode !== 'live') {
+      setError('Откройте Mini App через Telegram, чтобы запустить генерацию.')
+      return
+    }
     setIsSubmitting(true)
     setError(null)
     try {
-      if (state.mode === 'live') {
-        const result = await generateVideo(data)
-        addTask(result.task)
-        setCredits(result.credits)
-        setLastРезультат(result.task)
-        if (result.detail) {
-          setTaskDetail(result.detail)
-        }
-        selectTask(result.task)
-      } else {
-        const model = state.videoModels.find(m => m.id === data.model)
-        const quality = model?.veo_resolutions?.length
-          ? data.veoResolution
-          : model?.grok_resolutions?.length
-            ? data.grokResolution
-            : (data.model === 'gemini_omni' || data.model === 'gemini_omni_video') && data.scenario !== 'audio' && data.scenario !== 'character'
-            ? data.omniResolution
-            : undefined
-        const cost = data.scenario === 'audio'
-          ? model?.omni_audio_cost ?? 3
-          : data.scenario === 'character'
-            ? model?.omni_character_cost ?? 5
-            : getVideoModelCost(model, data.duration, quality)
-        const newTask: Task = {
-          task_id: `task_${Date.now()}`,
-          type: data.scenario === 'audio' ? 'audio' : data.scenario === 'character' ? 'character' : 'video',
-          model: data.model,
-          model_label: data.model === 'gemini_omni'
-            ? data.scenario === 'audio'
-              ? 'Gemini Omni Audio'
-              : data.scenario === 'character'
-                ? 'Gemini Omni Character'
-                : 'Gemini Omni Video'
-            : model?.label || data.model,
-          aspect_ratio: data.ratio,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          prompt_preview: data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
-          cost,
-          duration: data.duration,
-          prompt_hidden: false,
-          prompt_actions_allowed: !data.sourceFeedGenId,
-        }
-        addTask(newTask)
-        setCredits(Math.max(state.user.credits - cost, 0))
-        setLastРезультат(newTask)
-        selectTask(newTask)
+      const result = await generateVideo(data)
+      addTask(result.task)
+      setCredits(result.credits)
+      setLastРезультат(result.task)
+      if (result.detail) {
+        setTaskDetail(result.detail)
       }
+      selectTask(result.task)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
     } finally {
@@ -117,13 +68,7 @@ export function VideoTab() {
 
   const handleUploadImageReference = async (file: File): Promise<UploadedFile> => {
     if (state.mode !== 'live') {
-      return {
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: 'image',
-        size: file.size,
-      }
+      throw new Error('Откройте Mini App через Telegram, чтобы загрузить референс.')
     }
     const uploaded = await uploadFile('image_reference', file)
     addSavedReference(uploaded)
@@ -132,13 +77,7 @@ export function VideoTab() {
 
   const handleUploadVideoReference = async (file: File): Promise<UploadedFile> => {
     if (state.mode !== 'live') {
-      return {
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: '',
-        type: 'video',
-        size: file.size,
-      }
+      throw new Error('Откройте Mini App через Telegram, чтобы загрузить видео.')
     }
     const uploaded = await uploadFile('video_reference', file)
     addSavedReference(uploaded)
@@ -148,13 +87,7 @@ export function VideoTab() {
 
   const handleUploadAudioReference = async (file: File): Promise<UploadedFile> => {
     if (state.mode !== 'live') {
-      return {
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: '',
-        type: 'audio',
-        size: file.size,
-      }
+      throw new Error('Откройте Mini App через Telegram, чтобы загрузить аудио.')
     }
     const uploaded = await uploadFile('audio_reference', file)
     addSavedReference(uploaded)
@@ -162,7 +95,7 @@ export function VideoTab() {
   }
 
   return (
-    <div className="px-4 space-y-6">
+    <div className="min-w-0 space-y-4 overflow-x-hidden px-3 pb-3 sm:px-4">
       <div className="text-center mb-6">
         <h2 className="font-serif text-xl font-semibold text-foreground mb-1">
           Генерация видео
@@ -172,7 +105,7 @@ export function VideoTab() {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
         <VideoGeneratorForm 
           models={state.videoModels}
           onSubmit={handleSubmit}

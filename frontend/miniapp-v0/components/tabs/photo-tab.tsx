@@ -25,6 +25,10 @@ export function PhotoTab() {
     prompt: string
     references: string[]
   }) => {
+    if (state.mode !== 'live') {
+      setError('Откройте Mini App через Telegram, чтобы запустить генерацию.')
+      return
+    }
     setIsSubmitting(true)
     setError(null)
     try {
@@ -32,43 +36,22 @@ export function PhotoTab() {
       let latestCredits = state.user.credits
 
       for (let index = 0; index < data.count; index += 1) {
-        if (state.mode === 'live') {
-          const result = await generateImage({
-            model: data.model,
-            ratio: data.ratio,
-            quality: data.quality,
-            nsfwChecker: data.nsfwChecker,
-            nsfwEnabled: data.nsfwEnabled,
-            promptId: data.promptId,
-            sourceFeedGenId: data.sourceFeedGenId,
-            prompt: data.prompt,
-            references: data.references,
-          })
-          addTask(result.task)
-          latestCredits = result.credits
-          lastTask = result.task
-          if (result.detail) {
-            setTaskDetail(result.detail)
-          }
-        } else {
-          const model = state.imageModels.find(m => m.id === data.model)
-          const unitCost = model?.cost || 2
-          const newTask: Task = {
-            task_id: `task_${Date.now()}_${index}`,
-            type: 'image',
-            model: data.model,
-            model_label: model?.label || data.model,
-            aspect_ratio: data.ratio,
-            status: 'pending',
-            created_at: new Date().toISOString(),
-            prompt_preview: data.prompt.slice(0, 100) + (data.prompt.length > 100 ? '...' : ''),
-            cost: unitCost,
-            prompt_hidden: false,
-            prompt_actions_allowed: !data.sourceFeedGenId,
-          }
-          addTask(newTask)
-          latestCredits = Math.max(latestCredits - unitCost, 0)
-          lastTask = newTask
+        const result = await generateImage({
+          model: data.model,
+          ratio: data.ratio,
+          quality: data.quality,
+          nsfwChecker: data.nsfwChecker,
+          nsfwEnabled: data.nsfwEnabled,
+          promptId: data.promptId,
+          sourceFeedGenId: data.sourceFeedGenId,
+          prompt: data.prompt,
+          references: data.references,
+        })
+        addTask(result.task)
+        latestCredits = result.credits
+        lastTask = result.task
+        if (result.detail) {
+          setTaskDetail(result.detail)
         }
       }
 
@@ -86,13 +69,7 @@ export function PhotoTab() {
 
   const handleUploadReference = async (file: File): Promise<UploadedFile> => {
     if (state.mode !== 'live') {
-      return {
-        id: `file_${Date.now()}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: 'image',
-        size: file.size,
-      }
+      throw new Error('Откройте Mini App через Telegram, чтобы загрузить референс.')
     }
     const uploaded = await uploadFile('image_reference', file)
     addSavedReference(uploaded)

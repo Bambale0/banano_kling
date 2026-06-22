@@ -1,12 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-[ -f .env ] && export $(grep -v '^#' .env | xargs) || true
+load_env_file() {
+    local env_file="$1"
+    local line key value
+
+    [ -f "$env_file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [ -n "$line" ] || continue
+        case "$line" in \#*) continue ;; esac
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            export "$key=$value"
+        fi
+    done < "$env_file"
+}
+
+load_env_file .env
+load_env_file .env.postgres
 mkdir -p logs
 [ -f venv/bin/activate ] && source venv/bin/activate
 
 PROJECT_DIR="$(pwd)"
 BOT_PORT="${WEBHOOK_PORT:-1888}"
+SYSTEMD_SERVICE="${BANANO_SYSTEMD_SERVICE:-banano-kling.service}"
+
+if command -v systemctl >/dev/null 2>&1; then
+    SERVICE_STATE="$(systemctl show "$SYSTEMD_SERVICE" --property=LoadState --value 2>/dev/null || true)"
+    if [ "$SERVICE_STATE" = "loaded" ]; then
+        systemctl start "$SYSTEMD_SERVICE"
+        sleep 2
+        if systemctl is-active --quiet "$SYSTEMD_SERVICE"; then
+            BOT_PID="$(systemctl show "$SYSTEMD_SERVICE" --property=MainPID --value 2>/dev/null || true)"
+            if [ -n "$BOT_PID" ] && [ "$BOT_PID" != "0" ]; then
+                echo "$BOT_PID" > bot.pid
+                echo "Bot running via systemd PID=$BOT_PID"
+            else
+                echo "Bot running via systemd"
+            fi
+            exit 0
+        fi
+        systemctl status "$SYSTEMD_SERVICE" --no-pager || true
+        exit 1
+    fi
+fi
 
 is_our_bot_pid() {
     local pid="$1"

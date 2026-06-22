@@ -21,7 +21,7 @@ const ratioIcons: Record<string, { width: number; height: number }> = {
 
 export function RatioSelect({ ratios, value, onChange }: RatioSelectProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-4">
       {ratios.map((ratio) => {
         const icon = ratioIcons[ratio] || { width: 16, height: 16 }
         const isSelected = ratio === value
@@ -31,7 +31,7 @@ export function RatioSelect({ ratios, value, onChange }: RatioSelectProps) {
             key={ratio}
             onClick={() => onChange(ratio)}
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg",
+              "min-w-0 justify-center flex items-center gap-2 px-2 py-2 rounded-lg",
               "border transition-all duration-200",
               isSelected 
                 ? "bg-gold/15 border-gold/50 text-gold" 
@@ -48,7 +48,7 @@ export function RatioSelect({ ratios, value, onChange }: RatioSelectProps) {
                 height: `${icon.height}px` 
               }}
             />
-            <span className="text-xs font-medium">{ratio}</span>
+            <span className="truncate text-xs font-medium">{ratio}</span>
           </button>
         )
       })}

@@ -29,6 +29,15 @@ class Config:
     YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "yookassa").lower()
 
+    # Telegram Stars
+    TELEGRAM_STARS_ENABLED: bool = os.getenv("TELEGRAM_STARS_ENABLED", "1").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    TELEGRAM_STARS_PER_RUB: float = float(os.getenv("TELEGRAM_STARS_PER_RUB", "1"))
+
     # CryptoBot / Crypto Pay
     CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")
     CRYPTOBOT_USE_TESTNET: bool = os.getenv("CRYPTOBOT_USE_TESTNET", "0").lower() in (
@@ -187,7 +196,7 @@ class Config:
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"cryptobot", "lava", "yookassa", "tbank"}:
+        if self.PAYMENT_PROVIDER in {"cryptobot", "lava", "yookassa", "tbank", "telegram_stars"}:
             return self.PAYMENT_PROVIDER
         return "cryptobot"
 

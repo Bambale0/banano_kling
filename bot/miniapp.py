@@ -9,7 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
-import aiosqlite
+from aiogram.types import LabeledPrice
+from bot import db as db_backend
 from aiohttp import web
 
 from bot.config import config
@@ -60,6 +61,7 @@ from bot.database import (
     share_to_feed,
     share_to_library,
     touch_saved_references,
+    update_transaction_status,
     update_user_profile,
     use_prompt,
 )
@@ -93,6 +95,22 @@ from bot.keyboards import (
     get_payment_packages_keyboard,
     get_support_keyboard,
     get_video_model_label,
+)
+from bot.miniapp_links import (
+    feed_bot_link as build_feed_bot_link,
+    feed_link as build_feed_link,
+    profile_link as build_profile_link,
+    prompt_link as build_prompt_link,
+    referral_link as build_referral_link,
+    remix_bot_link as build_remix_bot_link,
+    remix_link as build_remix_link,
+)
+from bot.payment_utils import (
+    TELEGRAM_STARS_CURRENCY,
+    TELEGRAM_STARS_PROVIDER,
+    build_stars_invoice_payload,
+    package_stars_amount,
+    total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
@@ -130,6 +148,13 @@ def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
         "created_at": reference.created_at.isoformat() if reference.created_at else None,
         "last_used_at": reference.last_used_at.isoformat() if reference.last_used_at else None,
     }
+
+
+def _payment_package_payload(package: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(package)
+    payload["price_stars"] = package_stars_amount(package)
+    return payload
+
 
 IMAGE_MODELS = (
     {
@@ -624,13 +649,15 @@ def _referral_code_from_start_param(start_param: Any) -> str:
     if raw.startswith("ref_"):
         return raw.replace("ref_", "", 1).strip().upper()
 
-    if raw.startswith("feed_"):
-        _, sep, referral_code = raw.replace("feed_", "", 1).partition("_ref_")
-        return referral_code.strip().upper() if sep else ""
+    if raw.startswith(("profile_", "posts_")):
+        payload = raw.split("_", 1)[1]
+        profile_code, sep, referral_code = payload.partition("_ref_")
+        return (referral_code if sep else profile_code).strip().upper()
 
-    if raw.startswith("posts_"):
-        _, sep, referral_code = raw.replace("posts_", "", 1).partition("_ref_")
-        return referral_code.strip().upper() if sep else ""
+    for prefix in ("feed_", "remix_", "prompt_"):
+        if raw.startswith(prefix):
+            _, sep, referral_code = raw.replace(prefix, "", 1).partition("_ref_")
+            return referral_code.strip().upper() if sep else ""
 
     return ""
 
@@ -790,7 +817,7 @@ def _task_has_source_feed(row_or_payload: Any) -> bool:
 
 
 def _task_prompt_hidden(row_or_payload: Any) -> bool:
-    return False
+    return _task_has_source_feed(row_or_payload)
 
 
 def _task_prompt_actions_allowed(row_or_payload: Any) -> bool:
@@ -809,6 +836,22 @@ def _public_result_urls(payload: dict[str, Any]) -> list[str]:
     if result_url and result_url not in normalized:
         normalized.insert(0, result_url)
     return normalized
+
+
+def _payload_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on", "да"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "нет"}:
+            return False
+    return default
 
 
 async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
@@ -842,13 +885,13 @@ def _normalize_video_ratio(ratio: str) -> str:
 
 
 async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, created_at
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -884,6 +927,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "prompt_actions_allowed": _task_prompt_actions_allowed(row),
                 "is_public_feed": bool(row["is_public_feed"]),
                 "is_prompt_library": bool(row["is_prompt_library"]),
+                "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
+                "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
                 "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
@@ -893,13 +938,13 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
 
 async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] | None:
     lookup_value = str(task_id or "").strip()
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, created_at, request_data
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -912,7 +957,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, created_at, request_data
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -925,7 +970,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, created_at, request_data
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -975,6 +1020,8 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "result_urls": _public_result_urls(dict(row)),
         "is_public_feed": bool(row["is_public_feed"]),
         "is_prompt_library": bool(row["is_prompt_library"]),
+        "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
+        "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "created_at": row["created_at"],
         "request_data": request_data,
     }
@@ -1674,7 +1721,7 @@ async def _send_partner(app: web.Application, telegram_id: int):
     user = await get_or_create_user(telegram_id)
     me = await app["bot"].get_me()
     referral_link = (
-        f"https://t.me/{me.username}?start=ref_{user.referral_code}"
+        build_referral_link(me.username, user.referral_code)
         if user.referral_code
         else ""
     )
@@ -1748,7 +1795,7 @@ ACTIONS = {
 }
 
 
-async def miniapp_index(_request: web.Request) -> web.Response:
+async def miniapp_index(request: web.Request) -> web.Response:
     root = _resolve_miniapp_static_root()
     index_path = root / "index.html"
     logger.info(
@@ -1756,7 +1803,28 @@ async def miniapp_index(_request: web.Request) -> web.Response:
         str(root),
         str(index_path.exists()),
     )
-    response = web.FileResponse(index_path)
+    response: web.StreamResponse
+    try:
+        me = await request.app["bot"].get_me()
+        runtime_config = {
+            "botUsername": str(me.username or ""),
+            "miniAppUrl": config.mini_app_url,
+        }
+        script = (
+            '<script id="miniapp-runtime-config">'
+            "window.__BANANO_MINIAPP_CONFIG__="
+            f"{json.dumps(runtime_config, ensure_ascii=False).replace('</', '<\\/')};"
+            "</script>"
+        )
+        html_text = index_path.read_text(encoding="utf-8")
+        if "</head>" in html_text:
+            html_text = html_text.replace("</head>", f"{script}</head>", 1)
+        else:
+            html_text = f"{script}{html_text}"
+        response = web.Response(text=html_text, content_type="text/html")
+    except Exception:
+        logger.exception("Miniapp runtime config injection failed")
+        response = web.FileResponse(index_path)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -1781,6 +1849,9 @@ async def miniapp_asset(request: web.Request) -> web.Response:
         raise web.HTTPNotFound()
 
     if not asset_path.exists() or not asset_path.is_file():
+        requested = Path(tail)
+        if not requested.suffix:
+            return await miniapp_index(request)
         raise web.HTTPNotFound()
 
     response = web.FileResponse(asset_path)
@@ -1788,7 +1859,6 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
-
 
 async def miniapp_bootstrap(request: web.Request) -> web.Response:
     try:
@@ -1799,12 +1869,12 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         telegram_user = ctx["payload"]["user"]
         me = await request.app["bot"].get_me()
         profile_link = (
-            f"https://t.me/{me.username}?start=posts_{user.referral_code}_ref_{user.referral_code}"
+            build_profile_link(me.username, user.referral_code)
             if me.username and user.referral_code
             else config.mini_app_url
         )
         referral_link = (
-            f"https://t.me/{me.username}?start=ref_{user.referral_code}"
+            build_referral_link(me.username, user.referral_code)
             if me.username and user.referral_code
             else config.mini_app_url
         )
@@ -1833,7 +1903,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
-            "payment_packages": preset_manager.get_packages(),
+            "payment_packages": [
+                _payment_package_payload(package)
+                for package in preset_manager.get_packages()
+            ],
             "image_models": [
                 {**item, "cost": preset_manager.get_generation_cost(item["id"])}
                 for item in IMAGE_MODELS
@@ -1884,7 +1957,7 @@ async def miniapp_action(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         action = body.get("action", "")
         telegram_id, _ctx = await _get_user_context(
-            request.app, init_data, data.get("start_param_fallback")
+            request.app, init_data, body.get("start_param_fallback")
         )
 
         handler = ACTIONS.get(action)
@@ -1907,7 +1980,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         file_kind = str(data.get("file_kind", "image_reference"))
         upload = data.get("file")
 
-        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, _ctx = await _get_user_context(request.app, init_data)
         _ = telegram_id
 
         if file_kind not in FILE_KIND_MAP:
@@ -1985,12 +2058,24 @@ async def miniapp_upload(request: web.Request) -> web.Response:
 
 
 async def miniapp_create_payment(request: web.Request) -> web.Response:
-    """Create a YooKassa payment for a selected package from the mini-app."""
+    """Create a payment for a selected package from the mini-app."""
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
         package_id = body.get("package_id")
         promo_code = body.get("promo_code")
+        raw_provider = str(body.get("provider") or TELEGRAM_STARS_PROVIDER).lower()
+        provider = {
+            "stars": TELEGRAM_STARS_PROVIDER,
+            "telegram_stars": TELEGRAM_STARS_PROVIDER,
+            "xtr": TELEGRAM_STARS_PROVIDER,
+            "yookassa": "yookassa",
+        }.get(raw_provider)
+
+        if not provider:
+            return web.json_response(
+                {"ok": False, "error": "Unsupported payment provider"}, status=400
+            )
 
         if not package_id:
             return web.json_response(
@@ -2006,7 +2091,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Package not found"}, status=404
             )
 
-        order_id = f"{telegram_id}_{int(time.time())}_{package_id}"
+        order_id = f"{telegram_id}_{int(time.time() * 1000)}_{package_id}"
         promo = (
             await get_promo_code_by_code(promo_code, active_only=True)
             if promo_code
@@ -2015,12 +2100,75 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         promo_bonus = (
             get_promo_bonus_for_credits(package["credits"]) if promo else 0
         )
-        total_credits = (
-            package["credits"] + package.get("bonus_credits", 0) + promo_bonus
-        )
+        total_credits = total_package_credits(package, promo_bonus)
         description = f"Покупка {total_credits} бананов ({package['name']})"
 
-        # Create YooKassa payment (use service directly)
+        if provider == TELEGRAM_STARS_PROVIDER:
+            if not config.TELEGRAM_STARS_ENABLED:
+                return web.json_response(
+                    {"ok": False, "error": "Telegram Stars disabled"}, status=500
+                )
+
+            stars_amount = package_stars_amount(package)
+            invoice_payload = build_stars_invoice_payload(order_id, stars_amount)
+            created = await create_transaction(
+                order_id=order_id,
+                user_id=user.id,
+                payment_id=f"pending:{stars_amount}",
+                provider=TELEGRAM_STARS_PROVIDER,
+                credits=total_credits,
+                amount_rub=float(package["price_rub"]),
+                status="pending",
+                promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+                promo_code=promo.code if promo and promo_bonus > 0 else None,
+                promo_bonus_credits=promo_bonus,
+            )
+            if not created:
+                return web.json_response(
+                    {"ok": False, "error": "Payment already exists"}, status=409
+                )
+
+            try:
+                payment_url = await request.app["bot"].create_invoice_link(
+                    title=f"{package['name']} · {total_credits}🍌",
+                    description=description,
+                    payload=invoice_payload,
+                    currency=TELEGRAM_STARS_CURRENCY,
+                    prices=[
+                        LabeledPrice(
+                            label=f"{total_credits} бананов",
+                            amount=stars_amount,
+                        )
+                    ],
+                    provider_token="",
+                )
+            except Exception as exc:
+                await update_transaction_status(order_id, "failed")
+                logger.exception("Mini App Stars invoice link failed order=%s", order_id)
+                return web.json_response(
+                    {"ok": False, "error": str(exc)}, status=500
+                )
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "provider": TELEGRAM_STARS_PROVIDER,
+                    "order_id": order_id,
+                    "payment_id": f"pending:{stars_amount}",
+                    "payment_url": payment_url,
+                    "invoice_url": payment_url,
+                    "stars_amount": stars_amount,
+                    "credits": total_credits,
+                    "promo_bonus_credits": promo_bonus,
+                    "promo_code": promo.code if promo and promo_bonus > 0 else "",
+                }
+            )
+
+        if provider != "yookassa":
+            return web.json_response(
+                {"ok": False, "error": "Unsupported payment provider"}, status=400
+            )
+
         if not yookassa_service.enabled:
             return web.json_response(
                 {"ok": False, "error": "YooKassa not configured"}, status=500
@@ -2059,6 +2207,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         return web.json_response(
             {
                 "ok": True,
+                "provider": "yookassa",
                 "order_id": order_id,
                 "payment_id": payment_id,
                 "payment_url": payment_url,
@@ -2129,7 +2278,7 @@ async def miniapp_prompts(request: web.Request) -> web.Response:
         tag = str(body.get("tag", "") or "").strip()
         category = str(body.get("category", "") or "").strip() or None
         page = max(int(body.get("page", 1) or 1), 1)
-        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        limit = min(max(int(body.get("limit", 40) or 40), 1), 120)
 
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
@@ -2223,7 +2372,7 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         if not (prompt["status"] == "approved" and prompt["is_public"]) and prompt["author_id"] != user.id:
             return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
         me = await request.app["bot"].get_me()
-        link = f"https://t.me/{me.username}?start=prompt_{prompt_id}" if me.username else config.mini_app_url
+        link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
     except Exception as e:
         logger.exception("Mini App prompt link failed")
@@ -2311,7 +2460,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        limit = min(max(int(body.get("limit", 80) or 80), 1), 120)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
@@ -2324,11 +2473,33 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def miniapp_feed_item(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id") or body.get("feed_id")
+        if not gen_id:
+            return web.json_response({"ok": False, "error": "gen_id is required"}, status=400)
+
+        _telegram_id, ctx = await _get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
+        card = await get_feed_generation_card(gen_id, viewer_user_id=ctx["user"].id)
+        if not card:
+            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        return web.json_response({"ok": True, "feed_item": card})
+    except Exception as e:
+        logger.exception("Mini App feed item failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        limit = min(max(int(body.get("limit", 120) or 120), 1), 160)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
@@ -2350,12 +2521,12 @@ def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int |
         display_name = username or f"user_{getattr(author, 'telegram_id', '') or getattr(author, 'id', '')}"
 
     profile_link = (
-        f"https://t.me/{bot_username}?start=posts_{referral_code}_ref_{referral_code}"
+        build_profile_link(bot_username, referral_code)
         if bot_username and referral_code
         else config.mini_app_url
     )
     referral_link = (
-        f"https://t.me/{bot_username}?start=ref_{referral_code}"
+        build_referral_link(bot_username, referral_code)
         if bot_username and referral_code
         else config.mini_app_url
     )
@@ -2378,7 +2549,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = min(max(int(body.get("limit", 300) or 300), 1), 300)
+        limit = min(max(int(body.get("limit", 120) or 120), 1), 160)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
@@ -2424,8 +2595,21 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id") or body.get("feed_id")
+        prompt_visible = _payload_bool(
+            body.get("prompt_visible", body.get("feed_prompt_visible")),
+            False,
+        )
+        references_visible = _payload_bool(
+            body.get("references_visible", body.get("feed_references_visible")),
+            False,
+        )
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        card = await share_to_feed(gen_id, ctx["user"].id)
+        card = await share_to_feed(
+            gen_id,
+            ctx["user"].id,
+            prompt_visible=prompt_visible,
+            references_visible=references_visible,
+        )
         if not card:
             logger.warning(
                 "Mini App share rejected: telegram_id=%s user_id=%s gen_id=%r body_keys=%s",
@@ -2483,14 +2667,41 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
         me = await request.app["bot"].get_me()
         author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
-        start_param = (
-            f"feed_{card['id']}_ref_{author_referral_code}"
-            if author_referral_code
-            else f"feed_{card['id']}"
+        is_image_feed_item = str(card.get("gen_type") or "").strip().lower() == "image"
+        post_link = (
+            build_feed_bot_link(me.username, card["id"], author_referral_code)
+            if me.username
+            else config.mini_app_url
         )
-        link = f"https://t.me/{me.username}?start={start_param}" if me.username else config.mini_app_url
+        repeat_link = (
+            build_remix_bot_link(me.username, card["id"], author_referral_code)
+            if me.username and is_image_feed_item
+            else post_link
+        )
+        miniapp_post_link = (
+            build_feed_link(me.username, card["id"], author_referral_code)
+            if me.username
+            else config.mini_app_url
+        )
+        miniapp_repeat_link = (
+            build_remix_link(me.username, card["id"], author_referral_code)
+            if me.username and is_image_feed_item
+            else miniapp_post_link
+        )
         logger.info("Feed share link issued by %s for feed %s", telegram_id, card["id"])
-        return web.json_response({"ok": True, "feed_item": card, "link": link})
+        return web.json_response(
+            {
+                "ok": True,
+                "feed_item": card,
+                "link": post_link,
+                "bot_link": post_link,
+                "post_link": post_link,
+                "repeat_link": repeat_link,
+                "miniapp_link": miniapp_post_link,
+                "miniapp_post_link": miniapp_post_link,
+                "miniapp_repeat_link": miniapp_repeat_link,
+            }
+        )
     except Exception as e:
         logger.exception("Mini App feed share failed")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
@@ -2583,7 +2794,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if not source or source.get("gen_type") != "image":
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
 
-        source_prompt = str(source.get("prompt") or "").strip()
+        source_task = await get_generation_task_payload(source["id"])
+        if not source_task:
+            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        source_prompt = str(source_task.get("prompt") or "").strip()
         if not source_prompt:
             return web.json_response({"ok": False, "error": "У исходной генерации нет prompt"}, status=400)
         prompt = str(body.get("prompt", "") or "").strip() or source_prompt
@@ -2677,7 +2891,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 "credits": fresh_user.credits,
                 "cost": unit_cost,
                 "model_label": get_image_model_label(img_service),
-                "prompt_hidden": False,
+                "prompt_hidden": True,
                 "prompt_actions_allowed": False,
                 "source_feed_gen_id": int(source["id"]),
             }
@@ -2719,7 +2933,13 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Пост ленты не найден"},
                     status=404,
                 )
-            source_prompt = str(source_feed_task.get("prompt") or "").strip()
+            source_feed_payload = await get_generation_task_payload(source_feed_gen_id)
+            if not source_feed_payload:
+                return web.json_response(
+                    {"ok": False, "error": "Пост ленты не найден"},
+                    status=404,
+                )
+            source_prompt = str(source_feed_payload.get("prompt") or "").strip()
             if not source_prompt:
                 return web.json_response(
                     {"ok": False, "error": "У исходной генерации нет prompt"},
@@ -2857,7 +3077,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             await use_prompt(prompt_id, user.id, credits_spent=unit_cost)
 
         fresh_user = await get_or_create_user(telegram_id)
-        prompt_hidden = False
+        prompt_hidden = bool(source_feed_gen_id)
         return web.json_response(
             {
                 "ok": True,
@@ -3276,7 +3496,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 "credits": fresh_user.credits,
                 "cost": cost,
                 "model_label": get_video_model_label(effective_model),
-                "prompt_hidden": False,
+                "prompt_hidden": bool(source_feed_gen_id),
                 "prompt_actions_allowed": not bool(source_feed_gen_id),
                 "source_feed_gen_id": source_feed_gen_id,
             }
@@ -3485,7 +3705,7 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
         me = await request.app["bot"].get_me()
 
         referral_link = (
-            f"https://t.me/{me.username}?start=ref_{user.referral_code}"
+            build_referral_link(me.username, user.referral_code)
             if user.referral_code
             else ""
         )
@@ -3685,6 +3905,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/icon.svg", _miniapp_root_file)
     app.router.add_get("/icon-dark-32x32.png", _miniapp_root_file)
     app.router.add_get("/favicon.ico", _miniapp_root_file)
+    app.router.add_get("/apple-icon.png", _miniapp_root_file)
     app.router.add_get("/_vercel/insights/script.js", _empty_vercel_insights)
     app.router.add_get(miniapp_root, miniapp_index)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
@@ -3701,6 +3922,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/prompts/deactivate", miniapp_prompt_deactivate)
     app.router.add_post(miniapp_root + "/api/admin/prompts/moderate", miniapp_prompt_moderate)
     app.router.add_post(miniapp_root + "/api/feed", miniapp_feed)
+    app.router.add_post(miniapp_root + "/api/feed/item", miniapp_feed_item)
     app.router.add_post(miniapp_root + "/api/feed/my", miniapp_my_feed)
     app.router.add_get(miniapp_root + "/api/feed/profile", miniapp_profile_feed)
     app.router.add_post(miniapp_root + "/api/feed/profile", miniapp_profile_feed)
@@ -3738,6 +3960,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(api_v1_root + "/me/feed", miniapp_my_feed)
     app.router.add_get(api_v1_root + "/feed/profile", miniapp_profile_feed)
     app.router.add_post(api_v1_root + "/feed/profile", miniapp_profile_feed)
+    app.router.add_get(api_v1_root + "/feed/{gen_id}", miniapp_feed_item)
     app.router.add_get(api_v1_root + "/profiles/{referral_code}/feed", miniapp_profile_feed)
     app.router.add_post(api_v1_root + "/profiles/{referral_code}/feed", miniapp_profile_feed)
     app.router.add_post(api_v1_root + "/me/channel", miniapp_profile_channel_save)

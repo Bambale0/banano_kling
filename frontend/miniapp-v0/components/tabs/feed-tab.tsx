@@ -65,8 +65,24 @@ function getPinHeightWeight(value?: string | null, genType: FeedItem['gen_type']
   return height / width
 }
 
+function getPublicReferences(item: FeedItem | null) {
+  if (!item) return []
+  return [
+    ...(item.reference_images || []).map((url) => ({ type: 'image' as const, url })),
+    ...(item.reference_videos || []).map((url) => ({ type: 'video' as const, url })),
+  ].filter((item) => isHttpUrl(item.url))
+}
+
 export function FeedTab() {
-  const { state, setActiveTab, setPromptPreset, setVideoPromptPreset, openProfile } = useApp()
+  const {
+    state,
+    feedDeepLink,
+    consumeFeedDeepLink,
+    setActiveTab,
+    setPromptPreset,
+    setVideoPromptPreset,
+    openProfile,
+  } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [items, setItems] = useState<FeedItem[]>([])
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
@@ -96,6 +112,7 @@ export function FeedTab() {
 
     return columns
   }, [visibleItems])
+  const previewReferences = useMemo(() => getPublicReferences(previewItem), [previewItem])
 
   useEffect(() => {
     let ignore = false
@@ -107,7 +124,7 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source, limit: 300 })
+        const feed = await fetchFeed({ source, limit: 80 })
         if (!ignore) {
           setItems(feed)
           setBrokenMediaIds(new Set())
@@ -123,6 +140,20 @@ export function FeedTab() {
       ignore = true
     }
   }, [isLive, source])
+
+  useEffect(() => {
+    if (!isLive || !feedDeepLink) return
+    setItems((prev) => {
+      const exists = prev.some((item) => item.id === feedDeepLink.item.id)
+      return exists
+        ? prev.map((item) => (item.id === feedDeepLink.item.id ? feedDeepLink.item : item))
+        : [feedDeepLink.item, ...prev]
+    })
+    if (feedDeepLink.action === 'preview') {
+      setPreviewItem(feedDeepLink.item)
+    }
+    consumeFeedDeepLink()
+  }, [consumeFeedDeepLink, feedDeepLink, isLive])
 
   useEffect(() => {
     let ignore = false
@@ -480,6 +511,27 @@ export function FeedTab() {
               <ImageOff className="h-8 w-8" />
             </div>
           )}
+          {previewReferences.length ? (
+            <div className="absolute bottom-[4.5rem] left-3 right-3 flex justify-center">
+              <div className="flex max-w-full gap-2 overflow-x-auto rounded-xl border border-border/60 bg-background/80 p-2 backdrop-blur">
+                {previewReferences.map((reference, index) => (
+                  <a
+                    key={`${reference.url}_${index}`}
+                    href={reference.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
+                  >
+                    {reference.type === 'video' ? (
+                      <video src={reference.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                    ) : (
+                      <img src={reference.url} alt="" className="h-full w-full object-cover" />
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="absolute bottom-4 left-3 right-3 flex justify-center gap-2">
             <Button
               type="button"

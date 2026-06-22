@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
 import { 
   X, Image, Video, Clock, CheckCircle2, XCircle, 
-  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen
+  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen, Eye, EyeOff
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,17 @@ export function TaskDetailPanel() {
   const { taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
   const [publishBusy, setPublishBusy] = useState(false)
   const [libraryBusy, setLibraryBusy] = useState(false)
+  const [feedPromptVisible, setFeedPromptVisible] = useState(false)
+  const [feedReferencesVisible, setFeedReferencesVisible] = useState(false)
+
+  const referenceCount =
+    (taskDetail?.request_data?.reference_images?.length || 0) +
+    (taskDetail?.request_data?.v_reference_videos?.length || 0)
+
+  useEffect(() => {
+    setFeedPromptVisible(Boolean(taskDetail?.feed_prompt_visible))
+    setFeedReferencesVisible(Boolean(taskDetail?.feed_references_visible))
+  }, [taskDetail?.task_id, taskDetail?.feed_prompt_visible, taskDetail?.feed_references_visible])
 
   const confirmPublication = (target: string) => {
     if (typeof window === 'undefined') return true
@@ -60,12 +71,40 @@ export function TaskDetailPanel() {
         updateTask(taskDetail.task_id, { is_public_feed: false })
         toast.success('Убрано из ленты')
       } else {
-        await publishGeneration(taskDetail.task_id)
-        updateTask(taskDetail.task_id, { is_public_feed: true })
+        await publishGeneration(taskDetail.task_id, {
+          promptVisible: feedPromptVisible,
+          referencesVisible: feedReferencesVisible,
+        })
+        updateTask(taskDetail.task_id, {
+          is_public_feed: true,
+          feed_prompt_visible: feedPromptVisible,
+          feed_references_visible: feedReferencesVisible,
+        })
         toast.success('Опубликовано в ленте')
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
+    } finally {
+      setPublishBusy(false)
+    }
+  }
+
+  const handleUpdateFeedSettings = async () => {
+    if (!taskDetail || publishBusy || !taskDetail.is_public_feed) return
+    setPublishBusy(true)
+    try {
+      await publishGeneration(taskDetail.task_id, {
+        promptVisible: feedPromptVisible,
+        referencesVisible: feedReferencesVisible,
+      })
+      updateTask(taskDetail.task_id, {
+        is_public_feed: true,
+        feed_prompt_visible: feedPromptVisible,
+        feed_references_visible: feedReferencesVisible,
+      })
+      toast.success('Настройки ленты обновлены')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось обновить ленту')
     } finally {
       setPublishBusy(false)
     }
@@ -324,6 +363,51 @@ export function TaskDetailPanel() {
               {/* Actions */}
               {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
                 <div className="space-y-2">
+                  {canPublishToFeed ? (
+                    <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFeedPromptVisible((prev) => !prev)}
+                          className={cn(
+                            'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors',
+                            feedPromptVisible
+                              ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                              : 'border-border/50 bg-background/40 text-muted-foreground'
+                          )}
+                        >
+                          {feedPromptVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          Prompt
+                        </button>
+                        <button
+                          type="button"
+                          disabled={referenceCount === 0}
+                          onClick={() => setFeedReferencesVisible((prev) => !prev)}
+                          className={cn(
+                            'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors disabled:opacity-50',
+                            feedReferencesVisible
+                              ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                              : 'border-border/50 bg-background/40 text-muted-foreground'
+                          )}
+                        >
+                          {feedReferencesVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          Рефы {referenceCount ? `(${referenceCount})` : ''}
+                        </button>
+                      </div>
+                      {taskDetail.is_public_feed ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="mt-2 w-full"
+                          disabled={publishBusy}
+                          onClick={handleUpdateFeedSettings}
+                        >
+                          {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+                          Обновить ленту
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {(canPublishToFeed || canSavePrompt) && (
                     <div className={cn('grid gap-2', canSavePrompt ? 'grid-cols-2' : 'grid-cols-1')}>
                       {canPublishToFeed ? (

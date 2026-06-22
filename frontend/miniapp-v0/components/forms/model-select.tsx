@@ -23,22 +23,22 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
   const selected = models.find(m => m.id === value)
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "w-full flex items-center justify-between gap-3 p-4 rounded-xl",
+          "w-full min-w-0 flex items-center justify-between gap-3 p-3 sm:p-4 rounded-xl",
           "bg-secondary/50 border border-border/50",
           "transition-all duration-200",
           "hover:bg-secondary hover:border-border",
           isOpen && "ring-2 ring-gold/30 border-gold/50"
         )}
       >
-        <div className="flex-1 text-left">
+        <div className="min-w-0 flex-1 text-left">
           <p className="text-sm font-medium text-foreground">{selected?.label}</p>
           <p className="text-xs text-muted-foreground line-clamp-1">{selected?.description}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="flex items-center gap-1 text-xs text-gold">
             <Banana className="w-3.5 h-3.5" />
             {selected?.cost}
@@ -66,7 +66,7 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
               exit={{ opacity: 0, y: -8, scale: 0.95 }}
               transition={{ duration: 0.15 }}
               className={cn(
-                "absolute z-50 w-full mt-2 py-2 rounded-xl",
+                "absolute z-50 mt-2 max-h-[60vh] w-full overflow-y-auto rounded-xl py-2",
                 "glass-strong border border-border/50 shadow-xl"
               )}
             >
@@ -84,11 +84,11 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                     model.id === value && "bg-gold/10"
                   )}
                 >
-                  <div className="flex-1 text-left">
+                  <div className="min-w-0 flex-1 text-left">
                     <p className="text-sm font-medium text-foreground">{model.label}</p>
                     <p className="text-xs text-muted-foreground line-clamp-1">{model.description}</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     <span className="flex items-center gap-1 text-xs text-gold">
                       <Banana className="w-3.5 h-3.5" />
                       {model.cost}

@@ -1,27 +1,88 @@
 'use client'
 
 import type { ComponentType } from 'react'
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Banana, CreditCard, Gift, Receipt, Sparkles, X } from 'lucide-react'
+import { Banana, CreditCard, Gift, Loader2, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { createPayment } from '@/lib/api'
+import type { PaymentProvider } from '@/lib/types'
 
 export function BalanceSheet() {
-  const { state, isBalanceOpen, closeBalance } = useApp()
+  const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
+  const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
 
   const totalSpent = recentTasks.reduce((sum, task) => sum + task.cost, 0)
   const imageTasks = recentTasks.filter((task) => task.type === 'image').length
   const videoTasks = recentTasks.filter((task) => task.type === 'video').length
 
-  const handleTopup = async (packageId: string) => {
+  const openExternalPayment = (url: string) => {
+    const opened = window.open(url, '_blank', 'noopener,noreferrer')
+    if (!opened) {
+      window.location.href = url
+    }
+  }
+
+  const openTelegramInvoice = (url: string) => {
+    const openInvoice = window.Telegram?.WebApp?.openInvoice
+    if (!openInvoice) {
+      openExternalPayment(url)
+      return Promise.resolve('opened')
+    }
+
+    return new Promise<string>((resolve) => {
+      try {
+        openInvoice(url, (status) => resolve(status || 'unknown'))
+      } catch {
+        openExternalPayment(url)
+        resolve('opened')
+      }
+    })
+  }
+
+  const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
-    toast.success(`Пакет ${selectedPackage.name}`, {
-      description: `Фронтовое пополнение готово: ${selectedPackage.credits}🍌 за ${selectedPackage.price_rub}₽. Следующий шаг — подключить платёжный confirm flow в этом sheet.`,
-    })
+    const loadingKey = `${packageId}:${provider}`
+    setLoadingPayment(loadingKey)
+    try {
+      const payment = await createPayment({ packageId, provider })
+      if (payment.provider === 'telegram_stars' && payment.invoice_url) {
+        const status = await openTelegramInvoice(payment.invoice_url)
+        if (status === 'paid') {
+          toast.success('Оплата Stars прошла', {
+            description: `Начисляем ${payment.credits}🍌. Баланс обновится автоматически.`,
+          })
+          await refreshTasks()
+        } else if (status === 'cancelled') {
+          toast.message('Оплата отменена')
+        } else if (status === 'failed') {
+          toast.error('Оплата Stars не прошла')
+        } else {
+          toast.message('Счёт Stars открыт', {
+            description: 'После оплаты баланс обновится в Mini App.',
+          })
+        }
+        return
+      }
+
+      if (payment.payment_url) {
+        openExternalPayment(payment.payment_url)
+        toast.message('Открыта страница оплаты')
+        return
+      }
+
+      throw new Error('Платёжная ссылка не получена')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось создать платёж'
+      toast.error(message)
+    } finally {
+      setLoadingPayment(null)
+    }
   }
 
   return (
@@ -73,7 +134,7 @@ export function BalanceSheet() {
                   </div>
                   <div className="rounded-2xl border border-cyan/20 bg-background/30 px-4 py-3 text-right">
                     <p className="text-xs text-muted-foreground">Режим</p>
-                    <p className="text-sm font-medium text-foreground">{mode === 'demo' ? 'Просмотр' : 'Онлайн'}</p>
+                    <p className="text-sm font-medium text-foreground">{mode === 'live' ? 'Онлайн' : 'Telegram'}</p>
                   </div>
                 </div>
               </div>
@@ -94,6 +155,9 @@ export function BalanceSheet() {
                 <div className="space-y-3">
                   {paymentPackages.map((pkg) => {
                     const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
+                    const starsPrice = pkg.price_stars ?? pkg.price_rub
+                    const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
+                    const cardLoading = loadingPayment === `${pkg.id}:yookassa`
                     return (
                       <div
                         key={pkg.id}
@@ -118,6 +182,9 @@ export function BalanceSheet() {
                             <p className="mt-2 text-xs text-muted-foreground">
                               {pkg.credits}🍌 • около {pricePerBanana}₽ за банан
                             </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Stars: {starsPrice}⭐
+                            </p>
                           </div>
                           <div className="text-right">
                             <p className="text-xl font-semibold text-foreground">{pkg.price_rub}₽</p>
@@ -125,17 +192,38 @@ export function BalanceSheet() {
                           </div>
                         </div>
 
-                        <Button
-                          onClick={() => handleTopup(pkg.id)}
-                          className={cn(
-                            'mt-4 w-full',
-                            pkg.popular
-                              ? 'bg-gold hover:bg-gold/90 text-primary-foreground'
-                              : 'bg-secondary hover:bg-secondary/80 text-foreground'
-                          )}
-                        >
-                          Выбрать пакет
-                        </Button>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <Button
+                            onClick={() => handleTopup(pkg.id, 'telegram_stars')}
+                            disabled={Boolean(loadingPayment)}
+                            className={cn(
+                              'w-full',
+                              pkg.popular
+                                ? 'bg-gold hover:bg-gold/90 text-primary-foreground'
+                                : 'bg-secondary hover:bg-secondary/80 text-foreground'
+                            )}
+                          >
+                            {starsLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Star className="mr-2 h-4 w-4" />
+                            )}
+                            Stars
+                          </Button>
+                          <Button
+                            onClick={() => handleTopup(pkg.id, 'yookassa')}
+                            disabled={Boolean(loadingPayment)}
+                            variant="outline"
+                            className="w-full border-border/50 bg-background/20 text-foreground hover:bg-secondary/40"
+                          >
+                            {cardLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <CreditCard className="mr-2 h-4 w-4" />
+                            )}
+                            Картой
+                          </Button>
+                        </div>
                       </div>
                     )
                   })}
@@ -150,7 +238,7 @@ export function BalanceSheet() {
                 >
                   Обновить статистику
                 </Button>
-                <Button onClick={() => handleTopup(paymentPackages[0]?.id || 'mini')} className="bg-gold hover:bg-gold/90 text-primary-foreground">
+                <Button onClick={() => handleTopup(paymentPackages[0]?.id || 'mini', 'telegram_stars')} className="bg-gold hover:bg-gold/90 text-primary-foreground">
                   Продолжить пополнение
                 </Button>
               </div>

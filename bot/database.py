@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
-import aiosqlite
+from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ FEED_EPHEMERAL_RESULT_HOSTS = {
 }
 FEED_PUBLIC_TYPES = {"image", "video"}
 _last_public_feed_cleanup_at = 0.0
+_last_public_feed_cleanup_db_path: str | None = None
 _public_feed_cleanup_lock: asyncio.Lock | None = None
 
 
@@ -53,12 +54,15 @@ def _get_public_feed_cleanup_lock() -> asyncio.Lock:
 
 
 def _public_feed_cleanup_due() -> bool:
+    if _last_public_feed_cleanup_db_path != DATABASE_PATH:
+        return True
     return (time.monotonic() - _last_public_feed_cleanup_at) >= FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS
 
 
 def _mark_public_feed_cleanup_done() -> None:
-    global _last_public_feed_cleanup_at
+    global _last_public_feed_cleanup_at, _last_public_feed_cleanup_db_path
     _last_public_feed_cleanup_at = time.monotonic()
+    _last_public_feed_cleanup_db_path = DATABASE_PATH
 
 PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "other"}
 PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
@@ -236,7 +240,7 @@ def get_promo_bonus_for_credits(credits: float | int | str) -> int:
     return int(PROMO_BONUS_BY_CREDITS.get(amount, 0))
 
 
-def _row_to_promo_code(row: aiosqlite.Row | None) -> Optional[PromoCode]:
+def _row_to_promo_code(row: db_backend.Row | None) -> Optional[PromoCode]:
     if not row:
         return None
     return PromoCode(
@@ -261,7 +265,7 @@ def _row_to_promo_code(row: aiosqlite.Row | None) -> Optional[PromoCode]:
     )
 
 
-def _row_to_user_prompt(row: aiosqlite.Row | None) -> Optional[UserPrompt]:
+def _row_to_user_prompt(row: db_backend.Row | None) -> Optional[UserPrompt]:
     if not row:
         return None
 
@@ -330,7 +334,7 @@ def _prompt_to_dict(prompt: UserPrompt | None) -> Optional[dict[str, Any]]:
     }
 
 
-def _prompt_admin_dict(row: aiosqlite.Row | None) -> Optional[dict[str, Any]]:
+def _prompt_admin_dict(row: db_backend.Row | None) -> Optional[dict[str, Any]]:
     prompt = _prompt_to_dict(_row_to_user_prompt(row))
     if not prompt or row is None:
         return prompt
@@ -432,7 +436,7 @@ def derive_description(prompt_text: str) -> str:
     return (text[:197] + "...") if len(text) > 200 else text
 
 
-async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
+async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     await db.execute("""
         CREATE TABLE IF NOT EXISTS user_prompts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -463,7 +467,7 @@ async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
     """)
     try:
         await db.execute("ALTER TABLE user_prompts ADD COLUMN source_generation_id INTEGER")
-    except aiosqlite.OperationalError:
+    except db_backend.OperationalError:
         pass
     await db.execute("""
         CREATE TABLE IF NOT EXISTS prompt_likes (
@@ -525,10 +529,12 @@ async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
         ("action_type", "ALTER TABLE generation_tasks ADD COLUMN action_type TEXT"),
         ("likes_count", "ALTER TABLE generation_tasks ADD COLUMN likes_count INTEGER DEFAULT 0"),
         ("shares_count", "ALTER TABLE generation_tasks ADD COLUMN shares_count INTEGER DEFAULT 0"),
+        ("feed_prompt_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_prompt_visible BOOLEAN DEFAULT 0"),
+        ("feed_references_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_references_visible BOOLEAN DEFAULT 0"),
     ]:
         try:
             await db.execute(statement)
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
 
     await db.execute(
@@ -557,7 +563,7 @@ async def _ensure_prompt_feed_schema(db: aiosqlite.Connection) -> None:
     )
 
 
-async def _ensure_saved_references_schema(db: aiosqlite.Connection) -> None:
+async def _ensure_saved_references_schema(db: db_backend.Connection) -> None:
     await db.execute("""
         CREATE TABLE IF NOT EXISTS saved_references (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -590,7 +596,7 @@ async def _ensure_saved_references_schema(db: aiosqlite.Connection) -> None:
         if column_name not in columns:
             try:
                 await db.execute(statement)
-            except aiosqlite.OperationalError:
+            except db_backend.OperationalError:
                 pass
 
     await db.execute(
@@ -637,12 +643,14 @@ class GenerationTask:
     action_type: Optional[str] = None
     likes_count: int = 0
     shares_count: int = 0
+    feed_prompt_visible: bool = False
+    feed_references_visible: bool = False
     created_at: Optional[datetime] = None
 
 
 async def init_db():
     """Инициализация базы данных"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
         await db.execute("PRAGMA foreign_keys=ON")
@@ -661,7 +669,7 @@ async def init_db():
         # Referral system migrations for existing databases
         try:
             await db.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         for statement in (
             "ALTER TABLE users ADD COLUMN username TEXT",
@@ -671,61 +679,61 @@ async def init_db():
         ):
             try:
                 await db.execute(statement)
-            except aiosqlite.OperationalError:
+            except db_backend.OperationalError:
                 pass
         try:
             await db.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN referral_earned INTEGER DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute("ALTER TABLE users ADD COLUMN has_paid BOOLEAN DEFAULT 0")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute("ALTER TABLE users ADD COLUMN partner_agreed_at TIMESTAMP")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_total_revenue_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_balance_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_withdrawn_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN prompt_repeat_balance_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN prompt_repeat_total_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_tier TEXT DEFAULT 'basic'"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         for statement in (
             "ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0",
@@ -734,7 +742,7 @@ async def init_db():
         ):
             try:
                 await db.execute(statement)
-            except aiosqlite.OperationalError:
+            except db_backend.OperationalError:
                 pass
 
         # Таблица транзакций (платежи)
@@ -763,7 +771,7 @@ async def init_db():
         ):
             try:
                 await db.execute(statement)
-            except aiosqlite.OperationalError:
+            except db_backend.OperationalError:
                 pass
 
         await db.execute("""
@@ -835,35 +843,35 @@ async def init_db():
             await db.execute(
                 "ALTER TABLE generation_tasks ADD COLUMN telegram_id INTEGER"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN model TEXT")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN duration INTEGER")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE generation_tasks ADD COLUMN aspect_ratio TEXT"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN prompt TEXT")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass  # Column already exists
         try:
             await db.execute("ALTER TABLE generation_tasks ADD COLUMN cost INTEGER")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass  # Column already exists
         try:
             await db.execute(
                 "ALTER TABLE generation_tasks ADD COLUMN request_data TEXT"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
@@ -872,7 +880,7 @@ async def init_db():
             await db.execute(
                 "UPDATE generation_tasks SET updated_at = COALESCE(completed_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
 
         # Миграция: добавляем provider в transactions
@@ -880,7 +888,7 @@ async def init_db():
             await db.execute(
                 "ALTER TABLE transactions ADD COLUMN provider TEXT DEFAULT 'cryptobot'"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
 
         # Таблица истории генераций
@@ -925,44 +933,44 @@ async def init_db():
         # Add columns to users if not exist
         try:
             await db.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN referred_by INTEGER REFERENCES users(id)"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN referral_earned INTEGER DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN has_paid BOOLEAN DEFAULT FALSE"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN prompt_repeat_balance_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN prompt_repeat_total_rub REAL DEFAULT 0"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
 
         try:
             await db.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass
 
         # Referrals table
@@ -1001,13 +1009,13 @@ async def init_db():
             await db.execute(
                 "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass  # Колонка уже существует
         try:
             await db.execute(
                 "ALTER TABLE user_settings ADD COLUMN referral_purchase_notifications_enabled BOOLEAN DEFAULT 1"
             )
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pass  # Колонка уже существует
 
         await db.execute("""
@@ -1060,8 +1068,8 @@ async def init_db():
 
 async def get_or_create_user(telegram_id: int) -> User:
     """Получает или создаёт пользователя (thread-safe)"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         # Ищем пользователя
         cursor = await db.execute(
@@ -1152,7 +1160,7 @@ async def get_or_create_user(telegram_id: int) -> User:
                     (referred_by,),
                 )
                 await db.commit()
-        except aiosqlite.IntegrityError:
+        except db_backend.IntegrityError:
             # Пользователь уже создан другим параллельным запросом
             logger.debug(f"User {telegram_id} already exists (race condition handled)")
 
@@ -1246,8 +1254,8 @@ async def update_user_profile(
     clean_first_name = (first_name or "").strip() or None
     clean_last_name = (last_name or "").strip() or None
 
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT username, first_name, last_name
@@ -1307,7 +1315,7 @@ def _normalize_channel_url(channel_url: str) -> str:
 async def save_user_channel_url(telegram_id: int, channel_url: str) -> str:
     """Stores the author's public Telegram channel link."""
     normalized = _normalize_channel_url(channel_url)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             """
             UPDATE users
@@ -1321,7 +1329,7 @@ async def save_user_channel_url(telegram_id: int, channel_url: str) -> str:
     return normalized
 
 
-async def generate_referral_code(db: Optional[aiosqlite.Connection] = None) -> str:
+async def generate_referral_code(db: Optional[db_backend.Connection] = None) -> str:
     """Генерирует уникальный реферальный код."""
     import secrets
     import string
@@ -1331,10 +1339,10 @@ async def generate_referral_code(db: Optional[aiosqlite.Connection] = None) -> s
     owns_connection = conn is None
 
     if owns_connection:
-        conn = await aiosqlite.connect(DATABASE_PATH)
+        conn = await db_backend.connect(DATABASE_PATH)
 
     assert conn is not None
-    conn.row_factory = aiosqlite.Row
+    conn.row_factory = db_backend.Row
 
     try:
         for _ in range(20):
@@ -1352,8 +1360,8 @@ async def generate_referral_code(db: Optional[aiosqlite.Connection] = None) -> s
 
 async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
     """Получает пользователя по реферальному коду."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT * FROM users WHERE referral_code = ?",
             (referral_code.strip().upper(),),
@@ -1423,7 +1431,7 @@ async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
 
 async def update_user_referral_code(telegram_id: int, referral_code: str) -> bool:
     """Сохраняет реферальный код пользователя."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             "UPDATE users SET referral_code = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (referral_code, telegram_id),
@@ -1433,7 +1441,7 @@ async def update_user_referral_code(telegram_id: int, referral_code: str) -> boo
 
 
 async def _referral_chain_contains(
-    db: aiosqlite.Connection,
+    db: db_backend.Connection,
     *,
     start_user_id: int,
     target_user_id: int,
@@ -1469,8 +1477,8 @@ async def _referral_chain_contains(
 
 async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool:
     """Привязывает пользователя к рефереру один раз."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         user_cursor = await db.execute(
             "SELECT id, referred_by FROM users WHERE telegram_id = ?", (telegram_id,)
         )
@@ -1532,8 +1540,8 @@ async def process_referral(
         )
         return False
 
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
 
         referrer_cursor = await db.execute(
             "SELECT id FROM users WHERE referral_code = ?",
@@ -1720,7 +1728,7 @@ async def process_referral(
 
 async def mark_user_paid(telegram_id: int) -> bool:
     """Помечает пользователя как оплатившего хотя бы один раз."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (telegram_id,),
@@ -1737,8 +1745,8 @@ async def credit_referral_commission(
     level2_percent: int = PARTNER_LEVEL2_PERCENT,
 ) -> dict:
     """Начисляет партнёру 1 уровня bonus_percent% и 2 уровня level2_percent% с каждой оплаты."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT id, referred_by, has_paid FROM users WHERE telegram_id = ?",
             (telegram_id,),
@@ -1856,8 +1864,8 @@ def get_partner_percent_by_tier(tier: str) -> int:
 
 async def accept_partner_agreement(telegram_id: int) -> bool:
     """Подтверждает участие в партнёрской программе."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         # Read current referral-related fields to ensure we don't accidentally overwrite them
         cursor = await db.execute(
             "SELECT referral_code, referred_by, referral_earned, partner_agreed_at, partner_tier FROM users WHERE telegram_id = ?",
@@ -1900,8 +1908,8 @@ async def accept_partner_agreement(telegram_id: int) -> bool:
 
 async def get_partner_overview(telegram_id: int) -> dict:
     """Возвращает данные партнёрского кабинета."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         target_user = await get_or_create_user(telegram_id)
         target_user_id = target_user.id
@@ -1995,8 +2003,8 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
 async def get_admin_partner_stats(limit: int = 10) -> dict:
     """Возвращает сводку по партнёрской программе для админки."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             """
@@ -2114,8 +2122,8 @@ async def get_admin_partner_details(
     telegram_id: int, referrals_limit: int = 15
 ) -> Optional[dict]:
     """Возвращает детальную партнёрскую статистику по конкретному пользователю."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             "SELECT * FROM users WHERE telegram_id = ?",
@@ -2257,8 +2265,8 @@ async def get_admin_partner_payment_report(
     if not details:
         return None
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         summary_cursor = await db.execute(
             """
@@ -2338,7 +2346,7 @@ async def get_admin_partner_payment_report(
     }
 
 
-def _sqlite_rows_to_dicts(rows: list[aiosqlite.Row]) -> list[dict]:
+def _sqlite_rows_to_dicts(rows: list[db_backend.Row]) -> list[dict]:
     return [{key: row[key] for key in row.keys()} for row in rows]
 
 
@@ -2353,8 +2361,8 @@ def _safe_report_limit(limit: int) -> int:
 async def get_admin_finance_report(limit: int = 100) -> dict:
     """Детальный финансово-реферальный отчёт для админки."""
     safe_limit = _safe_report_limit(limit)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             """
@@ -2822,8 +2830,8 @@ async def get_admin_finance_report(limit: int = 100) -> dict:
 
 async def get_partner_pending_withdrawals_sum(telegram_id: int) -> float:
     """Сумма ожидающих заявок на вывод по пользователю."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT COALESCE(SUM(pw.amount_rub), 0) AS total
@@ -2856,8 +2864,8 @@ async def exchange_partner_balance_to_credits(
     if rub_per_credit <= 0:
         return {"ok": False, "reason": "invalid_rate"}
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         await db.execute("BEGIN IMMEDIATE")
 
         user_cursor = await db.execute(
@@ -2880,7 +2888,7 @@ async def exchange_partner_balance_to_credits(
             )
             pending_row = await pending_cursor.fetchone()
             pending_sum = float(pending_row["pending_sum"] or 0) if pending_row else 0.0
-        except aiosqlite.OperationalError:
+        except db_backend.OperationalError:
             pending_sum = 0.0
 
         current_partner_balance = float(user_row["partner_balance_rub"] or 0)
@@ -2955,8 +2963,8 @@ async def create_partner_withdrawal(
 
     _min = float(getattr(_cfg, "PARTNER_MIN_WITHDRAWAL_RUB", 0)) if min_amount_rub is None else min_amount_rub
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         # Эксклюзивная блокировка на запись — сериализует конкурентные запросы
         await db.execute("BEGIN IMMEDIATE")
         try:
@@ -3011,8 +3019,8 @@ async def create_partner_withdrawal(
 
 async def get_partner_withdrawal_request(withdrawal_id: int) -> Optional[dict]:
     """Возвращает заявку на вывод вместе с текущим балансом пользователя."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3050,8 +3058,8 @@ async def get_partner_withdrawal_request(withdrawal_id: int) -> Optional[dict]:
 
 async def get_pending_partner_withdrawals(limit: int = 20) -> list[dict]:
     """Возвращает список ожидающих заявок на вывод для админки."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3088,8 +3096,8 @@ async def get_pending_partner_withdrawals(limit: int = 20) -> list[dict]:
 
 async def approve_partner_withdrawal(withdrawal_id: int) -> Optional[dict]:
     """Подтверждает заявку и только в этот момент списывает сумму с баланса."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3167,8 +3175,8 @@ async def approve_partner_withdrawal(withdrawal_id: int) -> Optional[dict]:
 
 async def cancel_partner_withdrawal(withdrawal_id: int) -> Optional[dict]:
     """Отменяет заявку без списания баланса."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3221,7 +3229,7 @@ def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _saved_reference_from_row(row: aiosqlite.Row) -> SavedReference:
+def _saved_reference_from_row(row: db_backend.Row) -> SavedReference:
     return SavedReference(
         id=row["id"],
         user_id=row["user_id"],
@@ -3315,14 +3323,14 @@ async def _remove_saved_reference_files(file_urls: list[str]) -> None:
 
 
 async def _prune_saved_references_for_user_id(
-    db: aiosqlite.Connection,
+    db: db_backend.Connection,
     *,
     user_id: int,
     kind: str,
     keep_latest: int = SAVED_REFERENCES_MAX_PER_KIND,
 ) -> tuple[int, list[str]]:
     safe_keep_latest = max(1, int(keep_latest or SAVED_REFERENCES_MAX_PER_KIND))
-    db.row_factory = aiosqlite.Row
+    db.row_factory = db_backend.Row
     cursor = await db.execute(
         """
         SELECT id, file_url
@@ -3370,7 +3378,7 @@ async def prune_saved_references_for_user(
     removed_count = 0
     removable_urls: list[str] = []
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         for target_kind in target_kinds:
             deleted_count, deletable_urls = await _prune_saved_references_for_user_id(
                 db,
@@ -3401,15 +3409,15 @@ async def cleanup_saved_references(
     removable_urls: list[str] = []
     telegram_ids: set[int] = set()
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT sr.user_id, u.telegram_id, sr.kind, COUNT(*) AS refs_count
             FROM saved_references sr
             JOIN users u ON u.id = sr.user_id
             GROUP BY sr.user_id, u.telegram_id, sr.kind
-            HAVING refs_count > ?
+            HAVING COUNT(*) > ?
             """,
             (safe_keep_latest,),
         )
@@ -3487,7 +3495,7 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
     from bot.services.media_input_utils import resolve_local_upload_path
 
     referenced_paths: set[str] = set()
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
         )
@@ -3545,18 +3553,18 @@ async def cleanup_stale_local_generation_tasks(
     refunded_credits = 0.0
     failed_count = 0
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT id, user_id, telegram_id, task_id, COALESCE(cost, 0) AS cost
             FROM generation_tasks
             WHERE status = 'pending'
               AND type = 'image'
-              AND task_id LIKE 'img_%'
+              AND task_id LIKE ?
               AND datetime(created_at) < datetime('now', ?)
             """,
-            (cutoff_modifier,),
+            ('img_%', cutoff_modifier),
         )
         rows = await cursor.fetchall()
 
@@ -3598,8 +3606,8 @@ async def cleanup_stale_local_generation_tasks(
 
 async def get_saved_reference_by_hash(telegram_id: int, kind: str, file_hash: str) -> Optional[SavedReference]:
     user = await get_or_create_user(telegram_id)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT *
@@ -3615,8 +3623,8 @@ async def get_saved_reference_by_hash(telegram_id: int, kind: str, file_hash: st
 
 async def get_saved_reference_by_id(telegram_id: int, reference_id: int) -> Optional[SavedReference]:
     user = await get_or_create_user(telegram_id)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT * FROM saved_references WHERE id = ? AND user_id = ? LIMIT 1",
             (reference_id, user.id),
@@ -3629,8 +3637,8 @@ async def delete_saved_reference(telegram_id: int, reference_id: int) -> bool:
     user = await get_or_create_user(telegram_id)
     file_url: str | None = None
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT file_url FROM saved_references WHERE id = ? AND user_id = ? LIMIT 1",
             (reference_id, user.id),
@@ -3672,8 +3680,8 @@ async def save_user_reference(
     source: str = "telegram",
 ) -> SavedReference:
     user = await get_or_create_user(telegram_id)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         await db.execute(
             """
             INSERT INTO saved_references (user_id, kind, file_url, file_hash, original_filename, content_type, source)
@@ -3723,7 +3731,7 @@ async def touch_saved_references(telegram_id: int, file_urls: list[str], kind: O
         where_kind = " AND kind = ?"
         params.append(kind)
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             f"UPDATE saved_references SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND file_url IN ({placeholders}){where_kind}",
             params,
@@ -3758,8 +3766,8 @@ async def list_saved_references(telegram_id: int, kind: Optional[str] = None, li
     query += " ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC LIMIT ?"
     params.append(safe_limit)
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
@@ -3781,8 +3789,8 @@ async def list_saved_references(telegram_id: int, kind: Optional[str] = None, li
 
 async def get_referral_stats(telegram_id: int) -> dict:
     """Возвращает статистику по рефералам пользователя."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         user = await get_or_create_user(telegram_id)
 
         cursor = await db.execute(
@@ -3815,8 +3823,8 @@ async def create_promo_code(
     clean_partner_name = str(partner_name or "").strip()[:80] or None
     partner_user_id = None
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         if partner_telegram_id:
             cursor = await db.execute(
@@ -3852,7 +3860,7 @@ async def create_promo_code(
             row = await cursor.fetchone()
             await db.commit()
             return _row_to_promo_code(row)
-        except aiosqlite.IntegrityError:
+        except db_backend.IntegrityError:
             await db.rollback()
             return None
 
@@ -3870,15 +3878,15 @@ async def get_promo_code_by_code(
         query += " AND is_active = 1"
     query += " LIMIT 1"
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(query, params)
         return _row_to_promo_code(await cursor.fetchone())
 
 
 async def get_promo_code_by_id(promo_code_id: int) -> Optional[PromoCode]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT * FROM promo_codes WHERE id = ? LIMIT 1", (int(promo_code_id),)
         )
@@ -3887,8 +3895,8 @@ async def get_promo_code_by_id(promo_code_id: int) -> Optional[PromoCode]:
 
 async def list_promo_codes(limit: int = 20) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit or 20), 100))
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3906,8 +3914,8 @@ async def list_promo_codes(limit: int = 20) -> list[dict[str, Any]]:
 
 async def get_admin_promo_stats(limit: int = 12) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit or 12), 50))
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3936,8 +3944,8 @@ async def get_promo_code_details(
     promo_code_id: int, redemptions_limit: int = 10
 ) -> Optional[dict[str, Any]]:
     safe_limit = max(1, min(int(redemptions_limit or 10), 50))
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -3981,8 +3989,8 @@ async def get_promo_code_details(
 
 
 async def set_promo_code_active(promo_code_id: int, is_active: bool) -> Optional[PromoCode]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         await db.execute(
             """
             UPDATE promo_codes
@@ -4006,7 +4014,7 @@ async def record_promo_redemption(transaction: Transaction) -> dict[str, Any]:
     if not promo_code_id or bonus_credits <= 0:
         return {}
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
             INSERT OR IGNORE INTO promo_redemptions (
@@ -4052,7 +4060,7 @@ async def get_user_credits(telegram_id: int) -> float:
 
 async def add_credits(telegram_id: int, amount: float) -> bool:
     """Добавляет кредиты пользователю"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (amount, telegram_id),
@@ -4073,8 +4081,8 @@ async def deduct_credits(
         logger.info(f"Admin {telegram_id} - free access (skipped {amount} credits)")
         return True
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         await db.execute("BEGIN IMMEDIATE")
 
         if check_balance:
@@ -4131,7 +4139,7 @@ async def create_transaction(
     promo_bonus_credits: int = 0,
 ) -> bool:
     """Создаёт транзакцию платежа"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO transactions 
@@ -4153,14 +4161,14 @@ async def create_transaction(
             )
             await db.commit()
             return True
-        except aiosqlite.IntegrityError:
+        except db_backend.IntegrityError:
             logger.warning(f"Transaction already exists: {order_id}")
             return False
 
 
 async def create_miniapp_notification(user_id: int, message: str) -> bool:
     """Создаёт уведомление, которое мини‑апп прочитает при следующем bootstrap."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 "INSERT INTO miniapp_notifications (user_id, message) VALUES (?, ?)",
@@ -4175,8 +4183,8 @@ async def create_miniapp_notification(user_id: int, message: str) -> bool:
 
 async def get_and_clear_miniapp_notifications(telegram_id: int) -> list:
     """Получает и удаляет все накопленные уведомления для пользователя (по telegram_id)."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         # Получаем внутренний user_id
         cursor = await db.execute(
             "SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)
@@ -4199,8 +4207,8 @@ async def get_and_clear_miniapp_notifications(telegram_id: int) -> list:
 
 async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
     """Получает транзакцию по order_id"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             "SELECT * FROM transactions WHERE order_id = ?", (order_id,)
@@ -4244,7 +4252,7 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
 
 async def update_transaction_status(order_id: str, status: str) -> bool:
     """Обновляет статус транзакции. Возвращает True, если строка была изменена."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "UPDATE transactions SET status = ? WHERE order_id = ? AND status != ?",
             (status, order_id, status),
@@ -4253,10 +4261,26 @@ async def update_transaction_status(order_id: str, status: str) -> bool:
         return cursor.rowcount > 0
 
 
+async def update_transaction_payment_id(order_id: str, payment_id: str) -> bool:
+    """Сохраняет внешний идентификатор платежа у существующей транзакции."""
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE transactions
+            SET payment_id = ?
+            WHERE order_id = ?
+              AND COALESCE(payment_id, '') != ?
+            """,
+            (payment_id, order_id, payment_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
     """Получает telegram_id по внутреннему user_id"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT telegram_id FROM users WHERE id = ?", (user_id,)
         )
@@ -4298,7 +4322,7 @@ async def add_generation_task(
     action_type: Optional[str] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         normalized_request = _merge_task_id_aliases(request_data, task_id)
         serialized_request = (
             json.dumps(normalized_request, ensure_ascii=False)
@@ -4341,8 +4365,8 @@ async def add_generation_task(
 async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
     """Получает задачу по task_id, а для обратной совместимости — и по numeric id."""
     lookup_value = str(task_id or "").strip()
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             "SELECT * FROM generation_tasks WHERE task_id = ?", (lookup_value,)
@@ -4426,6 +4450,16 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
             shares_count=(
                 int(row["shares_count"] or 0) if "shares_count" in row.keys() else 0
             ),
+            feed_prompt_visible=(
+                bool(row["feed_prompt_visible"])
+                if "feed_prompt_visible" in row.keys()
+                else False
+            ),
+            feed_references_visible=(
+                bool(row["feed_references_visible"])
+                if "feed_references_visible" in row.keys()
+                else False
+            ),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -4433,7 +4467,7 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
 async def complete_video_task(task_id: str, result_url: str) -> bool:
     """Отмечает задачу как выполненную"""
     lookup_value = str(task_id or "").strip()
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         final_status = "completed" if result_url else "failed"
         await db.execute(
             """UPDATE generation_tasks 
@@ -4478,8 +4512,8 @@ async def create_prompt(
     if final_category not in PROMPT_CATEGORIES:
         final_category = "other"
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             INSERT INTO user_prompts (
@@ -4505,8 +4539,8 @@ async def create_prompt(
 
 
 async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         sql = "SELECT * FROM user_prompts WHERE id = ?"
         params: list[Any] = [prompt_id]
         if approved_public_only:
@@ -4517,7 +4551,7 @@ async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False
 
 
 async def count_active_prompts_by_author(author_id: int) -> int:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
             SELECT COUNT(*) FROM user_prompts
@@ -4539,8 +4573,8 @@ async def _fetch_prompt_list(
 ) -> list[dict[str, Any]]:
     safe_limit = min(max(int(limit or 20), 1), 100)
     safe_offset = max(int(offset or 0), 0)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
             SELECT * FROM user_prompts
@@ -4613,7 +4647,7 @@ async def count_approved_prompts(category: Optional[str] = None) -> int:
     if category and category in PROMPT_CATEGORIES:
         where += " AND category = ?"
         params.append(category)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(f"SELECT COUNT(*) FROM user_prompts WHERE {where}", params)
         row = await cursor.fetchone()
         return int((row or [0])[0] or 0)
@@ -4621,7 +4655,7 @@ async def count_approved_prompts(category: Optional[str] = None) -> int:
 
 async def get_admin_prompt_stats() -> dict[str, int]:
     stats = {status: 0 for status in PROMPT_STATUSES}
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
             SELECT COALESCE(status, 'pending') AS status, COUNT(*) AS count
@@ -4661,8 +4695,8 @@ async def get_admin_prompts(
         where = "up.status = ?"
         params.append(status)
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
             SELECT up.*,
@@ -4689,8 +4723,8 @@ async def get_admin_prompts(
 
 
 async def get_admin_prompt_details(prompt_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT up.*,
@@ -4711,8 +4745,8 @@ async def get_admin_prompt_details(prompt_id: int) -> Optional[dict[str, Any]]:
 
 
 async def like_prompt(prompt_id: int, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT * FROM user_prompts WHERE id = ? AND status = 'approved' AND is_public = 1",
             (prompt_id,),
@@ -4736,7 +4770,7 @@ async def like_prompt(prompt_id: int, user_id: int) -> Optional[dict[str, Any]]:
 
 
 async def _credit_prompt_repeat_reward_in_db(
-    db: aiosqlite.Connection,
+    db: db_backend.Connection,
     *,
     author_id: int,
     repeater_id: int,
@@ -4791,8 +4825,8 @@ async def credit_feed_prompt_repeat(
     repeat_task_id: Optional[str] = None,
     credits_spent: Optional[float] = None,
 ) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT id, user_id
@@ -4827,8 +4861,8 @@ async def use_prompt(
     user_id: int,
     credits_spent: Optional[float] = None,
 ) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT * FROM user_prompts WHERE id = ? AND status = 'approved' AND is_public = 1",
             (prompt_id,),
@@ -4854,8 +4888,8 @@ async def use_prompt(
 
 
 async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT source_generation_id, author_id FROM user_prompts WHERE id = ? LIMIT 1",
             (prompt_id,),
@@ -4885,8 +4919,8 @@ async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
 
 
 async def reject_prompt(prompt_id: int, reject_reason: str = "") -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             "SELECT source_generation_id, author_id FROM user_prompts WHERE id = ? LIMIT 1",
             (prompt_id,),
@@ -4921,8 +4955,8 @@ async def deactivate_prompt(prompt_id: int, author_id: Optional[int] = None) -> 
     if author_id is not None:
         where += " AND author_id = ?"
         params.append(author_id)
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"SELECT source_generation_id, author_id FROM user_prompts WHERE {where} LIMIT 1",
             params,
@@ -4960,7 +4994,7 @@ async def get_author_prompts(author_id: int) -> list[dict[str, Any]]:
 
 
 async def get_author_total_uses(author_id: int) -> int:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             "SELECT COALESCE(SUM(uses_count), 0) FROM user_prompts WHERE author_id = ?",
             (author_id,),
@@ -4979,7 +5013,7 @@ async def set_ai_moderation_result(
     raw: Optional[dict[str, Any] | str] = None,
 ) -> Optional[dict[str, Any]]:
     raw_value = json.dumps(raw, ensure_ascii=False) if isinstance(raw, dict) else raw
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             """
             UPDATE user_prompts
@@ -5005,15 +5039,39 @@ async def set_ai_moderation_result(
     return await get_prompt_by_id(prompt_id)
 
 
-def generation_prompt_hidden(generation: GenerationTask | dict[str, Any] | aiosqlite.Row | None) -> bool:
+def _generation_attr(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+    key: str,
+    default: Any = None,
+) -> Any:
     if generation is None:
-        return False
+        return default
     if isinstance(generation, GenerationTask):
-        return bool(generation.source_feed_gen_id)
+        return getattr(generation, key, default)
     try:
-        return bool(generation["source_feed_gen_id"])
+        if hasattr(generation, "keys") and key not in generation.keys():
+            return default
+        return generation[key]
     except Exception:
-        return bool(getattr(generation, "source_feed_gen_id", None))
+        return getattr(generation, key, default)
+
+
+def generation_feed_prompt_visible(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(_generation_attr(generation, "feed_prompt_visible", False))
+
+
+def generation_references_visible(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(_generation_attr(generation, "feed_references_visible", False))
+
+
+def generation_prompt_hidden(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(_generation_attr(generation, "source_feed_gen_id")) or not generation_feed_prompt_visible(generation)
 
 
 def _generation_identifier_clause(identifier: int | str) -> tuple[str, Any]:
@@ -5024,12 +5082,12 @@ def _generation_identifier_clause(identifier: int | str) -> tuple[str, Any]:
 
 
 async def _fetch_generation_row(
-    db: aiosqlite.Connection,
+    db: db_backend.Connection,
     identifier: int | str,
     *,
     user_id: Optional[int] = None,
     public_only: bool = False,
-) -> Optional[aiosqlite.Row]:
+) -> Optional[db_backend.Row]:
     clause, value = _generation_identifier_clause(identifier)
     where = [clause]
     params: list[Any] = [value]
@@ -5052,7 +5110,7 @@ async def _fetch_generation_row(
     return await cursor.fetchone()
 
 
-def _generation_result_urls(row: aiosqlite.Row) -> list[str]:
+def _generation_result_urls(row: db_backend.Row) -> list[str]:
     urls = [
         str(item)
         for item in _parse_json_list(row["result_urls"] if "result_urls" in row.keys() else None)
@@ -5064,7 +5122,7 @@ def _generation_result_urls(row: aiosqlite.Row) -> list[str]:
     return urls
 
 
-def _feed_row_timestamp(row: aiosqlite.Row) -> Optional[datetime]:
+def _feed_row_timestamp(row: db_backend.Row) -> Optional[datetime]:
     for key in ("completed_at", "updated_at", "created_at"):
         if key in row.keys():
             parsed = _parse_datetime(row[key])
@@ -5087,7 +5145,7 @@ def _is_ephemeral_feed_result_url(url: str) -> bool:
     return any(host == ephemeral or host.endswith(f".{ephemeral}") for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS)
 
 
-def _is_feed_result_expired(row: aiosqlite.Row, url: str) -> bool:
+def _is_feed_result_expired(row: db_backend.Row, url: str) -> bool:
     if FEED_EPHEMERAL_RESULT_TTL_HOURS <= 0 or not _is_ephemeral_feed_result_url(url):
         return False
     timestamp = _feed_row_timestamp(row)
@@ -5097,7 +5155,7 @@ def _is_feed_result_expired(row: aiosqlite.Row, url: str) -> bool:
     return now - timestamp > timedelta(hours=FEED_EPHEMERAL_RESULT_TTL_HOURS)
 
 
-def _is_feed_result_url_available(row: aiosqlite.Row, url: str) -> bool:
+def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
     candidate = str(url or "").strip()
     if not candidate.startswith(("http://", "https://")):
         return False
@@ -5117,7 +5175,7 @@ def _is_feed_result_url_available(row: aiosqlite.Row, url: str) -> bool:
     return not _is_feed_result_expired(row, candidate)
 
 
-def _feed_result_urls(row: aiosqlite.Row) -> list[str]:
+def _feed_result_urls(row: db_backend.Row) -> list[str]:
     available: list[str] = []
     for url in _generation_result_urls(row):
         normalized = str(url or "").strip()
@@ -5126,7 +5184,31 @@ def _feed_result_urls(row: aiosqlite.Row) -> list[str]:
     return available
 
 
-def _feed_activity_time_for_sort(row: aiosqlite.Row) -> datetime:
+def _public_reference_urls(row: db_backend.Row, urls: Any) -> list[str]:
+    available: list[str] = []
+    for url in _parse_json_list(urls) if isinstance(urls, str) else list(urls or []):
+        normalized = str(url or "").strip()
+        if (
+            normalized
+            and normalized not in available
+            and _is_feed_result_url_available(row, normalized)
+        ):
+            available.append(normalized)
+    return available
+
+
+def _feed_reference_images(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
+    source_refs = request_data.get("source_reference_images")
+    if isinstance(source_refs, list):
+        return _public_reference_urls(row, source_refs)
+    return _public_reference_urls(row, request_data.get("reference_images", []))
+
+
+def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
+    return _public_reference_urls(row, request_data.get("v_reference_videos", []))
+
+
+def _feed_activity_time_for_sort(row: db_backend.Row) -> datetime:
     values: list[datetime] = []
     for key in ("created_at", "updated_at"):
         if key not in row.keys() or not row[key]:
@@ -5138,7 +5220,7 @@ def _feed_activity_time_for_sort(row: aiosqlite.Row) -> datetime:
     return max(values) if values else datetime.min
 
 
-def _calculate_feed_score(row: aiosqlite.Row) -> float:
+def _calculate_feed_score(row: db_backend.Row) -> float:
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
     likes_count = int(row["likes_count"] or 0)
     shares_count = int(row["shares_count"] or 0)
@@ -5168,8 +5250,8 @@ async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
             return {"image": 0, "video": 0}
 
         stats = {"image": 0, "video": 0}
-        async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-            db.row_factory = aiosqlite.Row
+        async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+            db.row_factory = db_backend.Row
             cursor = await db.execute(
                 """
                 SELECT gt.*,
@@ -5189,7 +5271,7 @@ async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
             rows = await cursor.fetchall()
 
             ids_to_prune: list[int] = []
-            valid_rows: list[aiosqlite.Row] = []
+            valid_rows: list[db_backend.Row] = []
             for row in rows:
                 if _feed_result_urls(row):
                     valid_rows.append(row)
@@ -5236,7 +5318,7 @@ async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
                     await db.execute(
                         f"""
                         UPDATE generation_tasks
-                        SET is_public_feed = 0,
+                        SET is_public_feed = FALSE,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id IN ({placeholders})
                         """,
@@ -5248,7 +5330,7 @@ async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
         return stats
 
 
-def _author_display_name(row: aiosqlite.Row) -> str:
+def _author_display_name(row: db_backend.Row) -> str:
     username = ""
     if "author_username" in row.keys() and row["author_username"]:
         username = str(row["author_username"]).strip().lstrip("@")
@@ -5269,7 +5351,7 @@ def _author_display_name(row: aiosqlite.Row) -> str:
 
 
 def _generation_row_to_card(
-    row: aiosqlite.Row,
+    row: db_backend.Row,
     *,
     viewer_user_id: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
@@ -5280,6 +5362,13 @@ def _generation_row_to_card(
     comments_count = int(row["comments_count"] or 0) if "comments_count" in row.keys() else 0
     author = _author_display_name(row)
     request_data = _parse_json_dict(row["request_data"] if "request_data" in row.keys() else None)
+    prompt_hidden = generation_prompt_hidden(row)
+    references_visible = generation_references_visible(row)
+    all_reference_images = _feed_reference_images(row, request_data)
+    all_reference_videos = _feed_reference_videos(row, request_data)
+    public_reference_images = all_reference_images if references_visible else []
+    public_reference_videos = all_reference_videos if references_visible else []
+    references_count = len(all_reference_images) + len(all_reference_videos)
     return {
         "id": row["id"],
         "task_id": row["task_id"],
@@ -5287,13 +5376,17 @@ def _generation_row_to_card(
         "gen_type": row["type"],
         "result_url": feed_urls[0],
         "result_urls": feed_urls,
-        "prompt": "" if generation_prompt_hidden(row) else str(row["prompt"] or ""),
+        "prompt": "" if prompt_hidden else str(row["prompt"] or ""),
         "likes_count": int(row["likes_count"] or 0),
         "shares_count": int(row["shares_count"] or 0),
         "comments_count": comments_count,
         "aspect_ratio": row["aspect_ratio"] or "",
         "duration": row["duration"] if "duration" in row.keys() else None,
         "scenario": request_data.get("v_type") or request_data.get("generation_type"),
+        "reference_images": public_reference_images,
+        "reference_videos": public_reference_videos,
+        "references_count": references_count,
+        "references_hidden": bool(references_count and not references_visible),
         "author": author,
         "author_referral_code": (
             row["author_referral_code"]
@@ -5305,8 +5398,10 @@ def _generation_row_to_card(
         "remixes": remix_count,
         "score": _calculate_feed_score(row),
         "created_at": row["created_at"],
-        "prompt_hidden": generation_prompt_hidden(row),
-        "prompt_actions_allowed": not generation_prompt_hidden(row),
+        "prompt_hidden": prompt_hidden,
+        "prompt_actions_allowed": not prompt_hidden,
+        "feed_prompt_visible": generation_feed_prompt_visible(row),
+        "feed_references_visible": references_visible,
     }
 
 
@@ -5316,7 +5411,7 @@ async def get_feed_generations(
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 40), 1), 300)
+    safe_limit = min(max(int(limit or 40), 1), 120)
     source = source if source in {"recent", "top_day", "top"} else "recent"
     where = [
         "gt.type IN ('image', 'video')",
@@ -5329,8 +5424,8 @@ async def get_feed_generations(
 
     await cleanup_public_feed_limits()
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
@@ -5375,7 +5470,7 @@ async def get_user_feed_generations(
     *,
     include_unpublished_owned: bool = False,
 ) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 200), 1), 400)
+    safe_limit = min(max(int(limit or 120), 1), 160)
     await cleanup_public_feed_limits()
     where_clause = """
             WHERE gt.user_id = ?
@@ -5392,8 +5487,8 @@ async def get_user_feed_generations(
               AND gt.result_url IS NOT NULL
               AND gt.source_feed_gen_id IS NULL
         """
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
@@ -5438,8 +5533,8 @@ async def get_feed_generation_card(
     *,
     viewer_user_id: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         value = str(gen_id).strip()
         if value.isdigit():
             clause, param = "gt.id = ?", int(value)
@@ -5485,7 +5580,7 @@ async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, An
 
 
 def _feed_comment_row_to_payload(
-    row: aiosqlite.Row,
+    row: db_backend.Row,
     *,
     viewer_user_id: Optional[int] = None,
 ) -> dict[str, Any]:
@@ -5515,8 +5610,8 @@ async def get_feed_comments(
         internal_id = int(gen_id)
     except (TypeError, ValueError):
         return []
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT fc.*, u.telegram_id AS author_telegram_id,
@@ -5553,8 +5648,8 @@ async def add_feed_comment(
     except (TypeError, ValueError):
         return None
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         generation_cursor = await db.execute(
             """
             SELECT *
@@ -5604,8 +5699,8 @@ async def get_generation_task_payload(
     *,
     user_id: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
             return None
@@ -5615,9 +5710,15 @@ async def get_generation_task_payload(
         return payload
 
 
-async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
+async def share_to_feed(
+    gen_id: int | str,
+    user_id: int,
+    *,
+    prompt_visible: bool = False,
+    references_visible: bool = False,
+) -> Optional[dict[str, Any]]:
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
             not row
@@ -5629,8 +5730,15 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
         ):
             return None
         await db.execute(
-            "UPDATE generation_tasks SET is_public_feed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (row["id"],),
+            """
+            UPDATE generation_tasks
+            SET is_public_feed = 1,
+                feed_prompt_visible = ?,
+                feed_references_visible = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (int(bool(prompt_visible)), int(bool(references_visible)), row["id"]),
         )
         await db.commit()
         gen_id = row["id"]
@@ -5639,8 +5747,8 @@ async def share_to_feed(gen_id: int | str, user_id: int) -> Optional[dict[str, A
 
 
 async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
             return False
@@ -5653,8 +5761,8 @@ async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
 
 
 async def share_to_library(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH, timeout=15) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if (
             not row
@@ -5736,8 +5844,8 @@ async def share_to_library(gen_id: int | str, user_id: int) -> Optional[dict[str
 
 
 async def remove_from_library(gen_id: int | str, user_id: int) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
         if not row:
             return False
@@ -5777,8 +5885,8 @@ async def remove_from_library(gen_id: int | str, user_id: int) -> bool:
 
 
 async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, public_only=True)
         if not row or not _feed_result_urls(row):
             return None
@@ -5800,8 +5908,8 @@ async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict
 
 
 async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, public_only=True)
         if not row or not _feed_result_urls(row):
             return None
@@ -5815,8 +5923,8 @@ async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
 
 
 async def create_feed_remix_event(remix_task_id: int | str) -> bool:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, remix_task_id)
         if not row or row["source_feed_gen_id"] is None:
             return False
@@ -5856,7 +5964,7 @@ async def add_generation_history(
     user_id: int, preset_id: str, prompt: str, cost: int
 ) -> bool:
     """Добавляет запись в историю генераций"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             """INSERT INTO generation_history 
                (user_id, preset_id, prompt, cost) 
@@ -5869,8 +5977,8 @@ async def add_generation_history(
 
 async def get_user_stats(telegram_id: int) -> dict:
     """Получает статистику пользователя"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         # Получаем пользователя
         user = await get_or_create_user(telegram_id)
@@ -5904,8 +6012,8 @@ async def get_user_stats(telegram_id: int) -> dict:
 
 async def get_admin_stats() -> dict:
     """Получает общую статистику для админа"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         # Всего пользователей
         cursor = await db.execute("SELECT COUNT(*) as count FROM users")
@@ -5945,7 +6053,7 @@ async def get_admin_stats() -> dict:
         }
 
 
-async def _ensure_bot_settings_table(db: aiosqlite.Connection) -> None:
+async def _ensure_bot_settings_table(db: db_backend.Connection) -> None:
     await db.execute("""
         CREATE TABLE IF NOT EXISTS bot_settings (
             key TEXT PRIMARY KEY,
@@ -5962,8 +6070,8 @@ async def get_bot_setting(key: str, default: str | None = None) -> str | None:
     if not setting_key:
         return default
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         await _ensure_bot_settings_table(db)
         cursor = await db.execute(
             "SELECT value FROM bot_settings WHERE key = ? LIMIT 1",
@@ -5986,7 +6094,7 @@ async def set_bot_setting(
 
     setting_value = "1" if value is True else "0" if value is False else str(value)
 
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         await _ensure_bot_settings_table(db)
         await db.execute(
             """
@@ -6042,15 +6150,15 @@ async def set_channel_subscription_required(
 async def is_user_banned(telegram_id: int) -> bool:
     """Проверяет, заблокирован ли пользователь на уровне бота."""
     try:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with db_backend.connect(DATABASE_PATH) as db:
+            db.row_factory = db_backend.Row
             cursor = await db.execute(
                 "SELECT COALESCE(is_banned, 0) AS is_banned FROM users WHERE telegram_id = ? LIMIT 1",
                 (int(telegram_id),),
             )
             row = await cursor.fetchone()
             return bool(row and row["is_banned"])
-    except aiosqlite.OperationalError:
+    except db_backend.OperationalError:
         return False
 
 
@@ -6061,7 +6169,7 @@ async def set_user_banned(
     admin_id: int | None = None,
 ) -> bool:
     """Ставит или снимает бан без создания нового пользователя."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         cursor = await db.execute(
             """
             UPDATE users
@@ -6085,8 +6193,8 @@ async def set_user_banned(
 
 async def get_existing_user_stats(telegram_id: int) -> Optional[dict[str, Any]]:
     """Возвращает статистику только для существующего пользователя."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT COALESCE(is_banned, 0) AS is_banned
@@ -6109,8 +6217,8 @@ async def get_existing_user_stats(telegram_id: int) -> Optional[dict[str, Any]]:
 async def export_users_for_admin(limit: int = 50000) -> list[dict[str, Any]]:
     """Возвращает ограниченный список пользователей для подтверждённого экспорта."""
     safe_limit = max(1, min(int(limit or 50000), 50000))
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT
@@ -6143,7 +6251,7 @@ async def save_batch_job(
     duration: Optional[float] = None,
 ) -> bool:
     """Сохраняет результаты пакетной генерации"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         try:
             # Создаём таблицу если не существует
             await db.execute("""
@@ -6169,15 +6277,15 @@ async def save_batch_job(
             await db.commit()
             logger.info(f"Saved batch job: {job_id}")
             return True
-        except aiosqlite.IntegrityError:
+        except db_backend.IntegrityError:
             logger.warning(f"Batch job already exists: {job_id}")
             return False
 
 
 async def get_batch_jobs_by_user(telegram_id: int, limit: int = 10) -> list:
     """Получает историю пакетных генераций пользователя"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         user = await get_or_create_user(telegram_id)
 
@@ -6205,8 +6313,8 @@ async def get_batch_jobs_by_user(telegram_id: int, limit: int = 10) -> list:
 
 async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dict]:
     """Получает последнюю(ие) генерацию(и) пользователя"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         cursor = await db.execute(
             """SELECT * FROM generation_tasks 
@@ -6267,21 +6375,21 @@ async def _ensure_user_settings_table(db):
         await db.execute(
             "ALTER TABLE user_settings ADD COLUMN image_service TEXT DEFAULT 'nanobanana'"
         )
-    except aiosqlite.OperationalError:
+    except db_backend.OperationalError:
         pass  # Колонка уже существует
     try:
         await db.execute(
             "ALTER TABLE user_settings ADD COLUMN referral_purchase_notifications_enabled BOOLEAN DEFAULT 1"
         )
-    except aiosqlite.OperationalError:
+    except db_backend.OperationalError:
         pass  # Колонка уже существует
     await db.commit()
 
 
 async def get_user_settings(telegram_id: int) -> dict:
     """Получает настройки пользователя из БД"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
 
         # Создаем таблицу если не существует
         await _ensure_user_settings_table(db)
@@ -6334,7 +6442,7 @@ async def save_user_settings(
     referral_purchase_notifications_enabled: Optional[bool] = None,
 ) -> bool:
     """Сохраняет настройки пользователя в БД"""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
+    async with db_backend.connect(DATABASE_PATH) as db:
         # Создаем таблицу если не существует
         await _ensure_user_settings_table(db)
 

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 const outDir = join(process.cwd(), 'out')
 const telegramSrc = 'https://telegram.org/js/telegram-web-app.js'
 const telegramScript = `<script src="${telegramSrc}" async=""></script>`
+const inlineMiniappCss = process.env.MINIAPP_INLINE_CSS === '1'
 
 const telegramEarlyScriptPattern =
   /<script\b(?=[^>]*\bid=(["'])telegram-early-ready\1)[^>]*>[\s\S]*?<\/script>/gi
@@ -40,6 +41,10 @@ function removeQueuedTelegramScripts(html) {
 }
 
 function inlineMiniappStyles(html) {
+  if (!inlineMiniappCss) {
+    return html
+  }
+
   const stylesheetMatch = html.match(stylesheetPattern)
   const stylesheetTag = stylesheetMatch?.[0]
   const stylesheetHref = stylesheetMatch?.[3]
@@ -95,4 +100,6 @@ for (const file of htmlFiles(outDir)) {
   }
 }
 
-console.log(`Patched Telegram head scripts in ${patched} HTML files.`)
+console.log(
+  `Patched Telegram head scripts in ${patched} HTML files. inline css: ${inlineMiniappCss ? 'on' : 'off'}.`,
+)
