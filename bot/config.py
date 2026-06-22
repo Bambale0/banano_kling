@@ -1,14 +1,14 @@
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
-from dotenv import load_dotenv
 from typing import List
+
+from bot.env import load_project_env
 
 logger = logging.getLogger(__name__)
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+load_project_env()
 
 
 @dataclass
@@ -37,6 +37,7 @@ class Config:
         "on",
     )
     TELEGRAM_STARS_PER_RUB: float = float(os.getenv("TELEGRAM_STARS_PER_RUB", "1"))
+    TELEGRAM_STARS_FLAT_FEE: int = int(os.getenv("TELEGRAM_STARS_FLAT_FEE", "0"))
 
     # CryptoBot / Crypto Pay
     CRYPTOBOT_API_TOKEN: str = os.getenv("CRYPTOBOT_API_TOKEN", "")

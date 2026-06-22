@@ -2,15 +2,15 @@
 
 ## Project shape
 
-- This repo is a Python Telegram bot using aiogram, aiohttp webhooks, Redis for FSM/cache, and SQLite as the production business database.
-- The production DB is `bot.db` unless `.env` overrides `DATABASE_PATH`. The app is still coupled to `aiosqlite`; do not switch runtime to Postgres until the DB layer is refactored.
+- This repo is a Python Telegram bot using aiogram, aiohttp webhooks, Redis for FSM/cache, and PostgreSQL as the production business database.
+- Runtime DB selection is driven by `DATABASE_URL`. Production should use the Postgres DSN from `.env.postgres`; SQLite files such as `bot.db` are legacy/import/backup sources unless the user explicitly asks for SQLite maintenance.
 - Public user files live under `static/uploads/` and are required for provider callbacks, Telegram downloads, and miniapp flows.
 - Secrets live in `.env`, `.env.postgres`, and `~/.codex/auth.json` on hosts. Never print secret values in logs, comments, final answers, or docs.
 
 ## Runtime safety
 
 - Do not run two production instances against the same Telegram token and mutable DB during migration. Prepare dependencies, nginx, Redis, systemd, and Codex first; start the new bot only during cutover.
-- Before DB-moving work, create a SQLite backup with `SEND_BACKUP_TO_ADMINS=0 ./scripts/backup_db.sh` or stop the bot and copy `bot.db` plus any `bot.db-wal`/`bot.db-shm` files.
+- Before DB-moving or migration work, create a current backup. For legacy SQLite source work, use `SEND_BACKUP_TO_ADMINS=0 ./scripts/backup_db.sh` or stop the bot and copy `bot.db` plus any `bot.db-wal`/`bot.db-shm` files.
 - Do not delete `static/uploads/`, `backups/`, `.env*`, or `bot.db*` unless the user explicitly asks for cleanup and a fresh backup exists.
 - Treat `bot.pid` as host-local state. It should not be trusted after a copy to another server.
 
@@ -26,6 +26,10 @@
   `./restart.sh`
 - Check service logs on systemd hosts:
   `journalctl -u banano-kling.service -n 200 --no-pager`
+- Check production Postgres runtime:
+  `source venv/bin/activate && python scripts/check_postgres_runtime.py`
+- Verify one-time SQLite-to-Postgres migration counts only during cutover:
+  `source venv/bin/activate && python scripts/verify_postgres_migration.py`
 
 ## Deployment notes
 

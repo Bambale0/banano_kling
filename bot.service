@@ -1,13 +1,15 @@
 [Unit]
 Description=banano_kling Telegram Bot
-After=network.target
+After=network-online.target redis-server.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/banano_kling
-EnvironmentFile=-/root/banano_kling/.env
-ExecStart=/bin/bash -lc 'cd /root/banano_kling && source venv/bin/activate && exec python -m bot.main'
+WorkingDirectory=/root/tanya/banano_kling
+EnvironmentFile=-/root/tanya/banano_kling/.env
+EnvironmentFile=-/root/tanya/banano_kling/.env.postgres
+ExecStart=/bin/bash -lc 'cd /root/tanya/banano_kling && source venv/bin/activate && exec python -m bot.main'
 Restart=always
 RestartSec=5
 TimeoutStopSec=20

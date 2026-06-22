@@ -122,6 +122,7 @@ from bot.services.reference_storage_service import save_reference_file
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
+    should_block_for_subscription,
 )
 from bot.services.preset_manager import preset_manager
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
@@ -135,6 +136,16 @@ from bot.video_reference_policy import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if parsed <= 0:
+        parsed = default
+    return min(max(parsed, minimum), maximum)
 
 
 def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
@@ -740,7 +751,7 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     telegram_id = int(telegram_user["id"])
     if await is_channel_subscription_required():
         result = await check_required_channel_subscription(app["bot"], telegram_id)
-        if not result.ok:
+        if should_block_for_subscription(result):
             raise PermissionError(
                 f"Подпишитесь на @{REQUIRED_CHANNEL_USERNAME}, чтобы пользоваться ботом."
             )
@@ -2460,7 +2471,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = min(max(int(body.get("limit", 80) or 80), 1), 120)
+        limit = _bounded_int(body.get("limit"), default=80, maximum=120)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
@@ -2499,7 +2510,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = min(max(int(body.get("limit", 120) or 120), 1), 160)
+        limit = _bounded_int(body.get("limit"), default=120, maximum=160)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
@@ -2549,7 +2560,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = min(max(int(body.get("limit", 120) or 120), 1), 160)
+        limit = _bounded_int(body.get("limit"), default=120, maximum=160)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
@@ -2689,11 +2700,12 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
             else miniapp_post_link
         )
         logger.info("Feed share link issued by %s for feed %s", telegram_id, card["id"])
+        preferred_link = repeat_link if is_image_feed_item else post_link
         return web.json_response(
             {
                 "ok": True,
                 "feed_item": card,
-                "link": post_link,
+                "link": preferred_link,
                 "bot_link": post_link,
                 "post_link": post_link,
                 "repeat_link": repeat_link,

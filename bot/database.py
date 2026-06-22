@@ -5426,8 +5426,7 @@ async def get_feed_generations(
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        cursor = await db.execute(
-            f"""
+        query = f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
                    u.username AS author_username,
                    u.first_name AS author_first_name,
@@ -5448,10 +5447,10 @@ async def get_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
             ORDER BY gt.created_at DESC
-            LIMIT ?
-            """,
-            (safe_limit * 5,),
-        )
+        """
+        query += "\n            LIMIT ?"
+        params: tuple[Any, ...] = (safe_limit * 5,)
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
     cards = [
@@ -5466,7 +5465,7 @@ async def get_feed_generations(
 
 async def get_user_feed_generations(
     user_id: int,
-    limit: int = 200,
+    limit: int = 120,
     *,
     include_unpublished_owned: bool = False,
 ) -> list[dict[str, Any]]:
@@ -5489,8 +5488,7 @@ async def get_user_feed_generations(
         """
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        cursor = await db.execute(
-            f"""
+        query = f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
                    u.username AS author_username,
                    u.first_name AS author_first_name,
@@ -5511,10 +5509,10 @@ async def get_user_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             {where_clause}
             ORDER BY gt.created_at DESC
-            LIMIT ?
-            """,
-            (user_id, safe_limit * 5),
-        )
+        """
+        query += "\n            LIMIT ?"
+        params: tuple[Any, ...] = (user_id, safe_limit * 5)
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
     cards = [
         card

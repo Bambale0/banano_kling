@@ -1158,9 +1158,10 @@ async def handle_cryptobot_webhook(request: web.Request):
             return web.Response(status=200)
 
         signature = request.headers.get("crypto-pay-api-signature", "")
-        if signature and not cryptobot_service.verify_webhook_signature(
-            raw_body, signature
-        ):
+        if not cryptobot_service.enabled:
+            logger.warning("Rejected CryptoBot webhook: service is disabled")
+            return web.Response(status=403)
+        if not cryptobot_service.verify_webhook_signature(raw_body, signature):
             logger.warning("Invalid CryptoBot webhook signature")
             return web.Response(status=403)
 
@@ -1183,6 +1184,14 @@ async def handle_cryptobot_webhook(request: web.Request):
 
         transaction = await get_transaction_by_order(order_id)
         if not transaction:
+            return web.Response(status=200)
+        invoice_id = str(invoice.get("invoice_id") or invoice.get("id") or "")
+        if invoice_id and str(transaction.payment_id or "") != invoice_id:
+            logger.warning(
+                "CryptoBot webhook invoice mismatch order=%s invoice_id=%s",
+                order_id,
+                invoice_id,
+            )
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
@@ -1252,6 +1261,16 @@ async def handle_cryptobot_webhook(request: web.Request):
         return web.Response(status=200)
 
 
+async def _resolve_lava_provider_status(transaction, contract_id: str | None) -> str:
+    payment_id = str(getattr(transaction, "payment_id", "") or contract_id or "")
+    if not payment_id:
+        return ""
+    invoice = await lava_service.get_invoice(payment_id)
+    if not invoice:
+        return ""
+    return lava_service.webhook_status(invoice) or str(invoice.get("status") or "").lower()
+
+
 async def handle_lava_webhook(request: web.Request):
     """Webhook updates from Lava.top."""
     try:
@@ -1265,8 +1284,6 @@ async def handle_lava_webhook(request: web.Request):
             logger.warning("Lava webhook received invalid JSON")
             return web.Response(status=200)
 
-        logger.info("Lava webhook payload: %s", data)
-
         if not (
             lava_service.is_success_webhook(data)
             or lava_service.is_failed_webhook(data)
@@ -1275,6 +1292,13 @@ async def handle_lava_webhook(request: web.Request):
 
         contract_id = lava_service.webhook_contract_id(data)
         order_id = _extract_first(data, ("order_id", "orderId"))
+        logger.info(
+            "Lava webhook received event=%s status=%s order_id=%s contract_id=%s",
+            lava_service.webhook_event_type(data) or "unknown",
+            lava_service.webhook_status(data) or "unknown",
+            order_id or "",
+            contract_id or "",
+        )
 
         if order_id:
             transaction = await get_transaction_by_order(str(order_id))
@@ -1305,9 +1329,32 @@ async def handle_lava_webhook(request: web.Request):
             return web.Response(status=200)
 
         order_id = transaction.order_id
+        provider_status = await _resolve_lava_provider_status(transaction, contract_id)
+        if not provider_status:
+            logger.warning(
+                "Lava webhook ignored: cannot verify provider status order=%s contract_id=%s",
+                order_id,
+                contract_id,
+            )
+            return web.Response(status=200)
+
         if lava_service.is_failed_webhook(data):
-            if await update_transaction_status(order_id, "failed"):
+            if provider_status in {"cancelled", "canceled", "failed", "expired"} and await update_transaction_status(order_id, "failed"):
                 logger.info("Lava webhook marked order %s as failed", order_id)
+            else:
+                logger.info(
+                    "Lava failed webhook ignored after provider check order=%s provider_status=%s",
+                    order_id,
+                    provider_status,
+                )
+            return web.Response(status=200)
+
+        if provider_status != "completed":
+            logger.info(
+                "Lava success webhook ignored until provider status is completed order=%s provider_status=%s",
+                order_id,
+                provider_status,
+            )
             return web.Response(status=200)
 
         telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
@@ -1400,12 +1447,12 @@ async def handle_yookassa_webhook(request: web.Request):
 
                 if not verified:
                     logger.warning(
-                        "Rejected YooKassa webhook: invalid signature headers=%s",
-                        {
-                            k: v
-                            for k, v in request.headers.items()
+                        "Rejected YooKassa webhook: invalid signature header_names=%s",
+                        [
+                            k
+                            for k in request.headers.keys()
                             if "yookassa" in k.lower() or "signature" in k.lower()
-                        },
+                        ],
                     )
                     return web.Response(status=200)
         except Exception:

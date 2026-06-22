@@ -17,16 +17,25 @@ from bot.services.preset_manager import preset_manager
 logger = logging.getLogger(__name__)
 
 
-def _mini_app_url_with_referral(referral_code: str | None = None) -> str:
+def _mini_app_url_with_start_param(start_param: str | None = None, referral_code: str | None = None) -> str:
     base_url = str(config.mini_app_url or "").strip()
-    code = str(referral_code or "").strip().upper()
-    if not base_url or not code:
+    if not base_url:
         return base_url
+    code = str(referral_code or "").strip().upper()
+    param = str(start_param or "").strip()
     parts = urlsplit(base_url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query["ref"] = code
-    query.setdefault("startapp", f"ref_{code}")
+    if code:
+        query["ref"] = code
+    if param:
+        query["startapp"] = param
+    elif code:
+        query.setdefault("startapp", f"ref_{code}")
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _mini_app_url_with_referral(referral_code: str | None = None) -> str:
+    return _mini_app_url_with_start_param(referral_code=referral_code)
 
 
 def _video_prompt_price_label() -> str:

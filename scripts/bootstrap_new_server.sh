@@ -67,9 +67,11 @@ apt-get install -y \
     curl \
     git \
     nginx \
+    postgresql-client \
     redis-server \
     rsync \
     sqlite3 \
+    ffmpeg \
     bubblewrap \
     build-essential \
     python3 \
@@ -109,6 +111,7 @@ Type=simple
 User=${APP_USER}
 WorkingDirectory=${PROJECT_DIR}
 EnvironmentFile=-${PROJECT_DIR}/.env
+EnvironmentFile=-${PROJECT_DIR}/.env.postgres
 ExecStart=/bin/bash -lc 'cd ${PROJECT_DIR} && source venv/bin/activate && exec python -m bot.main'
 Restart=always
 RestartSec=5

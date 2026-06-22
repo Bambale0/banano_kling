@@ -78,7 +78,7 @@ export function ImageGeneratorForm({
     if (promptPreset.ratio) {
       setSelectedRatio(promptPreset.ratio)
     }
-    setReferences([])
+    setReferences(promptPreset.initialReferences || [])
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])
 
@@ -280,7 +280,9 @@ export function ImageGeneratorForm({
           />
           <p className="text-xs text-muted-foreground">
             {isFeedRemix
-              ? 'Добавьте своё фото или референс. Промпт из ленты подставлен ниже.'
+              ? references.length > 0
+                ? 'Старые референсы уже подтянуты. Можно удалить фото человека, оставить вещь/образ и загрузить своё фото.'
+                : 'Добавьте своё фото или референс. Промпт из ленты подставлен ниже.'
               : model?.requires_reference
                 ? 'Для этой модели нужен хотя бы один исходник или референс.'
                 : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}

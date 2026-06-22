@@ -23,7 +23,8 @@ def package_stars_amount(package: dict[str, Any]) -> int:
         return max(1, int(round(float(explicit))))
 
     multiplier = max(0.01, float(config.TELEGRAM_STARS_PER_RUB or 1))
-    return max(1, int(math.ceil(float(package["price_rub"]) * multiplier)))
+    flat_fee = max(0, int(config.TELEGRAM_STARS_FLAT_FEE or 0))
+    return max(1, int(math.ceil(float(package["price_rub"]) * multiplier)) + flat_fee)
 
 
 def build_stars_invoice_payload(order_id: str, stars_amount: int) -> str:

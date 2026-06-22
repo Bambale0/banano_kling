@@ -14,17 +14,9 @@ from urllib.parse import urlparse
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Загружаем переменные из .env файла
-from dotenv import load_dotenv
+from bot.env import load_project_env
 
-load_dotenv(
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-)
-load_dotenv(
-    os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env.postgres"
-    )
-)
+load_project_env()
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -76,6 +68,7 @@ from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     SUBSCRIPTION_CHECK_CALLBACK,
     check_required_channel_subscription,
+    should_block_for_subscription,
 )
 from bot.services.yookassa_service import yookassa_service
 
@@ -90,7 +83,7 @@ LAVA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 LAVA_RECONCILE_BATCH_SIZE = 50
 
 USER_BOT_COMMANDS = [
-    BotCommand(command="start", description="Главное меню"),
+    BotCommand(command="start", description="Текстовый бот и главное меню"),
     BotCommand(command="feed", description="Лента работ"),
     BotCommand(command="prompts", description="Библиотека промптов"),
     BotCommand(command="help", description="Помощь и возможности"),
@@ -105,7 +98,7 @@ USER_BOT_COMMAND_LANGUAGES = (None, "ru")
 
 
 async def _set_commands_chat_menu_button() -> None:
-    """Force Telegram's system menu button to open the bot command list."""
+    """Keep Telegram's system menu button on quick commands; Mini App stays inside bot UI."""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/setChatMenuButton"
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -368,7 +361,7 @@ class AccessGuardMiddleware(BaseMiddleware):
                     return None
 
                 result = await check_required_channel_subscription(bot, user.id)
-                if not result.ok:
+                if should_block_for_subscription(result):
                     await self._reply_required_subscription(event)
                     return None
         except Exception:
@@ -470,6 +463,21 @@ def _preview_log_payload(value, limit: int = 1200) -> str:
     return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
 
 
+def _safe_log_url(value: str) -> str:
+    parsed = urlparse(str(value or ""))
+    if not parsed.scheme:
+        return "[not configured]"
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    path = parsed.path or ""
+    return f"{parsed.scheme}://{host}{path}"
+
+
+def _preview_log_headers(headers, limit: int = 1200) -> str:
+    return _preview_log_payload(dict(headers), limit=limit)
+
+
 def _build_dispatcher_storage():
     try:
         from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
@@ -478,7 +486,7 @@ def _build_dispatcher_storage():
             config.redis_url,
             key_builder=DefaultKeyBuilder(prefix=config.REDIS_PREFIX, with_bot_id=True),
         )
-        logger.info("FSM storage configured via Redis: %s", config.redis_url)
+        logger.info("FSM storage configured via Redis: %s", _safe_log_url(config.redis_url))
         return FallbackFSMStorage(storage, MemoryStorage())
     except Exception as exc:
         logger.warning("Redis FSM storage unavailable, fallback to MemoryStorage: %s", exc)
@@ -1445,6 +1453,22 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         logger.exception("Failed to register user bot commands")
 
     try:
+        for language_code in USER_BOT_COMMAND_LANGUAGES:
+            await bot.set_my_short_description(
+                "Mini App + текстовый бот. Для обычного режима нажмите /start.",
+                language_code=language_code,
+            )
+            await bot.set_my_description(
+                "Нейросети для фото и видео. Есть два режима: Mini App и обычный текстовый бот.\n\n"
+                "• Mini App — быстрый визуальный интерфейс\n"
+                "• /start — текстовое меню и пошаговый режим прямо в чате",
+                language_code=language_code,
+            )
+        logger.info("Registered bot descriptions for Mini App and text mode")
+    except Exception:
+        logger.exception("Failed to register bot descriptions")
+
+    try:
         await _set_commands_chat_menu_button()
         logger.info("Configured Telegram chat menu button for bot commands")
     except Exception:
@@ -1724,8 +1748,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
             return web.Response(status=200)
 
-        # Логируем все заголовки для отладки
-        logger.info(f"Kling webhook headers: {dict(request.headers)}")
+        logger.info("Kling webhook headers: %s", _preview_log_headers(request.headers))
 
         # Проверяем, есть ли данные в теле запроса
         if not raw_body:
@@ -1734,7 +1757,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
 
         try:
             body_text = raw_body.decode("utf-8")
-            logger.info("Kling webhook raw body: %s", _preview_log_payload(body_text))
+            logger.info("Kling webhook raw body received: %s bytes", len(raw_body))
             data = json.loads(body_text)
         except Exception as e:
             logger.warning(f"Kling webhook received invalid JSON: {e}")
@@ -2403,10 +2426,10 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
     }
     """
     try:
-        logger.info(f"Seedream webhook headers: {dict(request.headers)}")
+        logger.info("Seedream webhook headers: %s", _preview_log_headers(request.headers))
 
         body = await request.text()
-        logger.info("Seedream webhook raw body: %s", _preview_log_payload(body, limit=500))
+        logger.info("Seedream webhook raw body received: %s chars", len(body))
 
         if not body:
             logger.warning("Seedream webhook received empty body")
@@ -2608,10 +2631,10 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
     }
     """
     try:
-        logger.info(f"Novita FLUX webhook headers: {dict(request.headers)}")
+        logger.info("Novita FLUX webhook headers: %s", _preview_log_headers(request.headers))
 
         body = await request.text()
-        logger.info(f"Novita FLUX webhook raw body: {repr(body)[:500]}")
+        logger.info("Novita FLUX webhook raw body received: %s chars", len(body))
 
         if not body:
             logger.warning("Novita FLUX webhook received empty body")
@@ -2773,10 +2796,10 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
 async def handle_wanx_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от PiAPI WanX API"""
     try:
-        logger.info(f"WanX webhook headers: {dict(request.headers)}")
+        logger.info("WanX webhook headers: %s", _preview_log_headers(request.headers))
 
         body = await request.text()
-        logger.info(f"WanX webhook raw body: {repr(body)[:500]}")
+        logger.info("WanX webhook raw body received: %s chars", len(body))
 
         if not body:
             logger.warning("WanX webhook received empty body")
@@ -2900,7 +2923,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
     try:
-        logger.info(f"Kie.ai webhook headers: {dict(request.headers)}")
+        logger.info("Kie.ai webhook headers: %s", _preview_log_headers(request.headers))
 
         raw_body = await request.read()
         if not raw_body:
@@ -2909,7 +2932,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         try:
             body_text = raw_body.decode("utf-8")
-            logger.info("Kie.ai webhook raw body: %s", _preview_log_payload(body_text))
+            logger.info("Kie.ai webhook raw body received: %s bytes", len(raw_body))
             data = json.loads(body_text)
         except Exception as e:
             logger.warning(f"Kie.ai webhook received invalid JSON: {e}")

@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 from bot.config import config
 
@@ -9,6 +10,16 @@ try:
     import redis.asyncio as redis
 except Exception:  # pragma: no cover - optional dependency fallback
     redis = None
+
+
+def _safe_redis_url(value: str) -> str:
+    parsed = urlparse(str(value or ""))
+    if not parsed.scheme:
+        return "[not configured]"
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}{parsed.path or ''}"
 
 
 class RedisService:
@@ -39,9 +50,9 @@ class RedisService:
                     health_check_interval=30,
                 )
                 await self._client.ping()
-                logger.info("Redis connected: %s", config.redis_url)
+                logger.info("Redis connected: %s", _safe_redis_url(config.redis_url))
             except Exception:
-                logger.exception("Failed to connect to Redis at %s", config.redis_url)
+                logger.exception("Failed to connect to Redis at %s", _safe_redis_url(config.redis_url))
                 self._is_disabled = True
                 self._client = None
                 return None

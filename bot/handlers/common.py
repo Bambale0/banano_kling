@@ -7,6 +7,8 @@ import uuid
 from math import floor
 from urllib.parse import urlparse
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
 from bot import db as db_backend
 import aiohttp
 from aiogram import Bot, F, Router, types
@@ -52,11 +54,13 @@ from bot.database import (
 from bot.config import config
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
+    feed_link as build_feed_link,
     feed_start_param as build_feed_start_param,
     referral_link as build_referral_link,
     remix_link as build_remix_link,
 )
 from bot.keyboards import (
+    _mini_app_url_with_start_param,
     get_ai_assistant_keyboard,
     get_admin_keyboard,
     get_animate_hub_keyboard,
@@ -76,6 +80,7 @@ from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     SUBSCRIPTION_CHECK_CALLBACK,
     check_required_channel_subscription,
+    should_block_for_subscription,
 )
 from bot.states import AdminStates, GenerationStates, PaymentStates
 
@@ -1172,6 +1177,8 @@ def _build_main_menu_text(user_credits: int, referral_bonus_text: str = "") -> s
     bonus_block = f"\n{referral_bonus_text.strip()}\n" if referral_bonus_text else "\n"
     return (
         "🏠 <b>NEUROMIX</b>\n"
+        "Здесь есть два режима: <b>Mini App</b> и <b>обычный текстовый бот</b>.\n"
+        "Mini App открывается кнопкой сверху, а текстовый режим — кнопками ниже или через <code>/start</code>.\n\n"
         "Выберите, что хотите сделать. Бот сам проведёт вас по шагам.\n\n"
         "<b>Что можно сделать</b>\n"
         "• Создать фото\n"
@@ -2076,6 +2083,12 @@ def _feed_share_link(bot_username: str, gen_id: int | str, referral_code: str | 
     return build_feed_bot_link(bot_username, gen_id, referral_code)
 
 
+def _feed_miniapp_link(bot_username: str, gen_id: int | str, referral_code: str | None = None) -> str:
+    if not gen_id:
+        return config.mini_app_url
+    return build_feed_link(bot_username, gen_id, referral_code)
+
+
 def _feed_remix_link(bot_username: str, gen_id: int | str, referral_code: str | None = None) -> str:
     if not gen_id:
         return config.mini_app_url
@@ -2086,6 +2099,15 @@ def _split_feed_deeplink(value: str) -> tuple[str, str]:
     raw = str(value or "").strip()
     gen_id, sep, referral_code = raw.partition("_ref_")
     return gen_id, (referral_code if sep else "")
+
+
+def _miniapp_open_markup(start_param: str, *, text: str = "🚀 Открыть Mini App") -> InlineKeyboardMarkup | None:
+    url = _mini_app_url_with_start_param(start_param)
+    if not url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))]]
+    )
 
 
 def _feed_card_photos(card: dict) -> list[str]:
@@ -2349,23 +2371,42 @@ async def _build_feed_keyboard(
             ),
         )
     ]
+    rows.append(action_row)
+
     if username and gen_id:
-        action_row.append(
-            types.InlineKeyboardButton(
-                text="🔗 Скопировать ссылку",
-                copy_text=types.CopyTextButton(
-                    text=_feed_share_link(username, gen_id, author_referral_code)
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="📱 Открыть пост в Mini App",
+                    url=_feed_miniapp_link(username, gen_id, author_referral_code),
+                )
+            ]
+        )
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🔗 Ссылка на пост в боте",
+                    copy_text=types.CopyTextButton(
+                        text=_feed_share_link(username, gen_id, author_referral_code)
+                    ),
                 ),
-            )
+                types.InlineKeyboardButton(
+                    text="📱 Mini App ссылка",
+                    copy_text=types.CopyTextButton(
+                        text=_feed_miniapp_link(username, gen_id, author_referral_code)
+                    ),
+                ),
+            ]
         )
     elif gen_id:
-        action_row.append(
-            types.InlineKeyboardButton(
-                text="🔗 Ссылка",
-                callback_data=f"bfs:{gen_id}",
-            )
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text="🔗 Ссылки",
+                    callback_data=f"bfs:{gen_id}",
+                )
+            ]
         )
-    rows.append(action_row)
 
     rows.extend(
         [
@@ -3180,8 +3221,13 @@ async def share_feed_card(callback: types.CallbackQuery):
         return
 
     username = await _bot_username(callback.bot)
-    link = _feed_share_link(username, card["id"], card.get("author_referral_code"))
-    await _safe_callback_answer(callback, f"Ссылка: {link}", show_alert=True)
+    bot_link = _feed_share_link(username, card["id"], card.get("author_referral_code"))
+    miniapp_link = _feed_miniapp_link(username, card["id"], card.get("author_referral_code"))
+    await _safe_callback_answer(
+        callback,
+        f"Бот: {bot_link}\nMini App: {miniapp_link}",
+        show_alert=True,
+    )
 
 
 @router.callback_query(F.data.startswith("bfr:"))
@@ -3300,7 +3346,7 @@ async def check_required_subscription(callback: types.CallbackQuery, state: FSMC
     else:
         result = None
 
-    if result and not result.ok:
+    if should_block_for_subscription(result):
         text = (
             "🔐 Доступ к боту открыт только подписчикам канала "
             f"@{REQUIRED_CHANNEL_USERNAME}.\n\n"
@@ -3470,8 +3516,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
             message,
             user,
             feed_gen_id,
-            state=state,
-            open_repeat=True,
         )
         return
 

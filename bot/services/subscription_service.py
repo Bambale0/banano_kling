@@ -25,6 +25,17 @@ class SubscriptionCheckResult:
     error: str = ""
 
 
+def should_block_for_subscription(result: "SubscriptionCheckResult | None") -> bool:
+    """Block access only on explicit non-member states; soft-fail on check errors/unknowns."""
+    if result is None:
+        return False
+    if result.ok:
+        return False
+    if result.error:
+        return False
+    return _normalize_status(result.status) in {"left", "kicked"}
+
+
 def _normalize_status(status) -> str:
     value = getattr(status, "value", status)
     return str(value or "").lower()

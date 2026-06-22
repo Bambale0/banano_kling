@@ -517,7 +517,7 @@ def _apply_safe_prompt_framing(
         r"\bкорсет\w*\b",
         r"\bбоди\b",
     }
-    preserve_garment_terms = img_service in {"seedream_edit", "banana_pro", "banana_2", "nanobanana"} and has_reference_images
+    preserve_garment_terms = img_service in {"seedream_edit", "banana_pro", "banana_2", "nanobanana", "wan_27"} and has_reference_images
 
     replacements = [
         (r"\blingerie\b", "fashion outfit"),
@@ -1233,6 +1233,8 @@ async def _restore_image_task_to_state(
                 "repeat_prompt_hidden": bool(hide_prompt),
                 "repeat_unit_cost": task.cost or 0,
                 "repeat_original_ref_count": len(original_reference_images),
+                "repeat_inherited_reference_count": len(reference_images),
+                "repeat_user_references_replaced": False,
             }
         )
     await state.update_data(**updates)
@@ -1697,6 +1699,8 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     unit_cost = data.get("repeat_unit_cost", 0)
     original_ref_count = int(data.get("repeat_original_ref_count") or 0)
     missing_ref_count = int(data.get("repeat_missing_ref_count") or 0)
+    inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
+    user_references_replaced = bool(data.get("repeat_user_references_replaced"))
     if missing_ref_count:
         ref_note = (
             f"<code>{len(reference_images)}</code> доступно, "
@@ -1710,10 +1714,17 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         ref_note = "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
     else:
         ref_note = f"<code>{original_ref_count}</code> прежних референсов"
+    replace_note = ""
+    if inherited_ref_count and not user_references_replaced:
+        replace_note = (
+            "⚠️ В текстовом боте новое фото заменит старые фото-референсы. "
+            "Для точечной ручной замены лучше открыть пост в Mini App.\n\n"
+        )
     return (
         "🔁 <b>Повторить prompt</b>\n\n"
         "Чтобы не получить результат без вашего лица, сначала отправьте фото прямо в чат. "
         "Генерация запустится только после отдельного подтверждения.\n\n"
+        f"{replace_note}"
         "<b>Текущие настройки</b>\n"
         f"• Модель: <code>{get_image_model_label(img_service)}</code>\n"
         f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
@@ -6692,12 +6703,22 @@ async def upload_reference_image_for_any_image_flow(
                 )
                 return
 
-            reference_images.append(public_url)
-            await state.update_data(reference_images=reference_images)
-
             if data.get("repeat_source_task_id"):
+                inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
+                already_replaced = bool(data.get("repeat_user_references_replaced"))
+                if inherited_ref_count > 0 and not already_replaced:
+                    reference_images = [public_url]
+                else:
+                    reference_images.append(public_url)
+                await state.update_data(
+                    reference_images=reference_images,
+                    repeat_user_references_replaced=True,
+                )
                 await _show_repeat_image_screen(message, state)
                 return
+
+            reference_images.append(public_url)
+            await state.update_data(reference_images=reference_images)
 
             title = (
                 "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
@@ -7084,15 +7105,25 @@ async def process_reference_photo_upload(message: types.Message, state: FSMConte
         )
 
         if image_url:
+            if data.get("repeat_source_task_id"):
+                inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
+                already_replaced = bool(data.get("repeat_user_references_replaced"))
+                if inherited_ref_count > 0 and not already_replaced:
+                    reference_images = [image_url]
+                else:
+                    reference_images.append(image_url)
+                await state.update_data(
+                    reference_images=reference_images,
+                    repeat_user_references_replaced=True,
+                )
+                await _show_repeat_image_screen(message, state)
+                return
+
             reference_images.append(image_url)
             await state.update_data(reference_images=reference_images)
 
             preset_id = data.get("preset_id", "new")
             current_count = len(reference_images)
-
-            if data.get("repeat_source_task_id"):
-                await _show_repeat_image_screen(message, state)
-                return
 
             text = (
                 f"📎 <b>Загрузка референсов</b>\n"
