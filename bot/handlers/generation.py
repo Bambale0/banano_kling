@@ -1788,7 +1788,7 @@ async def _ensure_repeat_image_state(
     return await _restore_image_task_to_state(
         task,
         state,
-        include_references=bool(task and task.user_id == user.id),
+        include_references=True,
         repeat_source_task_id=task_id,
         hide_prompt=bool(task and task.is_public_feed and task.user_id != user.id),
     )
@@ -1801,12 +1801,11 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     task = await get_task_by_id(task_id)
     user = await get_or_create_user(callback.from_user.id)
 
-    include_references = bool(task and task.user_id == user.id)
     hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
     restored, error_message = await _restore_image_task_to_state(
         task,
         state,
-        include_references=include_references,
+        include_references=True,
         repeat_source_task_id=task_id,
         hide_prompt=hide_prompt,
     )
