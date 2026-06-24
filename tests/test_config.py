@@ -49,6 +49,10 @@ class TestConfig:
         cfg.WEBHOOK_PATH = "webhook"
         assert cfg.webhook_url == "https://test.com/webhook"
 
+    def test_webhook_bind_host_default_is_localhost(self):
+        cfg = Config()
+        assert cfg.WEBHOOK_BIND_HOST == "127.0.0.1"
+
     def test_payment_provider_tbank(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "tbank"

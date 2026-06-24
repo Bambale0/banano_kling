@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, writeFileSync, copyFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const outDir = join(process.cwd(), 'out')
-const telegramSrc = 'https://telegram.org/js/telegram-web-app.js'
-const telegramScript = `<script src="${telegramSrc}" async=""></script>`
+const localTelegramJs = 'telegram-web-app.js'
+const localTelegramSrc = `/${localTelegramJs}`
+const telegramScript = `<script src="${localTelegramSrc}" async=""></script>`
 const inlineMiniappCss = process.env.MINIAPP_INLINE_CSS === '1'
 
 const telegramEarlyScriptPattern =
@@ -36,7 +37,7 @@ function removeQueuedTelegramScripts(html) {
       return tag
     }
 
-    return tag.includes(telegramSrc) || tag.includes('telegram-early-ready') ? '' : tag
+    return tag.includes(localTelegramSrc) || tag.includes(localTelegramJs) || tag.includes('telegram-early-ready') ? '' : tag
   })
 }
 
@@ -62,6 +63,16 @@ function inlineMiniappStyles(html) {
   }
 
   return html.replace(stylesheetTag, `${stylesheetTag}${inlineStyle}`)
+}
+
+// Copy local telegram-web-app.js into out/ so it is served from the same origin
+const publicTelegramJs = join(process.cwd(), 'public', localTelegramJs)
+const outTelegramJs = join(outDir, localTelegramJs)
+if (existsSync(publicTelegramJs)) {
+  copyFileSync(publicTelegramJs, outTelegramJs)
+  console.log(`Copied ${localTelegramJs} to ${outTelegramJs}`)
+} else {
+  console.warn(`⚠ Missing ${publicTelegramJs} — local Telegram SDK file not found`)
 }
 
 let patched = 0

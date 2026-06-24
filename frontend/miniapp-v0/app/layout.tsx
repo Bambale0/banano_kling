@@ -39,7 +39,7 @@ const telegramBootstrapScript = `
 
     if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
       try {
-        window.parent.postMessage(payload, '*');
+        window.parent.postMessage(payload, window.location.origin || '*');
       } catch (e) {}
     }
   }
@@ -56,7 +56,7 @@ const telegramBootstrapScript = `
     postTelegramEvent('web_app_ready');
     postTelegramEvent('web_app_expand');
 
-    if (attempts < 80) {
+    if (attempts < 30) {
       window.setTimeout(markReady, 100);
     }
   }
@@ -106,7 +106,7 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <body className="font-sans antialiased">
-        <script src="https://telegram.org/js/telegram-web-app.js" async />
+        <script src="/telegram-web-app.js" async />
         <script
           id="telegram-early-ready"
           dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}

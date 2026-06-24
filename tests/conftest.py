@@ -10,10 +10,16 @@ def temp_db_path(tmp_path):
 @pytest.fixture(autouse=True)
 async def isolated_database(tmp_path, monkeypatch):
     """Run every test against a fresh SQLite database, never the live bot.db."""
-    from bot import database
-
     db_path = tmp_path / "test.db"
+    sqlite_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", sqlite_url)
     monkeypatch.setenv("DATABASE_PATH", str(db_path))
+
+    from bot import database
+    from bot import db as db_backend
+
+    monkeypatch.setattr(db_backend, "DATABASE_URL", sqlite_url)
+    monkeypatch.setattr(db_backend, "DATABASE_PATH", str(db_path))
     monkeypatch.setattr(database, "DATABASE_PATH", str(db_path))
     await database.init_db()
     yield

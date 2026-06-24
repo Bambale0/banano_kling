@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
+_LOGGED_REFERRAL_CYCLES: set[tuple[int, int, int]] = set()
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
@@ -1454,12 +1455,22 @@ async def _referral_chain_contains(
         if current_id == target_user_id:
             return True
         if current_id in seen:
-            logger.warning(
-                "Referral ancestry cycle detected: start_user_id=%s target_user_id=%s repeated_user_id=%s",
-                start_user_id,
-                target_user_id,
-                current_id,
-            )
+            cycle_key = (int(start_user_id), int(target_user_id), int(current_id))
+            if cycle_key not in _LOGGED_REFERRAL_CYCLES:
+                _LOGGED_REFERRAL_CYCLES.add(cycle_key)
+                logger.warning(
+                    "Referral ancestry cycle detected: start_user_id=%s target_user_id=%s repeated_user_id=%s",
+                    start_user_id,
+                    target_user_id,
+                    current_id,
+                )
+            else:
+                logger.debug(
+                    "Referral ancestry cycle already reported: start_user_id=%s target_user_id=%s repeated_user_id=%s",
+                    start_user_id,
+                    target_user_id,
+                    current_id,
+                )
             return False
         seen.add(current_id)
 
@@ -3277,6 +3288,29 @@ def _saved_reference_from_payload(payload: dict) -> SavedReference:
     )
 
 
+def _saved_reference_is_available(reference: SavedReference) -> bool:
+    try:
+        from bot.services.media_input_utils import (
+            is_local_upload_source,
+            resolve_local_upload_path,
+        )
+
+        if is_local_upload_source(reference.file_url):
+            return bool(resolve_local_upload_path(reference.file_url))
+    except Exception:
+        logger.exception("Failed to validate saved reference file: %s", reference.file_url)
+        return True
+    return True
+
+
+def _filter_available_saved_references(
+    references: list[SavedReference],
+    *,
+    limit: int,
+) -> list[SavedReference]:
+    return [item for item in references if _saved_reference_is_available(item)][:limit]
+
+
 async def _invalidate_saved_reference_cache(telegram_id: int) -> None:
     try:
         from bot.services.redis_service import redis_service
@@ -3753,7 +3787,14 @@ async def list_saved_references(telegram_id: int, kind: Optional[str] = None, li
         if cached:
             payload = json.loads(cached)
             if isinstance(payload, list):
-                return [_saved_reference_from_payload(item) for item in payload if isinstance(item, dict)]
+                references = [
+                    _saved_reference_from_payload(item)
+                    for item in payload
+                    if isinstance(item, dict)
+                ]
+                available = _filter_available_saved_references(references, limit=safe_limit)
+                if len(available) == len(references):
+                    return available
     except Exception:
         logger.exception("Failed to read saved references cache for telegram_id=%s", telegram_id)
 
@@ -3764,14 +3805,17 @@ async def list_saved_references(telegram_id: int, kind: Optional[str] = None, li
         query += " AND kind = ?"
         params.append(safe_kind)
     query += " ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC LIMIT ?"
-    params.append(safe_limit)
+    params.append(safe_limit * 3)
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
-    references = [_saved_reference_from_row(row) for row in rows]
+    references = _filter_available_saved_references(
+        [_saved_reference_from_row(row) for row in rows],
+        limit=safe_limit,
+    )
 
     try:
         from bot.services.redis_service import redis_service

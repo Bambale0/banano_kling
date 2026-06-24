@@ -81,6 +81,7 @@ YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
 LAVA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 LAVA_RECONCILE_BATCH_SIZE = 50
+_TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -443,7 +444,7 @@ def _preview_log_payload(value, limit: int = 1200) -> str:
         if isinstance(obj, list):
             return [_redact_payload(item) for item in obj]
         if isinstance(obj, str):
-            if obj.startswith(("http://", "https://")):
+            if "http://" in obj or "https://" in obj:
                 return "[redacted:url]"
             return obj
         return obj
@@ -1642,7 +1643,7 @@ async def handle_telegram_webhook(
 
         async def _process_update():
             try:
-                await dp.feed_webhook_update(bot, update)
+                await dp.feed_update(bot, update)
             except TelegramBadRequest as e:
                 error_msg = str(e).lower()
                 if (
@@ -1661,7 +1662,9 @@ async def handle_telegram_webhook(
 
         # Сразу отвечаем Telegram, а обработку уводим в фон,
         # чтобы длинные операции не вызывали повторную доставку update.
-        asyncio.create_task(_process_update())
+        task = asyncio.create_task(_process_update())
+        _TELEGRAM_WEBHOOK_TASKS.add(task)
+        task.add_done_callback(_TELEGRAM_WEBHOOK_TASKS.discard)
 
         return web.Response(text="OK", status=200)
     except TelegramBadRequest as e:
@@ -3604,10 +3607,14 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
 
-        site = web.TCPSite(runner, "0.0.0.0", config.WEBHOOK_PORT)
+        site = web.TCPSite(runner, config.WEBHOOK_BIND_HOST, config.WEBHOOK_PORT)
         await site.start()
 
-        logger.info(f"Server started on port {config.WEBHOOK_PORT}")
+        logger.info(
+            "Server started on %s:%s",
+            config.WEBHOOK_BIND_HOST,
+            config.WEBHOOK_PORT,
+        )
         await on_startup(bot, dp)
 
         # Держим бота запущенным

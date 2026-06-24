@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 
 import aiohttp
@@ -6,6 +7,18 @@ import aiohttp
 from bot.config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _preview_lava_error_body(raw_text: str, limit: int = 500) -> str:
+    text = (raw_text or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("<!doctype html") or lowered.startswith("<html"):
+        return f"[html response: {len(text)} chars]"
+    if len(text) > limit:
+        return text[:limit] + f"... [truncated, {len(text)} chars total]"
+    return text
 
 
 class LavaService:
@@ -53,33 +66,66 @@ class LavaService:
 
         session = await self._get_session()
         url = f"{self.base_url}/{path.lstrip('/')}"
+        max_attempts = 3 if method.upper() == "GET" else 1
 
-        async with session.request(
-            method.upper(),
-            url,
-            headers=self._headers(),
-            json=payload,
-            params=params,
-        ) as resp:
-            raw_text = await resp.text()
+        for attempt in range(1, max_attempts + 1):
             try:
-                data = await resp.json(content_type=None)
-            except Exception:
-                data = {"raw": raw_text}
+                async with session.request(
+                    method.upper(),
+                    url,
+                    headers=self._headers(),
+                    json=payload,
+                    params=params,
+                ) as resp:
+                    raw_text = await resp.text()
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        data = {"raw": raw_text}
 
-            if resp.status >= 400:
-                logger.warning("Lava API error %s %s: %s", resp.status, url, raw_text)
-                return {
-                    "ok": False,
-                    "status": resp.status,
-                    "error": data,
-                    "raw": raw_text,
-                }
+                    if resp.status >= 400:
+                        if resp.status in {500, 502, 503, 504} and attempt < max_attempts:
+                            logger.info(
+                                "Lava API transient error %s %s attempt=%s/%s",
+                                resp.status,
+                                url,
+                                attempt,
+                                max_attempts,
+                            )
+                            await asyncio.sleep(0.5 * attempt)
+                            continue
+                        logger.warning(
+                            "Lava API error %s %s: %s",
+                            resp.status,
+                            url,
+                            _preview_lava_error_body(raw_text),
+                        )
+                        return {
+                            "ok": False,
+                            "status": resp.status,
+                            "error": data,
+                            "raw": raw_text,
+                        }
 
-            if isinstance(data, dict):
-                data.setdefault("ok", True)
-                return data
-            return {"ok": True, "result": data}
+                    if isinstance(data, dict):
+                        data.setdefault("ok", True)
+                        return data
+                    return {"ok": True, "result": data}
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                if attempt < max_attempts:
+                    logger.info(
+                        "Lava API request failed %s attempt=%s/%s: %s",
+                        url,
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                logger.warning("Lava API request failed %s: %s", url, exc)
+                return {"ok": False, "status": None, "error": str(exc), "raw": ""}
+
+        return {"ok": False, "status": None, "error": "request failed", "raw": ""}
 
     async def create_invoice(
         self,

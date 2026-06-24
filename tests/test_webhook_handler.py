@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 import pytest
 from aiohttp import web
@@ -14,7 +15,9 @@ from bot.main import (
     _build_failure_notification_text,
     _build_plain_result_link_text,
     _extract_gemini_omni_asset_id,
+    _TELEGRAM_WEBHOOK_TASKS,
     handle_kling_webhook,
+    handle_telegram_webhook,
 )
 
 
@@ -79,6 +82,27 @@ async def test_handle_kling_webhook_signature_rejects_invalid_signature(monkeypa
 
     resp = await handle_kling_webhook(req)
     assert resp.status == 200
+
+
+@pytest.mark.asyncio
+async def test_handle_telegram_webhook_uses_plain_background_update_processing():
+    class FakeReq:
+        async def read(self):
+            return b'{"update_id": 12345}'
+
+    bot = Mock()
+    dp = Mock()
+    dp.feed_update = AsyncMock()
+    dp.feed_webhook_update = AsyncMock()
+
+    resp = await handle_telegram_webhook(FakeReq(), bot, dp)
+
+    assert resp.status == 200
+    for task in list(_TELEGRAM_WEBHOOK_TASKS):
+        await task
+
+    dp.feed_update.assert_awaited_once()
+    dp.feed_webhook_update.assert_not_awaited()
 
 
 def test_extract_gemini_omni_asset_id_from_result_json():

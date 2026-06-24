@@ -137,6 +137,59 @@ from bot.video_reference_policy import (
 
 logger = logging.getLogger(__name__)
 
+_MINIAPP_INIT_DATA_ERRORS = {
+    "Missing init_data": "Откройте Mini App из Telegram и попробуйте снова.",
+    "Missing Telegram hash": "Откройте Mini App из Telegram и попробуйте снова.",
+    "Invalid Telegram signature": "Откройте Mini App заново из Telegram.",
+    "Expired Telegram session": "Сессия Telegram истекла. Откройте Mini App заново из Telegram.",
+    "Missing Telegram user": "Откройте Mini App заново из Telegram.",
+}
+
+
+def _miniapp_expected_error_response(error: Exception) -> web.Response | None:
+    if isinstance(error, PermissionError):
+        return web.json_response({"ok": False, "error": str(error)}, status=403)
+
+    if isinstance(error, ValueError):
+        message = str(error)
+        if message in _MINIAPP_INIT_DATA_ERRORS:
+            return web.json_response(
+                {"ok": False, "error": _MINIAPP_INIT_DATA_ERRORS[message]},
+                status=401,
+            )
+
+    if isinstance(error, ConnectionResetError):
+        return web.json_response(
+            {"ok": False, "error": "Загрузка была прервана. Попробуйте ещё раз."},
+            status=499,
+        )
+
+    if isinstance(error, web.HTTPException):
+        return web.json_response(
+            {"ok": False, "error": error.reason or "Mini App request failed"},
+            status=error.status,
+        )
+
+    return None
+
+
+def _miniapp_error_response(
+    error: Exception,
+    *,
+    log_message: str,
+    default_error: str | None = None,
+) -> web.Response:
+    expected_response = _miniapp_expected_error_response(error)
+    if expected_response is not None:
+        logger.warning("%s: %s", log_message, error)
+        return expected_response
+
+    logger.exception(log_message)
+    return web.json_response(
+        {"ok": False, "error": default_error or str(error)},
+        status=500,
+    )
+
 
 def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int) -> int:
     try:
@@ -768,6 +821,13 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
 
     resolved_start_param = payload.get("start_param") or start_param_fallback
+    if not payload.get("start_param") and not start_param_fallback:
+        logger.warning(
+            "Mini App start_param missing: user_id=%s username=%s payload_keys=%s",
+            telegram_id,
+            telegram_user.get("username"),
+            list(payload.keys()),
+        )
     if start_param_fallback and not payload.get("start_param"):
         logger.info(
             "Mini App start_param fallback used: user_id=%s username=%s fallback=%s",
@@ -846,7 +906,8 @@ def _public_result_urls(payload: dict[str, Any]) -> list[str]:
     result_url = payload.get("result_url")
     if result_url and result_url not in normalized:
         normalized.insert(0, result_url)
-    return normalized
+    missing = set(missing_local_upload_sources(normalized))
+    return [url for url in normalized if url not in missing]
 
 
 def _payload_bool(value: Any, default: bool = False) -> bool:
@@ -916,6 +977,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
     for row in rows:
         task_type = row["type"] or "image"
         model = row["model"] or ""
+        result_urls = _public_result_urls(dict(row))
         label = (
             get_image_model_label(model)
             if task_type == "image"
@@ -930,8 +992,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "duration": row["duration"],
                 "aspect_ratio": row["aspect_ratio"] or "",
                 "status": row["status"] or "pending",
-                "result_url": row["result_url"],
-                "result_urls": _public_result_urls(dict(row)),
+                "result_url": result_urls[0] if result_urls else None,
+                "result_urls": result_urls,
                 "created_at": row["created_at"],
                 "prompt_preview": "" if _task_prompt_hidden(row) else _task_preview(row["prompt"]),
                 "prompt_hidden": _task_prompt_hidden(row),
@@ -1009,6 +1071,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
     task_type = row["type"] or "image"
     model = row["model"] or ""
     request_data = _parse_request_data(row["request_data"])
+    result_urls = _public_result_urls(dict(row))
     model_label = (
         get_image_model_label(model)
         if task_type == "image"
@@ -1027,8 +1090,8 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "prompt_actions_allowed": _task_prompt_actions_allowed(row),
         "cost": row["cost"] or 0,
         "status": row["status"] or "pending",
-        "result_url": row["result_url"],
-        "result_urls": _public_result_urls(dict(row)),
+        "result_url": result_urls[0] if result_urls else None,
+        "result_urls": result_urls,
         "is_public_feed": bool(row["is_public_feed"]),
         "is_prompt_library": bool(row["is_prompt_library"]),
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
@@ -1958,8 +2021,10 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         }
         return web.json_response(data)
     except Exception as e:
-        logger.warning("Mini App bootstrap failed: %s", e)
-        return web.json_response({"ok": False, "error": str(e)}, status=400)
+        return _miniapp_error_response(
+            e,
+            log_message="Mini App bootstrap failed",
+        )
 
 
 async def miniapp_action(request: web.Request) -> web.Response:
@@ -1980,8 +2045,7 @@ async def miniapp_action(request: web.Request) -> web.Response:
         await handler(request.app, telegram_id)
         return web.json_response({"ok": True})
     except Exception as e:
-        logger.exception("Mini App action failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App action failed")
 
 
 async def miniapp_upload(request: web.Request) -> web.Response:
@@ -2064,8 +2128,11 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App upload failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(
+            e,
+            log_message="Mini App upload failed",
+            default_error="Не удалось загрузить файл",
+        )
 
 
 async def miniapp_create_payment(request: web.Request) -> web.Response:
@@ -2229,8 +2296,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
         )
 
     except Exception as e:
-        logger.exception("Mini App create-payment failed: %s", e)
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App create-payment failed")
 
 
 async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
@@ -2273,8 +2339,7 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App photo-to-prompt failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App photo-to-prompt failed")
 
 
 async def miniapp_prompts(request: web.Request) -> web.Response:
@@ -2311,8 +2376,7 @@ async def miniapp_prompts(request: web.Request) -> web.Response:
 
         return web.json_response({"ok": True, "prompts": prompts})
     except Exception as e:
-        logger.exception("Mini App prompts list failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompts list failed")
 
 
 async def miniapp_prompt_detail(request: web.Request) -> web.Response:
@@ -2330,8 +2394,7 @@ async def miniapp_prompt_detail(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Промпт недоступен"}, status=403)
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt detail failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt detail failed")
 
 
 async def miniapp_prompt_like(request: web.Request) -> web.Response:
@@ -2348,8 +2411,7 @@ async def miniapp_prompt_like(request: web.Request) -> web.Response:
             )
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt like failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt like failed")
 
 
 async def miniapp_prompt_use(request: web.Request) -> web.Response:
@@ -2366,8 +2428,7 @@ async def miniapp_prompt_use(request: web.Request) -> web.Response:
             )
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt use failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt use failed")
 
 
 async def miniapp_prompt_link(request: web.Request) -> web.Response:
@@ -2386,8 +2447,7 @@ async def miniapp_prompt_link(request: web.Request) -> web.Response:
         link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
         return web.json_response({"ok": True, "prompt": prompt, "link": link})
     except Exception as e:
-        logger.exception("Mini App prompt link failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt link failed")
 
 
 async def miniapp_prompt_submit(request: web.Request) -> web.Response:
@@ -2426,8 +2486,7 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
             prompt = await approve_prompt(prompt["id"])
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt submit failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt submit failed")
 
 
 async def miniapp_prompt_deactivate(request: web.Request) -> web.Response:
@@ -2439,8 +2498,7 @@ async def miniapp_prompt_deactivate(request: web.Request) -> web.Response:
         prompt = await deactivate_prompt(prompt_id, author_id=ctx["user"].id)
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt deactivate failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt deactivate failed")
 
 
 async def miniapp_prompt_moderate(request: web.Request) -> web.Response:
@@ -2462,8 +2520,7 @@ async def miniapp_prompt_moderate(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Неизвестное действие"}, status=400)
         return web.json_response({"ok": True, "prompt": prompt})
     except Exception as e:
-        logger.exception("Mini App prompt moderate failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App prompt moderate failed")
 
 
 async def miniapp_feed(request: web.Request) -> web.Response:
@@ -2480,8 +2537,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
-        logger.exception("Mini App feed list failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed list failed")
 
 
 async def miniapp_feed_item(request: web.Request) -> web.Response:
@@ -2502,8 +2558,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
-        logger.exception("Mini App feed item failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed item failed")
 
 
 async def miniapp_my_feed(request: web.Request) -> web.Response:
@@ -2518,8 +2573,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
-        logger.exception("Mini App my feed failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App my feed failed")
 
 
 def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int | None = None) -> dict[str, Any]:
@@ -2582,8 +2636,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "profile": profile, "feed": feed})
     except Exception as e:
-        logger.exception("Mini App profile feed failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App profile feed failed")
 
 
 async def miniapp_profile_channel_save(request: web.Request) -> web.Response:
@@ -2597,8 +2650,7 @@ async def miniapp_profile_channel_save(request: web.Request) -> web.Response:
     except ValueError as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
     except Exception as e:
-        logger.exception("Mini App profile channel save failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App profile channel save failed")
 
 
 async def miniapp_generation_share(request: web.Request) -> web.Response:
@@ -2635,8 +2687,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             )
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
-        logger.exception("Mini App share generation failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App share generation failed")
 
 
 async def miniapp_feed_remove(request: web.Request) -> web.Response:
@@ -2648,8 +2699,7 @@ async def miniapp_feed_remove(request: web.Request) -> web.Response:
         removed = await remove_from_feed(gen_id, ctx["user"].id)
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
-        logger.exception("Mini App remove feed failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App remove feed failed")
 
 
 async def miniapp_feed_like(request: web.Request) -> web.Response:
@@ -2663,8 +2713,7 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
-        logger.exception("Mini App feed like failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed like failed")
 
 
 async def miniapp_feed_share(request: web.Request) -> web.Response:
@@ -2715,8 +2764,7 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App feed share failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed share failed")
 
 
 async def miniapp_feed_comments(request: web.Request) -> web.Response:
@@ -2733,8 +2781,7 @@ async def miniapp_feed_comments(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "comments": comments})
     except Exception as e:
-        logger.exception("Mini App feed comments failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed comments failed")
 
 
 async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
@@ -2759,8 +2806,7 @@ async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App feed comment add failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed comment add failed")
 
 
 async def miniapp_generation_share_library(request: web.Request) -> web.Response:
@@ -2777,8 +2823,7 @@ async def miniapp_generation_share_library(request: web.Request) -> web.Response
             )
         return web.json_response({"ok": True, "generation": task})
     except Exception as e:
-        logger.exception("Mini App share library failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App share library failed")
 
 
 async def miniapp_generation_remove_library(request: web.Request) -> web.Response:
@@ -2790,8 +2835,7 @@ async def miniapp_generation_remove_library(request: web.Request) -> web.Respons
         removed = await remove_from_library(gen_id, ctx["user"].id)
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
-        logger.exception("Mini App remove library failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App remove library failed")
 
 
 async def miniapp_feed_remix(request: web.Request) -> web.Response:
@@ -2909,8 +2953,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App feed remix failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App feed remix failed")
 
 
 async def miniapp_generate_image(request: web.Request) -> web.Response:
@@ -3107,8 +3150,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App image generation failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App image generation failed")
 
 
 async def miniapp_generate_video(request: web.Request) -> web.Response:
@@ -3514,8 +3556,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App video generation failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App video generation failed")
 
 
 async def miniapp_generate_motion(request: web.Request) -> web.Response:
@@ -3701,8 +3742,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         )
 
     except Exception as e:
-        logger.exception("Mini App Motion Control generation failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
 
 
 async def miniapp_partner_overview(request: web.Request) -> web.Response:
@@ -3740,8 +3780,7 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
             }
         )
     except Exception as e:
-        logger.exception("Mini App partner overview failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App partner overview failed")
 
 
 async def miniapp_task_detail(request: web.Request) -> web.Response:
@@ -3763,8 +3802,7 @@ async def miniapp_task_detail(request: web.Request) -> web.Response:
 
         return web.json_response({"ok": True, "task": detail})
     except Exception as e:
-        logger.exception("Mini App task detail failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App task detail failed")
 
 
 async def miniapp_ai_assistant(request: web.Request) -> web.Response:
@@ -3828,8 +3866,7 @@ async def miniapp_ai_assistant(request: web.Request) -> web.Response:
 
         return web.json_response({"ok": True, "reply": response_text})
     except Exception as e:
-        logger.exception("Mini App AI assistant failed")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return _miniapp_error_response(e, log_message="Mini App AI assistant failed")
 
 
 async def miniapp_api_not_found(request: web.Request) -> web.Response:
@@ -3919,6 +3956,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/favicon.ico", _miniapp_root_file)
     app.router.add_get("/apple-icon.png", _miniapp_root_file)
     app.router.add_get("/_vercel/insights/script.js", _empty_vercel_insights)
+    app.router.add_get("/telegram-web-app.js", _miniapp_root_file)
     app.router.add_get(miniapp_root, miniapp_index)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)

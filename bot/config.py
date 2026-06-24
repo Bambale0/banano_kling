@@ -126,6 +126,7 @@ class Config:
     # Default to "/webhook" to avoid registering an empty route in aiohttp.
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
+    WEBHOOK_BIND_HOST: str = os.getenv("WEBHOOK_BIND_HOST", "127.0.0.1")
     STATIC_BASE_URL: str = os.getenv("STATIC_BASE_URL", "")
     PERSIST_PROVIDER_RESULTS: bool = os.getenv("PERSIST_PROVIDER_RESULTS", "0").lower() in (
         "1",
