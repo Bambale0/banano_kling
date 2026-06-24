@@ -873,6 +873,11 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
 
 
 def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> bool:
+    if not task:
+        return False
+    # Не отправляем промпт, если он скрыт (повтор из публичной ленты)
+    if getattr(task, "source_feed_gen_id", None):
+        return False
     return bool(_extract_used_prompt(task))
 
 
@@ -905,6 +910,9 @@ def _get_task_mode_label(task, reference_urls: list[str]) -> str:
 async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, result_url: str | None = None) -> None:
     prompt = (_extract_used_prompt(task) or "").strip()
     if not prompt:
+        return
+    # Не отправляем промпт, если он скрыт (повтор из публичной ленты)
+    if getattr(task, "source_feed_gen_id", None):
         return
 
     result_urls = [result_url] if result_url else []
@@ -1807,7 +1815,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 caption += f"\\n📐 <code>{_html_fragment(task.aspect_ratio)}</code>"
                             if task.cost:
                                 caption += f"\\n💰 <code>{_html_fragment(task.cost)}🍌</code>"
-                            if task.preset_id == "no_preset" and task.prompt:
+                            if getattr(task, 'source_feed_gen_id', None):
+                                caption += f"\\n\\n🎯 Промпт скрыт"
+                            elif task.preset_id == "no_preset" and task.prompt:
                                 prompt_preview = _html_fragment(
                                     f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
                                 )
@@ -1927,7 +1937,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     caption += (
                                         f"\n• Стоимость: <code>{_html_fragment(task.cost)}🍌</code>"
                                     )
-                                if task.preset_id == "no_preset" and task.prompt:
+                                if getattr(task, 'source_feed_gen_id', None):
+                                    caption += f"\n\n🎯 <b>Промпт скрыт</b>"
+                                elif task.preset_id == "no_preset" and task.prompt:
                                     prompt_preview = _html_fragment(
                                         f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
                                     )
@@ -2168,7 +2180,9 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 caption += f"\\n📐 <code>{_html_fragment(task.aspect_ratio)}</code>"
             if task.cost:
                 caption += f"\\n💰 <code>{_html_fragment(task.cost)}🍌</code>"
-            if task.preset_id == "no_preset" and task.prompt:
+            if getattr(task, 'source_feed_gen_id', None):
+                caption += f"\\n\\n🎯 Промпт скрыт"
+            elif task.preset_id == "no_preset" and task.prompt:
                 prompt_preview = _html_fragment(
                     f"{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}"
                 )
@@ -2536,7 +2550,9 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                 caption += f"\\n📐 <code>{task.aspect_ratio}</code>"
             if task.cost:
                 caption += f"\\n💰 <code>{task.cost}🍌</code>"
-            if task.preset_id == "no_preset" and task.prompt:
+            if getattr(task, 'source_feed_gen_id', None):
+                caption += f"\\n\\n🎯 Промпт скрыт"
+            elif task.preset_id == "no_preset" and task.prompt:
                 caption += f"\\n\\n🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
             else:
                 caption += f"\\n\\n🎯 Пресет: {task.preset_id}"
@@ -2714,7 +2730,9 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             )
 
             # Determine caption based on preset
-            if task.preset_id == "no_preset" and task.prompt:
+            if getattr(task, 'source_feed_gen_id', None):
+                caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Промпт скрыт"
+            elif task.preset_id == "no_preset" and task.prompt:
                 caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if len(task.prompt) > 100 else ''}</code>"
             else:
                 caption = f"✅ <b>Ваше изображение (FLUX.2 Pro) готово!</b>🎯 Пресет: {task.preset_id}"
@@ -2866,11 +2884,14 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                 return web.Response(status=200)
 
             reference_preview_urls = _extract_reference_image_urls(task, webhook_data)
-            caption = (
-                f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
-                if task.preset_id == "no_preset" and task.prompt
-                else f"✅ <b>Ваше видео WanX готово!</b>🎯 Пресет: {task.preset_id}"
-            )
+            if getattr(task, 'source_feed_gen_id', None):
+                caption = f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт скрыт"
+            else:
+                caption = (
+                    f"✅ <b>Ваше видео WanX готово!</b>🎯 Промпт: <code>{task.prompt[:100]}{'...' if task.prompt and len(task.prompt) > 100 else ''}</code>"
+                    if task.preset_id == "no_preset" and task.prompt
+                    else f"✅ <b>Ваше видео WanX готово!</b>🎯 Пресет: {task.preset_id}"
+                )
 
             video_url = await _persist_result_url_if_needed(video_url, task_type="video")
 
