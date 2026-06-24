@@ -1700,7 +1700,7 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     original_ref_count = int(data.get("repeat_original_ref_count") or 0)
     missing_ref_count = int(data.get("repeat_missing_ref_count") or 0)
     inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
-    user_references_replaced = bool(data.get("repeat_user_references_replaced"))
+    user_ref_count = len(reference_images)
     if missing_ref_count:
         ref_note = (
             f"<code>{len(reference_images)}</code> доступно, "
@@ -1715,11 +1715,19 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     else:
         ref_note = f"<code>{inherited_ref_count}</code> прежних референсов"
     replace_note = ""
-    if inherited_ref_count and not user_references_replaced:
+    if inherited_ref_count and user_ref_count > inherited_ref_count:
         replace_note = (
-            "⚠️ В текстовом боте новое фото заменит старые фото-референсы. "
-            "Для точечной ручной замены лучше открыть пост в Mini App.\n\n"
+            f"📸 Загружено своей замены: <code>{user_ref_count - inherited_ref_count}</code> — "
+            f"всего референсов: <code>{user_ref_count}</code>\n\n"
         )
+    elif inherited_ref_count:
+        replace_note = (
+            "📸 Загрузите свои фото — они добавятся к существующим референсам. "
+            "Прежние референсы не удаляются, все фото пойдут в генерацию.\n\n"
+        )
+    else:
+        replace_note = ""
+
     return (
         "🔁 <b>Повторить prompt</b>\n\n"
         "Чтобы не получить результат без вашего лица, сначала отправьте фото прямо в чат. "
@@ -6703,16 +6711,8 @@ async def upload_reference_image_for_any_image_flow(
                 return
 
             if data.get("repeat_source_task_id"):
-                inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
-                already_replaced = bool(data.get("repeat_user_references_replaced"))
-                if inherited_ref_count > 0 and not already_replaced:
-                    reference_images = [public_url]
-                else:
-                    reference_images.append(public_url)
-                await state.update_data(
-                    reference_images=reference_images,
-                    repeat_user_references_replaced=True,
-                )
+                reference_images.append(public_url)
+                await state.update_data(reference_images=reference_images)
                 await _show_repeat_image_screen(message, state)
                 return
 
