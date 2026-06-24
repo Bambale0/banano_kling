@@ -1672,7 +1672,7 @@ async def remove_image_result_prompt_from_library(
     await callback.answer("Убрано из промптов.")
 
 
-def _repeat_image_keyboard(task_id: str, reference_count: int = 0) -> types.InlineKeyboardMarkup:
+def _repeat_image_keyboard(task_id: str, reference_count: int = 0, inherited_ref_count: int = 0) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(
         text="📸 Добавить своё фото" if reference_count == 0 else "📸 Добавить ещё фото",
@@ -1682,6 +1682,8 @@ def _repeat_image_keyboard(task_id: str, reference_count: int = 0) -> types.Inli
         text="🚀 Запустить с фото" if reference_count else "🚀 Повторить без фото",
         callback_data=f"repeat_run_{task_id}",
     )
+    if reference_count > 0 and inherited_ref_count > 0:
+        builder.button(text="🗑 Убрать референсы", callback_data=f"repeat_clear_refs_{task_id}")
     builder.button(text="✏️ Изменить prompt", callback_data=f"repeat_prompt_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1, 1)
@@ -1710,12 +1712,14 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         )
     elif reference_images:
         ref_note = f"<code>{len(reference_images)}</code>"
-    elif inherited_ref_count == 0:
+    elif data.get("repeat_refs_cleared") or inherited_ref_count == 0:
         ref_note = "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
     else:
         ref_note = f"<code>{inherited_ref_count}</code> прежних референсов"
     replace_note = ""
-    if inherited_ref_count and user_ref_count > inherited_ref_count:
+    if data.get("repeat_refs_cleared"):
+        replace_note = "🗑 Референсы автора удалены. Загрузите свои фото или запустите генерацию без референсов.\n\n"
+    elif inherited_ref_count and user_ref_count > inherited_ref_count:
         replace_note = (
             f"📸 Загружено своей замены: <code>{user_ref_count - inherited_ref_count}</code> — "
             f"всего референсов: <code>{user_ref_count}</code>\n\n"
@@ -1756,8 +1760,9 @@ async def _show_repeat_image_screen(
     data = await state.get_data()
     task_id = str(data.get("repeat_source_task_id") or "")
     reference_count = len(data.get("reference_images") or [])
+    inherited_ref_count = int(data.get("repeat_inherited_reference_count") or 0)
     text = _repeat_image_text(data, task_id)
-    keyboard = _repeat_image_keyboard(task_id, reference_count)
+    keyboard = _repeat_image_keyboard(task_id, reference_count, inherited_ref_count)
 
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
@@ -1835,6 +1840,20 @@ async def repeat_image_wait_for_references(callback: types.CallbackQuery, state:
 
     await state.set_state(GenerationStates.uploading_reference_images)
     await callback.answer("Отправьте фото прямо в чат")
+
+
+@router.callback_query(F.data.startswith("repeat_clear_refs_"))
+async def repeat_image_clear_refs(callback: types.CallbackQuery, state: FSMContext):
+    """Очищает все референсы при повторе (унаследованные + свои)."""
+    task_id = callback.data.replace("repeat_clear_refs_", "", 1)
+    data = await state.get_data()
+    if data.get("repeat_source_task_id") != task_id:
+        await callback.answer("Повтор не найден, откройте заново.", show_alert=True)
+        return
+
+    await state.update_data(reference_images=[], repeat_refs_cleared=True)
+    await _show_repeat_image_screen(callback, state, edit=True)
+    await callback.answer("Референсы удалены")
 
 
 @router.callback_query(F.data.startswith("repeat_prompt_"))
