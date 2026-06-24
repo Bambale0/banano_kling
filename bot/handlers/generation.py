@@ -1710,10 +1710,10 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         )
     elif reference_images:
         ref_note = f"<code>{len(reference_images)}</code>"
-    elif original_ref_count == 0:
+    elif inherited_ref_count == 0:
         ref_note = "<code>0</code> — добавьте своё фото, если нужно сохранить лицо"
     else:
-        ref_note = f"<code>{original_ref_count}</code> прежних референсов"
+        ref_note = f"<code>{inherited_ref_count}</code> прежних референсов"
     replace_note = ""
     if inherited_ref_count and not user_references_replaced:
         replace_note = (
