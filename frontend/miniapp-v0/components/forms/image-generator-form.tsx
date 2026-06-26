@@ -9,7 +9,7 @@ import { ModelSelect } from './model-select'
 import { RatioSelect } from './ratio-select'
 import { QualitySelect } from './quality-select'
 import { UploadArea } from './upload-area'
-import { Banana, Sparkles, Loader2, AlertCircle } from 'lucide-react'
+import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Sparkle, ScanFace } from 'lucide-react'
 
 interface ImageGeneratorFormProps {
   models: ImageModel[]
@@ -54,6 +54,7 @@ export function ImageGeneratorForm({
   const [sourceFeedGenId, setSourceFeedGenId] = useState<number | null>(null)
   const [remixTitle, setRemixTitle] = useState('')
   const [references, setReferences] = useState<UploadedFile[]>([])
+  const [activeChanges, setActiveChanges] = useState<Set<string>>(new Set())
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
@@ -66,12 +67,51 @@ export function ImageGeneratorForm({
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference
 
+  const CHANGE_CHIPS = [
+    {
+      id: 'hair',
+      icon: Palette,
+      label: 'Цвет волос',
+      hint: 'замени цвет волос на...',
+      insert: 'Замени цвет волос на ',
+    },
+    {
+      id: 'clothes',
+      icon: Shirt,
+      label: 'Одежду',
+      hint: 'смени одежду на...',
+      insert: 'Замени одежду на ',
+    },
+    {
+      id: 'background',
+      icon: Mountain,
+      label: 'Фон',
+      hint: 'поменяй фон на...',
+      insert: 'Замени фон на ',
+    },
+    {
+      id: 'style',
+      icon: Sparkle,
+      label: 'Стиль',
+      hint: 'измени стиль на...',
+      insert: 'Измени стиль на ',
+    },
+    {
+      id: 'details',
+      icon: ScanFace,
+      label: 'Детали',
+      hint: 'добавь/убери детали...',
+      insert: 'Добавь детали: ',
+    },
+  ] as const
+
   useEffect(() => {
     if (!promptPreset) return
     setPrompt(promptPreset.prompt)
     setSelectedPromptId(promptPreset.promptId || null)
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRemixTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
+    setActiveChanges(new Set())
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -104,6 +144,18 @@ export function ImageGeneratorForm({
     }
   }, [model, selectedQuality, selectedRatio])
 
+  const toggleChange = (chipId: string, insert: string) => {
+    setActiveChanges((prev) => {
+      const next = new Set(prev)
+      if (next.has(chipId)) {
+        next.delete(chipId)
+        return next
+      }
+      next.add(chipId)
+      return next
+    })
+  }
+
   const handleSubmit = async () => {
     if (!isValid) return
     await onSubmit({
@@ -123,6 +175,7 @@ export function ImageGeneratorForm({
     setSourceFeedGenId(null)
     setRemixTitle('')
     setReferences([])
+    setActiveChanges(new Set())
   }
 
   return (
@@ -291,13 +344,37 @@ export function ImageGeneratorForm({
 
         <div className="space-y-2">
           {isFeedRemix && (
-            <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4">
-              <p className="text-sm font-medium text-foreground">
-                {remixTitle || 'Повторить образ из ленты'}
-              </p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Можно заменить цвет волос, одежду, фон и другие детали перед запуском.
-              </p>
+            <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4 space-y-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {remixTitle || 'Повторить образ из ленты'}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Можно заменить цвет волос, одежду, фон и другие детали перед запуском.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CHANGE_CHIPS.map((chip) => {
+                  const Icon = chip.icon
+                  const isActive = activeChanges.has(chip.id)
+                  return (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => toggleChange(chip.id, chip.insert)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200',
+                        isActive
+                          ? 'border-gold/50 bg-gold/20 text-gold shadow-sm'
+                          : 'border-border/50 bg-background/50 text-muted-foreground hover:border-gold/30 hover:text-foreground'
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {chip.label}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
           <label className="text-sm font-medium text-foreground">Промпт</label>

@@ -517,7 +517,40 @@ def _apply_safe_prompt_framing(
         r"\bкорсет\w*\b",
         r"\bбоди\b",
     }
+    nudity_patterns = {
+        r"\bnude\b",
+        r"\bnaked\b",
+        r"\btopless\b",
+        r"\bbreast?s?\b",
+        r"\bnipple?s?\b",
+        r"\bbutt(?:ocks)?\b",
+        r"\bcrotch\b",
+        r"\bcleavage\b",
+        r"\bbust\b",
+        r"\bvoluptuous\b",
+        r"\bsensual\b",
+        r"\bsultry\b",
+        r"\bseductive\b",
+        r"\bhourglass\b",
+        r"\bобнаженн\w*\b",
+        r"\bгол(?:ый|ая|ое|ые|ого|ой|ую|ым|ыми|ых|ому|ом)\b",
+        r"\bголыш\w*\b",
+        r"\bобнаж\w*\b",
+        r"\bсоск\w*\b",
+        r"\bгруд\w*\b",
+        r"\bягодиц\w*\b",
+        r"\bпромежност\w*\b",
+        r"\bпышн\w*\s+груд\w*\b",
+        r"\bпышн\w*\s+бюст\w*\b",
+        r"\bбюст\w*\b",
+        r"\bдекольт\w*\b",
+        r"\bчувствен\w*\b",
+        r"\bсоблазнительн\w*\b",
+        r"\bэротичес\w*\b",
+        r"\bманящ\w*\b",
+    }
     preserve_garment_terms = img_service in {"seedream_edit", "banana_pro", "banana_2", "nanobanana", "wan_27"} and has_reference_images
+    preserve_nudity_terms = img_service in {"wan_27", "banana_pro", "banana_2", "nanobanana"} and has_reference_images
 
     replacements = [
         (r"\blingerie\b", "fashion outfit"),
@@ -616,9 +649,31 @@ def _apply_safe_prompt_framing(
     for pattern, replacement in replacements:
         if preserve_garment_terms and pattern in garment_patterns:
             continue
+        if preserve_nudity_terms and pattern in nudity_patterns:
+            continue
         normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
 
-    if preserve_garment_terms:
+    selfie_instruction = ""
+    if _prompt_requests_selfie_without_visible_device(prompt):
+        selfie_instruction = (
+            "Selfie means front-camera style only; do not show a phone, mirror, "
+            "visible camera, or hand holding a device unless explicitly requested. "
+        )
+
+    if img_service == "wan_27":
+        # Wan 2.7 — отправляем промпт как есть, без safety-префикса.
+        # Модель сама должна следовать описанию пользователя (включая undress/nudity),
+        # а эвфемизмы "editorial" только мешают и заставляют её одевать персонажа.
+        return f"{selfie_instruction}{normalized}"
+    elif preserve_nudity_terms:
+        safety_prefix = (
+            "Follow the user's prompt exactly. "
+            "Execute the requested scene, styling, composition, lighting, pose, and coverage level precisely as described. "
+            "Do not add clothing unless the user explicitly describes it. "
+            "Do not modify the requested level of undress or nudity. "
+            "Preserve the content and intent of the user's description without adding or removing coverage. "
+        )
+    elif preserve_garment_terms:
         safety_prefix = (
             "Reference-first editorial styling. "
             "Treat referenced garments as clothing and design details. "
@@ -630,12 +685,6 @@ def _apply_safe_prompt_framing(
         safety_prefix = (
             "Editorial fashion or product framing. "
             "Follow the user's requested styling, composition, lighting, and materials without inventing unnecessary wardrobe changes. "
-        )
-    selfie_instruction = ""
-    if _prompt_requests_selfie_without_visible_device(prompt):
-        selfie_instruction = (
-            "Selfie means front-camera style only; do not show a phone, mirror, "
-            "visible camera, or hand holding a device unless explicitly requested. "
         )
     normalized_lower = normalized.lower()
     framing_prefixes = (
@@ -692,6 +741,50 @@ def _build_compact_reference_guidance(prompt: str, reference_images: list[str]) 
     return f"Reference guidance: {guidance}"
 
 
+def _build_wan27_reference_guidance(prompt: str, reference_images: list[str]) -> str:
+    """Wan 2.7-specific reference guidance: preserve identity, but do not force clothing/coverage from reference."""
+    prompt = (prompt or "").strip()
+    guidance_lines = [
+        "Use the uploaded image as a visual reference for identity and composition.",
+        "Keep the main subject recognizable from the first reference.",
+        "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
+        "Do not preserve or add clothing or coverage from the reference unless the user's prompt explicitly requests it.",
+        "If the user's prompt asks for nudity or undressing, follow that request precisely without restoring clothing from the reference.",
+        "Keep visible text out of the image unless the user explicitly asks for typography.",
+    ]
+    if len(reference_images) > 1:
+        guidance_lines.insert(
+            3,
+            "Use additional references for requested clothing, accessories, products, pose, style, colors, or scene cues; if another person appears there, use visual cues only unless the user asks for multiple people.",
+        )
+    guidance = " ".join(guidance_lines)
+    if prompt:
+        return f"EDIT REQUEST (highest priority): {prompt}\n\nReference guidance: {guidance}"
+    return f"Reference guidance: {guidance}"
+
+
+def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -> str:
+    """Banana-specific reference guidance: preserve identity, but do not force clothing/coverage from reference."""
+    prompt = (prompt or "").strip()
+    guidance_lines = [
+        "Use the uploaded image as a visual reference for identity and composition.",
+        "Keep the main subject recognizable from the first reference.",
+        "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
+        "Do not preserve or add clothing or coverage from the reference unless the user's prompt explicitly requests it.",
+        "If the user's prompt asks for nudity or undressing, follow that request precisely without restoring clothing from the reference.",
+        "Keep visible text out of the image unless the user explicitly asks for typography.",
+    ]
+    if len(reference_images) > 1:
+        guidance_lines.insert(
+            3,
+            "Use additional references for requested clothing, accessories, products, pose, style, colors, or scene cues; if another person appears there, use visual cues only unless the user asks for multiple people.",
+        )
+    guidance = " ".join(guidance_lines)
+    if prompt:
+        return f"EDIT REQUEST (highest priority): {prompt}\n\nReference guidance: {guidance}"
+    return f"Reference guidance: {guidance}"
+
+
 def _apply_reference_detail_preservation(
     img_service: str, prompt: str, reference_images: list[str]
 ) -> str:
@@ -703,10 +796,16 @@ def _apply_reference_detail_preservation(
         "nanobanana",
         "grok_imagine_i2i",
         "seedream_edit",
-        "wan_27",
         "flux_pro",
+        "wan_27",
     }:
         return prompt
+
+    if img_service == "wan_27":
+        return _build_wan27_reference_guidance(prompt, reference_images)
+
+    if img_service in {"banana_pro", "banana_2", "nanobanana"}:
+        return _build_banana_reference_guidance(prompt, reference_images)
 
     return _build_compact_reference_guidance(prompt, reference_images)
 
@@ -1685,6 +1784,8 @@ def _repeat_image_keyboard(task_id: str, reference_count: int = 0, inherited_ref
     if reference_count > 0 and inherited_ref_count > 0:
         builder.button(text="🗑 Убрать референсы", callback_data=f"repeat_clear_refs_{task_id}")
     builder.button(text="✏️ Изменить prompt", callback_data=f"repeat_prompt_{task_id}")
+    if inherited_ref_count == 0:
+        builder.button(text="🎨 Что поменять?", callback_data=f"repeat_changes_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1, 1, 1, 1)
     return builder.as_markup()
@@ -1719,6 +1820,11 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     replace_note = ""
     if data.get("repeat_refs_cleared"):
         replace_note = "🗑 Референсы автора удалены. Загрузите свои фото или запустите генерацию без референсов.\n\n"
+    elif inherited_ref_count == 0:
+        replace_note = (
+            "⚠️ Референсы автора скрыты. Новые референсы не подтянуты — вы начинаете с нуля. "
+            "Загрузите своё фото и опишите в prompt, что хотите изменить.\n\n"
+        )
     elif inherited_ref_count and user_ref_count > inherited_ref_count:
         replace_note = (
             f"📸 Загружено своей замены: <code>{user_ref_count - inherited_ref_count}</code> — "
@@ -1732,6 +1838,16 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
     else:
         replace_note = ""
 
+    changes_hint = ""
+    if inherited_ref_count == 0:
+        changes_hint = (
+            "\n🎨 <b>Что можно поменять через prompt:</b>\n"
+            "• Цвет волос — напишите, на какой цвет поменять\n"
+            "• Одежду — опишите новый образ\n"
+            "• Фон — укажите другую обстановку\n"
+            "• Стиль — задайте новое настроение\n"
+        )
+
     return (
         "🔁 <b>Повторить prompt</b>\n\n"
         "Чтобы не получить результат без вашего лица, сначала отправьте фото прямо в чат. "
@@ -1741,8 +1857,9 @@ def _repeat_image_text(data: dict, task_id: str) -> str:
         f"• Модель: <code>{get_image_model_label(img_service)}</code>\n"
         f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
         f"• Референсы: {ref_note}\n"
-        f"• Стоимость: <code>{unit_cost}</code>🍌\n\n"
-        "<b>Prompt</b>\n"
+        f"• Стоимость: <code>{unit_cost}</code>🍌\n"
+        f"{changes_hint}"
+        "\n<b>Prompt</b>\n"
         + (
             "<i>Скрыт автором. В генерацию уйдёт исходный prompt без показа текста.</i>"
             if prompt_hidden
@@ -1801,7 +1918,7 @@ async def _ensure_repeat_image_state(
     return await _restore_image_task_to_state(
         task,
         state,
-        include_references=True,
+        include_references=False,
         repeat_source_task_id=task_id,
         hide_prompt=bool(task and task.is_public_feed and task.user_id != user.id),
     )
@@ -1815,10 +1932,12 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     user = await get_or_create_user(callback.from_user.id)
 
     hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
+    # Если референсы скрыты — не подтягиваем их при повторе
+    refs_hidden = bool(task and task.is_public_feed and task.user_id != user.id and not task.feed_references_visible)
     restored, error_message = await _restore_image_task_to_state(
         task,
         state,
-        include_references=True,
+        include_references=not refs_hidden,
         repeat_source_task_id=task_id,
         hide_prompt=hide_prompt,
     )
@@ -1903,6 +2022,40 @@ async def handle_repeat_image_prompt_text(message: types.Message, state: FSMCont
     await state.update_data(repeat_prompt=prompt, repeat_prompt_hidden=False)
     await message.answer("✅ Prompt обновлён.")
     await _show_repeat_image_screen(message, state)
+
+
+@router.callback_query(F.data.startswith("repeat_changes_"))
+async def repeat_image_show_changes_hint(callback: types.CallbackQuery, state: FSMContext):
+    """Show what the user can change when repeating with hidden references."""
+    task_id = callback.data.replace("repeat_changes_", "", 1)
+    data = await state.get_data()
+    current_prompt = " ".join(str(data.get("repeat_prompt") or "").split())
+    prompt_hidden = bool(data.get("repeat_prompt_hidden"))
+    if prompt_hidden:
+        prompt_info = "<i>Текущий prompt скрыт. Напишите новый prompt или только изменения, и он будет использован для генерации.</i>"
+    else:
+        prompt_info = f"<pre>{html.escape(current_prompt[:700] + ('...' if len(current_prompt) > 700 else '')) or html.escape(task_id)}</pre>"
+    await state.set_state(GenerationStates.waiting_for_repeat_prompt)
+    await callback.message.answer(
+        "🎨 <b>Что можно поменять через prompt</b>\n\n"
+        "У вас сейчас нет старых референсов — вы начинаете с нуля. "
+        "Опишите в prompt, что хотите изменить, или напишите полный новый prompt:\n\n"
+        "• <b>Цвет волос</b> — напишите, на какой цвет поменять\n"
+        "  Пример: <i>сделай волосы ярко-рыжими</i>\n\n"
+        "• <b>Одежду</b> — опишите новый образ\n"
+        "  Пример: <i>одень в чёрное кожаное пальто</i>\n\n"
+        "• <b>Фон</b> — укажите другую обстановку\n"
+        "  Пример: <i>перенеси на пляж на закате</i>\n\n"
+        "• <b>Стиль</b> — задайте новое настроение\n"
+        "  Пример: <i>сделай в стиле киберпанк</i>\n\n"
+        "• <b>Детали</b> — добавьте или уберите элементы\n"
+        "  Пример: <i>добавь солнечные очки и шляпу</i>\n\n"
+        "<b>Текущий prompt</b>\n"
+        f"{prompt_info}\n\n"
+        "Отправьте новым сообщением текст. Фото и настройки останутся как на экране повтора.",
+        parse_mode="HTML",
+    )
+    await callback.answer("Жду новый prompt")
 
 
 @router.callback_query(F.data.startswith("repeat_run_"))

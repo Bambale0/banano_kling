@@ -55,7 +55,6 @@ class Wan27Service(KlingService):
 
         if cleaned_urls:
             input_data["input_urls"] = cleaned_urls
-            input_data["bbox_list"] = [[] for _ in cleaned_urls]
 
         payload = {
             "model": model,

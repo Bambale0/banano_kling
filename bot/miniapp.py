@@ -710,6 +710,8 @@ def _referral_code_from_start_param(start_param: Any) -> str:
     if not raw:
         return ""
 
+    raw = raw.removeprefix("start=").removeprefix("startapp=").strip()
+
     if raw.startswith("ref_"):
         return raw.replace("ref_", "", 1).strip().upper()
 
@@ -2861,8 +2863,6 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
         references = [str(item) for item in list(body.get("reference_images", []) or []) if str(item).strip()]
-        if not references and source.get("result_url"):
-            references = [str(source["result_url"])]
         img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
@@ -3888,6 +3888,40 @@ def setup_miniapp_routes(app: web.Application):
     miniapp_root = miniapp_path.rstrip("/")
 
     @web.middleware
+    async def _miniapp_cors_middleware(
+        request: web.Request,
+        handler,
+    ) -> web.StreamResponse:
+        """Add CORS headers to Mini App API responses.
+
+        Telegram Mini Apps run inside an iframe. Some VPNs/proxies inspect or
+        strip CORS headers, causing fetch() requests from the mini-app to fail
+        if the response lacks explicit Access-Control-Allow-Origin.
+
+        We echo the request Origin back (not '*') because credentialed requests
+        (with X-Telegram-Init-Data) require a concrete origin, not a wildcard.
+        """
+        if request.method == "OPTIONS":
+            response = web.Response(status=204)
+            origin = request.headers.get("Origin", "")
+            if origin:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Content-Type, Authorization, X-Telegram-Init-Data, X-Requested-With"
+            )
+            response.headers["Access-Control-Max-Age"] = "86400"
+            return response
+
+        response = await handler(request)
+        origin = request.headers.get("Origin", "")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+    @web.middleware
     async def _miniapp_api_json_errors(
         request: web.Request,
         handler,
@@ -3904,6 +3938,9 @@ def setup_miniapp_routes(app: web.Application):
                 )
             raise
 
+    # CORS middleware must be FIRST so it wraps all other middlewares and
+    # applies to every Mini App / API response.
+    app.middlewares.insert(0, _miniapp_cors_middleware)
     app.middlewares.append(_miniapp_api_json_errors)
 
     # miniapp_static_mount_v1

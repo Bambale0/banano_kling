@@ -37,11 +37,11 @@ def _normalize_resolution(resolution: str) -> str:
     return normalized
 
 
-class NanoBanana2Service:
-    def __init__(self, api_key: str):
+class ProviderClient:
+    def __init__(self, api_key: str, base_url: str):
         self.api_key = api_key
-        self.base_url = "https://api.kie.ai"
-        self._session = None
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -63,12 +63,15 @@ class NanoBanana2Service:
                     return await resp.json()
                 else:
                     error = await resp.text()
-                    logger.error(
-                        f"Nano Banana 2 POST {endpoint} failed: {resp.status} - {error}"
+                    logger.warning(
+                        "Nano Banana 2 POST failed on provider %s: %s - %s",
+                        self.base_url,
+                        resp.status,
+                        error,
                     )
                     return None
         except Exception as e:
-            logger.exception(f"Nano Banana 2 POST error: {e}")
+            logger.warning("Nano Banana 2 POST error on provider %s: %s", self.base_url, e)
             return None
 
     async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
@@ -84,16 +87,48 @@ class NanoBanana2Service:
                     error = await resp.text()
                     if resp.status != 404:
                         logger.warning(
-                            f"Nano Banana 2 GET {endpoint} failed: {resp.status} - {error}"
+                            "Nano Banana 2 GET failed on provider %s: %s - %s",
+                            self.base_url,
+                            resp.status,
+                            error,
                         )
                     else:
                         logger.debug(
-                            f"Nano Banana 2 GET {endpoint} 404 (expected for non-existent task)"
+                            "Nano Banana 2 GET 404 on provider %s (expected for non-existent task)",
+                            self.base_url,
                         )
                     return None
         except Exception as e:
-            logger.exception(f"Nano Banana 2 GET error: {e}")
+            logger.warning("Nano Banana 2 GET error on provider %s: %s", self.base_url, e)
             return None
+
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+
+class NanoBanana2Service:
+    def __init__(self, primary_provider: ProviderClient, fallback_provider: Optional[ProviderClient] = None):
+        self.primary_provider = primary_provider
+        self.fallback_provider = fallback_provider
+
+    async def _post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
+        resp = await self.primary_provider._post(endpoint, payload)
+        if resp is not None:
+            return resp
+        if self.fallback_provider is not None:
+            logger.info("Falling back to secondary provider for Nano Banana 2 POST %s", endpoint)
+            return await self.fallback_provider._post(endpoint, payload)
+        return None
+
+    async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
+        resp = await self.primary_provider._get(endpoint, params)
+        if resp is not None:
+            return resp
+        if self.fallback_provider is not None:
+            logger.info("Falling back to secondary provider for Nano Banana 2 GET %s", endpoint)
+            return await self.fallback_provider._get(endpoint, params)
+        return None
 
     async def create_task(
         self,
@@ -235,12 +270,25 @@ class NanoBanana2Service:
         return None
 
     async def close(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
+        await self.primary_provider.close()
+        if self.fallback_provider is not None:
+            await self.fallback_provider.close()
 
 
 from bot.config import config
 
+_primary = ProviderClient(
+    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
+    base_url="https://api.kie.ai",
+)
+_fallback = None
+if config.NANOBANANA2_FALLBACK_API_KEY and config.NANOBANANA2_FALLBACK_BASE_URL:
+    _fallback = ProviderClient(
+        api_key=config.NANOBANANA2_FALLBACK_API_KEY,
+        base_url=config.NANOBANANA2_FALLBACK_BASE_URL,
+    )
+
 nano_banana_2_service = NanoBanana2Service(
-    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY
+    primary_provider=_primary,
+    fallback_provider=_fallback,
 )

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ScenarioType } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -71,6 +71,55 @@ function getPublicReferences(item: FeedItem | null) {
     ...(item.reference_images || []).map((url) => ({ type: 'image' as const, url })),
     ...(item.reference_videos || []).map((url) => ({ type: 'video' as const, url })),
   ].filter((item) => isHttpUrl(item.url))
+}
+
+/** Eager-loading image with IntersectionObserver — loads earlier than native lazy by 400px margin */
+function FeedImage({ src, alt, priority, onError, style, className }: {
+  src: string
+  alt: string
+  priority?: boolean
+  onError?: () => void
+  style?: CSSProperties
+  className?: string
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(!!priority)
+
+  useEffect(() => {
+    if (priority) return
+    const el = containerRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '400px', threshold: 0.01 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [priority])
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('relative overflow-hidden bg-secondary/50', className)}
+      style={style}
+    >
+      {visible && (
+        <img
+          src={src}
+          alt={alt}
+          fetchPriority={priority ? 'high' : undefined}
+          decoding="async"
+          onError={onError}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+        />
+      )}
+    </div>
+  )
 }
 
 export function FeedTab() {
@@ -332,6 +381,7 @@ export function FeedTab() {
                 <article
                   key={item.id}
                   className="min-w-0 overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: '400px' }}
                 >
                   <div className="relative overflow-hidden bg-secondary/50">
                     <button
@@ -346,19 +396,19 @@ export function FeedTab() {
                             src={item.result_url}
                             muted
                             playsInline
-                            preload="metadata"
+                            preload="none"
                             onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
                             className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
                           />
                         ) : (
-                          <img
+                          <FeedImage
                             src={item.result_url}
                             alt=""
-                            loading="lazy"
+                            priority={column.indexOf(item) < 6}
                             onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
-                            className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                            className="w-full"
                           />
                         )
                       ) : (
@@ -523,7 +573,7 @@ export function FeedTab() {
                     className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
                   >
                     {reference.type === 'video' ? (
-                      <video src={reference.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                      <video src={reference.url} muted playsInline preload="none" className="h-full w-full object-cover" />
                     ) : (
                       <img src={reference.url} alt="" className="h-full w-full object-cover" />
                     )}
