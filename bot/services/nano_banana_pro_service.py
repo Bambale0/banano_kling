@@ -37,11 +37,11 @@ def _normalize_resolution(resolution: str) -> str:
     return normalized
 
 
-class NanoBananaProService:
-    def __init__(self, api_key: str):
+class ProviderClient:
+    def __init__(self, api_key: str, base_url: str):
         self.api_key = api_key
-        self.base_url = "https://api.kie.ai"
-        self._session = None
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -63,12 +63,15 @@ class NanoBananaProService:
                     return await resp.json()
                 else:
                     error = await resp.text()
-                    logger.error(
-                        f"Nano Banana Pro POST {endpoint} failed: {resp.status} - {error}"
+                    logger.warning(
+                        "Nano Banana Pro POST failed on provider %s: %s - %s",
+                        self.base_url,
+                        resp.status,
+                        error,
                     )
                     return None
         except Exception as e:
-            logger.exception(f"Nano Banana Pro POST error: {e}")
+            logger.warning("Nano Banana Pro POST error on provider %s: %s", self.base_url, e)
             return None
 
     async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
@@ -84,16 +87,48 @@ class NanoBananaProService:
                     error = await resp.text()
                     if resp.status != 404:
                         logger.warning(
-                            f"Nano Banana Pro GET {endpoint} failed: {resp.status} - {error}"
+                            "Nano Banana Pro GET failed on provider %s: %s - %s",
+                            self.base_url,
+                            resp.status,
+                            error,
                         )
                     else:
                         logger.debug(
-                            f"Nano Banana Pro GET {endpoint} 404 (expected for non-existent task)"
+                            "Nano Banana Pro GET 404 on provider %s (expected for non-existent task)",
+                            self.base_url,
                         )
                     return None
         except Exception as e:
-            logger.exception(f"Nano Banana Pro GET error: {e}")
+            logger.warning("Nano Banana Pro GET error on provider %s: %s", self.base_url, e)
             return None
+
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+
+class NanoBananaProService:
+    def __init__(self, primary_provider: ProviderClient, fallback_provider: Optional[ProviderClient] = None):
+        self.primary_provider = primary_provider
+        self.fallback_provider = fallback_provider
+
+    async def _post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
+        resp = await self.primary_provider._post(endpoint, payload)
+        if resp is not None:
+            return resp
+        if self.fallback_provider is not None:
+            logger.info("Falling back to secondary provider for Nano Banana Pro POST %s", endpoint)
+            return await self.fallback_provider._post(endpoint, payload)
+        return None
+
+    async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
+        resp = await self.primary_provider._get(endpoint, params)
+        if resp is not None:
+            return resp
+        if self.fallback_provider is not None:
+            logger.info("Falling back to secondary provider for Nano Banana Pro GET %s", endpoint)
+            return await self.fallback_provider._get(endpoint, params)
+        return None
 
     async def create_task(
         self,
@@ -130,10 +165,8 @@ class NanoBananaProService:
             if not fallback_inputs:
                 logger.error("Nano Banana Pro create_task aborted: all local reference files are missing")
                 return None
-            # Fallback for non-path byte inputs. Kie.ai may still reject these, but
-            # we prefer URLs whenever possible because inline data URIs trigger
-            # "file type not supported" for Nano Banana Pro.
             normalized_image_input = image_sources_to_data_uris(fallback_inputs)
+
         normalized_resolution = _normalize_resolution(resolution)
         payload = {
             "model": "nano-banana-pro",
@@ -195,6 +228,11 @@ class NanoBananaProService:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[Dict]:
+        # Если primary_provider — Gemini (имеет generate_image), используем его напрямую
+        if hasattr(self.primary_provider, "generate_image"):
+            return await self.primary_provider.generate_image(prompt, aspect_ratio, resolution, image_input, output_format)
+
+        # Иначе — старый async-формат через create_task
         task_id = await self.create_task(
             prompt, image_input, aspect_ratio, resolution, output_format, callback_url
         )
@@ -233,12 +271,155 @@ class NanoBananaProService:
         return None
 
     async def close(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
+        await self.primary_provider.close()
+        if self.fallback_provider is not None:
+            await self.fallback_provider.close()
 
 
 from bot.config import config
 
-nano_banana_pro_service = NanoBananaProService(
-    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY
+
+class NanoBananaProGeminiProvider:
+    """Gemini-совместимый провайдер для Nano Banana Pro (api.apiyi.com).
+    Использует синхронный generateContent — ответ приходит сразу с изображением."""
+
+    def __init__(self, api_key: str, base_url: str):
+        self.api_key = api_key
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=120)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+        return self._session
+
+    async def generate_image(
+        self,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        resolution: str = "4K",
+        image_input: List[str] = None,
+        output_format: str = "png",
+    ) -> Optional[bytes]:
+        session = await self._get_session()
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Build parts with prompt text and optional reference images
+        parts = [{"text": prompt}]
+        if image_input:
+            for source in image_input:
+                if isinstance(source, str) and source.startswith("data:image/"):
+                    # data URI — extract mime type and base64 data
+                    try:
+                        header, b64data = source.split(",", 1)
+                        mime_type = header.replace("data:", "").split(";")[0]
+                        parts.append({
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": b64data,
+                            }
+                        })
+                    except Exception:
+                        logger.warning("Nano Banana Pro Gemini provider: failed to parse data URI")
+                elif isinstance(source, str) and source.startswith(("http://", "https://")):
+                    # Remote URL — fetch and convert to base64
+                    try:
+                        async with session.get(source) as img_resp:
+                            if img_resp.status == 200:
+                                img_bytes = await img_resp.read()
+                                import base64
+                                b64data = base64.b64encode(img_bytes).decode("utf-8")
+                                mime_type = img_resp.content_type or "image/png"
+                                parts.append({
+                                    "inlineData": {
+                                        "mimeType": mime_type,
+                                        "data": b64data,
+                                    }
+                                })
+                    except Exception:
+                        logger.warning("Nano Banana Pro Gemini provider: failed to fetch remote reference %s", source)
+
+        normalized_resolution = _normalize_resolution(resolution)
+        if normalized_resolution == "4K":
+            image_size = "4K"
+        elif normalized_resolution == "2K":
+            image_size = "2K"
+        elif normalized_resolution == "1K":
+            image_size = "1K"
+        else:
+            image_size = "2K"
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "responseModalities": ["IMAGE", "TEXT"],
+                "aspect_ratio": aspect_ratio,
+                "image_size": image_size,
+            },
+        }
+        model = "gemini-3-pro-image-preview"
+        url = f"{self.base_url}/models/{model}:generateContent"
+        try:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            if "inlineData" in part:
+                                import base64
+                                return base64.b64decode(part["inlineData"]["data"])
+                    logger.warning(
+                        "Nano Banana Pro Gemini provider: no inlineData in response"
+                    )
+                    return None
+                else:
+                    error = await resp.text()
+                    logger.warning(
+                        "Nano Banana Pro Gemini provider POST failed: %s - %s",
+                        resp.status,
+                        error,
+                    )
+                    return None
+        except Exception as e:
+            logger.warning("Nano Banana Pro Gemini provider error: %s", e)
+            return None
+
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+
+# --- Инициализация: primary kie.ai, fallback api.apiyi.com (Gemini) ---
+
+_primary_kie = ProviderClient(
+    api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
+    base_url="https://api.kie.ai",
 )
+
+_fallback_gemini = None
+if config.NANO_BANANA_PRO_FALLBACK_API_KEY and config.NANO_BANANA_PRO_FALLBACK_BASE_URL:
+    _fallback_gemini = NanoBananaProGeminiProvider(
+        api_key=config.NANO_BANANA_PRO_FALLBACK_API_KEY,
+        base_url=config.NANO_BANANA_PRO_FALLBACK_BASE_URL,
+    )
+
+if _fallback_gemini:
+    logger.info(
+        "Nano Banana Pro: using kie.ai as primary, api.apiyi.com (Gemini) as fallback"
+    )
+    nano_banana_pro_service = NanoBananaProService(
+        primary_provider=_primary_kie,
+        fallback_provider=_fallback_gemini,
+    )
+else:
+    logger.info("Nano Banana Pro: using kie.ai as primary")
+    nano_banana_pro_service = NanoBananaProService(
+        primary_provider=_primary_kie,
+        fallback_provider=None,
+    )
