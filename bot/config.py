@@ -79,13 +79,13 @@ class Config:
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
     
-    # Nano Banana 2 fallback provider (optional)
+    # Nano Banana 2 fallback provider - Gemini-compatible (optional)
     NANOBANANA2_FALLBACK_API_KEY: str = os.getenv("NANOBANANA2_FALLBACK_API_KEY", "")
     NANOBANANA2_FALLBACK_BASE_URL: str = os.getenv(
         "NANOBANANA2_FALLBACK_BASE_URL", ""
     )
     
-    # Nano Banana Pro fallback provider (optional)
+    # Nano Banana Pro fallback provider - Gemini-compatible (optional)
     NANO_BANANA_PRO_FALLBACK_API_KEY: str = os.getenv("NANO_BANANA_PRO_FALLBACK_API_KEY", "")
     NANO_BANANA_PRO_FALLBACK_BASE_URL: str = os.getenv(
         "NANO_BANANA_PRO_FALLBACK_BASE_URL", ""

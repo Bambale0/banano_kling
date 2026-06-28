@@ -49,7 +49,13 @@ def referral_start_param(referral_code: str | None) -> str:
 
 
 def referral_link(bot_username: str | None, referral_code: str | None) -> str:
+    """Партнёрская ссылка на мини-приложение (?startapp=ref_CODE)."""
     return miniapp_startapp_link(bot_username, referral_start_param(referral_code))
+
+
+def referral_bot_link(bot_username: str | None, referral_code: str | None) -> str:
+    """Партнёрская ссылка на бота (?start=ref_CODE)."""
+    return bot_start_link(bot_username, referral_start_param(referral_code))
 
 
 def profile_start_param(referral_code: str | None) -> str:

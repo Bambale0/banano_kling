@@ -190,6 +190,7 @@ def get_admin_keyboard(subscription_required: bool | None = None):
     builder.button(text="🎟 Промокоды", callback_data="admin_promocodes")
     builder.button(text="📚 Промпты", callback_data="admin_prompts")
     builder.button(text="🤖 ИИ-админ", callback_data="admin_ai")
+    builder.button(text="🍌 Nano Banana 2 test", callback_data="admin_nano_banana2_test")
     builder.button(text="📘 Инструкция ИИ", callback_data="admin_ai_help")
     builder.button(
         text=subscription_label,
@@ -199,6 +200,15 @@ def get_admin_keyboard(subscription_required: bool | None = None):
     builder.button(text="⚙️ Рассылка", callback_data="admin_broadcast")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(2, 2, 2, 2, 2, 2, 2)
+    return builder.as_markup()
+
+
+def get_admin_nano_banana2_test_keyboard():
+    """Тест Nano Banana 2 через api.apiyi.com."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Обновить", callback_data="admin_nano_banana2_test")
+    builder.button(text="🔙 Админ-панель", callback_data="admin_back")
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 

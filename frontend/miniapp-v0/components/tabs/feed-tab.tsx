@@ -173,7 +173,7 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source, limit: 80 })
+        const feed = await fetchFeed({ source })
         if (!ignore) {
           setItems(feed)
           setBrokenMediaIds(new Set())

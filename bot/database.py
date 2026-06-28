@@ -31,10 +31,10 @@ REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS = {
 }
 MAX_ACTIVE_PROMPTS_PER_USER = 5
 TOP_PROMPTS_LIMIT = 10
-FEED_PUBLIC_IMAGE_MAX_ITEMS = 1500
-FEED_PUBLIC_VIDEO_MAX_ITEMS = 400
+FEED_PUBLIC_IMAGE_MAX_ITEMS = 999999
+FEED_PUBLIC_VIDEO_MAX_ITEMS = 999999
 FEED_PUBLIC_RECENT_GRACE_HOURS = 168
-FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS = 900
+FEED_PUBLIC_CLEANUP_INTERVAL_SECONDS = 999999999
 FEED_EPHEMERAL_RESULT_TTL_HOURS = int(os.getenv("FEED_EPHEMERAL_RESULT_TTL_HOURS", "72"))
 FEED_EPHEMERAL_RESULT_HOSTS = {
     host.strip().lower().lstrip(".")
@@ -119,6 +119,7 @@ class User:
     prompt_repeat_total_rub: float = 0.0
     partner_tier: str = "basic"
     channel_url: Optional[str] = None
+    photo_url: Optional[str] = None
 
 
 @dataclass
@@ -651,11 +652,7 @@ class GenerationTask:
 
 async def init_db():
     """Инициализация базы данных"""
-    async with db_backend.connect(DATABASE_PATH) as db:
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA synchronous=NORMAL")
-        await db.execute("PRAGMA foreign_keys=ON")
-        await db.execute("PRAGMA temp_store=MEMORY")
+    async with db_backend.connect() as db:
         # Таблица пользователей
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -733,6 +730,12 @@ async def init_db():
         try:
             await db.execute(
                 "ALTER TABLE users ADD COLUMN partner_tier TEXT DEFAULT 'basic'"
+            )
+        except db_backend.OperationalError:
+            pass
+        try:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN photo_url TEXT"
             )
         except db_backend.OperationalError:
             pass
@@ -1142,6 +1145,11 @@ async def get_or_create_user(telegram_id: int) -> User:
                     if "channel_url" in row.keys() and row["channel_url"]
                     else None
                 ),
+                photo_url=(
+                    row["photo_url"]
+                    if "photo_url" in row.keys() and row["photo_url"]
+                    else None
+                ),
             )
 
         # Создаём нового пользователя с бонусными кредитами
@@ -1249,17 +1257,19 @@ async def update_user_profile(
     username: Optional[str] = None,
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
+    photo_url: Optional[str] = None,
 ) -> bool:
     """Stores lightweight Telegram profile fields for public author labels."""
     clean_username = (username or "").lstrip("@") or None
     clean_first_name = (first_name or "").strip() or None
     clean_last_name = (last_name or "").strip() or None
+    clean_photo_url = (photo_url or "").strip() or None
 
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
-            SELECT username, first_name, last_name
+            SELECT username, first_name, last_name, photo_url
             FROM users
             WHERE telegram_id = ?
             """,
@@ -1270,7 +1280,8 @@ async def update_user_profile(
             current["username"],
             current["first_name"],
             current["last_name"],
-        ) == (clean_username, clean_first_name, clean_last_name):
+            current["photo_url"] if "photo_url" in current.keys() else None,
+        ) == (clean_username, clean_first_name, clean_last_name, clean_photo_url):
             return True
 
         cursor = await db.execute(
@@ -1279,10 +1290,11 @@ async def update_user_profile(
             SET username = ?,
                 first_name = ?,
                 last_name = ?,
+                photo_url = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE telegram_id = ?
             """,
-            (clean_username, clean_first_name, clean_last_name, telegram_id),
+            (clean_username, clean_first_name, clean_last_name, clean_photo_url, telegram_id),
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -5285,93 +5297,8 @@ def _feed_public_limit_for_type(generation_type: str) -> int:
 
 
 async def cleanup_public_feed_limits(*, force: bool = False) -> dict[str, int]:
-    """Keep the public feed bounded by media type, pruning low-score old posts."""
-    if not force and not _public_feed_cleanup_due():
-        return {"image": 0, "video": 0}
-
-    async with _get_public_feed_cleanup_lock():
-        if not force and not _public_feed_cleanup_due():
-            return {"image": 0, "video": 0}
-
-        stats = {"image": 0, "video": 0}
-        async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
-            db.row_factory = db_backend.Row
-            cursor = await db.execute(
-                """
-                SELECT gt.*,
-                       (
-                           SELECT COUNT(*)
-                           FROM generation_tasks child
-                           WHERE child.parent_generation_id = gt.id
-                             AND child.status = 'completed'
-                       ) AS remix_count
-                FROM generation_tasks gt
-                WHERE gt.type IN ('image', 'video')
-                  AND gt.status = 'completed'
-                  AND gt.result_url IS NOT NULL
-                  AND gt.is_public_feed = 1
-                """
-            )
-            rows = await cursor.fetchall()
-
-            ids_to_prune: list[int] = []
-            valid_rows: list[db_backend.Row] = []
-            for row in rows:
-                if _feed_result_urls(row):
-                    valid_rows.append(row)
-                    continue
-                ids_to_prune.append(int(row["id"] or 0))
-                generation_type = str(row["type"] or "")
-                if generation_type in stats:
-                    stats[generation_type] += 1
-            rows = valid_rows
-            recent_cutoff = datetime.utcnow() - timedelta(hours=FEED_PUBLIC_RECENT_GRACE_HOURS)
-            for generation_type in ("image", "video"):
-                type_rows = [row for row in rows if row["type"] == generation_type]
-                limit = _feed_public_limit_for_type(generation_type)
-                if len(type_rows) <= limit:
-                    continue
-                protected_rows = []
-                candidate_rows = []
-                for row in type_rows:
-                    activity_time = _feed_activity_time_for_sort(row)
-                    if activity_time != datetime.min and activity_time >= recent_cutoff:
-                        protected_rows.append(row)
-                    else:
-                        candidate_rows.append(row)
-                if len(protected_rows) >= limit:
-                    continue
-                ranked_rows = sorted(
-                    candidate_rows,
-                    key=lambda row: (
-                        _calculate_feed_score(row),
-                        _feed_activity_time_for_sort(row),
-                        int(row["id"] or 0),
-                    ),
-                    reverse=True,
-                )
-                keep_candidates = max(limit - len(protected_rows), 0)
-                prune_rows = ranked_rows[keep_candidates:]
-                stats[generation_type] += len(prune_rows)
-                ids_to_prune.extend(int(row["id"] or 0) for row in prune_rows)
-
-            if ids_to_prune:
-                for index in range(0, len(ids_to_prune), 200):
-                    chunk = ids_to_prune[index : index + 200]
-                    placeholders = ",".join("?" for _ in chunk)
-                    await db.execute(
-                        f"""
-                        UPDATE generation_tasks
-                        SET is_public_feed = FALSE,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id IN ({placeholders})
-                        """,
-                        chunk,
-                    )
-                await db.commit()
-
-        _mark_public_feed_cleanup_done()
-        return stats
+    """No-op: feed limits disabled."""
+    return {"image": 0, "video": 0}
 
 
 def _author_display_name(row: db_backend.Row) -> str:
@@ -5437,7 +5364,11 @@ def _generation_row_to_card(
             if "author_referral_code" in row.keys()
             else None
         ),
-        "author_photo_url": None,
+        "author_photo_url": (
+            row["author_photo_url"]
+            if "author_photo_url" in row.keys() and row["author_photo_url"]
+            else None
+        ),
         "is_mine": bool(viewer_user_id and row["user_id"] == viewer_user_id),
         "remixes": remix_count,
         "score": _calculate_feed_score(row),
@@ -5451,11 +5382,11 @@ def _generation_row_to_card(
 
 async def get_feed_generations(
     *,
-    limit: int = 40,
+    limit: int = 0,
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 40), 1), 120)
+    """Return ALL public feed items — no limits."""
     source = source if source in {"recent", "top_day", "top"} else "recent"
     where = [
         "gt.type IN ('image', 'video')",
@@ -5466,8 +5397,6 @@ async def get_feed_generations(
     if source == "top_day":
         where.append("gt.created_at >= datetime('now', '-1 day')")
 
-    await cleanup_public_feed_limits()
-
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         query = f"""
@@ -5476,6 +5405,7 @@ async def get_feed_generations(
                    u.first_name AS author_first_name,
                    u.last_name AS author_last_name,
                    u.referral_code AS author_referral_code,
+                   u.photo_url AS author_photo_url,
                    (
                        SELECT COUNT(*)
                        FROM generation_tasks child
@@ -5492,9 +5422,7 @@ async def get_feed_generations(
             WHERE {' AND '.join(where)}
             ORDER BY gt.created_at DESC
         """
-        query += "\n            LIMIT ?"
-        params: tuple[Any, ...] = (safe_limit * 5,)
-        cursor = await db.execute(query, params)
+        cursor = await db.execute(query)
         rows = await cursor.fetchall()
 
     cards = [
@@ -5504,7 +5432,7 @@ async def get_feed_generations(
     ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
-    return cards[:safe_limit]
+    return cards
 
 
 async def get_user_feed_generations(
@@ -5513,8 +5441,7 @@ async def get_user_feed_generations(
     *,
     include_unpublished_owned: bool = False,
 ) -> list[dict[str, Any]]:
-    safe_limit = min(max(int(limit or 120), 1), 160)
-    await cleanup_public_feed_limits()
+    """Return ALL user feed items — no limits."""
     where_clause = """
             WHERE gt.user_id = ?
               AND gt.type IN ('image', 'video')
@@ -5538,6 +5465,7 @@ async def get_user_feed_generations(
                    u.first_name AS author_first_name,
                    u.last_name AS author_last_name,
                    u.referral_code AS author_referral_code,
+                   u.photo_url AS author_photo_url,
                    (
                        SELECT COUNT(*)
                        FROM generation_tasks child
@@ -5554,16 +5482,14 @@ async def get_user_feed_generations(
             {where_clause}
             ORDER BY gt.created_at DESC
         """
-        query += "\n            LIMIT ?"
-        params: tuple[Any, ...] = (user_id, safe_limit * 5)
-        cursor = await db.execute(query, params)
+        cursor = await db.execute(query, (user_id,))
         rows = await cursor.fetchall()
     cards = [
         card
         for row in rows
         if (card := _generation_row_to_card(row, viewer_user_id=user_id))
     ]
-    return cards[:safe_limit]
+    return cards
 
 
 async def get_top_day_generations(limit: int = 40) -> list[dict[str, Any]]:
@@ -5589,6 +5515,7 @@ async def get_feed_generation_card(
                    u.first_name AS author_first_name,
                    u.last_name AS author_last_name,
                    u.referral_code AS author_referral_code,
+                   u.photo_url AS author_photo_url,
                    (
                        SELECT COUNT(*)
                        FROM generation_tasks child
@@ -5784,7 +5711,6 @@ async def share_to_feed(
         )
         await db.commit()
         gen_id = row["id"]
-    await cleanup_public_feed_limits()
     return await get_feed_generation_card(gen_id, viewer_user_id=user_id)
 
 

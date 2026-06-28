@@ -56,6 +56,7 @@ from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
     feed_link as build_feed_link,
     feed_start_param as build_feed_start_param,
+    referral_bot_link as build_referral_bot_link,
     referral_link as build_referral_link,
     remix_link as build_remix_link,
 )
@@ -1245,7 +1246,7 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
     )
 
 
-FEED_PAGE_LIMIT = 300
+FEED_PAGE_LIMIT = 999999
 PROMPT_PAGE_LIMIT = 24
 FEED_PREVIEW_MAX_BYTES = 9 * 1024 * 1024
 FEED_PREVIEW_MAX_SIDE = 1800
@@ -3817,14 +3818,29 @@ async def render_partner_program(target, user_id: int):
     referral_link = (
         build_referral_link(me.username, referral_code)
         if referral_code
-        else "Ссылка появится после активации"
+        else ""
     )
+    referral_bot_link_str = (
+        build_referral_bot_link(me.username, referral_code)
+        if referral_code
+        else ""
+    )
+
+    links_text = ""
+    if referral_code:
+        links_text = (
+            "<b>Ваши ссылки:</b>\n"
+            f"• На бота: <code>{referral_bot_link_str}</code>\n"
+            f"• На Mini App: <code>{referral_link}</code>\n"
+            "Для канала рекомендуем ссылку на бота (надёжнее).\n\n"
+        )
+    else:
+        links_text = "Ссылка появится после активации.\n\n"
 
     text = (
         "💼 <b>Партнёрам</b>\n\n"
         "Это практическое руководство по участию в партнёрской программе.\n"
-        "Ваша партнёрская ссылка:\n"
-        f"🔗 <code>{referral_link}</code>\n\n"
+        f"{links_text}"
         "<b>1 уровень</b> — ваш личный процент: <code>30%</code> от всех покупок ваших рефералов.\n"
         "<b>2 уровень</b> — <code>7%</code> от покупок рефералов ваших рефералов.\n\n"
         "<b>Как это работает:</b>\n"
@@ -3845,7 +3861,7 @@ async def render_partner_program(target, user_id: int):
     )
 
     markup = get_partner_program_keyboard(
-        referral_link if referral_code else "",
+        referral_bot_link_str if referral_code else "",
         is_partner=stats.get("is_partner", False),
     )
 
@@ -3876,14 +3892,14 @@ async def accept_partner(callback: types.CallbackQuery):
     # Подготавливаем корректную реферальную ссылку — без лишнего 'ref_' если кода нет
     me = await callback.bot.get_me()
     referral_code = user.referral_code
-    referral_link = (
-        build_referral_link(me.username, referral_code) if referral_code else ""
+    referral_bot_link_str = (
+        build_referral_bot_link(me.username, referral_code) if referral_code else ""
     )
 
     await callback.message.edit_text(
         "✅ <b>Партнёрская программа активирована</b>\n\n"
         "Теперь вы получаете 30% с покупок рефералов 1 уровня и 7% с покупок 2 уровня.",
-        reply_markup=get_partner_program_keyboard(referral_link, is_partner=True),
+        reply_markup=get_partner_program_keyboard(referral_bot_link_str, is_partner=True),
         parse_mode="HTML",
     )
     await callback.answer("Партнёрская программа активирована")
@@ -3907,14 +3923,14 @@ async def partner_stats(callback: types.CallbackQuery):
     user = await get_or_create_user(callback.from_user.id)
     me = await callback.bot.get_me()
     referral_code = user.referral_code
-    referral_link = (
-        build_referral_link(me.username, referral_code) if referral_code else ""
+    referral_bot_link_str = (
+        build_referral_bot_link(me.username, referral_code) if referral_code else ""
     )
 
     await callback.message.edit_text(
         text,
         reply_markup=get_partner_program_keyboard(
-            referral_link, is_partner=stats.get("is_partner", False)
+            referral_bot_link_str, is_partner=stats.get("is_partner", False)
         ),
         parse_mode="HTML",
     )

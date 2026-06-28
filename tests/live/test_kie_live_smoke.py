@@ -218,9 +218,13 @@ async def _create_kling_glow(api_key: str) -> dict:
 
 
 async def _create_nano_banana_2(api_key: str) -> dict | None:
-    from bot.services.nano_banana_2_service import NanoBanana2Service
+    from bot.services.nano_banana_2_service import NanoBanana2Service, ProviderClient
 
-    service = NanoBanana2Service(api_key=api_key)
+    service = NanoBanana2Service(
+        primary_provider=ProviderClient(
+            api_key=api_key, base_url="https://api.kie.ai"
+        )
+    )
     try:
         return await service.generate_image(
             prompt="Live smoke test: small yellow banana sticker on white background",
@@ -233,9 +237,13 @@ async def _create_nano_banana_2(api_key: str) -> dict | None:
 
 
 async def _create_nano_banana_pro(api_key: str) -> dict | None:
-    from bot.services.nano_banana_pro_service import NanoBananaProService
+    from bot.services.nano_banana_pro_service import NanoBananaProService, ProviderClient
 
-    service = NanoBananaProService(api_key=api_key)
+    service = NanoBananaProService(
+        primary_provider=ProviderClient(
+            api_key=api_key, base_url="https://api.kie.ai"
+        )
+    )
     try:
         return await service.generate_image(
             prompt="Live smoke test: clean studio product photo of one banana",

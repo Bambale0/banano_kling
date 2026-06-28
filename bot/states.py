@@ -79,6 +79,7 @@ class AdminStates(StatesGroup):
     waiting_promo_code_value = State()  # Создание/поиск промокода
     waiting_ai_request = State()  # Ввод задачи для ИИ-админа
     confirming_ai_action = State()  # Подтверждение действия ИИ-админа
+    waiting_nano_banana2_prompt = State()  # Тест Nano Banana 2 (api.apiyi.com)
 
 
 class BatchGenerationStates(StatesGroup):

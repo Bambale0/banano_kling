@@ -101,6 +101,7 @@ from bot.miniapp_links import (
     feed_link as build_feed_link,
     profile_link as build_profile_link,
     prompt_link as build_prompt_link,
+    referral_bot_link as build_referral_bot_link,
     referral_link as build_referral_link,
     remix_bot_link as build_remix_bot_link,
     remix_link as build_remix_link,
@@ -818,6 +819,7 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
             username=telegram_user.get("username"),
             first_name=telegram_user.get("first_name"),
             last_name=telegram_user.get("last_name"),
+            photo_url=telegram_user.get("photo_url"),
         )
     except Exception:
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
@@ -2530,7 +2532,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = _bounded_int(body.get("limit"), default=80, maximum=120)
+        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
@@ -2567,7 +2569,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = _bounded_int(body.get("limit"), default=120, maximum=160)
+        limit = _bounded_int(body.get("limit"), default=120, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
@@ -2603,7 +2605,7 @@ def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int |
         "last_name": last_name,
         "username": username,
         "display_name": display_name,
-        "photo_url": "",
+        "photo_url": getattr(author, "photo_url", None) or "",
         "profile_link": profile_link,
         "referral_link": referral_link,
         "channel_url": getattr(author, "channel_url", None) or "",
@@ -2616,7 +2618,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = _bounded_int(body.get("limit"), default=120, maximum=160)
+        limit = _bounded_int(body.get("limit"), default=120, maximum=999999)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
@@ -3761,6 +3763,11 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
             if user.referral_code
             else ""
         )
+        referral_bot_link_str = (
+            build_referral_bot_link(me.username, user.referral_code)
+            if user.referral_code
+            else ""
+        )
 
         return web.json_response(
             {
@@ -3776,6 +3783,7 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
                 ),
                 "channel_url": user.channel_url or "",
                 "referral_link": referral_link,
+                "referral_bot_link": referral_bot_link_str,
                 "status": "partner" if stats.get("is_partner") else "basic",
             }
         )

@@ -454,6 +454,8 @@ def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
     if isinstance(result, dict):
         if result.get("task_id"):
             return "queued", None
+        if result.get("image_bytes"):
+            return "done", None
         error_message = result.get("message") or result.get("error") or str(result)
         return "failed", make_user_friendly_generation_error(error_message)
     if isinstance(result, (bytes, bytearray)):
@@ -1155,7 +1157,10 @@ async def _start_image_generation_task(
         }
 
     if result_status == "done":
-        result_bytes = bytes(result)
+        if isinstance(result, dict) and "image_bytes" in result:
+            result_bytes = result["image_bytes"]
+        else:
+            result_bytes = bytes(result)
         saved_url = save_uploaded_file(result_bytes, "png")
         await complete_video_task(local_task_id, saved_url)
         return {
