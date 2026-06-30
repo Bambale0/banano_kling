@@ -4,6 +4,8 @@ IMAGE_MODEL_ORDER = [
     # Text-to-image (работают без референсов)
     "banana_pro",
     "banana_2",
+    "wan_27_image_pro",
+    "wan_27_image",
     "gpt_image_2",
     "grok_t2i",
     # Image-to-image (требуют хотя бы один референс)
@@ -19,6 +21,8 @@ IMAGE_MODEL_ALIASES = {
     "nano-banana-pro": "banana_pro",
     "seedream": "seedream_edit",
     "seedream_45": "seedream_edit",
+    "wan-image": "wan_27_image",
+    "wan-image-pro": "wan_27_image_pro",
 }
 
 
@@ -60,6 +64,60 @@ IMAGE_MODEL_CONFIGS = {
             "output_format": ["png", "jpg"],
         },
         "service": "banana_2",
+    },
+    "wan_27_image": {
+        "label": "🌊 Wan 2.7 Image",
+        "settings_label": "🌊 Wan Image",
+        "cost_key": "wan_27_image",
+        "requires_refs": False,
+        "supports_refs": True,
+        "aspect_ratios": ["1:1", "3:4", "4:3", "1:8", "8:1", "9:16", "16:9", "21:9"],
+        "defaults": {
+            "aspect_ratio": "1:1",
+            "resolution": "2K",
+            "n": 1,
+            "enable_sequential": False,
+            "thinking_mode": True,
+            "watermark": False,
+            "seed": 0,
+            "nsfw_checker": True,
+        },
+        "options": {
+            "aspect_ratio": ["1:1", "3:4", "4:3", "1:8", "8:1", "9:16", "16:9", "21:9"],
+            "resolution": ["1K", "2K"],
+            "enable_sequential": [False, True],
+            "thinking_mode": [True, False],
+            "watermark": [False, True],
+            "nsfw_checker": [True, False],
+        },
+        "service": "wan_27_image",
+    },
+    "wan_27_image_pro": {
+        "label": "🌊 Wan 2.7 Image Pro",
+        "settings_label": "🌊 Wan Image Pro",
+        "cost_key": "wan_27_image_pro",
+        "requires_refs": False,
+        "supports_refs": True,
+        "aspect_ratios": ["1:1", "3:4", "4:3", "1:8", "8:1", "9:16", "16:9", "21:9"],
+        "defaults": {
+            "aspect_ratio": "1:1",
+            "resolution": "2K",
+            "n": 1,
+            "enable_sequential": False,
+            "thinking_mode": False,
+            "watermark": False,
+            "seed": 0,
+            "nsfw_checker": True,
+        },
+        "options": {
+            "aspect_ratio": ["1:1", "3:4", "4:3", "1:8", "8:1", "9:16", "16:9", "21:9"],
+            "resolution": ["1K", "2K", "4K"],
+            "enable_sequential": [False, True],
+            "thinking_mode": [False, True],
+            "watermark": [False, True],
+            "nsfw_checker": [True, False],
+        },
+        "service": "wan_27_image_pro",
     },
     "gpt_image_2": {
         "label": "🧠 GPT Image 2",
@@ -212,6 +270,10 @@ IMAGE_OPTION_LABELS = {
     "enable_pro": "Pro режим",
     "quality": "Качество",
     "nsfw_checker": "NSFW check",
+    "enable_sequential": "Галерея",
+    "thinking_mode": "Thinking",
+    "watermark": "Watermark",
+    "seed": "Seed",
     "rendering_speed": "Скорость",
     "style": "Стиль",
     "expand_prompt": "Улучшение",
@@ -255,6 +317,16 @@ def get_image_option_label(option_name: str, value):
         return "⚡ Pro" if value else "Std"
     if option_name == "quality":
         return "Basic" if value == "basic" else str(value).upper()
+    if option_name in {"nsfw_checker", "enable_sequential", "thinking_mode", "watermark"}:
+        if option_name == "nsfw_checker":
+            return "NSFW ON" if value else "NSFW OFF"
+        if option_name == "enable_sequential":
+            return "Галерея ON" if value else "Галерея OFF"
+        if option_name == "thinking_mode":
+            return "Thinking ON" if value else "Thinking OFF"
+        return "Watermark ON" if value else "Watermark OFF"
+    if option_name == "seed":
+        return str(value)
     if option_name == "nsfw_checker":
         return "NSFW ON" if value else "NSFW OFF"
     if option_name == "rendering_speed":

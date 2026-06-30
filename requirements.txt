@@ -3,12 +3,14 @@ aiogram>=3.0.0
 
 # Async HTTP Client
 aiohttp>=3.8.0
+aiofiles>=23.0.0
 
 # Database
 aiosqlite>=0.19.0
 
 # Google Gemini API
 google-genai>=0.3.0
+httpx>=0.28.1,<1.0.0
 Pillow>=10.0.0
 
 # Environment variables (optional, for .env support)
@@ -29,4 +31,3 @@ redis>=5.0.0
 
 # Future PostgreSQL backend
 asyncpg>=0.29.0
-

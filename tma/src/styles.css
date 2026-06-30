@@ -12,12 +12,19 @@
   --accent: #43f6ff;
   --accent-2: #ff62d8;
   --accent-3: #c9ff6a;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --weight-regular: 500;
+  --weight-medium: 620;
+  --weight-semibold: 720;
+  --weight-bold: 820;
+  --weight-black: 880;
   color: var(--text);
   background: var(--bg-0);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -145,6 +152,7 @@ select,
 textarea {
   font: inherit;
   font-size: 14px;
+  letter-spacing: 0;
 }
 
 button,
@@ -162,6 +170,8 @@ button {
     linear-gradient(180deg, rgba(28, 41, 79, 0.94), rgba(9, 14, 33, 0.96));
   color: var(--text);
   cursor: pointer;
+  font-weight: var(--weight-semibold);
+  line-height: 1.18;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 12px 28px rgba(0, 0, 0, 0.34),
@@ -268,33 +278,34 @@ textarea {
 .rail nav {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 3px;
+  gap: 2px;
 }
 
 .rail nav button {
   display: grid;
   min-width: 0;
-  min-height: 56px;
+  min-height: 52px;
   place-items: center;
-  gap: 4px;
+  gap: 3px;
   border-color: transparent;
-  border-radius: 18px;
+  border-radius: 16px;
   background: transparent;
   color: var(--muted-2);
-  padding: 5px 2px;
+  padding: 5px 1px;
   box-shadow: none;
 }
 
 .rail nav button svg {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
 }
 
 .rail nav button span {
   max-width: 100%;
   overflow: hidden;
-  font-size: 10px;
-  line-height: 1.05;
+  font-size: 10.5px;
+  font-weight: var(--weight-medium);
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -312,7 +323,7 @@ textarea {
 
 .workspace {
   min-width: 0;
-  padding: 20px 18px calc(98px + env(safe-area-inset-bottom));
+  padding: 18px 18px calc(86px + env(safe-area-inset-bottom));
 }
 
 .top {
@@ -333,9 +344,9 @@ textarea {
 .top p {
   color: #5effff;
   font-size: 13px;
-  font-weight: 800;
-  line-height: 1.05;
-  letter-spacing: 0.14em;
+  font-weight: var(--weight-semibold);
+  line-height: 1.12;
+  letter-spacing: 0.08em;
   text-transform: none;
   text-shadow:
     0 0 10px rgba(67, 246, 255, 0.92),
@@ -346,9 +357,9 @@ textarea {
   margin-top: 6px;
   color: var(--text);
   font-size: 26px;
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  line-height: 1;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0;
+  line-height: 1.06;
 }
 
 .home-app .workspace {
@@ -415,7 +426,7 @@ textarea {
   background-clip: text;
   color: transparent;
   font-size: clamp(15px, 4.7vw, 20px);
-  font-weight: 950;
+  font-weight: var(--weight-black);
   letter-spacing: 0;
   white-space: nowrap;
   text-transform: none;
@@ -464,7 +475,8 @@ textarea {
   justify-content: center;
   gap: 6px;
   padding: 0 12px;
-  font-weight: 800;
+  font-weight: var(--weight-semibold);
+  line-height: 1.15;
 }
 
 .top-actions button {
@@ -492,7 +504,7 @@ textarea {
     rgba(15, 25, 53, 0.9);
   color: var(--text);
   padding: 0 11px;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   box-shadow: 0 0 20px rgba(65, 242, 255, 0.18);
 }
 
@@ -569,6 +581,8 @@ textarea {
 .field span {
   color: var(--muted);
   font-size: 12px;
+  font-weight: var(--weight-regular);
+  line-height: 1.28;
 }
 
 .metric strong {
@@ -576,8 +590,8 @@ textarea {
   margin-top: 8px;
   color: #ffffff;
   font-size: 18px;
-  font-weight: 900;
-  line-height: 1.1;
+  font-weight: var(--weight-bold);
+  line-height: 1.12;
 }
 
 .panel {
@@ -596,7 +610,7 @@ textarea {
   margin: 0;
   color: #ffffff;
   font-size: 18px;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   letter-spacing: 0;
   line-height: 1.12;
 }
@@ -633,8 +647,8 @@ textarea {
   overflow: hidden;
   color: #ffffff;
   font-size: 20px;
-  font-weight: 950;
-  line-height: 1.08;
+  font-weight: var(--weight-bold);
+  line-height: 1.12;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -644,7 +658,7 @@ textarea {
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--weight-medium);
 }
 
 .package-head b {
@@ -675,7 +689,7 @@ textarea {
   color: #c9d3e8;
   padding: 6px 9px;
   font-size: 12px;
-  font-weight: 850;
+  font-weight: var(--weight-semibold);
 }
 
 .package-badges span {
@@ -734,7 +748,7 @@ textarea {
   display: block;
   overflow: hidden;
   color: #ffffff;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -771,8 +785,8 @@ textarea {
   color: #edf8ff;
   padding: 10px 6px;
   font-size: 12px;
-  font-weight: 800;
-  line-height: 1.05;
+  font-weight: var(--weight-semibold);
+  line-height: 1.15;
   text-align: center;
   box-shadow: none;
 }
@@ -803,7 +817,7 @@ textarea {
 .muted-line {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: var(--weight-medium);
 }
 
 .info-tile strong {
@@ -812,8 +826,8 @@ textarea {
   margin-top: 5px;
   color: #ffffff;
   font-size: 15px;
-  font-weight: 900;
-  line-height: 1.15;
+  font-weight: var(--weight-bold);
+  line-height: 1.18;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -838,7 +852,7 @@ textarea {
   overflow: hidden;
   color: #dce9ff;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -846,7 +860,7 @@ textarea {
 .compact-row strong {
   color: #62f7ff;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
 }
 
 .search {
@@ -897,7 +911,7 @@ th {
   z-index: 1;
   background: rgba(8, 13, 31, 0.96);
   color: #62f7ff;
-  font-weight: 800;
+  font-weight: var(--weight-semibold);
 }
 
 .feed-grid {
@@ -938,6 +952,15 @@ button.feed-media {
   cursor: zoom-in;
 }
 
+.feed-media.loading {
+  position: relative;
+  min-height: 120px;
+  background:
+    radial-gradient(circle at 24% 20%, rgba(67, 246, 255, 0.08), transparent 34%),
+    radial-gradient(circle at 84% 82%, rgba(255, 98, 216, 0.06), transparent 38%),
+    #09152c;
+}
+
 .feed-media.loading::before {
   content: "";
   position: absolute;
@@ -947,14 +970,15 @@ button.feed-media {
   animation: shineSweep 2.4s ease-in-out infinite;
 }
 
-.feed-card img {
+.feed-media img,
+.feed-media video {
   display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
   background: transparent;
+  transition: opacity 0.3s ease;
 }
 
+.feed-card img,
 .feed-card video,
 .feed-media video {
   display: block;
@@ -962,6 +986,27 @@ button.feed-media {
   aspect-ratio: 4 / 3;
   object-fit: cover;
   background: #050716;
+}
+
+.pin-card .pin-media img,
+.pin-card .pin-media video {
+  width: 100%;
+  height: auto;
+  min-height: 140px;
+}
+
+.feed-media.media-empty,
+.history-placeholder {
+  display: grid;
+  min-height: 168px;
+  aspect-ratio: 4 / 3;
+  place-items: center;
+  color: rgba(225, 250, 255, 0.72);
+}
+
+.pin-card .feed-media.media-empty {
+  aspect-ratio: 3 / 4;
+  min-height: 220px;
 }
 
 .feed-author {
@@ -975,7 +1020,7 @@ button.feed-media {
 .feed-author strong {
   overflow: hidden;
   color: #ffffff;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -995,7 +1040,7 @@ button.feed-media {
   color: #65ffe6;
   padding: 3px 7px;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .feed-avatar {
@@ -1006,7 +1051,7 @@ button.feed-media {
   border: 1px solid rgba(95, 255, 245, 0.45);
   border-radius: 50%;
   color: #ffffff;
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   box-shadow: 0 0 18px rgba(65, 242, 255, 0.24);
 }
 
@@ -1032,17 +1077,16 @@ button.feed-media {
 }
 
 .pinterest-feed {
-  display: block;
-  column-count: 2;
-  column-gap: 9px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
   padding-bottom: 96px;
 }
 
 .pin-card {
-  display: inline-block;
-  width: 100%;
-  break-inside: avoid;
-  margin: 0 0 10px;
+  display: grid;
+  grid-template-rows: auto;
+  align-content: start;
   overflow: hidden;
   border-radius: 16px;
   background:
@@ -1052,14 +1096,26 @@ button.feed-media {
 }
 
 .pin-card .pin-media {
+  display: block;
+  width: 100%;
   border: 0;
   border-radius: 16px;
   box-shadow: none;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 24% 20%, rgba(67, 246, 255, 0.22), transparent 34%),
+    radial-gradient(circle at 84% 82%, rgba(255, 98, 216, 0.16), transparent 38%),
+    #09152c;
 }
 
 .pin-card .pin-media img,
 .pin-card .pin-media video {
-  aspect-ratio: 3 / 4;
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  object-position: center;
+  background: transparent;
 }
 
 .pin-card:nth-child(3n + 1) .pin-media img,
@@ -1070,6 +1126,16 @@ button.feed-media {
 .pin-card:nth-child(3n + 2) .pin-media img,
 .pin-card:nth-child(3n + 2) .pin-media video {
   aspect-ratio: 1 / 1;
+}
+
+.pin-card:not(:nth-child(3n + 1)):not(:nth-child(3n + 2)) .pin-media img,
+.pin-card:not(:nth-child(3n + 1)):not(:nth-child(3n + 2)) .pin-media video {
+  aspect-ratio: 3 / 4;
+}
+
+.pin-card .pin-media.media-empty {
+  aspect-ratio: 3 / 4;
+  min-height: 220px;
 }
 
 .pin-overlay {
@@ -1236,7 +1302,7 @@ button.feed-media {
   color: #ffffff;
   padding: 0 13px;
   font-size: 13px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
   text-decoration: none;
 }
 
@@ -1278,15 +1344,15 @@ button.feed-media {
 .chatgpt-head span {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--weight-medium);
 }
 
 .chatgpt-head h2 {
   margin: 1px 0 0;
   color: #ffffff;
   font-size: 22px;
-  font-weight: 950;
-  line-height: 1;
+  font-weight: var(--weight-bold);
+  line-height: 1.08;
 }
 
 .chatgpt-head button {
@@ -1316,7 +1382,7 @@ button.feed-media {
   margin: 0;
   color: #ffffff;
   font-size: 25px;
-  font-weight: 950;
+  font-weight: var(--weight-bold);
 }
 
 .chat-empty p {
@@ -1344,7 +1410,7 @@ button.feed-media {
   background: rgba(18, 28, 56, 0.92);
   color: #c9fcff;
   font-size: 10px;
-  font-weight: 950;
+  font-weight: var(--weight-bold);
 }
 
 .chat-message.from-user .chat-avatar {
@@ -1358,13 +1424,14 @@ button.feed-media {
   margin-bottom: 5px;
   color: #ffffff;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .chat-message p {
   margin: 0;
   color: #edf3ff;
   font-size: 14px;
+  font-weight: var(--weight-regular);
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -1482,6 +1549,26 @@ button.feed-media {
   gap: 12px;
 }
 
+.wan-extra-options {
+  display: grid;
+  gap: 10px;
+}
+
+.wan-extra-options label {
+  display: grid;
+  gap: 7px;
+}
+
+.wan-extra-options span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+}
+
+.wan-extra-options textarea {
+  min-height: 86px;
+}
+
 .create-flow-head,
 .create-workspace-panel {
   gap: 12px;
@@ -1515,15 +1602,15 @@ button.feed-media {
 .create-detail-head > strong {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--weight-medium);
 }
 
 .create-detail-head h2 {
   margin: 2px 0 0;
   color: #ffffff;
   font-size: 22px;
-  font-weight: 950;
-  line-height: 1.05;
+  font-weight: var(--weight-bold);
+  line-height: 1.08;
   white-space: normal;
 }
 
@@ -1540,18 +1627,19 @@ button.feed-media {
 .choice-group > span {
   color: rgba(226, 239, 255, 0.82);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 760;
+  line-height: 1.25;
 }
 
 .choice-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 7px;
 }
 
 .choice-list.compact {
-  grid-template-columns: repeat(var(--choice-count, 2), minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
+  gap: 7px;
 }
 
 .choice-list.binary {
@@ -1565,17 +1653,21 @@ button.feed-media {
 .choice-chip {
   display: grid;
   min-width: 0;
-  min-height: 48px;
+  min-height: 44px;
   align-content: center;
+  border-radius: 13px;
   padding: 8px 10px;
-  text-align: left;
+  text-align: center;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 18px rgba(0, 0, 0, 0.24);
 }
 
 .choice-list.compact .choice-chip {
-  min-height: 38px;
+  min-height: 42px;
   justify-items: center;
   border-radius: 12px;
-  padding: 7px 6px;
+  padding: 8px 9px;
   text-align: center;
 }
 
@@ -1590,15 +1682,16 @@ button.feed-media {
 .choice-chip small {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .choice-chip strong {
   color: #f8fbff;
-  font-size: 13px;
-  line-height: 1.1;
+  font-size: 12.5px;
+  font-weight: 760;
+  line-height: 1.15;
 }
 
 .choice-list.compact .choice-chip strong {
@@ -1606,10 +1699,10 @@ button.feed-media {
 }
 
 .choice-chip small {
-  margin-top: 3px;
+  margin-top: 2px;
   color: rgba(194, 206, 228, 0.78);
-  font-size: 11px;
-  line-height: 1.1;
+  font-size: 10.5px;
+  line-height: 1.18;
 }
 
 .choice-chip.active {
@@ -1640,7 +1733,7 @@ button.feed-media {
 .model-select > span {
   color: rgba(226, 239, 255, 0.82);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .model-select select {
@@ -1658,7 +1751,7 @@ button.feed-media {
 .model-select small {
   color: rgba(194, 206, 228, 0.78);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--weight-medium);
 }
 
 .model-info {
@@ -1689,7 +1782,7 @@ button.feed-media {
 .price-summary span {
   color: rgba(226, 239, 255, 0.82);
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .price-summary strong {
@@ -1716,7 +1809,7 @@ button.feed-media {
 .package-form-grid label > span {
   color: #ffffff;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--weight-semibold);
 }
 
 .package-form-grid button {
@@ -1810,9 +1903,9 @@ button.feed-media {
   margin: 6px 0 2px;
   color: var(--text);
   font-size: clamp(24px, 7vw, 30px);
-  font-weight: 950;
-  letter-spacing: -0.02em;
-  line-height: 1;
+  font-weight: var(--weight-black);
+  letter-spacing: 0;
+  line-height: 1.06;
   text-align: left;
 }
 
@@ -1878,7 +1971,7 @@ button.feed-media {
   padding: 0 12px;
   color: #b7c5df;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: var(--weight-semibold);
 }
 
 .home-flow-picker {
@@ -1950,8 +2043,8 @@ button.feed-media {
   max-width: 100%;
   color: #f7fbff;
   font-size: 17px;
-  font-weight: 850;
-  line-height: 1.12;
+  font-weight: var(--weight-bold);
+  line-height: 1.14;
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.38);
   text-transform: none;
 }
@@ -2033,7 +2126,7 @@ button.feed-media {
 .glyph-arrow {
   color: inherit;
   font-size: clamp(18px, 5.4vw, 28px);
-  font-weight: 900;
+  font-weight: var(--weight-bold);
   line-height: 1;
   text-shadow: 0 0 9px color-mix(in srgb, currentColor 22%, transparent);
 }
@@ -2056,7 +2149,7 @@ button.feed-media {
 .flow-glyph-g span {
   color: inherit;
   font-size: clamp(48px, 16vw, 76px);
-  font-weight: 950;
+  font-weight: var(--weight-black);
   line-height: 1;
   text-shadow: 0 0 10px color-mix(in srgb, currentColor 24%, transparent);
 }
@@ -2185,7 +2278,7 @@ button.feed-media {
   overflow: hidden;
   color: #a8b5d1;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2203,7 +2296,7 @@ button.feed-media {
   color: #c9d3e8;
   padding: 6px 9px;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .multi-photo-screen {
@@ -2228,14 +2321,14 @@ button.feed-media {
 .multi-photo-hero strong {
   color: #ffffff;
   font-size: 15px;
-  font-weight: 950;
+  font-weight: var(--weight-bold);
 }
 
 .multi-photo-hero span,
 .multi-photo-state span {
   color: #c9d3e8;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: var(--weight-semibold);
 }
 
 .multi-photo-state {
@@ -2498,13 +2591,16 @@ textarea {
 }
 
 @media (max-width: 360px) {
-  .account-grid,
-  .choice-list:not(.compact) {
+  .account-grid {
     grid-template-columns: 1fr;
   }
 
+  .choice-list {
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  }
+
   .choice-list.compact .choice-chip strong {
-    font-size: 11px;
+    font-size: 11.5px;
   }
 }
 

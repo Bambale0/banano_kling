@@ -26,6 +26,7 @@ from bot.database import (
     complete_video_task,
     consume_free_generation,
     deduct_credits,
+    fail_generation_task,
     refund_free_generation,
     get_or_create_user,
     get_task_by_id,
@@ -69,6 +70,7 @@ from bot.services.gemini_omni_service import (
 from bot.services.hailuo_service import hailuo_service
 from bot.services.happyhorse_service import happyhorse_service
 from bot.services.ideogram_service import ideogram_service
+from bot.services.kling_service import kling_service
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -465,6 +467,23 @@ def _apply_face_preservation_prompt(prompt: str, face_mode: str, ref_count: int)
             "or scene."
         )
     return f"{prompt}\n\n{instruction}"
+
+
+def _needs_background_target(prompt: str, ref_count: int) -> bool:
+    """Detect background-change prompts that do not say what the new background is."""
+    if ref_count <= 0:
+        return False
+    normalized = re.sub(r"\s+", " ", (prompt or "").strip().lower())
+    normalized = normalized.strip(" .,!?:;—-")
+    if not normalized:
+        return False
+    vague_patterns = (
+        r"^(с?мени|замени|поменяй|измени|сменить|заменить|поменять|изменить)\s+(задний\s+)?фон$",
+        r"^(задний\s+)?фон\s+(с?мени|замени|поменяй|измени|сменить|заменить|поменять|изменить)$",
+        r"^сделай\s+(другой|новый|иной)\s+(задний\s+)?фон$",
+        r"^(другой|новый|иной)\s+(задний\s+)?фон$",
+    )
+    return any(re.fullmatch(pattern, normalized) for pattern in vague_patterns)
 
 
 def _build_face_preservation_text(ref_count: int) -> str:
@@ -2894,6 +2913,9 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         "resolution": "resolution_",
         "quality": "quality_",
         "nsfw_checker": "nsfw_checker_",
+        "enable_sequential": "enable_sequential_",
+        "thinking_mode": "thinking_mode_",
+        "watermark": "watermark_",
         "enable_pro": "enable_pro_",
         "rendering_speed": "rendering_speed_",
         "style": "style_",
@@ -2912,7 +2934,14 @@ async def handle_dynamic_image_option(callback: types.CallbackQuery, state: FSMC
         await callback.answer("Неизвестная опция", show_alert=True)
         return
 
-    if option_name in {"nsfw_checker", "expand_prompt", "enable_pro"}:
+    if option_name in {
+        "nsfw_checker",
+        "expand_prompt",
+        "enable_pro",
+        "enable_sequential",
+        "thinking_mode",
+        "watermark",
+    }:
         value = raw_value == "on"
     elif option_name == "aspect_ratio":
         value = raw_value.replace("_", ":").upper().replace("AUTO", "auto")
@@ -4758,6 +4787,19 @@ async def handle_image_prompt_text(
     img_service, img_options, reference_images = _get_image_state(data)
     mix_mode = bool(data.get("mix_mode"))
 
+    if _needs_background_target(prompt, len(reference_images)):
+        await state.set_state(GenerationStates.waiting_for_image_prompt)
+        await message.answer(
+            "🖼 <b>На какой фон заменить?</b>\n\n"
+            "Напишите конкретнее одним сообщением, например:\n"
+            "• заменить фон на неоновый город ночью\n"
+            "• поставить сумку на пляжный фон\n"
+            "• сделать премиальный студийный фон в розовых тонах\n\n"
+            "<i>Лимит не списан.</i>",
+            parse_mode="HTML",
+        )
+        return
+
     if improve_prompt is None:
         await state.update_data(
             pending_image_prompt=prompt,
@@ -4914,8 +4956,8 @@ async def handle_image_prompt_text(
             cost=job_cost,
             reference_images=_serialize_reference_images(reference_images),
             source_feed_task_id=data.get("source_feed_task_id"),
-            billing_source=locals().get("billing_source", "credits"),
-            subscription_usage_id=locals().get("subscription_usage_id"),
+            billing_source=billing_source,
+            subscription_usage_id=subscription_usage_id,
         )
         try:
             callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -4935,6 +4977,21 @@ async def handle_image_prompt_text(
                     resolution=job_options["resolution"],
                     output_format=job_options["output_format"],
                     image_input=reference_images,
+                    callback_url=callback_url,
+                )
+            elif job_model in {"wan_27_image", "wan_27_image_pro"}:
+                result = await kling_service.generate_wan_image(
+                    prompt=prompt,
+                    model=job_model,
+                    input_urls=reference_images,
+                    n=1,
+                    enable_sequential=job_options.get("enable_sequential", False),
+                    resolution=job_options.get("resolution", "2K"),
+                    thinking_mode=job_options.get("thinking_mode", job_model == "wan_27_image"),
+                    aspect_ratio=job_options["aspect_ratio"],
+                    watermark=job_options.get("watermark", False),
+                    seed=job_options.get("seed"),
+                    nsfw_checker=job_options.get("nsfw_checker", True),
                     callback_url=callback_url,
                 )
             elif job_model in ["seedream_edit", "seedream_5_lite"]:
@@ -5007,7 +5064,31 @@ async def handle_image_prompt_text(
             model_label = get_image_model_config(job_model)["label"]
             prefix = f"[{idx}/{img_count}] " if img_count > 1 else ""
 
-            if isinstance(result, dict) and "task_id" in result:
+            if isinstance(result, dict) and result.get("error"):
+                provider_message = str(
+                    result.get("message") or result.get("error") or "ошибка провайдера"
+                )
+                logger.error(
+                    "Image provider failed (idx=%s, model=%s, task=%s): %s",
+                    idx,
+                    job_model,
+                    local_tid,
+                    result,
+                )
+                await _refund_generation_charge(
+                    telegram_id,
+                    job_cost,
+                    billing_source=billing_source,
+                    subscription_usage_id=subscription_usage_id,
+                    reason="generation_refund",
+                    external_id=local_tid,
+                    metadata={"handler": "image_provider_error", "idx": idx},
+                )
+                await fail_generation_task(local_tid)
+                await message.answer(
+                    f"❌ {prefix}{model_label}: {html.escape(provider_message)}. Ресурс возвращён."
+                )
+            elif isinstance(result, dict) and "task_id" in result:
                 api_task_id = result["task_id"]
                 import aiosqlite
 
@@ -5058,17 +5139,31 @@ async def handle_image_prompt_text(
                 )
                 await complete_video_task(local_tid, saved_url)
             else:
-                if locals().get("billing_source") == "credits" and not config.is_admin(telegram_id):
-                    await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
-                await complete_video_task(local_tid, None)
+                await _refund_generation_charge(
+                    telegram_id,
+                    job_cost,
+                    billing_source=billing_source,
+                    subscription_usage_id=subscription_usage_id,
+                    reason="generation_refund",
+                    external_id=local_tid,
+                    metadata={"handler": "image_provider_empty", "idx": idx},
+                )
+                await fail_generation_task(local_tid)
                 await message.answer(f"❌ {prefix}{model_label}: ошибка генерации. Ресурс возвращён.")
 
         except Exception as e:
             logger.exception(f"Image generation error (idx={idx}): {e}")
-            if locals().get("billing_source") == "credits" and not config.is_admin(telegram_id):
-                await add_credits_once(telegram_id, job_cost, reason="generation_refund", external_id=local_tid)
-            await complete_video_task(local_tid, None)
-            await message.answer(f"❌ Ошибка генерации #{idx}.")
+            await _refund_generation_charge(
+                telegram_id,
+                job_cost,
+                billing_source=billing_source,
+                subscription_usage_id=subscription_usage_id,
+                reason="generation_refund",
+                external_id=local_tid,
+                metadata={"handler": "image_exception", "idx": idx},
+            )
+            await fail_generation_task(local_tid)
+            await message.answer(f"❌ Ошибка генерации #{idx}. Ресурс возвращён.")
 
     try:
         await asyncio.gather(
@@ -5393,6 +5488,21 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
                 image_input=reference_images,
                 callback_url=callback_url,
             )
+        elif img_service in {"wan_27_image", "wan_27_image_pro"}:
+            result = await kling_service.generate_wan_image(
+                prompt=prompt,
+                model=img_service,
+                input_urls=reference_images,
+                n=1,
+                enable_sequential=img_options.get("enable_sequential", False),
+                resolution=img_options.get("resolution", "2K"),
+                thinking_mode=img_options.get("thinking_mode", img_service == "wan_27_image"),
+                aspect_ratio=aspect_ratio,
+                watermark=img_options.get("watermark", False),
+                seed=img_options.get("seed"),
+                nsfw_checker=img_options.get("nsfw_checker", True),
+                callback_url=callback_url,
+            )
         elif img_service in ("seedream_edit", "seedream_5_lite"):
             result = await seedream_service.generate_image(
                 prompt=prompt,
@@ -5436,7 +5546,30 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
 
         await processing_msg.delete()
 
-        if isinstance(result, dict) and "task_id" in result:
+        if isinstance(result, dict) and result.get("error"):
+            provider_message = str(
+                result.get("message") or result.get("error") or "ошибка провайдера"
+            )
+            logger.error(
+                "Retry image provider failed (model=%s, task=%s): %s",
+                img_service,
+                local_task_id,
+                result,
+            )
+            await _refund_generation_charge(
+                callback.from_user.id,
+                cost,
+                billing_source=locals().get("billing_source", "none"),
+                subscription_usage_id=locals().get("subscription_usage_id"),
+                reason="generation_refund",
+                external_id=local_task_id,
+                metadata={"handler": "retry_image_provider_error"},
+            )
+            await fail_generation_task(local_task_id)
+            await callback.message.answer(
+                f"❌ Ошибка повтора: {html.escape(provider_message)}. Ресурс возвращён."
+            )
+        elif isinstance(result, dict) and "task_id" in result:
             api_task_id = result["task_id"]
             import aiosqlite
 
@@ -5477,7 +5610,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
                 external_id=local_task_id if "local_task_id" in locals() else f"retry:{task_id}",
                 metadata={"handler": "retry_image_empty_result"},
             )
-            await complete_video_task(local_task_id, None)
+            await fail_generation_task(local_task_id)
             await callback.message.answer("❌ Ошибка повтора. Ресурс возвращён.")
 
     except Exception as e:
@@ -5491,7 +5624,7 @@ async def handle_retry_image(callback: types.CallbackQuery, state: FSMContext):
             external_id=local_task_id,
             metadata={"handler": "retry_image"},
         )
-        await complete_video_task(local_task_id, None)
+        await fail_generation_task(local_task_id)
         await callback.message.answer("❌ Ошибка повтора.")
     finally:
         await generation_lock_guard.release(generation_lock)
@@ -5588,7 +5721,7 @@ async def run_no_preset_video_from_message(
     v_type = data.get("v_type", "text")
     v_model = data.get("v_model", "v3_std")
     video_urls = data.get("v_reference_videos", [])
-    if video_urls and v_model not in {"happyhorse_edit", "glow", "gemini_omni"}:
+    if video_urls and v_model not in {"happyhorse_edit", "glow", "gemini_omni", "wan_27_r2v", "wan_27_videoedit"}:
         v_model = "aleph"
     if v_type == "video" and v_model not in _MODELS_VIDEO:
         v_model = "aleph"
@@ -5613,6 +5746,8 @@ async def run_no_preset_video_from_message(
         "happyhorse_edit",
         "wan_27_t2v",
         "wan_27_i2v",
+        "wan_27_r2v",
+        "wan_27_videoedit",
         "gemini_omni",
     )
     if v_type == "imgtxt" and v_model not in _no_cap_models:
@@ -5624,7 +5759,7 @@ async def run_no_preset_video_from_message(
     image_url = data.get("v_image_url")
     video_urls = (
         data.get("v_reference_videos", [])
-        if v_model == "gemini_omni" or v_type == "video"
+        if v_model in {"gemini_omni", "wan_27_r2v", "wan_27_videoedit"} or v_type == "video"
         else None
     )
     image_refs = data.get("reference_images", [])
@@ -5968,7 +6103,7 @@ async def run_no_preset_video_from_message(
                     config.kie_notification_url if config.WEBHOOK_HOST else None
                 ),
             )
-        elif v_model in {"wan_27_t2v", "wan_27_i2v"}:
+        elif v_model in {"wan_27_t2v", "wan_27_i2v", "wan_27_r2v", "wan_27_videoedit"}:
             if v_model == "wan_27_i2v" and not image_url:
                 await target_message.answer(
                     "❌ Wan 2.7 I2V требует стартовое изображение (фото+текст режим)."
@@ -5978,16 +6113,52 @@ async def run_no_preset_video_from_message(
                 await generation_lock_guard.release(generation_lock)
                 await state.clear()
                 return
+            if v_model == "wan_27_r2v" and not image_refs and not video_urls:
+                await target_message.answer(
+                    "❌ Wan 2.7 R2V требует хотя бы одно фото или видео-референс."
+                )
+                await refund_current_video_charge("wan_r2v_missing_refs")
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            if v_model == "wan_27_videoedit" and not video_urls:
+                await target_message.answer(
+                    "❌ Wan 2.7 VideoEdit требует исходное видео."
+                )
+                await refund_current_video_charge("wan_videoedit_missing_video")
+                await processing_msg.delete()
+                await generation_lock_guard.release(generation_lock)
+                await state.clear()
+                return
+            wan_seed_value = video_options.get("seed")
+            try:
+                wan_seed = (
+                    int(wan_seed_value) if wan_seed_value not in (None, "") else None
+                )
+            except (TypeError, ValueError):
+                wan_seed = None
             result = await kling_service.generate_video(
                 prompt=prompt,
                 model=v_model,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 image_url=image_url,
+                video_urls=video_urls,
+                negative_prompt=video_options.get("negative_prompt") or None,
                 seedance_resolution=video_options.get("resolution", "1080p"),
                 wan_resolution=video_options.get("resolution", "1080p"),
                 wan_prompt_extend=video_options.get("prompt_extend", True),
                 wan_watermark=video_options.get("watermark", False),
+                wan_nsfw_checker=video_options.get("nsfw_checker", True),
+                wan_audio_url=video_options.get("audio_url") or None,
+                wan_driving_audio_url=video_options.get("driving_audio_url") or None,
+                wan_first_clip_url=video_options.get("first_clip_url") or None,
+                wan_reference_voice=video_options.get("reference_voice") or None,
+                wan_reference_image=image_refs,
+                wan_reference_video=video_urls or [],
+                wan_reference_image_url=video_options.get("reference_image") or None,
+                wan_seed=wan_seed,
                 webhook_url=(
                     config.kie_notification_url if config.WEBHOOK_HOST else None
                 ),

@@ -99,6 +99,8 @@ TABLES: tuple[TableSpec, ...] = (
             "likes_count",
             "shares_count",
             "source_feed_task_id",
+            "billing_source",
+            "subscription_usage_id",
         ),
         bool_columns=("is_public_feed",),
     ),

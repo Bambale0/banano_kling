@@ -15,6 +15,7 @@ Telegram-бот на Aiogram 3.x для генерации изображени�
 - Промокоды со скидками и лимитом использований.
 - Партнерская программа: ссылка, начисления в рублях, выплаты через Jump Finance, перевод партнерского заработка в BoomCoin.
 - Админ-панель: ИИ-админ, статистика, пользователи, баланс, промокоды, цены, рассылка, бан/разбан, техрежим.
+- Telegram Mini App: пользовательский кабинет, генерация, лента, GPT 5.5, профиль, платежи, партнерка и админ-панель через TMA.
 
 ## Документация по ИИ-админу
 
@@ -28,6 +29,7 @@ Telegram-бот на Aiogram 3.x для генерации изображени�
 - Aiohttp server для Telegram/payment/provider webhooks.
 - SQLite через `aiosqlite`; есть черновой план миграции на PostgreSQL.
 - Redis опционально для idempotency/locks/rate-limit через `bot.services.reliability`.
+- React 18 + Vite + TypeScript для Telegram Mini App (`tma/`).
 - Systemd в production: `bot.service`, `bot-reloader.service`, watchdog.
 - Конфигурация через `.env` и `bot/config.py`.
 
@@ -106,6 +108,10 @@ bot/
   services/
     *_service.py          интеграции с AI/payment/storage/reliability
   utils/                  тексты помощи, валидаторы, инструкции ассистента
+tma/
+  src/App.tsx             Mini App UI
+  src/styles.css          Mini App визуальная система
+  dist/                   production build, отдается через /miniapp
 data/
   price.json              пакеты BoomCoin, цены генераций, admin_ids fallback
   runway_characters.json  локальный storage для Runway character ids
@@ -148,10 +154,20 @@ logs/                     bot.log, bot_output.log, watchdog logs
 - `POST /webhook/kling` - Kling/PiAPI/Kie-compatible callbacks;
 - `POST {KIE_AI_WEBHOOK_PATH}` - Kie.ai callbacks, по умолчанию `/webhook/kie_ai`;
 - `POST /webhook/veo` - Veo callbacks;
+- `GET /miniapp` - Telegram Mini App HTML;
+- `GET /miniapp/assets/...` - Mini App JS/CSS assets;
+- `GET /api/tma/app/bootstrap` - пользовательский bootstrap Mini App, требует Telegram `initData`;
+- `POST /api/tma/app/generation` - запуск генерации из Mini App, требует Telegram `initData`;
+- `POST /api/tma/app/upload` - загрузка референсов из Mini App;
+- `GET /api/tma/app/ws` - realtime updates для Mini App;
+- `GET /api/tma/admin/bootstrap` - админский bootstrap Mini App, требует Telegram `initData` и admin id;
+- `GET/POST /api/tma/admin/...` - пользователи, оплаты, генерации, лента, пакеты, промо, партнеры, push, настройки;
 - `GET /health` - health check;
 - `GET /uploads/...` - static files from `static/uploads`.
 
 AI webhooks проверяются через `AI_WEBHOOK_SECRET`: query `secret`, headers `x-webhook-secret`/`x-ai-webhook-secret` или bearer token.
+
+TMA endpoints проверяют Telegram WebApp `initData` через HMAC. Без `initData` защищенные routes возвращают `401`.
 
 ## Конфигурация
 
@@ -195,6 +211,7 @@ GEMINI_API_KEY=
 KLING_API_KEY=
 PIAPI_API_KEY=
 ALLOW_NSFW=0
+MINI_APP_PRODUCTION_LIMIT=500
 ```
 
 Партнерка и выплаты:
@@ -296,6 +313,17 @@ Video-модели описаны в `bot/video_models.py`.
 
 После правки `price.json` можно перезагрузить конфиг через админ-панель, если соответствующий flow доступен, или перезапустить сервис.
 
+### Wan 2.7 через Kie.ai
+
+Wan 2.7 поддерживается через `bot/services/kling_service.py`:
+
+- image: `wan_27_image`, `wan_27_image_pro`;
+- video: `wan_27_t2v`, `wan_27_i2v`, `wan_27_r2v`, `wan_27_videoedit`.
+
+Важное production-наблюдение от 2026-06-13: официальная документация Kie.ai допускает `4K` для Image Pro, но live API может вернуть `422` на `4K + input_urls` с текстом `resolution 4K is only supported for non-sequential text-to-image`. Код сначала отправляет `4K`, а при таком конкретном отказе автоматически повторяет создание задачи в `2K`, чтобы пользователь получил результат вместо падения.
+
+Если пользователь отправляет референс и пишет слишком общий промпт вроде `смени фон`, генерация не запускается и лимит не списывается: бот просит уточнить, на какой фон заменить.
+
 ## Reliability
 
 `bot/services/reliability.py` использует `redis_service`:
@@ -321,8 +349,10 @@ Video-модели описаны в `bot/video_models.py`.
 
 ```bash
 source venv/bin/activate
-pytest
-python -m py_compile bot/config.py bot/database.py bot/keyboards.py bot/states.py bot/handlers/common.py
+pytest -q
+python -m compileall -q bot tests
+python -m pip check
+cd tma && npm run build && npm audit --omit=dev --audit-level=high
 ```
 
 Существующие тесты покрывают:
@@ -335,7 +365,9 @@ python -m py_compile bot/config.py bot/database.py bot/keyboards.py bot/states.p
 - runtime reliability;
 - storage policy;
 - validators/help texts;
-- часть provider payload builders.
+- provider payload builders, включая Wan 2.7/Kie.ai;
+- TMA API bootstrap/generation/admin actions;
+- защиту от слишком общих background-edit промптов с референсом.
 
 Standalone smoke scripts лежат в `tests/standalone` и могут требовать живые API-ключи.
 
@@ -359,6 +391,10 @@ tail -f logs/bot_output.log
 # Проверка health
 curl http://127.0.0.1:8443/health
 
+# Проверка Mini App
+curl -I https://dev.chillcreative.ru/miniapp
+curl -I https://dev.chillcreative.ru/miniapp/assets/<asset>.js
+
 # Проверка активных процессов
 pgrep -af "python -m bot.main"
 ```
@@ -372,5 +408,7 @@ pgrep -af "python -m bot.main"
 - Для платежей использовать idempotent external ids.
 - Для новых моделей сначала обновлять `image_models.py`/`video_models.py`, затем `data/price.json`, затем клавиатуры/handlers.
 - Для публичных ссылок на uploaded files использовать `config.static_base_url` и helpers из `storage_policy.py`.
+- Не считать все `pending` задачи активными: админская метрика `active_tasks` должна учитывать только свежие `pending/processing`, сейчас окно - последние 24 часа.
 
 Дополнительный технический анализ: [docs/project_analysis.md](docs/project_analysis.md).
+Последний production-аудит: [docs/production_audit_2026-06-13.md](docs/production_audit_2026-06-13.md).

@@ -148,6 +148,8 @@ def get_admin_price_image_keyboard(price_config: dict):
         "grok_t2i": "Grok T2I",
         "grok_i2i": "Grok I2I",
         "ideogram_character": "Ideogram Character",
+        "wan_27_image": "Wan 2.7 Image",
+        "wan_27_image_pro": "Wan 2.7 Image Pro",
     }
     builder = InlineKeyboardBuilder()
     image_models = price_config.get("costs_reference", {}).get("image_models", {})
@@ -189,6 +191,8 @@ def get_admin_price_video_keyboard(price_config: dict):
         "happyhorse_edit": "HappyHorse Edit",
         "wan_27_t2v": "Wan 2.7 T2V",
         "wan_27_i2v": "Wan 2.7 I2V",
+        "wan_27_r2v": "Wan 2.7 R2V",
+        "wan_27_videoedit": "Wan 2.7 VideoEdit",
         "gemini_omni": "Gemini Omni",
     }
     builder = InlineKeyboardBuilder()
@@ -241,8 +245,10 @@ SUPPORTED_RATIOS = {
     "happyhorse_i2v": ["16:9"],
     "happyhorse_ref2v": ["16:9", "9:16", "1:1"],
     "happyhorse_edit": ["16:9"],
-    "wan_27_t2v": ["16:9", "9:16", "1:1"],
+    "wan_27_t2v": ["16:9", "9:16", "1:1", "4:3", "3:4"],
     "wan_27_i2v": [],
+    "wan_27_r2v": ["16:9", "9:16", "1:1", "4:3", "3:4"],
+    "wan_27_videoedit": ["16:9", "9:16", "1:1", "4:3", "3:4"],
 }
 
 

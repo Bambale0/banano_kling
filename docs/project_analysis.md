@@ -2,6 +2,8 @@
 
 Дата анализа: 2026-05-25.
 
+Обновление: 2026-06-13 после production-аудита, регрессионных тестов и smoke-проверок.
+
 ## Краткое резюме
 
 Проект - production Telegram-бот для генерации AI-контента. Архитектура монолитная: один Python-процесс держит Aiogram dispatcher, aiohttp webhook server, бизнес-логику, интеграции провайдеров, платежи и партнерку.
@@ -53,6 +55,7 @@
 - GPT 5.5;
 - Gemini Omni menu helpers;
 - общие меню/баланс.
+- Wan 2.7 Image/Image Pro/T2V/I2V/R2V/VideoEdit через Kie.ai.
 
 Сильная сторона: все пользовательские сценарии доступны в одном боте, цены централизованы в `price.json`.
 
@@ -63,6 +66,12 @@
 - выносить provider orchestration в отдельные сервисы;
 - оставлять в handlers только FSM, валидацию пользовательского ввода и вызов доменного сервиса;
 - для новых моделей добавлять smoke/unit tests на payload и расчет цены.
+
+Production-наблюдение 2026-06-13:
+
+- Kie.ai live API может отклонять `wan/2-7-image-pro` с `resolution=4K` и `input_urls`, даже если документация допускает 4K в Image Pro. Код отправляет 4K, но при конкретном 422 `resolution 4K is only supported for non-sequential text-to-image` повторяет создание задачи в 2K.
+- Provider error dict должен обрабатываться как ошибка API, а не как bytes изображения. Этот сценарий покрыт регрессионными тестами.
+- Слишком общий prompt `смени фон` с референсом не должен запускать генерацию и списывать ресурс; бот просит уточнить новый фон.
 
 ### Платежи
 
@@ -139,6 +148,7 @@
 - Kie.ai: `{KIE_AI_WEBHOOK_PATH}`;
 - Veo: `/webhook/veo`;
 - static: `/uploads/`;
+- Telegram Mini App: `/miniapp`, `/miniapp/assets/...`, `/api/tma/app/...`, `/api/tma/admin/...`;
 - health: `/health`.
 
 Хорошо:
@@ -157,9 +167,43 @@
 - вынести provider webhook parsers в `bot/webhooks/`;
 - для каждого provider держать normalized event schema: `task_id`, `status`, `result_url`, `error`, `raw`.
 
+### Telegram Mini App
+
+Mini App находится в `tma/`, build отдается из `tma/dist`.
+
+Основные пользовательские routes:
+
+- `GET /api/tma/app/bootstrap`;
+- `POST /api/tma/app/upload`;
+- `POST /api/tma/app/generation`;
+- `POST /api/tma/app/gpt55`;
+- `POST /api/tma/app/photo-to-prompt`;
+- `POST /api/tma/app/payment`;
+- `POST /api/tma/app/partner`;
+- `GET /api/tma/app/ws`.
+
+Основные admin routes:
+
+- `GET /api/tma/admin/bootstrap`;
+- `GET /api/tma/admin/users`;
+- `POST /api/tma/admin/users/{telegram_id}/action`;
+- `POST /api/tma/admin/generations/{task_id}/action`;
+- `POST /api/tma/admin/packages`;
+- `POST /api/tma/admin/packages/{package_id}`;
+- `POST /api/tma/admin/promos`;
+- `POST /api/tma/admin/push`;
+- `POST /api/tma/admin/settings`.
+
+Все защищенные TMA endpoints требуют валидный Telegram WebApp `initData`. Без него routes должны возвращать `401`.
+
+Production-наблюдение 2026-06-13:
+
+- Admin dashboard `active_tasks` раньше считал все старые `pending` задачи и показывал 191 активную задачу. Метрика исправлена: теперь считаются только `pending`/`processing` за последние 24 часа.
+- `GET /api/tma/app/bootstrap` может возвращать большой JSON около 486 KB. Для дальнейшего роста лучше пагинировать ленту, историю и справочники.
+
 ## Текущие операционные факты
 
-На момент анализа:
+На момент анализа 2026-05-25:
 
 - `bot.service` активен и перезапущен после `systemctl daemon-reload`;
 - новый PID после перезапуска: `619962`;
@@ -168,6 +212,15 @@
 - stdout/stderr: `logs/bot_output.log`;
 - SQLite: `bot.db`, размер около 9.8M;
 - production unit читает `.env` через `EnvironmentFile`.
+
+На момент обновления 2026-06-13:
+
+- `bot.service` активен;
+- health endpoint `http://127.0.0.1:8443/health` возвращает `200 OK`;
+- public Mini App `https://dev.chillcreative.ru/miniapp` возвращает `200 OK`;
+- TMA app/admin bootstrap работают с валидным `initData`;
+- TMA app/admin bootstrap возвращают `401` без `initData`;
+- admin dashboard после фикса показывает реалистичный `active_tasks` вместо старых pending-задач.
 
 ## Проверки после изменений
 
@@ -186,10 +239,22 @@ python -m py_compile bot/config.py bot/database.py bot/keyboards.py bot/states.p
 Для полного regression перед релизом желательно:
 
 ```bash
-pytest
+pytest -q
+python -m compileall -q bot tests
+python -m pip check
+cd tma && npm run build
+cd tma && npm audit --omit=dev --audit-level=high
 curl http://127.0.0.1:8443/health
 systemctl status bot.service --no-pager -l
 ```
+
+Фактический результат 2026-06-13:
+
+- backend regression: `228 passed`;
+- TMA production build: успешно;
+- `pip check`: без конфликтов;
+- `npm audit --omit=dev --audit-level=high`: `0 vulnerabilities`;
+- production smoke: service active, health 200, miniapp 200, TMA auth smoke OK.
 
 ## Риски и приоритеты
 
@@ -207,36 +272,44 @@ systemctl status bot.service --no-pager -l
 
 Если там явно стоит `PARTNER_MIN_WITHDRAWAL_RUB=2000`, кодовый дефолт `0` не сработает. Нужно поставить `PARTNER_MIN_WITHDRAWAL_RUB=0`.
 
+4. Разобрать старые `pending` платежи.
+
+В базе есть старые unpaid invoices. Они не входят в revenue, но в админке полезно добавить фильтр по возрасту/статусу и действие архивирования или отмены старых pending.
+
 ### Средний приоритет
 
-4. Разнести `database.py`.
+1. Разнести `database.py`.
 
 Файл слишком большой для безопасного развития. Разносить постепенно, сохраняя публичный API.
 
-5. Разнести provider webhooks из `main.py`.
+2. Разнести provider webhooks из `main.py`.
 
 `main.py` сейчас одновременно entrypoint и большой webhook controller.
 
-6. Включить Redis в production, если еще не включен.
+3. Включить Redis в production, если еще не включен.
 
 Без Redis часть idempotency/locks после рестарта теряется.
 
+4. Улучшить доставку больших видео.
+
+Telegram может отклонять прямой URL, а upload больших файлов может завершаться `Request Entity Too Large`. Сейчас бот отправляет fallback-ссылку. Для лучшего UX нужен стабильный downloader/CDN или отправка как document при допустимом размере.
+
 ### Низкий приоритет
 
-7. Убрать legacy YooKassa, если она больше не используется.
+1. Убрать legacy YooKassa, если она больше не используется.
 
-8. Привести docs к одному стилю: README как быстрый старт, `docs/` как глубокие инструкции.
+2. Привести docs к одному стилю: README как быстрый старт, `docs/` как глубокие инструкции.
 
-9. Добавить таблицу "модель -> провайдер -> env vars -> webhook route".
+3. Добавить таблицу "модель -> провайдер -> env vars -> webhook route".
 
 ## Рекомендуемый ближайший план
 
 1. Добавить pytest на `convert_partner_balance_to_credits()`.
 2. Проверить и обновить production `.env`.
-3. Прогнать полный `pytest`.
-4. Проверить `curl /health` после рестарта.
+3. Добавить админ-инструмент для отмены/архивации старых pending payments/tasks.
+4. Пагинировать тяжелые TMA bootstrap-секции.
 5. Обновить оферту/правила партнерки.
-6. Запланировать разбиение `database.py` и `main.py` на доменные модули.
+6. Запланировать разбиение `database.py`, `generation.py` и `main.py` на доменные модули.
 
 ## Карта важных файлов
 
@@ -256,3 +329,5 @@ systemctl status bot.service --no-pager -l
 | `scripts/run_bot_foreground.sh` | production start script |
 | `scripts/code_reload_watchdog.py` | auto-restart watcher |
 | `docs/watchdog.md` | systemd/watchdog notes |
+| `docs/test.md` | regression и smoke runbook |
+| `docs/production_audit_2026-06-13.md` | последний production-аудит |

@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     likes_count INTEGER DEFAULT 0,
     shares_count INTEGER DEFAULT 0,
     source_feed_task_id TEXT,
+    billing_source TEXT DEFAULT 'credits',
+    subscription_usage_id BIGINT,
     published_at TIMESTAMPTZ,
     feed_status TEXT DEFAULT 'approved'
 );

@@ -183,6 +183,8 @@ type OptionItem = { id: string; label: string; hint?: string }
 const imageModelOptions: OptionItem[] = [
   { id: 'banana_pro', label: 'Nano Banana Pro', hint: 'детально' },
   { id: 'banana_2', label: 'Nano Banana', hint: 'быстро' },
+  { id: 'wan_27_image_pro', label: 'Wan Image Pro', hint: '2.7' },
+  { id: 'wan_27_image', label: 'Wan Image', hint: '2.7' },
   { id: 'gpt_image_2', label: 'GPT Image', hint: 'текст и стиль' },
   { id: 'seedream_5_lite', label: 'Seedream', hint: 'легкая' },
 ]
@@ -192,6 +194,7 @@ const textVideoModelOptions: OptionItem[] = [
   { id: 'v3_pro', label: 'Kling Pro', hint: 'качество' },
   { id: 'runway', label: 'Runway', hint: 'кино' },
   { id: 'seedance2', label: 'Seedance 2', hint: 'динамика' },
+  { id: 'wan_27_t2v', label: 'Wan 2.7', hint: 'T2V' },
 ]
 
 const imageVideoModelOptions: OptionItem[] = [
@@ -199,6 +202,9 @@ const imageVideoModelOptions: OptionItem[] = [
   { id: 'v3_pro', label: 'Kling I2V Pro', hint: 'качество' },
   { id: 'runway', label: 'Runway I2V', hint: 'кино' },
   { id: 'seedance2', label: 'Seedance 2', hint: 'динамика' },
+  { id: 'wan_27_i2v', label: 'Wan 2.7 I2V', hint: 'стартовое фото' },
+  { id: 'wan_27_r2v', label: 'Wan 2.7 R2V', hint: 'референсы' },
+  { id: 'wan_27_videoedit', label: 'Wan VideoEdit', hint: 'видео' },
 ]
 
 const motionModelOptions: OptionItem[] = [
@@ -679,6 +685,28 @@ export default function App() {
   const nav = mode === 'admin' ? tabs : userTabs
   const title = mode === 'admin' ? t(tabs.find(([id]) => id === adminTab)?.[2] || '') : t(userTitle[tab])
   const isHome = mode === 'studio' && tab === 'home'
+  const navLabel = (key: string) => {
+    if (lang === 'ru') {
+      return {
+        home: 'Глав',
+        create: 'Созд',
+        history: 'Ист',
+        feed: 'Лента',
+        chat: 'Чат',
+        settings: 'Проф',
+        admin: 'Админ',
+      }[key] || t(key)
+    }
+    return {
+      home: 'Home',
+      create: 'New',
+      history: 'Hist',
+      feed: 'Feed',
+      chat: 'Chat',
+      settings: 'Me',
+      admin: 'Admin',
+    }[key] || t(key)
+  }
 
   return (
     <div className={cls('app', isHome && 'home-app')}>
@@ -708,7 +736,7 @@ export default function App() {
 	              }}
             >
               <Icon size={17} />
-	              <span>{t(label)}</span>
+              <span>{navLabel(label)}</span>
             </button>
           ))}
         </nav>
@@ -816,19 +844,73 @@ function isVideoUrl(url: string) {
   return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url)
 }
 
+function firstReferenceUrl(value: unknown) {
+  if (Array.isArray(value)) {
+    return String(value.find(Boolean) || '')
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return ''
+  }
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? String(parsed.find(Boolean) || '') : value
+  } catch {
+    return value
+  }
+}
+
+function mediaUrl(row: Record<string, unknown>) {
+  const raw = String(row.result_url || row.preview_url || firstReferenceUrl(row.reference_images) || '')
+  if (!raw) return ''
+  // Если это внешний URL (не наш сервер) — используем прокси
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    // Прокси только если URL не на нашем домене
+    const host = window.location.host
+    try {
+      const parsed = new URL(raw)
+      if (parsed.host !== host && !raw.includes('/uploads/')) {
+        const taskId = String(row.task_id || '')
+        if (taskId) {
+          return `/api/tma/app/media/${taskId}`
+        }
+      }
+    } catch {
+      // Если URL не парсится — используем как есть
+    }
+  }
+  return raw
+}
+
 function FeedPreview({ url, variant = 'default', onOpen }: { url: unknown; variant?: 'default' | 'pin'; onOpen?: () => void }) {
   const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
   const src = String(url || '')
-  if (!src) return null
+  const handleError = () => {
+    if (retryKey < 2) {
+      setTimeout(() => setRetryKey((k) => k + 1), 1000 * (retryKey + 1))
+    } else {
+      setFailed(true)
+    }
+  }
+  if (!src || failed) {
+    return (
+      <div className={cls('feed-media', variant === 'pin' && 'pin-media', 'media-empty')}>
+        <Image size={26} />
+      </div>
+    )
+  }
   if (isVideoUrl(src)) {
     return (
       <button type="button" className={cls('feed-media', variant === 'pin' && 'pin-media', onOpen && 'openable', !loaded && 'loading')} onClick={onOpen}>
         <video
+          key={retryKey}
           src={src}
           muted
           playsInline
-          preload="metadata"
+          preload="auto"
           onLoadedData={() => setLoaded(true)}
+          onError={handleError}
         />
       </button>
     )
@@ -836,11 +918,14 @@ function FeedPreview({ url, variant = 'default', onOpen }: { url: unknown; varia
   return (
     <button type="button" className={cls('feed-media', variant === 'pin' && 'pin-media', onOpen && 'openable', !loaded && 'loading')} onClick={onOpen}>
       <img
+        key={retryKey}
         src={src}
         alt=""
-        loading="lazy"
+        loading={variant === 'pin' ? undefined : 'lazy'}
         decoding="async"
+        fetchpriority={variant === 'pin' ? 'auto' : undefined}
         onLoad={() => setLoaded(true)}
+        onError={handleError}
       />
     </button>
   )
@@ -848,7 +933,7 @@ function FeedPreview({ url, variant = 'default', onOpen }: { url: unknown; varia
 
 function FeedLightbox({ row, lang, onClose, onRepeat }: { row: Record<string, unknown>; lang: Lang; onClose: () => void; onRepeat: () => void }) {
   const t = (key: string) => translate(lang, key)
-  const src = String(row.result_url || '')
+  const src = mediaUrl(row)
   if (!src) return null
   return (
     <div className="lightbox" role="dialog" aria-modal="true">
@@ -1070,6 +1155,8 @@ function modelOptionsFromConfig(data: AppState, flow: string): OptionItem[] {
 const modelDescriptions: Record<string, string> = {
   banana_pro: 'Детальная универсальная фото-модель: хорошо держит стиль, лица и качество.',
   banana_2: 'Быстрая базовая фото-модель для простых генераций и референсов.',
+  wan_27_image: 'Wan 2.7 Image: генерация и редактирование изображений, 1K/2K, до 4 вариантов.',
+  wan_27_image_pro: 'Wan 2.7 Image Pro: продвинутая версия с 4K для text-to-image.',
   gpt_image_2: 'Сильна в сложных промптах, тексте на изображении и аккуратной композиции.',
   grok_t2i: 'Текст в изображение без референсов, быстрые идеи и стилизация.',
   grok_i2i: 'Изображение в изображение: меняет кадр по референсу и промпту.',
@@ -1081,6 +1168,10 @@ const modelDescriptions: Record<string, string> = {
   gemini_omni: 'Omni-режим для смешанных фото, видео, аудио и промпта.',
   runway: 'Кинематографичные видео и плавная динамика.',
   seedance2: 'Динамичные image-to-video ролики по референсу.',
+  wan_27_t2v: 'Wan 2.7 Text-to-Video: длительность 2-15 сек, форматы 16:9, 9:16, 1:1, 4:3 и 3:4.',
+  wan_27_i2v: 'Wan 2.7 Image-to-Video: видео по стартовому изображению, опционально с финальным кадром и аудио.',
+  wan_27_r2v: 'Wan 2.7 R2V: видео по набору фото/видео-референсов до 5 файлов.',
+  wan_27_videoedit: 'Wan 2.7 VideoEdit: редактирование исходного видео по промпту и референсу.',
   grok_imagine: 'Быстрые I2V-ролики с выразительной стилизацией.',
 }
 
@@ -1183,7 +1274,7 @@ function optionLabel(optionName: string, value: unknown) {
     mode: { normal: 'Normal', fun: 'Fun', spicy: 'Spicy' },
     rendering_speed: { TURBO: 'Turbo', BALANCED: 'Balanced', QUALITY: 'Quality' },
     style: { AUTO: 'Auto', REALISTIC: 'Realistic', FICTION: 'Fiction' },
-    audio_setting: { auto: 'Auto', keep: 'Keep', remove: 'Remove' },
+    audio_setting: { auto: 'Auto', origin: 'Оригинал', keep: 'Keep', remove: 'Remove' },
     face_preservation: { strict: 'Максимально', enhance: 'Мягко улучшить', none: 'Не сохранять' },
   }
   return labels[optionName]?.[String(value)] || String(value)
@@ -1193,9 +1284,11 @@ function optionNameLabel(optionName: string) {
   const labels: Record<string, string> = {
     resolution: 'Разрешение',
     output_format: 'Файл',
+    enable_sequential: 'Галерея',
+    thinking_mode: 'Thinking mode',
     enable_pro: 'Pro режим',
     quality: 'Качество',
-    nsfw_checker: 'NSFW check',
+    nsfw_checker: 'Проверка 18+',
     rendering_speed: 'Скорость',
     style: 'Стиль',
     expand_prompt: 'Улучшение промпта',
@@ -1209,9 +1302,10 @@ function optionNameLabel(optionName: string) {
     keep_original_sound: 'Ориг. звук',
     prompt_optimizer: 'Оптимизация',
     enable_translation: 'Перевод',
-    prompt_extend: 'Улучшение',
-    watermark: 'Watermark',
+    prompt_extend: 'Улучшить промпт',
+    watermark: 'Водяной знак',
     audio_setting: 'Аудио',
+    seed: 'Seed',
   }
   return labels[optionName] || optionName
 }
@@ -1454,6 +1548,88 @@ function CreatePage({ data, lang, mutate, initialFlow, initialDraft }: { data: A
                 }}
               />
             ))}
+          {currentModel.startsWith('wan_27_') ? (
+            <div className="wan-extra-options">
+              {isVideo ? (
+                <label>
+                  <span>Негативный промпт</span>
+                  <textarea
+                    value={String(formOptions.negative_prompt ?? '')}
+                    onChange={(event) => setOption('negative_prompt', event.target.value)}
+                    placeholder="Что исключить из видео"
+                    maxLength={500}
+                  />
+                </label>
+              ) : null}
+              {currentModel === 'wan_27_t2v' ? (
+                <label>
+                  <span>Аудио URL</span>
+                  <input
+                    value={String(formOptions.audio_url ?? '')}
+                    onChange={(event) => setOption('audio_url', event.target.value)}
+                    placeholder="https://..."
+                    inputMode="url"
+                  />
+                </label>
+              ) : null}
+              {currentModel === 'wan_27_i2v' ? (
+                <>
+                  <label>
+                    <span>Видео-подсказка URL</span>
+                    <input
+                      value={String(formOptions.first_clip_url ?? '')}
+                      onChange={(event) => setOption('first_clip_url', event.target.value)}
+                      placeholder="https://...mp4"
+                      inputMode="url"
+                    />
+                  </label>
+                  <label>
+                    <span>Аудио для движения URL</span>
+                    <input
+                      value={String(formOptions.driving_audio_url ?? '')}
+                      onChange={(event) => setOption('driving_audio_url', event.target.value)}
+                      placeholder="https://...mp3"
+                      inputMode="url"
+                    />
+                  </label>
+                </>
+              ) : null}
+              {currentModel === 'wan_27_r2v' ? (
+                <label>
+                  <span>Голос-референс URL</span>
+                  <input
+                    value={String(formOptions.reference_voice ?? '')}
+                    onChange={(event) => setOption('reference_voice', event.target.value)}
+                    placeholder="https://...wav"
+                    inputMode="url"
+                  />
+                </label>
+              ) : null}
+              {currentModel === 'wan_27_videoedit' ? (
+                <label>
+                  <span>Картинка-референс URL</span>
+                  <input
+                    value={String(formOptions.reference_image ?? '')}
+                    onChange={(event) => setOption('reference_image', event.target.value)}
+                    placeholder="https://...png"
+                    inputMode="url"
+                  />
+                </label>
+              ) : null}
+              <label>
+                <span>Seed</span>
+                <input
+                  value={String(formOptions.seed ?? '')}
+                  onChange={(event) => {
+                    const next = event.target.value.trim()
+                    setOption('seed', next === '' ? '' : Number(next))
+                  }}
+                  placeholder="0"
+                  inputMode="numeric"
+                />
+              </label>
+            </div>
+          ) : null}
           {showPrompt ? (
             <ChoiceGroup
               label={optionNameLabel('improve_prompt')}
@@ -1810,8 +1986,8 @@ function HistoryPage({ data, lang, mutate }: { data: AppState; lang: Lang; mutat
     <div className="cards">
       {data.tasks.map((row) => (
         <article className="row-card history-card" key={String(row.task_id)}>
-          {row.result_url ? (
-            <FeedPreview url={row.result_url} />
+          {mediaUrl(row) ? (
+            <FeedPreview url={mediaUrl(row)} />
           ) : (
             <div className="feed-media history-placeholder"><Sparkles size={26} /></div>
           )}
@@ -1855,7 +2031,7 @@ function UserFeedPage({ data, lang, mutate, openRepeat }: { data: AppState; lang
       <div className="feed-grid pinterest-feed">
         {data.feed.map((row) => (
           <article className="feed-card pin-card" key={String(row.task_id)}>
-            <FeedPreview url={row.result_url} variant="pin" onOpen={() => setOpened(row)} />
+            <FeedPreview url={mediaUrl(row)} variant="pin" onOpen={() => setOpened(row)} />
             {!row.is_public_feed ? <span className="feed-badge pin-badge">{t('newWork')}</span> : null}
             <div className="pin-overlay">
               <FeedAuthor row={row} />
@@ -2394,7 +2570,7 @@ function GenerationsPage({ rows, mutate }: { rows: Record<string, unknown>[]; mu
             <span>{String(row.task_id)} · {displayValue(row.status)} · {fmtNum(row.cost)} Бумкоины</span>
           </div>
           <div className="inline-actions">
-            {row.result_url ? <a href={String(row.result_url)} target="_blank">Открыть</a> : null}
+            {mediaUrl(row) ? <a href={mediaUrl(row)} target="_blank">Открыть</a> : null}
             <button onClick={() => mutate(() => postAction(`/api/tma/admin/generations/${row.task_id}/action`, { action: 'refund' }), 'Ресурс возвращен')}>Вернуть ресурс</button>
             <button onClick={() => mutate(() => postAction(`/api/tma/admin/generations/${row.task_id}/action`, { action: 'fail' }), 'Задача помечена ошибкой')}>Ошибка</button>
             <button onClick={() => mutate(() => postAction(`/api/tma/admin/generations/${row.task_id}/action`, { action: 'publish_feed' }), 'Добавлено в ленту')}>В ленту</button>
@@ -2410,7 +2586,7 @@ function FeedPage({ rows, mutate }: { rows: Record<string, unknown>[]; mutate: M
     <div className="feed-grid">
       {rows.map((row) => (
         <article className="feed-card" key={String(row.task_id)}>
-          <FeedPreview url={row.result_url} />
+          <FeedPreview url={mediaUrl(row)} />
           <FeedAuthor row={row} />
           <strong>{String(row.model || row.preset_id || 'feed')}</strong>
           <p>{String(row.prompt || '').slice(0, 220)}</p>

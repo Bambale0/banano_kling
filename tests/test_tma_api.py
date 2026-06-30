@@ -19,6 +19,7 @@ from bot.tma_api import (
     require_admin,
     validate_tma_init_data,
 )
+from bot.main import _remove_old_files
 
 
 def _signed_init_data(bot_token: str, user: dict) -> str:
@@ -87,11 +88,57 @@ def test_tma_feature_catalog_marks_reference_capable_models():
     assert generation["image_models"]["banana_pro"]["supports_refs"] is True
     assert generation["image_models"]["gpt_image_2"]["supports_refs"] is True
     assert generation["image_models"]["grok_t2i"]["supports_refs"] is False
+    assert generation["image_models"]["wan_27_image"]["options"]["resolution"] == [
+        "1K",
+        "2K",
+    ]
+    assert "4K" in generation["image_models"]["wan_27_image_pro"]["options"]["resolution"]
     assert generation["video_models"]["v3_std"]["supports_refs"] is True
     assert generation["video_models"]["seedance2"]["requires_refs"] is True
     assert generation["video_models"]["wan_27_i2v"]["requires_refs"] is True
+    assert generation["video_models"]["wan_27_r2v"]["requires_refs"] is True
+    assert generation["video_models"]["wan_27_videoedit"]["requires_refs"] is True
+    assert generation["video_models"]["wan_27_t2v"]["aspect_ratios"] == [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4",
+    ]
+    assert 15 in generation["video_models"]["wan_27_t2v"]["durations"]
+    assert generation["video_models"]["wan_27_t2v"]["defaults"]["nsfw_checker"] is True
+    assert 10 in generation["video_models"]["wan_27_r2v"]["durations"]
+    assert 0 in generation["video_models"]["wan_27_videoedit"]["durations"]
     assert generation["costs"]["image_models"]["banana_pro"] > 0
+    assert generation["costs"]["image_models"]["wan_27_image"] > 0
     assert generation["costs"]["video_models"]["v3_std"]["5"] > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_static_cleanup_removes_only_temp_refs(tmp_path):
+    uploads = tmp_path / "static" / "uploads"
+    temp_ref = uploads / "temp_refs" / "20260622" / "ref.png"
+    result_file = uploads / "results" / "20260622" / "result.png"
+    user_video = uploads / "user_uploads" / "20260622" / "clip.mp4"
+    temp_ref.parent.mkdir(parents=True, exist_ok=True)
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    user_video.parent.mkdir(parents=True, exist_ok=True)
+    temp_ref.write_bytes(b"ref")
+    result_file.write_bytes(b"result")
+    user_video.write_bytes(b"video")
+
+    old = time.time() - 7 * 3600
+    import os
+    os.utime(temp_ref, (old, old))
+    os.utime(result_file, (old, old))
+    os.utime(user_video, (old, old))
+
+    await _remove_old_files(str(uploads), max_age_seconds=6 * 3600)
+
+    assert not temp_ref.exists()
+    assert result_file.exists()
+    assert user_video.exists()
 
 
 @pytest.mark.asyncio
@@ -191,6 +238,11 @@ async def test_tma_dashboard_does_not_multiply_today_revenue_by_tasks(
     async with aiosqlite.connect(database.DATABASE_PATH) as db:
         await db.execute(
             "UPDATE generation_tasks SET status = 'failed' WHERE task_id = 'task-2'"
+        )
+        await db.execute(
+            "INSERT INTO generation_tasks (user_id, telegram_id, task_id, type, preset_id, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-2 days'))",
+            (user.id, 111111, "stale-pending", "image", "preset", "pending"),
         )
         await db.commit()
 
@@ -375,6 +427,80 @@ async def test_tma_generation_uses_gemini_omni_service(tmp_path, monkeypatch):
     assert calls["image_urls"] == ["https://cdn.example.com/ref.png"]
     assert calls["video_urls"] == ["https://cdn.example.com/ref.mp4"]
     assert calls["resolution"] == "1080p"
+
+
+@pytest.mark.asyncio
+async def test_tma_generation_passes_wan_27_t2v_options(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "BOT_TOKEN", "123456:test-token")
+    monkeypatch.setattr(config, "ADMIN_IDS_STR", "999999")
+
+    import bot.database as database
+    import bot.tma_api as tma_api
+
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "tma-wan.db"))
+    await database.init_db()
+    await database.get_or_create_user(111111, username="creator")
+
+    payload = {
+        "flow": "video_text",
+        "model": "wan_27_t2v",
+        "prompt": "neon city fly-through",
+        "duration": 15,
+        "aspect_ratio": "4:3",
+        "references": [],
+        "options": {
+            "resolution": "1080p",
+            "negative_prompt": "blur, jitter",
+            "audio_url": "https://cdn.example.com/track.mp3",
+            "prompt_extend": False,
+            "watermark": True,
+            "seed": 77,
+            "nsfw_checker": True,
+        },
+    }
+    calls = {}
+
+    async def fake_json(request):
+        return payload
+
+    async def fake_can_start(*args, **kwargs):
+        return True
+
+    async def fake_charge(*args, **kwargs):
+        return True, "credits", None
+
+    async def fake_generate_video(**kwargs):
+        calls.update(kwargs)
+        return {"task_id": "wan-task-1"}
+
+    monkeypatch.setattr(tma_api, "_read_json", fake_json)
+    monkeypatch.setattr(tma_api, "_can_start_generation", fake_can_start)
+    monkeypatch.setattr(tma_api, "_charge_generation", fake_charge)
+    monkeypatch.setattr(tma_api.kling_service, "generate_video", fake_generate_video)
+    init_data = _signed_init_data(
+        config.BOT_TOKEN,
+        {"id": 111111, "first_name": "Creator", "username": "creator"},
+    )
+    request = make_mocked_request(
+        "POST",
+        "/api/tma/app/generation",
+        headers={"X-Telegram-Init-Data": init_data},
+    )
+
+    response = await handle_tma_app_generation(request)
+    body = json.loads(response.text)
+
+    assert response.status == 200
+    assert body["ok"] is True
+    assert calls["model"] == "wan_27_t2v"
+    assert calls["duration"] == 15
+    assert calls["aspect_ratio"] == "4:3"
+    assert calls["negative_prompt"] == "blur, jitter"
+    assert calls["wan_audio_url"] == "https://cdn.example.com/track.mp3"
+    assert calls["wan_seed"] == 77
+    assert calls["wan_prompt_extend"] is False
+    assert calls["wan_watermark"] is True
+    assert calls["wan_nsfw_checker"] is True
 
 
 @pytest.mark.asyncio

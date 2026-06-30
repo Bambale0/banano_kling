@@ -17,6 +17,7 @@ PRO_IMAGE_MODELS = {
     "gemini_3_pro",
     "gemini-3-pro",
     "gemini-3-pro-image-preview",
+    "wan_27_image_pro",
 }
 
 

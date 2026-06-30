@@ -455,6 +455,82 @@ class KlingService:
 
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 
+    async def generate_wan_image(
+        self,
+        prompt: str,
+        model: str = "wan_27_image",
+        input_urls: Optional[List[str]] = None,
+        n: int = 1,
+        enable_sequential: bool = False,
+        resolution: str = "2K",
+        thinking_mode: bool = True,
+        aspect_ratio: str = "1:1",
+        watermark: bool = False,
+        seed: Optional[int] = None,
+        nsfw_checker: bool = True,
+        callback_url: Optional[str] = None,
+    ) -> Optional[Dict]:
+        try:
+            count = max(1, min(12 if enable_sequential else 4, int(n or 1)))
+        except (TypeError, ValueError):
+            count = 1
+        try:
+            safe_seed = int(seed) if seed not in (None, "") else 0
+        except (TypeError, ValueError):
+            safe_seed = 0
+        clean_input_urls = [
+            str(url).strip()
+            for url in (input_urls or [])
+            if str(url).strip()
+        ][:12]
+        safe_resolution = resolution
+        if (
+            model == "wan_27_image_pro"
+            and str(resolution).upper() == "4K"
+            and enable_sequential
+        ):
+            logger.info(
+                "Downgrading Wan 2.7 Image Pro resolution from 4K to 2K: "
+                "4K is supported only for non-sequential mode"
+            )
+            safe_resolution = "2K"
+        model_name = "wan/2-7-image-pro" if model == "wan_27_image_pro" else "wan/2-7-image"
+        payload = {
+            "model": model_name,
+            "input": {
+                "prompt": prompt,
+                "input_urls": clean_input_urls,
+                "n": count,
+                "enable_sequential": bool(enable_sequential),
+                "resolution": safe_resolution,
+                "thinking_mode": bool(thinking_mode),
+                "aspect_ratio": aspect_ratio,
+                "watermark": bool(watermark),
+                "seed": max(0, min(2147483647, safe_seed)),
+                "nsfw_checker": bool(nsfw_checker),
+            },
+        }
+        if callback_url:
+            payload["callBackUrl"] = callback_url
+        result = await self._kie_post("/api/v1/jobs/createTask", payload)
+        error_message = str((result or {}).get("message", ""))
+        if (
+            isinstance(result, dict)
+            and result.get("error")
+            and model == "wan_27_image_pro"
+            and str(resolution).upper() == "4K"
+            and clean_input_urls
+            and not enable_sequential
+            and "only supported for non-sequential text-to-image" in error_message
+        ):
+            logger.warning(
+                "Kie.ai rejected Wan 2.7 Image Pro 4K with reference image; "
+                "retrying task creation in 2K"
+            )
+            payload["input"]["resolution"] = "2K"
+            return await self._kie_post("/api/v1/jobs/createTask", payload)
+        return result
+
     async def generate_video(
         self,
         prompt: str,
@@ -480,17 +556,32 @@ class KlingService:
         wan_resolution: Optional[str] = None,
         wan_prompt_extend: bool = True,
         wan_watermark: bool = False,
-        wan_nsfw_checker: bool = False,
+        wan_nsfw_checker: bool = True,
+        wan_audio_url: Optional[str] = None,
+        wan_driving_audio_url: Optional[str] = None,
+        wan_first_clip_url: Optional[str] = None,
+        wan_reference_voice: Optional[str] = None,
+        wan_reference_image: Optional[List[str]] = None,
+        wan_reference_video: Optional[List[str]] = None,
+        wan_reference_image_url: Optional[str] = None,
+        wan_seed: Optional[int] = None,
     ) -> Optional[Dict]:
-        if model in {"wan_27_t2v", "wan_27_i2v"}:
+        if model in {"wan_27_t2v", "wan_27_i2v", "wan_27_r2v", "wan_27_videoedit"}:
+            try:
+                min_duration = 0 if model == "wan_27_videoedit" else 2
+                max_duration = 10 if model in {"wan_27_r2v", "wan_27_videoedit"} else 15
+                wan_duration = max(min_duration, min(max_duration, int(duration)))
+            except (TypeError, ValueError):
+                wan_duration = 5
+            try:
+                seed = int(wan_seed) if wan_seed not in (None, "") else 0
+            except (TypeError, ValueError):
+                seed = 0
+            safe_seed = max(0, min(2147483647, seed))
             input_data = {
                 "prompt": prompt,
                 "negative_prompt": negative_prompt
                 or "blurry, flicker, low quality, distorted, malformed",
-                "resolution": wan_resolution or seedance_resolution or "1080p",
-                "duration": duration,
-                "prompt_extend": wan_prompt_extend,
-                "watermark": wan_watermark,
             }
             if model == "wan_27_i2v":
                 if not image_url:
@@ -502,12 +593,87 @@ class KlingService:
                     input_data["first_frame_url"] = image_url
                 if end_image_url:
                     input_data["last_frame_url"] = end_image_url
+                input_data.update(
+                    {
+                        "first_clip_url": wan_first_clip_url or "",
+                        "driving_audio_url": wan_driving_audio_url or "",
+                        "resolution": wan_resolution or seedance_resolution or "1080p",
+                        "duration": wan_duration,
+                        "prompt_extend": wan_prompt_extend,
+                        "watermark": wan_watermark,
+                        "seed": safe_seed,
+                        "nsfw_checker": bool(wan_nsfw_checker),
+                    }
+                )
+            elif model == "wan_27_r2v":
+                refs_img = [
+                    str(url).strip()
+                    for url in (wan_reference_image or [])
+                    if str(url).strip()
+                ][:5]
+                refs_vid = [
+                    str(url).strip()
+                    for url in (wan_reference_video or [])
+                    if str(url).strip()
+                ][: max(0, 5 - len(refs_img))]
+                if not refs_img and not refs_vid:
+                    return {
+                        "error": "refs_required",
+                        "message": "reference_image or reference_video is required for Wan 2.7 R2V",
+                    }
+                input_data.update(
+                    {
+                        "reference_image": refs_img,
+                        "reference_video": refs_vid,
+                        "first_frame": image_url or "",
+                        "reference_voice": wan_reference_voice or "",
+                        "resolution": wan_resolution or seedance_resolution or "1080p",
+                        "aspect_ratio": aspect_ratio,
+                        "duration": wan_duration,
+                        "prompt_extend": wan_prompt_extend,
+                        "watermark": wan_watermark,
+                        "seed": safe_seed,
+                        "nsfw_checker": bool(wan_nsfw_checker),
+                    }
+                )
+            elif model == "wan_27_videoedit":
+                video_url = (video_urls or [None])[0]
+                if not video_url:
+                    return {
+                        "error": "video_url_required",
+                        "message": "video_url is required for Wan 2.7 VideoEdit",
+                    }
+                input_data.update(
+                    {
+                        "video_url": video_url,
+                        "reference_image": wan_reference_image_url or image_url or "",
+                        "resolution": wan_resolution or seedance_resolution or "720p",
+                        "duration": wan_duration,
+                        "aspect_ratio": aspect_ratio,
+                        "audio_setting": "auto" if keep_original_sound else "origin",
+                        "prompt_extend": wan_prompt_extend,
+                        "watermark": wan_watermark,
+                        "seed": safe_seed,
+                        "nsfw_checker": bool(wan_nsfw_checker),
+                    }
+                )
             else:
                 input_data["ratio"] = aspect_ratio
+                input_data["audio_url"] = wan_audio_url or ""
+                input_data["resolution"] = wan_resolution or seedance_resolution or "1080p"
+                input_data["duration"] = wan_duration
+                input_data["prompt_extend"] = wan_prompt_extend
+                input_data["watermark"] = wan_watermark
+                input_data["seed"] = safe_seed
+                input_data["nsfw_checker"] = bool(wan_nsfw_checker)
+            wan_model_map = {
+                "wan_27_i2v": "wan/2-7-image-to-video",
+                "wan_27_t2v": "wan/2-7-text-to-video",
+                "wan_27_r2v": "wan/2-7-r2v",
+                "wan_27_videoedit": "wan/2-7-videoedit",
+            }
             payload = {
-                "model": "wan/2-7-image-to-video"
-                if model == "wan_27_i2v"
-                else "wan/2-7-text-to-video",
+                "model": wan_model_map[model],
                 "input": input_data,
             }
             if webhook_url:

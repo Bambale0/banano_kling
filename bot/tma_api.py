@@ -118,6 +118,21 @@ async def _run_tma_image_model(
             output_format=str(options.get("output_format") or "png"),
             callback_url=callback_url,
         )
+    if model in {"wan_27_image", "wan_27_image_pro"}:
+        return await kling_service.generate_wan_image(
+            prompt=prompt,
+            model=model,
+            input_urls=refs,
+            n=int(options.get("n") or 1),
+            enable_sequential=bool(options.get("enable_sequential", False)),
+            resolution=str(options.get("resolution") or "2K"),
+            thinking_mode=bool(options.get("thinking_mode", model == "wan_27_image")),
+            aspect_ratio=aspect_ratio,
+            watermark=bool(options.get("watermark", False)),
+            seed=options.get("seed"),
+            nsfw_checker=bool(options.get("nsfw_checker", True)),
+            callback_url=callback_url,
+        )
     if model == "gpt_image_2":
         return await gpt_image_service.generate_image(
             prompt,
@@ -276,8 +291,49 @@ def _telegram_id(user: dict) -> int:
     return int(user.get("id") or 0)
 
 
-def _public_task(task: Any) -> dict:
+def _absolute_media_url(url: Any) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        return value
+    if value.startswith("//"):
+        return f"https:{value}"
+    if value.startswith("/"):
+        return f"{config.static_base_url.rstrip('/')}{value}"
+    if value.startswith("uploads/"):
+        return f"{config.static_base_url.rstrip('/')}/{value}"
+    return value
+
+
+def _reference_preview_url(reference_images: Any) -> str:
+    refs = reference_images
+    if isinstance(reference_images, str):
+        try:
+            refs = json.loads(reference_images)
+        except json.JSONDecodeError:
+            refs = [reference_images]
+    if not isinstance(refs, list):
+        return ""
+    for item in refs:
+        url = _absolute_media_url(item)
+        if url and not re.search(r"\.(mp4|mov|webm|m4v)(\?|#|$)", url, re.I):
+            return url
+    return _absolute_media_url(refs[0]) if refs else ""
+
+
+def _decorate_media_fields(row: dict) -> dict:
+    result_url = _absolute_media_url(row.get("result_url"))
+    preview_url = result_url or _reference_preview_url(row.get("reference_images"))
     return {
+        **row,
+        "result_url": result_url,
+        "preview_url": preview_url,
+    }
+
+
+def _public_task(task: Any) -> dict:
+    return _decorate_media_fields({
         "task_id": task.task_id,
         "type": task.type,
         "preset_id": task.preset_id,
@@ -295,7 +351,7 @@ def _public_task(task: Any) -> dict:
         "shares_count": task.shares_count,
         "published_at": getattr(task, "published_at", None),
         "feed_status": getattr(task, "feed_status", "approved"),
-    }
+    })
 
 
 async def _user_tasks(telegram_id: int, limit: int = 40) -> list[dict]:
@@ -309,7 +365,7 @@ async def _user_tasks(telegram_id: int, limit: int = 40) -> list[dict]:
         """,
         (telegram_id, max(1, min(int(limit or 40), 200))),
     )
-    return rows
+    return [_decorate_media_fields(row) for row in rows]
 
 
 async def _user_payments(telegram_id: int, limit: int = 20) -> list[dict]:
@@ -420,6 +476,7 @@ async def _dashboard() -> dict:
                 SELECT COUNT(*)
                 FROM generation_tasks
                 WHERE status IN ('pending', 'processing')
+                  AND created_at >= datetime('now', '-24 hours')
             ) AS active_tasks,
             (
                 SELECT COUNT(*)
@@ -519,10 +576,11 @@ async def _recurring(limit: int = 80) -> list[dict]:
 
 
 async def _generations(limit: int = 80) -> list[dict]:
-    return await _query_all(
+    rows = await _query_all(
         """
         SELECT gt.task_id, gt.type, gt.preset_id, gt.model, gt.duration,
-               gt.aspect_ratio, gt.cost, gt.status, gt.result_url, gt.is_public_feed,
+               gt.aspect_ratio, gt.cost, gt.status, gt.result_url,
+               gt.reference_images, gt.is_public_feed,
                gt.likes_count, gt.shares_count, gt.created_at, gt.completed_at,
                gt.billing_source, u.telegram_id, u.username
         FROM generation_tasks gt
@@ -532,6 +590,7 @@ async def _generations(limit: int = 80) -> list[dict]:
         """,
         (max(1, min(int(limit or 80), 5000)),),
     )
+    return [_decorate_media_fields(row) for row in rows]
 
 
 async def _feed(limit: int = 40) -> list[dict]:
@@ -564,7 +623,10 @@ async def _feed(limit: int = 40) -> list[dict]:
             "preset_id": task.preset_id,
             "model": task.model,
             "prompt": task.prompt,
-            "result_url": task.result_url,
+            "result_url": _absolute_media_url(task.result_url),
+            "reference_images": task.reference_images,
+            "preview_url": _absolute_media_url(task.result_url)
+            or _reference_preview_url(task.reference_images),
             "likes_count": task.likes_count,
             "shares_count": task.shares_count,
             "created_at": task.created_at,
@@ -1003,7 +1065,13 @@ async def handle_tma_app_generation(request: web.Request) -> web.Response:
         cost = int(preset_manager.get_video_cost(model, duration))
         if not await _can_start_generation(telegram_id, cost, usage_type="video", model=model):
             return _json({"ok": False, "error": "insufficient_balance"}, status=402)
-        image_url = refs[0] if refs else None
+        image_refs = [
+            url for url in refs if not re.search(r"\.(mp4|mov|webm|m4v)(\?|#|$)", url, re.I)
+        ]
+        video_refs = [
+            url for url in refs if re.search(r"\.(mp4|mov|webm|m4v)(\?|#|$)", url, re.I)
+        ]
+        image_url = image_refs[0] if image_refs else None
         if flow == "motion_control":
             motion_photo_url = str(payload.get("motion_photo_url") or "")
             motion_video_url = str(payload.get("motion_video_url") or "")
@@ -1054,6 +1122,66 @@ async def handle_tma_app_generation(request: web.Request) -> web.Response:
                 resolution=str(options.get("resolution") or payload.get("resolution") or "720p"),
                 seed=seed,
                 callback_url=callback_url,
+            )
+        elif model in {"wan_27_t2v", "wan_27_i2v", "wan_27_r2v", "wan_27_videoedit"}:
+            seed_value = options.get("seed", payload.get("seed"))
+            try:
+                wan_seed = int(seed_value) if seed_value not in (None, "") else None
+            except (TypeError, ValueError):
+                wan_seed = None
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=model,
+                duration=duration,
+                aspect_ratio=aspect_ratio,
+                webhook_url=callback_url,
+                image_url=image_url,
+                video_urls=video_refs,
+                image_input=image_refs,
+                negative_prompt=str(
+                    options.get("negative_prompt")
+                    or payload.get("negative_prompt")
+                    or ""
+                )
+                or None,
+                seedance_resolution=str(
+                    options.get("resolution") or payload.get("resolution") or "1080p"
+                ),
+                wan_resolution=str(
+                    options.get("resolution") or payload.get("resolution") or "1080p"
+                ),
+                wan_prompt_extend=bool(options.get("prompt_extend", True)),
+                wan_watermark=bool(options.get("watermark", False)),
+                wan_nsfw_checker=bool(options.get("nsfw_checker", True)),
+                wan_audio_url=str(options.get("audio_url") or payload.get("audio_url") or "")
+                or None,
+                wan_driving_audio_url=str(
+                    options.get("driving_audio_url")
+                    or payload.get("driving_audio_url")
+                    or ""
+                )
+                or None,
+                wan_first_clip_url=str(
+                    options.get("first_clip_url")
+                    or payload.get("first_clip_url")
+                    or ""
+                )
+                or None,
+                wan_reference_voice=str(
+                    options.get("reference_voice")
+                    or payload.get("reference_voice")
+                    or ""
+                )
+                or None,
+                wan_reference_image=image_refs,
+                wan_reference_video=video_refs,
+                wan_reference_image_url=str(
+                    options.get("reference_image")
+                    or payload.get("reference_image")
+                    or ""
+                )
+                or (image_refs[0] if image_refs else None),
+                wan_seed=wan_seed,
             )
         elif model == "runway":
             result = await runway_service.generate_video(
@@ -1906,6 +2034,35 @@ async def handle_tma_index(request: web.Request) -> web.Response:
     )
 
 
+async def handle_tma_media_proxy(request: web.Request) -> web.Response:
+    """Прокси для медиа-файлов. Скачивает внешний URL и кэширует локально."""
+    task_id = request.match_info.get("task_id", "")
+    if not task_id:
+        return web.Response(text="missing task_id", status=400)
+
+    task = await database.get_task_by_id(task_id)
+    if not task or not task.result_url:
+        return web.Response(text="not found", status=404)
+
+    url = task.result_url
+
+    # Если уже локальный — сразу отдаём
+    if url.startswith("/uploads/") or url.startswith("uploads/"):
+        return web.HTTPFound(location=url)
+
+    # Если это внешний URL — скачиваем на сервер
+    from bot.services.media_storage import download_media
+
+    stored_url, error = await download_media(task_id, url)
+    if stored_url and stored_url != url:
+        # Обновляем в БД
+        await database.update_task_result_url(task_id, stored_url)
+        return web.HTTPFound(location=stored_url)
+
+    # Не удалось скачать — редиректим на оригинал (возможно ещё живой)
+    return web.HTTPFound(location=url)
+
+
 def setup_tma_routes(app: web.Application) -> None:
     app.router.add_get("/api/tma/app/bootstrap", handle_tma_app_bootstrap)
     app.router.add_get("/api/tma/app/ws", handle_tma_app_ws)
@@ -1923,6 +2080,7 @@ def setup_tma_routes(app: web.Application) -> None:
     app.router.add_post("/api/tma/app/recurring/disable", handle_tma_app_recurring_disable)
     app.router.add_post("/api/tma/app/partner", handle_tma_app_partner)
     app.router.add_post("/api/tma/app/feed/{task_id}/action", handle_tma_app_feed_action)
+    app.router.add_get("/api/tma/app/media/{task_id}", handle_tma_media_proxy)
 
     app.router.add_get("/api/tma/admin/bootstrap", handle_tma_admin_bootstrap)
     app.router.add_get("/api/tma/admin/users", handle_tma_admin_users)

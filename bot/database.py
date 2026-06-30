@@ -2891,7 +2891,11 @@ async def remove_task_from_feed(task_id: str, telegram_id: int) -> bool:
 
 
 async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
-    """Returns public completed image tasks for bot-side feed cards."""
+    """Returns public completed image tasks for bot-side feed cards.
+    
+    Only returns tasks with locally stored media (/uploads/) to ensure
+    images are accessible even after external URLs expire.
+    """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -2904,6 +2908,7 @@ async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
               AND status = 'completed'
               AND result_url IS NOT NULL
               AND result_url != ''
+              AND (result_url LIKE '/uploads/%' OR result_url LIKE 'uploads/%')
             ORDER BY
               (COALESCE(likes_count, 0) + COALESCE(shares_count, 0) * 3) DESC,
               COALESCE(published_at, completed_at, created_at) DESC
@@ -3072,14 +3077,19 @@ async def increment_feed_share(task_id: str, telegram_id: Optional[int] = None) 
 
 
 async def complete_video_task(task_id: str, result_url: str) -> bool:
-    """Отмечает задачу как выполненную"""
+    """Отмечает задачу как выполненную, скачивая медиа на сервер."""
+    from bot.services.media_storage import download_media
+
+    stored_url, _ = await download_media(task_id, result_url)
+    final_url = stored_url or result_url
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute(
             """UPDATE generation_tasks 
                SET status = 'completed', result_url = ?, completed_at = CURRENT_TIMESTAMP 
                WHERE task_id = ?""",
-            (result_url, task_id),
+            (final_url, task_id),
         )
         cursor = await db.execute(
             "SELECT * FROM generation_tasks WHERE task_id = ?",
@@ -3089,6 +3099,17 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
         await db.commit()
         if row:
             await _notify_tma_task_update(dict(row))
+        return True
+
+
+async def update_task_result_url(task_id: str, new_url: str) -> bool:
+    """Обновляет result_url после скачивания файла на сервер."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE generation_tasks SET result_url = ? WHERE task_id = ?",
+            (new_url, task_id),
+        )
+        await db.commit()
         return True
 
 

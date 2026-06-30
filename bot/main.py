@@ -1,13 +1,10 @@
 import asyncio
-import hashlib
-import hmac
 import html
 import json
 import logging
 import os
 import sys
 import time
-from urllib.parse import parse_qsl
 
 # Добавляем родительскую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,7 +44,7 @@ from bot.handlers import (
 )
 from bot.handlers.payments import handle_cryptobot_webhook, handle_tbank_webhook
 from bot.services.preset_manager import preset_manager
-from bot.tma_api import setup_tma_routes
+from bot.tma_api import setup_tma_routes, validate_tma_init_data
 
 # Настройка логирования
 logging.basicConfig(
@@ -152,40 +149,6 @@ def _verify_ai_webhook_request(request: web.Request, provider: str) -> bool:
         candidate and hmac.compare_digest(str(candidate), secret)
         for candidate in candidates
     )
-
-
-def _validate_tma_init_data(init_data: str) -> dict | None:
-    """Validate Telegram WebApp initData and return parsed fields."""
-    if not init_data or not config.BOT_TOKEN:
-        return None
-
-    parsed = dict(parse_qsl(init_data, keep_blank_values=True))
-    received_hash = parsed.pop("hash", "")
-    if not received_hash:
-        return None
-
-    data_check_string = "\n".join(
-        f"{key}={value}" for key, value in sorted(parsed.items())
-    )
-    secret_key = hmac.new(
-        b"WebAppData",
-        config.BOT_TOKEN.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    calculated_hash = hmac.new(
-        secret_key,
-        data_check_string.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(calculated_hash, received_hash):
-        return None
-
-    if parsed.get("user"):
-        try:
-            parsed["user"] = json.loads(parsed["user"])
-        except json.JSONDecodeError:
-            return None
-    return parsed
 
 
 class AccessControlMiddleware(BaseMiddleware):
@@ -320,31 +283,32 @@ def _build_generation_result_caption(
 async def _remove_old_files(
     base_dir: str = "static/uploads", max_age_seconds: int = 6 * 3600
 ):
-    """Удаляет файлы старше max_age_seconds в каталоге base_dir (рекурсивно)."""
+    """Удаляет только временные референсы старше max_age_seconds."""
     try:
         now = time.time()
-        if not os.path.exists(base_dir):
-            return
+        target_dirs = [os.path.join(base_dir, "temp_refs")]
 
-        for root, dirs, files in os.walk(base_dir):
-            for name in files:
-                path = os.path.join(root, name)
+        for target_dir in target_dirs:
+            if not os.path.exists(target_dir):
+                continue
+
+            for root, dirs, files in os.walk(target_dir, topdown=False):
+                for name in files:
+                    path = os.path.join(root, name)
+                    try:
+                        mtime = os.path.getmtime(path)
+                        if now - mtime > max_age_seconds:
+                            os.remove(path)
+                            logger.info(f"Removed old temp ref file: {path}")
+                    except Exception:
+                        logger.exception(f"Failed to remove temp ref file: {path}")
+
                 try:
-                    mtime = os.path.getmtime(path)
-                    if now - mtime > max_age_seconds:
-                        os.remove(path)
-                        logger.info(f"Removed old file: {path}")
+                    if root != target_dir and not os.listdir(root):
+                        os.rmdir(root)
+                        logger.info(f"Removed empty temp ref dir: {root}")
                 except Exception:
-                    logger.exception(f"Failed to remove file: {path}")
-
-            # После обработки файлов: если папка пуста — удаляем её
-            try:
-                if not os.listdir(root):
-                    os.rmdir(root)
-                    logger.info(f"Removed empty dir: {root}")
-            except Exception as e:
-                # Игнорируем ошибки удаления каталогов
-                pass
+                    pass
     except Exception:
         logger.exception("Error during static cleanup")
 
@@ -432,7 +396,7 @@ async def handle_tma_action(request: web.Request) -> web.Response:
             request.headers.get("x-telegram-init-data")
             or str(payload.get("initData") or "")
         )
-        init_payload = _validate_tma_init_data(init_data)
+        init_payload = validate_tma_init_data(init_data)
         telegram_user = (
             init_payload.get("user")
             if isinstance(init_payload, dict)
@@ -1563,10 +1527,16 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             service_name = "Wan 2.7"
             if "image-to-video" in model_lower:
                 service_name += " I2V"
-            elif "t2v" in model_lower:
+            elif "text-to-video" in model_lower or "t2v" in model_lower:
                 service_name += " T2V"
             elif "r2v" in model_lower:
                 service_name += " R2V"
+            elif "videoedit" in model_lower:
+                service_name += " VideoEdit"
+            elif "image-pro" in model_lower:
+                service_name += " Image Pro"
+            elif "image" in model_lower:
+                service_name += " Image"
         elif "happyhorse" in model_lower:
             service_name = "HappyHorse"
             if "text-to-video" in model_lower:
@@ -2156,10 +2126,27 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     app.on_startup.append(app_startup)
     app.on_cleanup.append(app_cleanup)
 
-    # Serve static uploads directory to fix 404 errors for Novita image downloads
+    # Serve static uploads directory — includes /uploads/feed/ subdirectory
     app.router.add_static(
         "/uploads/", path="static/uploads", show_index=False, name="uploads"
     )
+
+    # Add explicit CORS headers for media files served from /uploads/feed/
+    @web.middleware
+    async def cors_middleware(request: web.Request, handler):
+        if request.path.startswith("/uploads/"):
+            if request.method == "OPTIONS":
+                response = web.Response(status=204)
+            else:
+                response = await handler(request)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Cache-Control"] = "public, max-age=86400"
+            return response
+        return await handler(request)
+
+    app.middlewares.append(cors_middleware)
 
     # Вебхук Telegram
     async def telegram_webhook_handler(request: web.Request) -> web.Response:
