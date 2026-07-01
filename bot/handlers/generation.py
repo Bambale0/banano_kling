@@ -383,9 +383,18 @@ SENSITIVE_FASHION_KEYWORDS = {
     "swimsuit",
 }
 
+BANANA_IMAGE_SERVICES = {
+    "banana_pro",
+    "banana_2",
+    "nanobanana",
+    "nano-banana-2-lite",
+}
+
 
 def _get_image_provider_model(img_service: str, reference_images: list[str]) -> str:
     """Return provider-facing model identifier for routing logs."""
+    if img_service == "nano-banana-2-lite":
+        return "nano-banana-2-lite"
     if img_service == "banana_2":
         return "nano-banana-2"
     if img_service in {"banana_pro", "nanobanana"}:
@@ -427,7 +436,7 @@ def _infer_image_aspect_ratio_from_prompt(prompt: str) -> Optional[str]:
 def _resolve_image_aspect_ratio(img_service: str, img_ratio: str, prompt: str) -> str:
     """Keep provider aspect_ratio aligned with a single explicit ratio in the prompt."""
     ratio = str(img_ratio or "1:1").replace("∶", ":").strip() or "1:1"
-    if img_service not in {"banana_pro", "banana_2", "nanobanana"}:
+    if img_service not in BANANA_IMAGE_SERVICES:
         return ratio
 
     prompt_ratio = _infer_image_aspect_ratio_from_prompt(prompt)
@@ -488,9 +497,7 @@ def _apply_safe_prompt_framing(
     if not prompt:
         return prompt
     if img_service not in {
-        "banana_pro",
-        "banana_2",
-        "nanobanana",
+        *BANANA_IMAGE_SERVICES,
         "seedream_edit",
         "grok_imagine_i2i",
         "wan_27",
@@ -551,8 +558,8 @@ def _apply_safe_prompt_framing(
         r"\bэротичес\w*\b",
         r"\bманящ\w*\b",
     }
-    preserve_garment_terms = img_service in {"seedream_edit", "banana_pro", "banana_2", "nanobanana", "wan_27"} and has_reference_images
-    preserve_nudity_terms = img_service in {"wan_27", "banana_pro", "banana_2", "nanobanana"} and has_reference_images
+    preserve_garment_terms = img_service in {*BANANA_IMAGE_SERVICES, "seedream_edit", "wan_27"} and has_reference_images
+    preserve_nudity_terms = img_service in {*BANANA_IMAGE_SERVICES, "wan_27"} and has_reference_images
 
     replacements = [
         (r"\blingerie\b", "fashion outfit"),
@@ -747,7 +754,7 @@ def _build_wan27_reference_guidance(prompt: str, reference_images: list[str]) ->
     """Wan 2.7-specific reference guidance: preserve identity, but do not force clothing/coverage from reference."""
     prompt = (prompt or "").strip()
     guidance_lines = [
-        "Use the uploaded image as a visual reference for identity and composition.",
+        "Use the uploaded image as a visual reference for identity and composition, not as a locked pose.",
         "Keep the main subject recognizable from the first reference.",
         "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
         "Do not preserve or add clothing or coverage from the reference unless the user's prompt explicitly requests it.",
@@ -769,7 +776,7 @@ def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -
     """Banana-specific reference guidance: preserve identity, but do not force clothing/coverage from reference."""
     prompt = (prompt or "").strip()
     guidance_lines = [
-        "Use the uploaded image as a visual reference for identity and composition.",
+        "Use the uploaded image as a visual reference for identity and composition, not as a locked pose.",
         "Keep the main subject recognizable from the first reference.",
         "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
         "Do not preserve or add clothing or coverage from the reference unless the user's prompt explicitly requests it.",
@@ -793,9 +800,7 @@ def _apply_reference_detail_preservation(
     """For reference-based generation, preserve identity without suppressing edits."""
     prompt = (prompt or "").strip()
     if not reference_images or img_service not in {
-        "banana_pro",
-        "banana_2",
-        "nanobanana",
+        *BANANA_IMAGE_SERVICES,
         "grok_imagine_i2i",
         "seedream_edit",
         "flux_pro",
@@ -806,7 +811,7 @@ def _apply_reference_detail_preservation(
     if img_service == "wan_27":
         return _build_wan27_reference_guidance(prompt, reference_images)
 
-    if img_service in {"banana_pro", "banana_2", "nanobanana"}:
+    if img_service in BANANA_IMAGE_SERVICES:
         return _build_banana_reference_guidance(prompt, reference_images)
 
     return _build_compact_reference_guidance(prompt, reference_images)
@@ -914,7 +919,7 @@ def _prepare_banana_reference_images(
     img_service: str, reference_images: list[str] | None, prompt: str = ""
 ) -> list[str]:
     normalized = _snapshot_reference_images(reference_images)
-    if img_service not in {"banana_pro", "banana_2", "nanobanana", "seedream_edit"}:
+    if img_service not in {*BANANA_IMAGE_SERVICES, "seedream_edit"}:
         return normalized
     max_refs = 5 if img_service == "seedream_edit" else 8
     direct_refs = [
@@ -1035,13 +1040,19 @@ async def _start_image_generation_task(
         len(prompt or ""),
     )
 
-    if runtime_img_service == "banana_2":
+    if runtime_img_service in {"banana_2", "nano-banana-2-lite"}:
+        image_callback_url = (
+            config.kie_market_notification_url
+            if runtime_img_service == "nano-banana-2-lite" and config.WEBHOOK_HOST
+            else callback_url
+        )
         result = await nano_banana_2_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
-            callback_url=callback_url,
+            callback_url=image_callback_url,
+            model=_get_image_provider_model(runtime_img_service, reference_images),
         )
     elif runtime_img_service in {"banana_pro", "nanobanana"}:
         result = await nano_banana_pro_service.generate_image(
@@ -4568,6 +4579,25 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Banana 2."""
     await state.update_data(img_service="banana_2")
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "model_nano_banana_2_lite")
+async def handle_model_nano_banana_2_lite(
+    callback: types.CallbackQuery, state: FSMContext
+):
+    """Выбор модели Nano Banana 2 Lite."""
+    await state.update_data(
+        img_service="nano-banana-2-lite",
+        img_ratio="auto",
+        img_quality="2K",
+    )
     data = await state.get_data()
     if data.get("img_flow_step") == "select_model":
         await state.update_data(img_flow_step="upload_refs")

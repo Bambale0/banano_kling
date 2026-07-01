@@ -270,6 +270,7 @@ IMAGE_MODEL_LABELS = {
     "flux_pro": "GPT Image 2",
     "banana_pro": "Nano Banana Pro",
     "banana_2": "Nano Banana 2",
+    "nano-banana-2-lite": "Nano Banana 2 Lite 🔥 НОВИНКА",
     "seedream_edit": "Seedream 4.5",
     "grok_imagine_i2i": "Grok Imagine",
     "wan_27": "Wan 2.7 Pro",
@@ -975,6 +976,12 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
             "model_banana_2",
             "🍌 Nano Banana 2",
             preset_manager.get_generation_cost("banana_2"),
+        ),
+        (
+            "nano-banana-2-lite",
+            "model_nano_banana_2_lite",
+            "🍌 Nano Banana 2 Lite 🔥 НОВИНКА",
+            preset_manager.get_generation_cost("nano-banana-2-lite"),
         ),
         (
             "seedream_edit",

@@ -599,6 +599,7 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "gemini_omni_character": "Gemini Omni Character",
         "banana_pro": "Banana Pro",
         "banana_2": "Banana 2",
+        "nano-banana-2-lite": "Nano Banana 2 Lite 🔥",
         "seedream_edit": "Seedream 4.5",
         "flux_pro": "GPT Image 2",
         "v26_pro": "Kling 2.5 Turbo Pro",
@@ -1277,7 +1278,13 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     if not task or getattr(task, "type", None) != "image":
         return False
     model_name = str(getattr(task, "model", "") or "").strip()
-    if model_name not in {"banana_pro", "nanobanana", "banana_2", "seedream_edit"}:
+    if model_name not in {
+        "banana_pro",
+        "nanobanana",
+        "banana_2",
+        "nano-banana-2-lite",
+        "seedream_edit",
+    }:
         return False
     normalized = str(fail_msg or "").lower()
     retryable_markers = (
@@ -1368,7 +1375,13 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     runtime_img_service = (
         request_data.get("img_service") or getattr(task, "model", None) or ""
     ).strip()
-    if runtime_img_service not in {"banana_pro", "nanobanana", "banana_2", "seedream_edit"}:
+    if runtime_img_service not in {
+        "banana_pro",
+        "nanobanana",
+        "banana_2",
+        "nano-banana-2-lite",
+        "seedream_edit",
+    }:
         return None
 
     retry_attempt = int(request_data.get("auto_retry_attempt") or 0)
@@ -1399,15 +1412,25 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
             nsfw_checker=False,
             callBackUrl=callback_url,
         )
-    elif runtime_img_service == "banana_2":
+    elif runtime_img_service in {"banana_2", "nano-banana-2-lite"}:
         from bot.services.nano_banana_2_service import nano_banana_2_service
 
+        retry_callback_url = (
+            config.kie_market_notification_url
+            if runtime_img_service == "nano-banana-2-lite" and config.WEBHOOK_HOST
+            else callback_url
+        )
         result = await nano_banana_2_service.generate_image(
             prompt=effective_prompt,
             aspect_ratio=img_ratio,
             resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
-            callback_url=callback_url,
+            callback_url=retry_callback_url,
+            model=(
+                "nano-banana-2-lite"
+                if runtime_img_service == "nano-banana-2-lite"
+                else "nano-banana-2"
+            ),
         )
     else:
         from bot.services.nano_banana_pro_service import nano_banana_pro_service
@@ -3615,6 +3638,38 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
 
+async def handle_kie_market_webhook(request: web.Request) -> web.Response:
+    """Webhook for KIE Market models such as nano-banana-2-lite."""
+    try:
+        raw_body = await request.read()
+        if not raw_body:
+            logger.warning("KIE Market webhook received empty body")
+            return web.Response(status=200)
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception as exc:
+            logger.warning("KIE Market webhook received invalid JSON: %s", exc)
+            return web.Response(status=200)
+
+        from bot.services.kie_market_service import kie_market_service
+
+        if not kie_market_service.verify_webhook_signature(
+            payload=payload,
+            headers=request.headers,
+        ):
+            return web.json_response(
+                {"ok": False, "error": "bad signature"},
+                status=401,
+            )
+
+        request._read_bytes = raw_body
+        return await handle_kie_ai_webhook(request)
+    except Exception as exc:
+        logger.exception("KIE Market webhook error: %s", exc)
+        return web.Response(status=200)
+
+
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
 
@@ -3667,6 +3722,12 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     app.router.add_post(
         _normalize_path(config.KIE_AI_WEBHOOK_PATH, "/webhook/kie_ai"),
         handle_kie_ai_webhook,
+    )
+
+    # Вебхук KIE Market (nano-banana-2-lite + future models)
+    app.router.add_post(
+        _normalize_path(config.KIE_MARKET_WEBHOOK_PATH, "/webhooks/kie"),
+        handle_kie_market_webhook,
     )
 
     # Health check endpoint

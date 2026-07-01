@@ -9,9 +9,15 @@ from bot.services.media_input_utils import (
     is_local_upload_source,
 )
 from bot.services.kie_file_upload_service import kie_file_upload_service
+from bot.services.kie_market_service import kie_market_service
 
 logger = logging.getLogger(__name__)
 MAX_IMAGE_INPUTS = 8
+NANO_BANANA_2_LITE_MODEL_IDS = {
+    "nano-banana-2-lite",
+    "nano_banana_2_lite",
+    "banana_2_lite",
+}
 RESOLUTION_ALIASES = {
     "BASIC": "2K",
     "HIGH": "4K",
@@ -142,6 +148,7 @@ class NanoBanana2Service:
         resolution: str = "2K",
         output_format: str = "png",
         callback_url: str = None,
+        model: str = "nano-banana-2",
     ) -> Optional[str]:
         if not prompt and not image_input:
             logger.warning("Nano Banana 2 create_task: no prompt and no image_input")
@@ -158,6 +165,23 @@ class NanoBanana2Service:
             normalized_image_input = image_sources_to_data_uris(image_input)
         else:
             normalized_image_input = []
+
+        if str(model or "").strip() in NANO_BANANA_2_LITE_MODEL_IDS:
+            try:
+                logger.info(
+                    "Nano Banana 2 Lite create_task: refs=%s aspect_ratio=%s model=nano-banana-2-lite",
+                    len(normalized_image_input),
+                    aspect_ratio,
+                )
+                return await kie_market_service.create_nano_banana_2_lite_task(
+                    prompt=prompt,
+                    image_urls=normalized_image_input[:10],
+                    aspect_ratio=aspect_ratio or "auto",
+                    callback_url=callback_url,
+                )
+            except Exception as exc:
+                logger.error("Nano Banana 2 Lite create_task failed: %s", exc)
+                return None
 
         normalized_resolution = _normalize_resolution(resolution)
         payload = {
@@ -219,7 +243,20 @@ class NanoBanana2Service:
         image_input: List[str] = None,
         output_format: str = "png",
         callback_url: str = None,
+        model: str = "nano-banana-2",
     ) -> Optional[Dict]:
+        if str(model or "").strip() in NANO_BANANA_2_LITE_MODEL_IDS:
+            task_id = await self.create_task(
+                prompt,
+                image_input,
+                aspect_ratio,
+                resolution,
+                output_format,
+                callback_url,
+                model=model,
+            )
+            return {"task_id": task_id} if task_id else None
+
         if hasattr(self.primary_provider, "generate_image"):
             return await self.primary_provider.generate_image(prompt, aspect_ratio, resolution, image_input, output_format)
 

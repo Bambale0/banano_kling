@@ -99,6 +99,7 @@ send_archive_to_admins() {
     local part_file=""
     local part_name=""
     local caption=""
+    local archive_sha256=""
 
     if [ -z "$bot_token" ] || [ -z "$admin_ids" ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') telegram send skipped: BOT_TOKEN or ADMIN_IDS is empty" >&2
@@ -111,9 +112,15 @@ send_archive_to_admins() {
     fi
 
     archive_size="$(du -h "$archive_path" | awk '{print $1}')"
+    if command -v sha256sum >/dev/null 2>&1; then
+        archive_sha256="$(sha256sum "$archive_path" | awk '{print $1}')"
+    else
+        archive_sha256="sha256sum not available"
+    fi
     caption="banano_kling DB backup
 created: ${created_at}
 archive: ${archive_size}
+sha256: ${archive_sha256}
 source: ${db_abs}"
 
     if [ "$(stat -c '%s' "$archive_path")" -le "$TELEGRAM_DOCUMENT_MAX_BYTES" ]; then
@@ -153,7 +160,8 @@ source: ${db_abs}"
 created: ${created_at}
 archive: ${archive_size}
 part: ${part_index}/${part_count}
-join: cat ${archive_name}.part-* > ${archive_name}"
+join: cat ${archive_name}.part-* > ${archive_name}
+sha256: ${archive_sha256}"
                 send_document "$bot_token" "$admin_id" "$part_file" "$part_name" "$caption" || failures=1
             done
         done

@@ -78,6 +78,8 @@ class Config:
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
+    KIE_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_WEBHOOK_HMAC_KEY", "")
+    KIE_MARKET_WEBHOOK_PATH: str = os.getenv("KIE_MARKET_WEBHOOK_PATH", "/webhooks/kie")
     
     # Nano Banana 2 fallback provider - Gemini-compatible (optional)
     NANOBANANA2_FALLBACK_API_KEY: str = os.getenv("NANOBANANA2_FALLBACK_API_KEY", "")
@@ -258,6 +260,13 @@ class Config:
     @property
     def kie_notification_url(self) -> str:
         path = self.KIE_AI_WEBHOOK_PATH
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    @property
+    def kie_market_notification_url(self) -> str:
+        path = self.KIE_MARKET_WEBHOOK_PATH
         if not path.startswith("/"):
             path = "/" + path
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
