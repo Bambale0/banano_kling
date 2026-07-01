@@ -3,26 +3,31 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
+POSTGRES_ENV_FILE="$PROJECT_DIR/.env.postgres"
 BACKUP_DIR="${DB_BACKUP_DIR:-$PROJECT_DIR/backups}"
 LATEST_BACKUP="$BACKUP_DIR/bot-latest.db"
 PREVIOUS_BACKUP="$BACKUP_DIR/bot-previous.db"
 TMP_BACKUP="$BACKUP_DIR/.bot-latest.db.tmp"
+LATEST_PG_DUMP="$BACKUP_DIR/postgres-latest.dump"
+PREVIOUS_PG_DUMP="$BACKUP_DIR/postgres-previous.dump"
+TMP_PG_DUMP="$BACKUP_DIR/.postgres-latest.dump.tmp"
 LATEST_ARCHIVE="$BACKUP_DIR/bot-latest.tar.gz"
 TMP_ARCHIVE="$BACKUP_DIR/.bot-latest.tar.gz.tmp"
 PARTS_DIR="$BACKUP_DIR/telegram-parts"
 LOCK_FILE="$BACKUP_DIR/.backup.lock"
 TELEGRAM_DOCUMENT_MAX_BYTES="${TELEGRAM_DOCUMENT_MAX_BYTES:-47185920}"
 
-read_env_value() {
-    local key="$1"
+read_env_file_value() {
+    local env_file="$1"
+    local key="$2"
     local line=""
     local value=""
 
-    if [ ! -f "$ENV_FILE" ]; then
+    if [ ! -f "$env_file" ]; then
         return 0
     fi
 
-    line="$(grep -E "^[[:space:]]*${key}=" "$ENV_FILE" | tail -n 1 || true)"
+    line="$(grep -E "^[[:space:]]*${key}=" "$env_file" | tail -n 1 || true)"
     if [ -z "$line" ]; then
         return 0
     fi
@@ -36,6 +41,19 @@ read_env_value() {
     value="${value%\'}"
     value="${value#\'}"
     printf '%s' "$value"
+}
+
+read_env_value() {
+    local key="$1"
+    local value=""
+
+    value="$(read_env_file_value "$POSTGRES_ENV_FILE" "$key")"
+    if [ -n "$value" ]; then
+        printf '%s' "$value"
+        return 0
+    fi
+
+    read_env_file_value "$ENV_FILE" "$key"
 }
 
 mkdir -p "$BACKUP_DIR" "$PROJECT_DIR/logs"
@@ -155,57 +173,136 @@ join: cat ${archive_name}.part-* > ${archive_name}"
         exit 0
     }
 
+    created_at="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+    archive_name="bot-db-$(date '+%Y%m%d_%H%M%S').tar.gz"
+    db_url="${DATABASE_URL:-$(read_env_value DATABASE_URL)}"
     db_path="${DATABASE_PATH:-$(read_env_value DATABASE_PATH)}"
+    archive_member=""
+    db_abs=""
 
-    if [ -z "$db_path" ]; then
-        db_url="${DATABASE_URL:-$(read_env_value DATABASE_URL)}"
-        case "$db_url" in
-            sqlite://*)
-                db_path="${db_url#sqlite:///}"
-                ;;
-        esac
-    fi
+    case "$db_url" in
+        postgres://*|postgresql://*)
+            if ! command -v pg_dump >/dev/null 2>&1; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') postgres backup failed: pg_dump not found" >&2
+                exit 1
+            fi
 
-    db_path="${db_path:-bot.db}"
+            rm -f "$TMP_PG_DUMP"
+            mapfile -t pg_params < <(python3 - "$db_url" <<'PY'
+from urllib.parse import unquote, urlparse
+import sys
 
-    case "$db_path" in
-        /*) db_abs="$db_path" ;;
-        *) db_abs="$PROJECT_DIR/$db_path" ;;
-    esac
+parsed = urlparse(sys.argv[1])
+if parsed.scheme not in {"postgres", "postgresql"}:
+    raise SystemExit("unsupported postgres url")
 
-    if [ ! -s "$db_abs" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') database not found or empty: $db_abs" >&2
-        exit 1
-    fi
+print(parsed.hostname or "")
+print(str(parsed.port or ""))
+print(unquote(parsed.username or ""))
+print(unquote(parsed.password or ""))
+print(unquote((parsed.path or "").lstrip("/")))
+print(parsed.query or "")
+PY
+)
+            pg_host="${pg_params[0]}"
+            pg_port="${pg_params[1]}"
+            pg_user="${pg_params[2]}"
+            pg_password="${pg_params[3]}"
+            pg_database="${pg_params[4]}"
+            pg_query="${pg_params[5]}"
+            pg_args=(--format=custom --no-owner --no-privileges --file "$TMP_PG_DUMP")
 
-    rm -f "$TMP_BACKUP"
+            if [ -n "$pg_host" ]; then
+                pg_args+=(--host "$pg_host")
+            fi
+            if [ -n "$pg_port" ]; then
+                pg_args+=(--port "$pg_port")
+            fi
+            if [ -n "$pg_user" ]; then
+                pg_args+=(--username "$pg_user")
+            fi
+            if [ -n "$pg_database" ]; then
+                pg_args+=(--dbname "$pg_database")
+            fi
+            if [[ "$pg_query" == *sslmode=* ]]; then
+                PGSSLMODE="$(python3 - "$pg_query" <<'PY'
+from urllib.parse import parse_qs
+import sys
+print(parse_qs(sys.argv[1]).get("sslmode", [""])[0])
+PY
+)"
+                export PGSSLMODE
+            fi
 
-    sqlite3 "$db_abs" <<SQL
+            PGPASSWORD="$pg_password" pg_dump "${pg_args[@]}"
+
+            if [ ! -s "$TMP_PG_DUMP" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') postgres backup failed: empty dump" >&2
+                rm -f "$TMP_PG_DUMP"
+                exit 1
+            fi
+
+            if [ -f "$LATEST_PG_DUMP" ]; then
+                cp -f "$LATEST_PG_DUMP" "$PREVIOUS_PG_DUMP"
+            fi
+
+            mv -f "$TMP_PG_DUMP" "$LATEST_PG_DUMP"
+            archive_member="$(basename "$LATEST_PG_DUMP")"
+            db_abs="postgres DATABASE_URL"
+
+            size="$(du -h "$LATEST_PG_DUMP" | awk '{print $1}')"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') postgres backup updated: $LATEST_PG_DUMP ($size)"
+            ;;
+        *)
+            if [ -z "$db_path" ]; then
+                case "$db_url" in
+                    sqlite://*)
+                        db_path="${db_url#sqlite:///}"
+                        ;;
+                esac
+            fi
+
+            db_path="${db_path:-bot.db}"
+
+            case "$db_path" in
+                /*) db_abs="$db_path" ;;
+                *) db_abs="$PROJECT_DIR/$db_path" ;;
+            esac
+
+            if [ ! -s "$db_abs" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') database not found or empty: $db_abs" >&2
+                exit 1
+            fi
+
+            rm -f "$TMP_BACKUP"
+
+            sqlite3 "$db_abs" <<SQL
 .timeout 30000
 .backup '$TMP_BACKUP'
 SQL
 
-    quick_check="$(sqlite3 "$TMP_BACKUP" 'PRAGMA quick_check;' | tr -d '\r')"
-    if [ "$quick_check" != "ok" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') backup quick_check failed: $quick_check" >&2
-        rm -f "$TMP_BACKUP"
-        exit 1
-    fi
+            quick_check="$(sqlite3 "$TMP_BACKUP" 'PRAGMA quick_check;' | tr -d '\r')"
+            if [ "$quick_check" != "ok" ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') backup quick_check failed: $quick_check" >&2
+                rm -f "$TMP_BACKUP"
+                exit 1
+            fi
 
-    if [ -f "$LATEST_BACKUP" ]; then
-        cp -f "$LATEST_BACKUP" "$PREVIOUS_BACKUP"
-    fi
+            if [ -f "$LATEST_BACKUP" ]; then
+                cp -f "$LATEST_BACKUP" "$PREVIOUS_BACKUP"
+            fi
 
-    mv -f "$TMP_BACKUP" "$LATEST_BACKUP"
+            mv -f "$TMP_BACKUP" "$LATEST_BACKUP"
+            archive_member="$(basename "$LATEST_BACKUP")"
 
-    created_at="$(date '+%Y-%m-%d %H:%M:%S %Z')"
-    archive_name="bot-db-$(date '+%Y%m%d_%H%M%S').tar.gz"
+            size="$(du -h "$LATEST_BACKUP" | awk '{print $1}')"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') sqlite backup updated: $LATEST_BACKUP ($size) from $db_abs"
+            ;;
+    esac
+
     rm -f "$TMP_ARCHIVE"
-    tar -C "$BACKUP_DIR" -czf "$TMP_ARCHIVE" "$(basename "$LATEST_BACKUP")"
+    tar -C "$BACKUP_DIR" -czf "$TMP_ARCHIVE" "$archive_member"
     mv -f "$TMP_ARCHIVE" "$LATEST_ARCHIVE"
-
-    size="$(du -h "$LATEST_BACKUP" | awk '{print $1}')"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') backup updated: $LATEST_BACKUP ($size) from $db_abs"
 
     archive_size="$(du -h "$LATEST_ARCHIVE" | awk '{print $1}')"
     echo "$(date '+%Y-%m-%d %H:%M:%S') archive updated: $LATEST_ARCHIVE ($archive_size)"

@@ -28,6 +28,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeDefault,
+    BufferedInputFile,
     Update,
 )
 from aiohttp import web
@@ -70,6 +71,7 @@ from bot.services.subscription_service import (
     check_required_channel_subscription,
     should_block_for_subscription,
 )
+from bot.services.memory_dump_service import build_memory_dump, ensure_memory_tracing
 from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
@@ -81,6 +83,9 @@ YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
 LAVA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 LAVA_RECONCILE_BATCH_SIZE = 50
+MEMORY_DUMP_INTERVAL_SECONDS = 3 * 3600
+DB_BACKUP_INTERVAL_SECONDS = 3 * 3600
+DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
 _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 
 USER_BOT_COMMANDS = [
@@ -170,6 +175,82 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
         await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
 
 
+async def _memory_dump_loop(bot: Bot) -> None:
+    while True:
+        await asyncio.sleep(MEMORY_DUMP_INTERVAL_SECONDS)
+        admin_ids = config.admin_ids
+        if not admin_ids:
+            logger.info("Memory dump send skipped: ADMIN_IDS is empty")
+            continue
+
+        try:
+            data, filename, caption = build_memory_dump()
+        except Exception:
+            logger.exception("Failed to build memory dump")
+            continue
+
+        for admin_id in admin_ids:
+            try:
+                await bot.send_document(
+                    chat_id=admin_id,
+                    document=BufferedInputFile(data, filename=filename),
+                    caption=caption,
+                )
+            except Exception:
+                logger.exception("Failed to send memory dump to admin_id=%s", admin_id)
+
+
+async def _db_backup_loop() -> None:
+    backup_script = Path(__file__).resolve().parents[1] / "scripts" / "backup_db.sh"
+    while True:
+        await asyncio.sleep(DB_BACKUP_INTERVAL_SECONDS)
+        env = os.environ.copy()
+        env.setdefault("SEND_BACKUP_TO_ADMINS", "1")
+        process = None
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                str(backup_script),
+                cwd=str(backup_script.parent.parent),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=DB_BACKUP_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            if process is not None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
+            logger.exception(
+                "DB backup timed out after %s seconds", DB_BACKUP_TIMEOUT_SECONDS
+            )
+            continue
+        except Exception:
+            logger.exception("Failed to run DB backup")
+            continue
+
+        stdout_text = stdout.decode("utf-8", errors="replace").strip()
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        if process.returncode == 0:
+            if stdout_text:
+                logger.info("DB backup completed: %s", stdout_text)
+            else:
+                logger.info("DB backup completed")
+        else:
+            logger.error(
+                "DB backup failed with code=%s stdout=%s stderr=%s",
+                process.returncode,
+                stdout_text[-1000:],
+                stderr_text[-1000:],
+            )
+
+
 def _configure_logging() -> None:
     if os.environ.get("BANANO_DISABLE_FILE_LOGGING") == "1":
         logging.basicConfig(
@@ -227,6 +308,7 @@ def _configure_logging() -> None:
 
 _configure_logging()
 logger = logging.getLogger(__name__)
+ensure_memory_tracing()
 
 
 class FallbackFSMStorage(BaseStorage):
@@ -1537,8 +1619,10 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
         asyncio.create_task(_lava_reconcile_loop(bot))
+        asyncio.create_task(_memory_dump_loop(bot))
+        asyncio.create_task(_db_backup_loop())
         logger.info(
-            "Scheduled cleanup task for static/uploads/logs and payment reconciliation"
+            "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, and DB backups"
         )
     except Exception:
         logger.exception("Failed to schedule background tasks")
