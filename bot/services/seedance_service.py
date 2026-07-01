@@ -14,6 +14,41 @@ from bot.services.media_input_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _with_seedance_identity_guidance(
+    prompt: str,
+    *,
+    has_first_frame: bool,
+    reference_image_count: int,
+    reference_video_count: int,
+) -> str:
+    """Add a compact identity lock for image-conditioned Seedance tasks."""
+    if not (has_first_frame or reference_image_count):
+        return prompt
+
+    guidance_parts = [
+        "IDENTITY / SOURCE LOCK:",
+        "Use the uploaded source image as the primary identity and character reference.",
+        "Preserve the same recognizable person: face geometry, eyes, nose, lips, skin tone, hair, body proportions, outfit, and distinctive marks.",
+        "Do not replace the person with a different actor, lookalike, or invented character.",
+        "Do not add extra people unless the user explicitly asks for multiple people.",
+    ]
+    if has_first_frame:
+        guidance_parts.append(
+            "The first-frame image is the exact starting frame and must anchor the video."
+        )
+    elif reference_image_count:
+        guidance_parts.append(
+            "The first reference image is the main subject identity; later references are secondary style, pose, scene, or motion cues."
+        )
+    if reference_video_count:
+        guidance_parts.append(
+            "Use video references for motion and atmosphere only; do not copy unrelated identities from them."
+        )
+
+    guidance = "\n".join(guidance_parts)
+    return f"{prompt.strip()}\n\n{guidance}" if prompt.strip() else guidance
+
+
 class SeedanceService(KlingService):
     """Wrapper for Bytedance Seedance 2.0 on Kie.ai."""
 
@@ -153,8 +188,15 @@ class SeedanceService(KlingService):
         )
         prepared_reference_image_urls = prepared_image_urls[len(frame_image_urls) :]
 
+        conditioned_prompt = _with_seedance_identity_guidance(
+            prompt,
+            has_first_frame=bool(prepared_frames.get("first_frame_url")),
+            reference_image_count=len(prepared_reference_image_urls),
+            reference_video_count=len(reference_video_urls),
+        )
+
         input_data: Dict[str, Any] = {
-            "prompt": prompt[:4000],
+            "prompt": conditioned_prompt[:4000],
             "duration": max(5, min(int(duration), 15)),
             "aspect_ratio": (
                 aspect_ratio if aspect_ratio in self.SUPPORTED_RATIOS else "16:9"

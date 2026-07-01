@@ -5223,7 +5223,10 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
         )
 
         if is_local_upload_source(candidate):
-            return bool(resolve_local_upload_path(candidate))
+            # Keep published feed rows visible even when the backing upload is
+            # temporarily unavailable on this host. Provider input paths are
+            # still validated by media_input_utils before reuse.
+            return True
     except Exception:
         logger.exception("Failed to validate local feed result url: %s", candidate)
         return False
@@ -5698,16 +5701,36 @@ async def share_to_feed(
             or not _feed_result_urls(row)
         ):
             return None
+
+        # Скачиваем эфемерные файлы на сервер, чтобы они не исчезали по TTL
+        result_urls = _generation_result_urls(row)
+        if result_urls:
+            from bot.services.feed_persist import persist_feed_result_urls
+            persisted = await persist_feed_result_urls(result_urls)
+            result_url = persisted[0] if persisted else row["result_url"]
+            result_urls_json = json.dumps(persisted, ensure_ascii=False) if persisted else None
+        else:
+            result_url = row["result_url"]
+            result_urls_json = None
+
         await db.execute(
             """
             UPDATE generation_tasks
             SET is_public_feed = 1,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
+                result_url = ?,
+                result_urls = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (int(bool(prompt_visible)), int(bool(references_visible)), row["id"]),
+            (
+                int(bool(prompt_visible)),
+                int(bool(references_visible)),
+                result_url,
+                result_urls_json,
+                row["id"],
+            ),
         )
         await db.commit()
         gen_id = row["id"]
