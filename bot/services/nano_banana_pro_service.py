@@ -3,6 +3,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,11 +75,14 @@ class NanoBananaProService:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
+        # Normalize relative URLs to absolute (Kie.ai cannot fetch relative paths)
+        normalized_input = [normalize_kie_image_url(url) for url in (image_input or [])]
+
         payload = {
             "model": "nano-banana-pro",
             "input": {
                 "prompt": prompt,
-                "image_input": image_input or [],
+                "image_input": normalized_input,
                 "aspect_ratio": aspect_ratio,
                 "resolution": resolution,
                 "output_format": output_format,

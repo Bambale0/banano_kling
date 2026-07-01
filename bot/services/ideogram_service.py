@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from bot.config import config
-from bot.services.kling_service import KlingService
+from bot.services.kling_service import KlingService, normalize_kie_image_url
 
 
 _IMAGE_SIZE_BY_RATIO = {
@@ -34,7 +34,9 @@ class IdeogramService(KlingService):
             "model": "ideogram/character",
             "input": {
                 "prompt": prompt,
-                "reference_image_urls": reference_image_urls[:4],
+                "reference_image_urls": [
+                    normalize_kie_image_url(u) for u in reference_image_urls[:4]
+                ],
                 "rendering_speed": rendering_speed,
                 "style": style,
                 "expand_prompt": expand_prompt,

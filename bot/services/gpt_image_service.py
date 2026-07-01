@@ -82,7 +82,9 @@ class GPTImageService:
             },
         }
         if is_image_to_image:
-            payload["input"]["input_urls"] = image_urls
+            # Normalize relative URLs to absolute (Kie.ai cannot fetch relative paths)
+            normalized_urls = [normalize_kie_image_url(url) for url in image_urls]
+            payload["input"]["input_urls"] = normalized_urls
         if callback_url:
             payload["callBackUrl"] = callback_url
 

@@ -203,6 +203,18 @@ def _build_friendly_generation_error(
     if any(
         marker in details
         for marker in (
+            "image fetch failed",
+            "check access settings",
+            "cannot download",
+        )
+    ):
+        friendly_text = (
+            "Сервис не смог загрузить изображение. "
+            "Попробуйте загрузить фото заново или используйте другое изображение."
+        )
+    elif any(
+        marker in details
+        for marker in (
             "content safety",
             "safety restrictions",
             "prohibited use policy",
@@ -833,6 +845,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.database import (
                     add_credits,
                     complete_video_task,
+                    fail_generation_task,
                     get_task_by_id,
                     get_telegram_id_by_user_id,
                 )
@@ -888,20 +901,41 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                     task_id,
                                     metadata={"provider": "kie_ai_legacy"},
                                 )
-                                await bot_instance.send_message(
-                                    chat_id=telegram_id,
-                                    text=_build_friendly_generation_error(
-                                        fail_code,
+
+                                # Grok Imagine specific: "Upload failed" = API cannot download image URLs
+                                if model_display in ("grok_imagine", "Grok Imagine") and "upload" in fail_msg.lower():
+                                    user_text = (
+                                        f"❌ <b>Grok Imagine (Kie.ai): API не может загрузить изображения.</b>\n\n"
+                                        f"Код: {fail_code}\n"
+                                        f"Причина: {html.escape(fail_msg)}\n\n"
+                                        f"Это ошибка на стороне Kie.ai — их сервер не может скачать "
+                                        f"файлы с нашего хостинга. Средств не списано.\n\n"
+                                        f"Попробуйте другой сервис для генерации видео."
+                                    )
+                                    await bot_instance.send_message(
+                                        chat_id=telegram_id,
+                                        text=user_text,
+                                        parse_mode="HTML",
+                                    )
+                                    logger.warning(
+                                        "Grok Imagine upload failed for task %s: fail_msg=%s",
+                                        task_id,
                                         fail_msg,
-                                        service_name=model_display,
-                                        credits_returned=bool(task.cost)
-                                        or task.billing_source == "subscription",
-                                    ),
-                                    parse_mode="HTML",
-                                )
-                                await complete_video_task(task_id, None)
+                                    )
+                                else:
+                                    await bot_instance.send_message(
+                                        chat_id=telegram_id,
+                                        text=_build_friendly_generation_error(
+                                            fail_code,
+                                            fail_msg,
+                                            service_name=model_display,
+                                            credits_returned=True,
+                                        ),
+                                        parse_mode="HTML",
+                                    )
+                                await fail_generation_task(task_id)
                                 logger.info(
-                                    f"Kie.ai fail notified to {telegram_id}, credits returned"
+                                    f"Kie.ai fail notified to {telegram_id}, task {task_id} marked failed"
                                 )
                             else:
                                 logger.info(
@@ -1054,6 +1088,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             from bot.database import (
                 add_credits,
                 complete_video_task,
+                fail_generation_task,
                 get_task_by_id,
                 get_telegram_id_by_user_id,
             )
@@ -1079,7 +1114,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             f"🪙 BoomCoin возвращены.",
                             parse_mode="HTML",
                         )
-                        await complete_video_task(task_id, None)
+                        await fail_generation_task(task_id)
                         logger.info(f"Kling failure notified to {telegram_id}")
                     except Exception as e:
                         logger.error(
@@ -1953,6 +1988,7 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
         from bot.database import (
             add_credits,
             complete_video_task,
+            fail_generation_task,
             get_task_by_id,
             get_telegram_id_by_user_id,
         )
@@ -2103,7 +2139,7 @@ async def handle_veo_webhook(request: web.Request) -> web.Response:
                     )
                 finally:
                     await bot_instance.session.close()
-            await complete_video_task(task_id, None)
+            await fail_generation_task(task_id)
 
         return web.Response(status=200)
 
@@ -2198,6 +2234,23 @@ async def main():
     logger.info("Initializing database before bot startup...")
     await init_db()
     logger.info("Database initialized successfully")
+
+    # Закрываем зависшие pending-задачи старше 60 минут с возвратом ресурсов
+    try:
+        from bot.database import timeout_stale_pending_tasks
+
+        timed_out = await timeout_stale_pending_tasks(max_age_minutes=60, refund=True, dry_run=False)
+        if timed_out:
+            logger.info(
+                "Startup reconciler: closed %d stale pending tasks: %s",
+                len(timed_out),
+                [
+                    {"task_id": t["task_id"], "model": t.get("model"), "refunded": t.get("refunded")}
+                    for t in timed_out
+                ],
+            )
+    except Exception:
+        logger.exception("Startup reconciler failed, continuing startup")
 
     # Создаём бота
     bot = Bot(

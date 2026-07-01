@@ -21,6 +21,19 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 
+def normalize_kie_image_url(url: str) -> str:
+    """Convert relative paths to absolute URLs using WEBHOOK_HOST.
+
+    Kie.ai API cannot fetch relative paths like /uploads/feed/...jpeg
+    — it requires full URLs like https://dev.chillcreative.ru/uploads/...
+    """
+    if url and url.startswith("/"):
+        from bot.config import config
+
+        return f"{config.WEBHOOK_HOST.rstrip('/')}{url}"
+    return url
+
+
 class KlingService:
     """Сервис для работы с PiAPI Kling 3.0 API"""
 
@@ -118,6 +131,70 @@ class KlingService:
                     "message": f"Network error: {str(e)}",
                     "status_code": 0,
                 }
+
+    async def _kie_upload_file_url(
+        self, file_url: str, upload_path: str = "grok-input", file_name: Optional[str] = None
+    ) -> Optional[str]:
+        """Upload a file to Kie.ai via URL, return internal filePath for task creation.
+
+        Kie.ai requires pre-uploaded files for image-to-video/image-to-image tasks.
+        This avoids "Upload failed: Server internal error" caused by passing external URLs directly.
+        """
+        if not self.kie_headers:
+            logger.error("Kie.ai API key not configured for file upload")
+            return None
+        # Normalize relative URLs to absolute (Kie.ai cannot fetch relative paths)
+        normalized_url = self._normalize_image_url(file_url)
+        url = "https://kieai.redpandaai.co/api/file-url-upload"
+        payload: Dict[str, str] = {
+            "fileUrl": normalized_url,
+            "uploadPath": upload_path,
+        }
+        if file_name:
+            payload["fileName"] = file_name
+        async with aiohttp.ClientSession(trust_env=False) as session:
+            try:
+                async with session.post(
+                    url,
+                    json=payload,
+                    headers=self.kie_headers,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                ) as resp:
+                    text = await resp.text()
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError as e:
+                        logger.error(
+                            f"Kie.ai file upload JSON decode error: {e}. Response: {text[:300]}..."
+                        )
+                        return None
+                    if not isinstance(data, dict):
+                        logger.error(
+                            f"Kie.ai file upload non-dict response: {type(data)}. Text: {text[:300]}..."
+                        )
+                        return None
+                    code = data.get("code")
+                    if code != 200:
+                        error_msg = data.get("msg", "Unknown error")
+                        logger.error(
+                            f"Kie.ai file upload failed code {code}: {error_msg}. url={file_url}"
+                        )
+                        return None
+                    file_path = data.get("data", {}).get("filePath")
+                    if not file_path:
+                        logger.error(
+                            f"Kie.ai file upload: no filePath in response. url={file_url}, data={data}"
+                        )
+                        return None
+                    logger.info(
+                        "Kie.ai file uploaded: url=%s -> filePath=%s",
+                        file_url[:80],
+                        file_path,
+                    )
+                    return file_path
+            except Exception as e:
+                logger.exception(f"Kie.ai file upload request error: {e}. url={file_url}")
+                return None
 
     async def _kie_get(
         self, endpoint: str, params: Optional[Dict] = None
@@ -413,6 +490,18 @@ class KlingService:
             config["webhook_config"] = {"endpoint": webhook_url, "secret": ""}
         return await self.create_task("omni_video_generation", input_data, config)
 
+    def _normalize_image_url(self, url: str) -> str:
+        """Convert relative paths to absolute URLs using WEBHOOK_HOST.
+
+        Kie.ai API cannot fetch relative paths like /uploads/feed/...jpeg
+        — it requires full URLs like https://dev.chillcreative.ru/uploads/...
+        """
+        if url and url.startswith("/"):
+            from bot.config import config
+
+            return f"{config.WEBHOOK_HOST.rstrip('/')}{url}"
+        return url
+
     async def generate_kling_3_video(
         self,
         prompt: str,
@@ -431,6 +520,21 @@ class KlingService:
             logger.error("Kie.ai API key not configured for Kling 3.0")
             return None
 
+        # Normalize all image URLs to absolute (Kie.ai cannot fetch relative paths)
+        normalized_image_urls: list[str] = [
+            self._normalize_image_url(url) for url in (image_urls or [])
+        ]
+        normalized_elements: list[dict] | None = None
+        if kling_elements:
+            normalized_elements = []
+            for el in kling_elements:
+                el_copy = dict(el)
+                raw_urls = el_copy.get("element_input_urls", [])
+                el_copy["element_input_urls"] = [
+                    self._normalize_image_url(u) for u in raw_urls
+                ]
+                normalized_elements.append(el_copy)
+
         input_data = {
             "prompt": prompt,
             "sound": sound,
@@ -439,10 +543,10 @@ class KlingService:
             "mode": mode,
             "multi_shots": multi_shots,
         }
-        if image_urls:
-            input_data["image_urls"] = image_urls
-        if kling_elements:
-            input_data["kling_elements"] = kling_elements
+        if normalized_image_urls:
+            input_data["image_urls"] = normalized_image_urls
+        if normalized_elements:
+            input_data["kling_elements"] = normalized_elements
         if multi_shots and multi_prompt:
             input_data["multi_prompt"] = multi_prompt
 
@@ -453,6 +557,16 @@ class KlingService:
         if webhook:
             payload["callBackUrl"] = webhook
 
+        logger.info(
+            "Creating Kling 3.0 video task: mode=%s duration=%s aspect_ratio=%s "
+            "sound=%s image_count=%s image_urls=%s",
+            mode,
+            duration,
+            aspect_ratio,
+            sound,
+            len(image_urls or []),
+            [str(url)[:120] for url in (image_urls or [])],
+        )
         return await self._kie_post("/api/v1/jobs/createTask", payload)
 
     async def generate_wan_image(
@@ -478,11 +592,12 @@ class KlingService:
             safe_seed = int(seed) if seed not in (None, "") else 0
         except (TypeError, ValueError):
             safe_seed = 0
-        clean_input_urls = [
+        raw_input_urls = [
             str(url).strip()
             for url in (input_urls or [])
             if str(url).strip()
         ][:12]
+        clean_input_urls = [self._normalize_image_url(url) for url in raw_input_urls]
         safe_resolution = resolution
         if (
             model == "wan_27_image_pro"

@@ -25,6 +25,7 @@ from bot.keyboards import (
     get_feed_empty_keyboard,
     get_reference_images_upload_keyboard,
 )
+from bot.services.feed_preview import feed_media_url, load_feed_preview_bytes
 from bot.states import GenerationStates
 
 logger = logging.getLogger(__name__)
@@ -152,10 +153,33 @@ def _prepare_preview_image(image_bytes: bytes) -> bytes:
 
 async def _send_feed_photo(target, task, markup) -> bool:
     caption = _feed_caption(task)
+    media_url = feed_media_url(task.result_url)
+    fast_preview = load_feed_preview_bytes(task.task_id, task.result_url)
+    fast_media = (
+        BufferedInputFile(fast_preview, filename=f"{task.task_id}.jpg")
+        if fast_preview
+        else None
+    )
     if not isinstance(target, types.CallbackQuery):
+        if fast_media:
+            try:
+                await target.answer_photo(
+                    photo=fast_media,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=markup,
+                )
+                return True
+            except TelegramBadRequest as exc:
+                logger.warning(
+                    "Cannot send feed task %s fast preview (%s); trying URL",
+                    task.task_id,
+                    exc,
+                )
+
         try:
             await target.answer_photo(
-                photo=task.result_url,
+                photo=media_url,
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=markup,
@@ -168,7 +192,7 @@ async def _send_feed_photo(target, task, markup) -> bool:
                 exc,
             )
 
-        image_bytes = await _download_preview(task.result_url)
+        image_bytes = await _download_preview(media_url)
         if not image_bytes:
             return False
 
@@ -176,7 +200,7 @@ async def _send_feed_photo(target, task, markup) -> bool:
             image_bytes = _prepare_preview_image(image_bytes)
             await target.answer_photo(
                 photo=BufferedInputFile(
-                    image_bytes, filename=_filename_from_url(task.result_url)
+                    image_bytes, filename=_filename_from_url(media_url)
                 ),
                 caption=caption,
                 parse_mode="HTML",
@@ -189,10 +213,28 @@ async def _send_feed_photo(target, task, markup) -> bool:
             )
             return False
 
+    if fast_media:
+        try:
+            await target.message.edit_media(
+                media=InputMediaPhoto(
+                    media=fast_media,
+                    caption=caption,
+                    parse_mode="HTML",
+                ),
+                reply_markup=markup,
+            )
+            return True
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Cannot edit feed task %s with fast preview (%s); trying URL",
+                task.task_id,
+                exc,
+            )
+
     try:
         await target.message.edit_media(
             media=InputMediaPhoto(
-                media=task.result_url,
+                media=media_url,
                 caption=caption,
                 parse_mode="HTML",
             ),
@@ -206,14 +248,14 @@ async def _send_feed_photo(target, task, markup) -> bool:
             exc,
         )
 
-    image_bytes = await _download_preview(task.result_url)
+    image_bytes = await _download_preview(media_url)
     if not image_bytes:
         return False
 
     try:
         image_bytes = _prepare_preview_image(image_bytes)
         media = BufferedInputFile(
-            image_bytes, filename=_filename_from_url(task.result_url)
+            image_bytes, filename=_filename_from_url(media_url)
         )
         await target.message.edit_media(
             media=InputMediaPhoto(media=media, caption=caption, parse_mode="HTML"),
@@ -235,7 +277,7 @@ async def _send_feed_photo(target, task, markup) -> bool:
     try:
         await target.message.answer_photo(
             photo=BufferedInputFile(
-                image_bytes, filename=_filename_from_url(task.result_url)
+                image_bytes, filename=_filename_from_url(media_url)
             ),
             caption=caption,
             parse_mode="HTML",

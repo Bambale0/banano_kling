@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 GEMINI_OMNI_MAX_IMAGES = 7
@@ -134,7 +136,9 @@ class GeminiOmniService:
             "resolution": resolution,
         }
         if image_urls:
-            input_data["image_urls"] = image_urls[:GEMINI_OMNI_MAX_IMAGES]
+            input_data["image_urls"] = [
+                normalize_kie_image_url(u) for u in image_urls[:GEMINI_OMNI_MAX_IMAGES]
+            ]
         if video_urls:
             input_data["video_list"] = [
                 {"url": url, "start": 0, "ends": 10}
@@ -211,7 +215,7 @@ class GeminiOmniService:
     ) -> Optional[Dict]:
         payload: Dict = {
             "descriptions": description,
-            "image_urls": [image_url],
+            "image_urls": [normalize_kie_image_url(image_url)],
             "character_name": character_name,
         }
         # Older Kie examples used `description`; current OpenAPI marks

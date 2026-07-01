@@ -3,6 +3,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,11 +71,14 @@ class SeedreamLiteService:
         nsfw_checker: bool = False,
         callback_url: str = None,
     ) -> Optional[str]:
+        # Normalize relative URLs to absolute (Kie.ai cannot fetch relative paths)
+        normalized_urls = [normalize_kie_image_url(u) for u in (image_urls or [])]
+
         payload = {
             "model": model,
             "input": {
                 "prompt": prompt,
-                "image_urls": image_urls or [],
+                "image_urls": normalized_urls,
                 "aspect_ratio": aspect_ratio,
                 "quality": quality,
                 "nsfw_checker": nsfw_checker,

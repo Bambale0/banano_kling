@@ -5,6 +5,8 @@ from typing import Dict, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 # Maps internal model keys → Kie.ai model identifiers
@@ -119,10 +121,10 @@ class HailuoService:
             input_data["prompt_optimizer"] = prompt_optimizer
 
         if image_url:
-            input_data["image_url"] = image_url
+            input_data["image_url"] = normalize_kie_image_url(image_url)
 
         if end_image_url and model_key in ("hailuo_i2v_pro", "hailuo_i2v_std"):
-            input_data["end_image_url"] = end_image_url
+            input_data["end_image_url"] = normalize_kie_image_url(end_image_url)
 
         payload: Dict = {
             "model": api_model,

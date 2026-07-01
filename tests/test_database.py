@@ -506,6 +506,36 @@ async def test_feed_publish_filters_and_metrics(temp_db):
 
 
 @pytest.mark.asyncio
+async def test_feed_keeps_published_task_with_external_result_url(temp_db):
+    user = await get_or_create_user(123456)
+    await add_generation_task(
+        user.id,
+        123456,
+        "external_img",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+    )
+    async with aiosqlite.connect(temp_db) as db:
+        await db.execute(
+            """
+            UPDATE generation_tasks
+            SET status = 'completed',
+                result_url = 'https://cdn.example.test/external.jpg',
+                completed_at = CURRENT_TIMESTAMP
+            WHERE task_id = 'external_img'
+            """
+        )
+        await db.commit()
+
+    assert await share_task_to_feed("external_img", 123456) == (True, "ok")
+
+    feed_tasks = await get_feed_tasks()
+    assert [task.task_id for task in feed_tasks] == ["external_img"]
+    assert feed_tasks[0].result_url == "https://cdn.example.test/external.jpg"
+
+
+@pytest.mark.asyncio
 async def test_feed_publish_blocks_foreign_source(temp_db):
     author = await get_or_create_user(111)
     remixer = await get_or_create_user(222)

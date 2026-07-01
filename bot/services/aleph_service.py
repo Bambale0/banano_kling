@@ -5,6 +5,8 @@ from typing import Dict, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,7 +72,7 @@ class AlephService:
         if seed:
             payload["seed"] = seed
         if reference_image:
-            payload["referenceImage"] = reference_image
+            payload["referenceImage"] = normalize_kie_image_url(reference_image)
         # uploadCn default false
 
         resp = await self._post("/api/v1/aleph/generate", payload)

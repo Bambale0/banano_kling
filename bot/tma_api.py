@@ -27,6 +27,7 @@ from bot.services.grok_service import grok_service
 from bot.services.ideogram_service import ideogram_service
 from bot.services.image_analyzer_service import image_analyzer_service
 from bot.services.kling_service import kling_service
+from bot.services.feed_preview import feed_preview_url
 from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
@@ -625,7 +626,8 @@ async def _feed(limit: int = 40) -> list[dict]:
             "prompt": task.prompt,
             "result_url": _absolute_media_url(task.result_url),
             "reference_images": task.reference_images,
-            "preview_url": _absolute_media_url(task.result_url)
+            "preview_url": feed_preview_url(task.task_id, task.result_url)
+            or _absolute_media_url(task.result_url)
             or _reference_preview_url(task.reference_images),
             "likes_count": task.likes_count,
             "shares_count": task.shares_count,

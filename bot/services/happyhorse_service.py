@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.services.kling_service import normalize_kie_image_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +109,7 @@ class HappyHorseService:
             logger.error(f"Unknown HappyHorse model key: {model_key}")
             return None
 
-        image_urls = [url for url in (image_urls or []) if url]
+        image_urls = [normalize_kie_image_url(url) for url in (image_urls or []) if url]
         input_data: Dict = {
             "prompt": prompt,
             "resolution": resolution,

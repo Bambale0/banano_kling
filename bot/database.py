@@ -2566,6 +2566,17 @@ async def refund_generation_billing(
     if task.billing_source == "subscription":
         return await refund_subscription_usage(task.subscription_usage_id or 0)
     if task.cost and task.cost > 0 and task.telegram_id:
+        # Админы не платят — refund не начисляем, иначе это чистый «+» без списания
+        from bot.config import config
+
+        if config.is_admin(task.telegram_id):
+            logger.info(
+                "Skipping refund for admin %s (task %s, cost %s) — free access was used",
+                task.telegram_id,
+                task_id,
+                task.cost,
+            )
+            return False
         return await add_credits_once(
             task.telegram_id,
             task.cost,
@@ -2892,9 +2903,10 @@ async def remove_task_from_feed(task_id: str, telegram_id: int) -> bool:
 
 async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
     """Returns public completed image tasks for bot-side feed cards.
-    
-    Only returns tasks with locally stored media (/uploads/) to ensure
-    images are accessible even after external URLs expire.
+
+    Feed visibility is based on persisted publication flags. External result
+    URLs may still be valid and can be cached lazily by the media proxy, so do
+    not hide published tasks only because the URL is not local yet.
     """
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -2908,7 +2920,6 @@ async def get_feed_tasks(limit: int = 30) -> list[GenerationTask]:
               AND status = 'completed'
               AND result_url IS NOT NULL
               AND result_url != ''
-              AND (result_url LIKE '/uploads/%' OR result_url LIKE 'uploads/%')
             ORDER BY
               (COALESCE(likes_count, 0) + COALESCE(shares_count, 0) * 3) DESC,
               COALESCE(published_at, completed_at, created_at) DESC
@@ -3132,6 +3143,87 @@ async def fail_generation_task(task_id: str) -> bool:
         if row:
             await _notify_tma_task_update(dict(row))
         return True
+
+
+async def timeout_stale_pending_tasks(
+    max_age_minutes: int = 60,
+    *,
+    refund: bool = True,
+    dry_run: bool = False,
+) -> list[dict]:
+    """Закрывает pending-задачи старше N минут как failed, опционально возвращая ресурсы.
+
+    Возвращает список словарей с информацией о закрытых задачах.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT * FROM generation_tasks
+            WHERE status = 'pending'
+              AND datetime(created_at) <= datetime('now', ?)
+            ORDER BY created_at ASC
+            """,
+            (f"-{max_age_minutes} minutes",),
+        )
+        stale_rows = await cursor.fetchall()
+        if not stale_rows:
+            await db.commit()
+            return []
+
+        results: list[dict] = []
+        for row in stale_rows:
+            task = dict(row)
+            if not dry_run:
+                await db.execute(
+                    """UPDATE generation_tasks
+                       SET status = 'failed', completed_at = CURRENT_TIMESTAMP
+                       WHERE task_id = ? AND status = 'pending'""",
+                    (task["task_id"],),
+                )
+                if refund and task.get("cost") and int(task["cost"] or 0) > 0 and task.get("telegram_id"):
+                    await refund_generation_billing(
+                        task["task_id"],
+                        reason="generation_refund_timeout",
+                        metadata={"stale_minutes": max_age_minutes},
+                    )
+                    task["refunded"] = True
+                else:
+                    task["refunded"] = False
+                await _notify_tma_task_update(dict(task))
+                results.append(
+                    {
+                        "task_id": task["task_id"],
+                        "telegram_id": task.get("telegram_id"),
+                        "model": task.get("model"),
+                        "created_at": task.get("created_at"),
+                        "cost": task.get("cost"),
+                        "refunded": task.get("refunded", False),
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "task_id": task["task_id"],
+                        "telegram_id": task.get("telegram_id"),
+                        "model": task.get("model"),
+                        "created_at": task.get("created_at"),
+                        "cost": task.get("cost"),
+                        "refunded": False,
+                        "dry_run": True,
+                    }
+                )
+
+        await db.commit()
+        if results:
+            logger.info(
+                "Timed out %d stale pending tasks (max_age=%d min, refund=%s, dry_run=%s)",
+                len(results),
+                max_age_minutes,
+                refund,
+                dry_run,
+            )
+        return results
 
 
 async def _notify_tma_task_update(row: dict) -> None:
