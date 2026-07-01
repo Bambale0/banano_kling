@@ -2264,6 +2264,11 @@ async def show_main_img_banana_2(callback: types.CallbackQuery, state: FSMContex
     await _open_image_model_from_main(callback, state, model="banana_2")
 
 
+@router.callback_query(F.data == "main_img_nano_banana_2_lite")
+async def show_main_img_nano_banana_2_lite(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="nano-banana-2-lite")
+
+
 @router.callback_query(F.data == "main_img_seedream")
 async def show_main_img_seedream(callback: types.CallbackQuery, state: FSMContext):
     await _open_image_model_from_main(callback, state, model="seedream_edit")
@@ -2593,7 +2598,7 @@ async def _open_image_model_from_main(
     await state.update_data(
         generation_type="image",
         img_service=model,
-        img_ratio="auto" if model == "flux_pro" else "1:1",
+        img_ratio="auto" if model in {"flux_pro", "nano-banana-2-lite"} else "1:1",
         img_count=1,
         img_quality="2K",
         img_nsfw_checker=False,

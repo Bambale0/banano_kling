@@ -75,6 +75,10 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
             web_app=WebAppInfo(url=_mini_app_url_with_referral(mini_app_referral_code) or config.mini_app_url),
         )
     builder.button(text="🖼 Создать фото", callback_data="create_image_text_new")
+    builder.button(
+        text="🔥 Nano Banana 2 Lite • 1🍌",
+        callback_data="main_img_nano_banana_2_lite",
+    )
     builder.button(text="🎬 Создать видео", callback_data="create_video_new")
     builder.button(text="🎯 Motion Control", callback_data="motion_control")
     builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
@@ -88,9 +92,9 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
     builder.button(text="⋯ Ещё", callback_data="ux_more")
 
     if config.mini_app_url:
-        builder.adjust(1, 2, 2, 2, 2, 2, 2)
+        builder.adjust(1, 1, 2, 2, 2, 2, 2, 2)
     else:
-        builder.adjust(2, 2, 2, 2, 2, 2)
+        builder.adjust(1, 2, 2, 2, 2, 2, 2)
 
     return builder.as_markup()
 
