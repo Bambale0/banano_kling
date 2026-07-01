@@ -70,31 +70,37 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
     builder = InlineKeyboardBuilder()
 
     if config.mini_app_url:
-        builder.button(
-            text="🚀 Открыть Mini App",
-            web_app=WebAppInfo(url=_mini_app_url_with_referral(mini_app_referral_code) or config.mini_app_url),
+        builder.row(
+            InlineKeyboardButton(
+                text="🚀 Открыть Mini App",
+                web_app=WebAppInfo(url=_mini_app_url_with_referral(mini_app_referral_code) or config.mini_app_url),
+            )
         )
-    builder.button(text="🖼 Создать фото", callback_data="create_image_text_new")
-    builder.button(
-        text="🔥 Nano Banana 2 Lite • 1🍌",
-        callback_data="main_img_nano_banana_2_lite",
+    # 🖼 Создать фото — первая ячейка левой колонки
+    builder.row(
+        InlineKeyboardButton(text="🖼 Создать фото", callback_data="create_image_text_new"),
+        InlineKeyboardButton(text="🎬 Создать видео", callback_data="create_video_new"),
     )
-    builder.button(text="🎬 Создать видео", callback_data="create_video_new")
-    builder.button(text="🎯 Motion Control", callback_data="motion_control")
-    builder.button(text="📸 Промпт по фото", callback_data="photo_to_prompt")
-    builder.button(text=f"🎞 Промпт по видео • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt")
-    builder.button(text="🖼 Лента", callback_data="menu_feed")
-    builder.button(text="📚 Библиотека промптов", callback_data="menu_prompts")
-    builder.button(text="🤖 AI-помощник", callback_data="menu_ai_assistant")
-    builder.button(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance")
-    builder.button(text="💬 Поддержка", callback_data="menu_support")
-    builder.button(text="🤝 Партнёрам", callback_data="menu_partner")
-    builder.button(text="⋯ Ещё", callback_data="ux_more")
-
-    if config.mini_app_url:
-        builder.adjust(1, 1, 2, 2, 2, 2, 2, 2)
-    else:
-        builder.adjust(1, 2, 2, 2, 2, 2, 2)
+    builder.row(
+        InlineKeyboardButton(text="🎯 Motion Control", callback_data="motion_control"),
+        InlineKeyboardButton(text="📸 Промпт по фото", callback_data="photo_to_prompt"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=f"🎞 Промпт по видео • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt"),
+        InlineKeyboardButton(text="🖼 Лента", callback_data="menu_feed"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="📚 Библиотека промптов", callback_data="menu_prompts"),
+        InlineKeyboardButton(text="🤖 AI-помощник", callback_data="menu_ai_assistant"),
+    )
+    builder.row(
+        InlineKeyboardButton(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance"),
+        InlineKeyboardButton(text="💬 Поддержка", callback_data="menu_support"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🤝 Партнёрам", callback_data="menu_partner"),
+        InlineKeyboardButton(text="⋯ Ещё", callback_data="ux_more"),
+    )
 
     return builder.as_markup()
 
