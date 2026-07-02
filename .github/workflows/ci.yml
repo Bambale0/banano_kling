@@ -1,0 +1,30 @@
+name: Deploy Таня TG
+
+on:
+  push:
+    branches: [tanyapi]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT || 2022 }}
+          username: ${{ secrets.DEPLOY_USER || 'root' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /root/tanya/banano_kling
+            git fetch --all
+            git pull --ff-only origin tanyapi
+            cp bot.service /etc/systemd/system/
+            systemctl daemon-reload
+            systemctl restart bot
+            sleep 3
+            systemctl status bot --no-pager --lines=5
+            echo '✅ Deploy OK'
