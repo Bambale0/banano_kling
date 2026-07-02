@@ -98,6 +98,18 @@ class Config:
     PHOTO_PROMPT_MODEL: str = os.getenv(
         "PHOTO_PROMPT_MODEL", "gpt-5-5"
     )
+
+    # APIYI Vision — простой анализ фото в промпт (как в VK-боте)
+    APIYI_VISION_MODEL: str = os.getenv(
+        "APIYI_VISION_MODEL", "gpt-5-4"
+    )
+    APIYI_VISION_FALLBACK_MODELS: list[str] = [
+        m.strip() for m in os.getenv("APIYI_VISION_FALLBACK_MODELS", "").split(",") if m.strip()
+    ]
+    APIYI_BASE_URL: str = os.getenv(
+        "APIYI_BASE_URL", "https://api.apiyi.com/v1"
+    ).rstrip("/")
+
     PHOTO_PROMPT_MAX_AUDIO_BYTES: int = int(
         os.getenv("PHOTO_PROMPT_MAX_AUDIO_BYTES", str(10 * 1024 * 1024))
     )
