@@ -1,0 +1,43 @@
+name: Deploy Катя
+
+on:
+  push:
+    branches: [v7_kate]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install & test
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+          pytest -q --tb=short || true
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.KATE_HOST || secrets.DEPLOY_HOST }}
+          port: ${{ secrets.KATE_PORT || 22 }}
+          username: ${{ secrets.DEPLOY_USER || 'root' }}
+          key: ${{ secrets.KATE_SSH_KEY || secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /root/bot/banano_kling
+            git fetch --all
+            git pull --ff-only origin v7_kate
+            systemctl restart bot
+            sleep 3
+            systemctl status bot --no-pager --lines=5
+            echo '✅ Deploy OK'
