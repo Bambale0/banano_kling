@@ -1122,27 +1122,62 @@ async def get_or_create_user(
                 )
                 has_completed_payment = await txn_cursor.fetchone() is not None
                 if not has_completed_payment:
-                    await db.execute(
-                        "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND referred_by IS NULL",
-                        (referrer_id, 0, row["id"]),
-                    )
-                    if db.total_changes > 0:
-                        await db.execute(
-                            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
-                            (referrer_id, row["id"]),
+                    # АНТИФРОД: те же проверки, что в process_referral
+                    if code in REFERRAL_ANTIFRAUD_BLOCK_CODES or referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
+                        logger.warning(
+                            "Referral blocked by antifraud blocklist (Path A): telegram_id=%s code=%s referrer_id=%s",
+                            telegram_id, code, referrer_id,
                         )
-                        await db.execute(
-                            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                            (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
-                        )
-                        await db.commit()
-                        referred_by = referrer_id
+                    elif await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=row["id"]):
                         logger.info(
-                            "Referral attached to existing user: telegram_id=%s referrer_id=%s code=%s",
-                            telegram_id,
-                            referrer_id,
-                            code,
+                            "Referral skipped: chain cycle (Path A): telegram_id=%s referrer_id=%s",
+                            telegram_id, referrer_id,
                         )
+                    else:
+                        # Hourly limit по referrals.created_at
+                        hourly_cursor = await db.execute(
+                            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 hour')",
+                            (referrer_id,),
+                        )
+                        hourly_count = int((await hourly_cursor.fetchone())["cnt"])
+                        if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
+                            logger.warning(
+                                "Referral blocked by antifraud hourly limit (Path A): telegram_id=%s referrer_id=%s hourly=%s limit=%s",
+                                telegram_id, referrer_id, hourly_count, REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
+                            )
+                        else:
+                            daily_cursor = await db.execute(
+                                "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
+                                (referrer_id,),
+                            )
+                            daily_count = int((await daily_cursor.fetchone())["cnt"])
+                            if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
+                                logger.warning(
+                                    "Referral blocked by antifraud daily limit (Path A): telegram_id=%s referrer_id=%s daily=%s limit=%s",
+                                    telegram_id, referrer_id, daily_count, REFERRAL_ANTIFRAUD_MAX_PER_DAY,
+                                )
+                            else:
+                                update_cursor = await db.execute(
+                                    "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND referred_by IS NULL",
+                                    (referrer_id, 0, row["id"]),
+                                )
+                                if update_cursor.rowcount > 0:
+                                    await db.execute(
+                                        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+                                        (referrer_id, row["id"]),
+                                    )
+                                    await db.execute(
+                                        "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                        (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
+                                    )
+                                    await db.commit()
+                                    referred_by = referrer_id
+                                    logger.info(
+                                        "Referral attached to existing user: telegram_id=%s referrer_id=%s code=%s",
+                                        telegram_id,
+                                        referrer_id,
+                                        code,
+                                    )
 
             referral_code = (
                 row["referral_code"] if "referral_code" in row.keys() else None
@@ -1727,7 +1762,7 @@ async def process_referral(
             )
             return False
         hourly_cursor = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM users WHERE referred_by = ? AND created_at >= datetime('now', '-1 hour')",
+            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 hour')",
             (referrer["id"],),
         )
         hourly_count = int((await hourly_cursor.fetchone())["cnt"])
@@ -1743,7 +1778,7 @@ async def process_referral(
             )
             return False
         daily_cursor = await db.execute(
-            "SELECT COUNT(*) AS cnt FROM users WHERE referred_by = ? AND created_at >= datetime('now', '-1 day')",
+            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
             (referrer["id"],),
         )
         daily_count = int((await daily_cursor.fetchone())["cnt"])

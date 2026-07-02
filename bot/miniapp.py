@@ -787,15 +787,15 @@ async def _activate_start_param_referral(
                 if str(telegram_user.get(key) or "").strip()
             ),
         )
-        await _notify_partner_about_new_referral(
+        sent = await _notify_partner_about_new_referral(
             app["bot"],
             referrer_telegram_id=referrer.telegram_id,
             referred=referred,
         )
         logger.info(
-            "Mini App referral applied: user_id=%s username=%s code=%s referrer_telegram_id=%s",
+            "Mini App referral %s: user_id=%s code=%s referrer=%s",
+            "notified" if sent else "skipped",
             telegram_id,
-            telegram_user.get("username"),
             referral_code,
             referrer.telegram_id,
         )
@@ -860,11 +860,16 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
                         if str(telegram_user.get(key) or "").strip()
                     ),
                 )
-                await _notify_partner_about_new_referral(
+                sent = await _notify_partner_about_new_referral(
                     app["bot"],
                     referrer_telegram_id=referrer.telegram_id,
                     referred=referred_sn,
                 )
+                if sent:
+                    logger.info(
+                        "Mini App get_or_create_user referral notify: user_id=%s code=%s",
+                        telegram_id, referral_code,
+                    )
         except Exception:
             logger.exception(
                 "Failed to notify partner about miniapp referral: user_id=%s code=%s",

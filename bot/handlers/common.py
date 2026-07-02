@@ -4,6 +4,7 @@ import time
 import mimetypes
 import re
 import uuid
+from datetime import datetime
 from math import floor
 from urllib.parse import urlparse
 
@@ -1065,8 +1066,29 @@ async def _notify_partner_about_new_referral(
     *,
     referrer_telegram_id: int,
     referred: types.User | None,
-) -> None:
+) -> bool:
+    """Отправляет уведомление о новом реферале. Возвращает True если отправлено, False если пропущено."""
     referred_id = getattr(referred, "id", None)
+
+    # Не уведомляем о привязке существующих пользователей — только реально новые
+    if referred_id:
+        try:
+            db_user = await get_or_create_user(referred_id)
+            if db_user and db_user.created_at:
+                age_seconds = (datetime.now() - db_user.created_at).total_seconds()
+                if age_seconds > 300:  # >5 минут — уже существующий
+                    logger.info(
+                        "Referral notify skipped: existing user referred_id=%s age=%ds",
+                        referred_id,
+                        int(age_seconds),
+                    )
+                    return False
+        except Exception:
+            logger.debug(
+                "Failed to check user age for referral notify: user_id=%s",
+                referred_id,
+                exc_info=True,
+            )
     referred_username = _clean_telegram_username(getattr(referred, "username", None))
     referred_name = _profile_display_name(referred)
 
@@ -1096,6 +1118,7 @@ async def _notify_partner_about_new_referral(
 
     try:
         await bot.send_message(referrer_telegram_id, text, parse_mode="HTML")
+        return True
     except TelegramBadRequest as e:
         logger.info(
             "Failed to notify partner %s about new referral %s: %s",
@@ -1109,6 +1132,7 @@ async def _notify_partner_about_new_referral(
             referrer_telegram_id,
             referred_id,
         )
+    return False
 
 
 # Состояния для ИИ-ассистента
@@ -2054,17 +2078,18 @@ async def _notify_partner_if_new_referral(
         )
         return
     try:
-        await _notify_partner_about_new_referral(
+        sent = await _notify_partner_about_new_referral(
             bot,
             referrer_telegram_id=referrer.telegram_id,
             referred=referred,
         )
-        logger.info(
-            "Referral partner notified: referrer_telegram_id=%s referred_id=%s code=%s",
-            referrer.telegram_id,
-            referred_id,
-            code,
-        )
+        if sent:
+            logger.info(
+                "Referral partner notified: referrer_telegram_id=%s referred_id=%s code=%s",
+                referrer.telegram_id,
+                referred_id,
+                code,
+            )
     except Exception:
         logger.exception(
             "Failed to notify partner about referral: referrer=%s referred=%s code=%s",
@@ -2119,11 +2144,16 @@ async def _activate_referral_code(
         )
 
     if referrer:
-        await _notify_partner_about_new_referral(
+        sent = await _notify_partner_about_new_referral(
             bot,
             referrer_telegram_id=referrer.telegram_id,
             referred=referred,
         )
+        if sent:
+            logger.info(
+                "Referral activation notify sent: user_id=%s code=%s referrer=%s",
+                referred.id, code, referrer.telegram_id,
+            )
 
     logger.info(
         "Referral activation applied: user_id=%s username=%s code=%s referrer_telegram_id=%s",
