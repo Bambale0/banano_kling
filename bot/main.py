@@ -1540,6 +1540,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             service_name = "Nano Banana"
             if "pro" in model_lower:
                 service_name += " Pro"
+            elif "lite" in model_lower:
+                service_name += " 2 Lite"
             else:
                 service_name += " 2"
         elif "hailuo" in model_lower:

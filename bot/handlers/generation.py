@@ -59,6 +59,7 @@ from bot.services.generation_guard import generation_lock_guard
 from bot.services.storage_policy import choose_upload_category, public_upload_url, upload_path
 from bot.services.gpt_image_service import gpt_image_service
 from bot.services.grok_service import grok_service
+from bot.services.kie_market_service import kie_market_service
 from bot.services.gemini_omni_service import (
     GEMINI_OMNI_BASE_VOICES,
     GEMINI_OMNI_MAX_AUDIO_IDS,
@@ -5003,6 +5004,14 @@ async def handle_image_prompt_text(
                     quality=job_options.get("quality", "basic"),
                     nsfw_checker=job_options.get("nsfw_checker", False),
                     image_urls=reference_images,
+                    callback_url=callback_url,
+                )
+            elif job_model == "nano_banana_2_lite":
+                model_config = get_image_model_config(job_model)
+                result = await kie_market_service.generate_nano_banana_2_lite(
+                    prompt=prompt,
+                    image_urls=reference_images or None,
+                    aspect_ratio=job_options["aspect_ratio"],
                     callback_url=callback_url,
                 )
             elif job_model == "gpt_image_2":

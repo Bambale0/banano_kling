@@ -57,6 +57,7 @@ class Config:
         "WEBHOOK_SECRET", ""
     )
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
+    KIE_AI_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_AI_WEBHOOK_HMAC_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
 
     # Legacy API Keys (optional fallbacks)

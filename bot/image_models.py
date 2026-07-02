@@ -4,6 +4,7 @@ IMAGE_MODEL_ORDER = [
     # Text-to-image (работают без референсов)
     "banana_pro",
     "banana_2",
+    "nano_banana_2_lite",
     "wan_27_image_pro",
     "wan_27_image",
     "gpt_image_2",
@@ -19,6 +20,7 @@ IMAGE_MODEL_ORDER = [
 IMAGE_MODEL_ALIASES = {
     "nanobanana": "banana_pro",
     "nano-banana-pro": "banana_pro",
+    "nano-banana-2-lite": "nano_banana_2_lite",
     "seedream": "seedream_edit",
     "seedream_45": "seedream_edit",
     "wan-image": "wan_27_image",
@@ -64,6 +66,28 @@ IMAGE_MODEL_CONFIGS = {
             "output_format": ["png", "jpg"],
         },
         "service": "banana_2",
+    },
+    "nano_banana_2_lite": {
+        "label": "⚡ Nano Banana 2 Lite",
+        "settings_label": "⚡ Nano Banana 2 Lite",
+        "cost_key": "nano_banana_2_lite",
+        "requires_refs": False,
+        "supports_refs": True,
+        "aspect_ratios": [
+            "auto", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1",
+            "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
+        ],
+        "defaults": {
+            "aspect_ratio": "auto",
+        },
+        "options": {
+            "aspect_ratio": [
+                "auto", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1",
+                "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
+            ],
+        },
+        "service": "kie_market",
+        "api_model": "nano-banana-2-lite",
     },
     "wan_27_image": {
         "label": "🌊 Wan 2.7 Image",

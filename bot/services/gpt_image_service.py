@@ -1,9 +1,22 @@
 import logging
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_kie_image_url(url: str) -> str:
+    """Превращает относительный URL в абсолютный для Kie.ai API (который не умеет ходить по relative paths)."""
+    parsed = urlparse(url)
+    if parsed.scheme in ("http", "https"):
+        return url
+    # относительный путь — подклеиваем WEBHOOK_HOST
+    from bot.config import config
+
+    host = config.WEBHOOK_HOST.rstrip("/")
+    return f"{host}{url}"
 
 
 class GPTImageService:

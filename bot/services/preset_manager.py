@@ -208,6 +208,7 @@ class PresetManager:
             "z-image-turbo": "z_image_turbo",
             "seedream": "seedream",
             "seedream_lite": "seedream_lite",
+            "nano_banana_2_lite": "nano_banana_2_lite",
             "wan_27_image": "wan_27_image",
             "wan_27_image_pro": "wan_27_image_pro",
         }
