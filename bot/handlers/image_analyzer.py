@@ -888,3 +888,197 @@ async def photo_prompt_wrong_input(message: Message):
         "Пожалуйста, отправьте фото или голосовой промпт. Можно отправлять их отдельно или сначала голос, затем фото.",
         reply_markup=get_back_keyboard("back_main"),
     )
+
+# ─── VK-style simple photo to prompt (analogous to VK bot) ─────────
+
+@router.callback_query(F.data == "photo_to_prompt_vk")
+async def photo_to_prompt_vk_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(ImageAnalyzerStates.waiting_for_photo_vk)
+
+    text = (
+        "📸 Фото→Промпт (бесплатно)\n\n"
+        "Отправьте одно фото, и я превращу его в подробный промпт для генерации.\n\n"
+        "Это удобно, если нужно повторить стиль, композицию, образ, свет или предмет с картинки. "
+        "После анализа можно использовать текст в «Создать фото» или «Создать видео»."
+    )
+
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+    except TelegramBadRequest as e:
+        if "there is no text in the message to edit" not in str(e).lower():
+            logger.warning("Cannot edit message in photo_to_prompt_vk_handler: %s", e)
+        await callback.message.answer(
+            text,
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
+
+
+async def _vk_analyze_photo(photo_url: str) -> str:
+    """Analyze photo via APIYI - same as VK bot."""
+    models = [config.APIYI_VISION_MODEL]
+    models.extend(m for m in config.APIYI_VISION_FALLBACK_MODELS if m not in models)
+
+    headers = {
+        "Authorization": f"Bearer {config.KIE_AI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    last_error = None
+    for model in models:
+        try:
+            data = {
+                "model": model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Составь подробное описание изображения для генерации похожего в Banana Pro. "
+                                    "Сохрани все мелкие детали, лицо, одежду, позу, освещение, стиль, цвета. "
+                                    "На русском языке."
+                                ),
+                            },
+                            {"type": "input_image", "image_url": photo_url},
+                        ],
+                    }
+                ],
+                "instructions": (
+                    "Ты эксперт по промптам для генерации изображений. "
+                    "Отвечай только готовым промптом без вводных фраз."
+                ),
+                "max_output_tokens": 1200,
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{config.APIYI_BASE_URL}/responses",
+                    headers=headers,
+                    json=data,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                ) as resp:
+                    text_result = await resp.text()
+
+                    if resp.status != 200:
+                        logger.warning(
+                            "APIYI %s HTTP %s: %s", model, resp.status, text_result[:500]
+                        )
+                        last_error = ValueError(f"APIYI {resp.status}")
+                        continue
+
+                    try:
+                        result = json.loads(text_result)
+                    except json.JSONDecodeError as e:
+                        logger.warning("APIYI JSON error: %s body=%s", e, text_result[:500])
+                        last_error = ValueError(f"JSON error: {e}")
+                        continue
+
+                    # Try choices format
+                    if result.get("choices") and result["choices"]:
+                        msg = result["choices"][0].get("message", {})
+                        content_text = msg.get("content")
+                        if content_text:
+                            return content_text.strip()
+
+                    # Try output_text format
+                    if result.get("output_text"):
+                        return str(result["output_text"]).strip()
+
+                    # Try responses format (output array)
+                    output_parts = []
+                    for item in result.get("output", []) or []:
+                        if isinstance(item, dict) and item.get("type") == "message":
+                            for c in item.get("content", []) or []:
+                                if isinstance(c, dict) and c.get("type") == "output_text":
+                                    text_val = c.get("text", "")
+                                    if text_val:
+                                        output_parts.append(str(text_val))
+                    if output_parts:
+                        return "\n".join(output_parts).strip()
+
+                    logger.warning("APIYI unexpected response: %s", result)
+                    last_error = ValueError("Unexpected API response")
+                    continue
+
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.warning("APIYI network error with %s: %s", model, e)
+            last_error = e
+            continue
+        except Exception as e:
+            logger.exception("APIYI unexpected error with %s: %s", model, e)
+            last_error = e
+            continue
+
+    raise ValueError(f"APIYI photo analysis failed for all models: {last_error}")
+
+
+@router.message(ImageAnalyzerStates.waiting_for_photo_vk, F.photo)
+async def photo_to_prompt_vk_photo_handler(message: Message, state: FSMContext):
+    processing = await message.answer("🔍 Анализирую фото и готовлю промпт…")
+
+    try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        image_io = await message.bot.download_file(file.file_path)
+        image_bytes = image_io.read()
+
+        from bot.handlers.generation import save_uploaded_file
+        photo_url = save_uploaded_file(image_bytes, "jpg")
+
+        if not photo_url:
+            await processing.edit_text(
+                "❌ Не удалось сохранить фото. Попробуйте другое изображение.",
+                reply_markup=get_main_menu_button_keyboard(),
+            )
+            await state.clear()
+            return
+
+        prompt = await _vk_analyze_photo(photo_url)
+
+        try:
+            await processing.delete()
+        except Exception:
+            pass
+
+        await message.answer(
+            f"✅ Готовый промпт:\n\n<code>{html.escape(prompt)}</code>\n\n"
+            "Как использовать: скопируйте текст и вставьте его в «Создать фото» или «Создать видео». "
+            "При необходимости добавьте свои правки: формат, настроение, цвет, действие.",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
+
+    except ValueError as e:
+        await processing.edit_text(
+            f"⚠️ Не удалось разобрать фото через APIYI.\n\n"
+            f"{html.escape(str(e))}\n\n"
+            "Попробуйте ещё раз. Если ошибка повторится, можно использовать «📸 Промпт по фото» (GPT-5.5).",
+            reply_markup=get_back_keyboard("back_main"),
+            parse_mode="HTML",
+        )
+        await state.clear()
+    except Exception as e:
+        logger.exception("VK-style photo analysis failed")
+        await processing.edit_text(
+            f"❌ Ошибка: {html.escape(str(e)[:500])}",
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        await state.clear()
+
+
+@router.message(ImageAnalyzerStates.waiting_for_photo_vk)
+async def photo_to_prompt_vk_wrong_input(message: Message):
+    await message.answer(
+        "❌ Нужна фотография. Прикрепите изображение к сообщению.",
+        reply_markup=get_back_keyboard("back_main"),
+    )

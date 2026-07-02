@@ -119,7 +119,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="banano_kling hot-swap watcher")
     parser.add_argument(
         "--service",
-        default="banano-kling.service",
+        default="bot.service",
         help="systemd service to restart",
     )
     parser.add_argument(

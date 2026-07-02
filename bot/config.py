@@ -1,6 +1,6 @@
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typing import List
 
@@ -99,13 +99,11 @@ class Config:
         "PHOTO_PROMPT_MODEL", "gpt-5-5"
     )
 
-    # APIYI Vision — простой анализ фото в промпт (как в VK-боте)
+    # APIYI Vision — analysis photo in prompt (like VK bot)
     APIYI_VISION_MODEL: str = os.getenv(
         "APIYI_VISION_MODEL", "gpt-5-4"
     )
-    APIYI_VISION_FALLBACK_MODELS: list[str] = [
-        m.strip() for m in os.getenv("APIYI_VISION_FALLBACK_MODELS", "").split(",") if m.strip()
-    ]
+    APIYI_VISION_FALLBACK_MODELS: list[str] = field(default_factory=list)
     APIYI_BASE_URL: str = os.getenv(
         "APIYI_BASE_URL", "https://api.apiyi.com/v1"
     ).rstrip("/")

@@ -98,6 +98,7 @@ class ImageAnalyzerStates(StatesGroup):
 
     waiting_for_photo = State()
     waiting_for_video_prompt = State()
+    waiting_for_photo_vk = State()
 
 
 class SeedreamVideoStates(StatesGroup):

@@ -3968,7 +3968,7 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
 async def admin_execute_broadcast(
     callback: types.CallbackQuery, state: FSMContext, bot: Bot
 ):
-    """Выполняет рассылку"""
+    """Выполняет рассылку с throttling и корректной обработкой ошибок"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
@@ -3990,43 +3990,107 @@ async def admin_execute_broadcast(
         "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
     )
 
+    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
+
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
-        cursor = await db.execute("SELECT telegram_id FROM users")
+        cursor = await db.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
         users = await cursor.fetchall()
+
+    BATCH_SIZE = 20
+    BATCH_SLEEP = 1.0
+    MESSAGE_SLEEP = 0.05
+    PROGRESS_INTERVAL = 100
 
     success_count = 0
     error_count = 0
+    blocked_count = 0
+    total = len(users)
 
-    for user in users:
+    for idx, user in enumerate(users):
+        tid = user["telegram_id"]
+        if not tid:
+            continue
+
         try:
             if broadcast_media_type == "photo":
                 await bot.send_photo(
-                    user["telegram_id"],
+                    tid,
                     photo=broadcast_media_file_id,
                     caption=broadcast_text or None,
                     parse_mode="HTML" if broadcast_text else None,
                 )
             elif broadcast_media_type == "video":
                 await bot.send_video(
-                    user["telegram_id"],
+                    tid,
                     video=broadcast_media_file_id,
                     caption=broadcast_text or None,
                     parse_mode="HTML" if broadcast_text else None,
                 )
             else:
-                await bot.send_message(
-                    user["telegram_id"], broadcast_text, parse_mode="HTML"
-                )
+                await bot.send_message(tid, broadcast_text, parse_mode="HTML")
             success_count += 1
+        except TelegramForbiddenError:
+            blocked_count += 1
+        except TelegramBadRequest as e:
+            if "bot was blocked" in str(e).lower() or "user is deactivated" in str(e).lower():
+                blocked_count += 1
+            else:
+                logger.warning("Broadcast bad request for %s: %s", tid, e)
+                error_count += 1
+        except TelegramRetryAfter as e:
+            retry_after = e.retry_after if hasattr(e, "retry_after") else 10
+            logger.warning("Broadcast rate limit: sleeping %.1f seconds", retry_after)
+            await asyncio.sleep(retry_after)
+            try:
+                if broadcast_media_type == "photo":
+                    await bot.send_photo(
+                        tid,
+                        photo=broadcast_media_file_id,
+                        caption=broadcast_text or None,
+                        parse_mode="HTML" if broadcast_text else None,
+                    )
+                elif broadcast_media_type == "video":
+                    await bot.send_video(
+                        tid,
+                        video=broadcast_media_file_id,
+                        caption=broadcast_text or None,
+                        parse_mode="HTML" if broadcast_text else None,
+                    )
+                else:
+                    await bot.send_message(tid, broadcast_text, parse_mode="HTML")
+                success_count += 1
+            except Exception as e_retry:
+                logger.warning("Broadcast retry failed for %s: %s", tid, e_retry)
+                error_count += 1
         except Exception as e:
-            logger.warning(f"Broadcast failed for {user['telegram_id']}: {e}")
+            logger.warning("Broadcast failed for %s: %s", tid, e)
             error_count += 1
+
+        await asyncio.sleep(MESSAGE_SLEEP)
+
+        if (idx + 1) % BATCH_SIZE == 0:
+            await asyncio.sleep(BATCH_SLEEP)
+
+        if (idx + 1) % PROGRESS_INTERVAL == 0 or idx == total - 1:
+            try:
+                await callback.message.edit_text(
+                    f"📢 <b>Рассылка...</b>\n"
+                    f"📨 Обработано: <code>{idx + 1}/{total}</code>\n"
+                    f"✅ Успешно: <code>{success_count}</code>\n"
+                    f"⛔ Заблокировали: <code>{blocked_count}</code>\n"
+                    f"❌ Ошибок: <code>{error_count}</code>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
     await callback.message.edit_text(
         f"📢 <b>Рассылка завершена!</b>\n\n"
         f"✅ Успешно: <code>{success_count}</code>\n"
-        f"❌ Ошибок: <code>{error_count}</code>",
+        f"⛔ Заблокировали бота: <code>{blocked_count}</code>\n"
+        f"❌ Ошибок: <code>{error_count}</code>\n"
+        f"📬 Всего: <code>{total}</code>",
         reply_markup=get_admin_keyboard(),
         parse_mode="HTML",
     )
