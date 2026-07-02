@@ -20,6 +20,8 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.database import (
     DATABASE_PATH,
     PARTNER_INVITER_BONUS,
+    REFERRAL_ANTIFRAUD_BLOCK_CODES,
+    REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
     accept_partner_agreement,
     approve_partner_withdrawal,
     cancel_partner_withdrawal,
@@ -2022,6 +2024,43 @@ async def _sync_telegram_profile(user: types.User | None) -> None:
         logger.debug("Unable to sync Telegram profile for %s", getattr(user, "id", None), exc_info=True)
 
 
+async def _notify_partner_if_new_referral(
+    bot: Bot,
+    referred: types.User,
+    referral_code: str | None,
+) -> None:
+    """Уведомляет реферрера, если referral_code валидный и пользователь привязан.
+    
+    Используется как уведомительный вызов после того, как get_or_create_user
+    уже выполнил привязку атомарно.
+    """
+    code = str(referral_code or "").strip().upper()
+    if not code:
+        return
+    referrer = await get_user_by_referral_code(code)
+    if not referrer:
+        return
+    try:
+        await _notify_partner_about_new_referral(
+            bot,
+            referrer_telegram_id=referrer.telegram_id,
+            referred=referred,
+        )
+        logger.info(
+            "Referral partner notified: referrer_telegram_id=%s referred_id=%s code=%s",
+            referrer.telegram_id,
+            getattr(referred, "id", None),
+            code,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to notify partner about referral: referrer=%s referred=%s code=%s",
+            getattr(referrer, "telegram_id", None),
+            getattr(referred, "id", None),
+            code,
+        )
+
+
 async def _activate_referral_code(
     bot: Bot,
     referred: types.User,
@@ -3400,11 +3439,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # /start всегда прерывает текущий сценарий/FSM и возвращает в главное меню
     await state.clear()
 
-    # Создаём или получаем пользователя
-    user = await get_or_create_user(message.from_user.id)
-    await _sync_telegram_profile(message.from_user)
-
-    # Проверяем deep linking для возврата после оплаты
+    # Извлекаем аргументы deep linking
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
     logger.info(
         "Start command received: user_id=%s username=%s args=%s",
@@ -3412,6 +3447,22 @@ async def cmd_start(message: types.Message, state: FSMContext):
         getattr(message.from_user, "username", None),
         args,
     )
+
+    # Определяем реферальный код из любого типа deep link
+    referral_code_from_args: str | None = None
+    if args:
+        arg = args[0]
+        if arg.startswith("ref_"):
+            referral_code_from_args = arg.replace("ref_", "", 1)
+        elif arg.startswith("feed_") or arg.startswith("remix_") or arg.startswith("posts_"):
+            prefix = arg.split("_")[0]
+            _, extracted_code = _split_feed_deeplink(arg.replace(f"{prefix}_", "", 1))
+            if extracted_code:
+                referral_code_from_args = extracted_code
+
+    # Создаём или получаем пользователя — теперь атомарно с привязкой реферала
+    user = await get_or_create_user(message.from_user.id, referral_code=referral_code_from_args)
+    await _sync_telegram_profile(message.from_user)
 
     if args and args[0].startswith("success_"):
         # Извлекаем order_id из аргумента
@@ -3433,9 +3484,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 )
                 return
             elif transaction.status == "pending":
-                state = await _resolve_payment_state(transaction)
+                pstate = await _resolve_payment_state(transaction)
 
-                if state.get("paid"):
+                if pstate.get("paid"):
                     await _complete_transaction(order_id, bot=message.bot)
 
                     user = await get_or_create_user(message.from_user.id)
@@ -3450,7 +3501,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     )
                     return
 
-                if state.get("failed"):
+                if pstate.get("failed"):
                     await update_transaction_status(order_id, "failed")
                     await message.answer(
                         "⚠️ <b>Оплата не подтверждена</b>\n"
@@ -3488,13 +3539,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
         feed_gen_id, referral_code = _split_feed_deeplink(
             args[0].replace("feed_", "", 1)
         )
-        referral_bonus_text = await _activate_referral_code(
-            message.bot,
-            message.from_user,
-            referral_code,
-        )
-        if referral_bonus_text:
-            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        if referral_code:
+            await _notify_partner_if_new_referral(
+                message.bot, message.from_user, referral_code,
+            )
         await _render_feed_deeplink(
             message,
             user,
@@ -3506,13 +3554,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
         feed_gen_id, referral_code = _split_feed_deeplink(
             args[0].replace("remix_", "", 1)
         )
-        referral_bonus_text = await _activate_referral_code(
-            message.bot,
-            message.from_user,
-            referral_code,
-        )
-        if referral_bonus_text:
-            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        if referral_code:
+            await _notify_partner_if_new_referral(
+                message.bot, message.from_user, referral_code,
+            )
         await _render_feed_deeplink(
             message,
             user,
@@ -3531,13 +3576,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
         profile_code, referral_code = _split_feed_deeplink(
             args[0].replace("posts_", "", 1)
         )
-        referral_bonus_text = await _activate_referral_code(
-            message.bot,
-            message.from_user,
-            referral_code,
-        )
-        if referral_bonus_text:
-            await message.answer(referral_bonus_text.strip(), parse_mode="HTML")
+        if referral_code:
+            await _notify_partner_if_new_referral(
+                message.bot, message.from_user, referral_code,
+            )
         await _render_profile_feed_deeplink(
             message,
             user,
@@ -3546,18 +3588,25 @@ async def cmd_start(message: types.Message, state: FSMContext):
         return
 
     referral_bonus_text = ""
-    if args and args[0].startswith("ref_"):
-        referral_code = args[0].replace("ref_", "", 1)
-        referral_bonus_text = await _activate_referral_code(
-            message.bot,
-            message.from_user,
-            referral_code,
-        )
-
-    welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
     main_menu_referral_code = None
     if args and args[0].startswith("ref_"):
-        main_menu_referral_code = args[0].replace("ref_", "", 1).strip().upper() or None
+        referral_code = args[0].replace("ref_", "", 1)
+        main_menu_referral_code = referral_code.strip().upper() or None
+        # Уведомление реферрера, если привязка уже произошла в get_or_create_user
+        if user.referred_by:
+            referral_bonus_text = (
+                "\n🎁 <b>Реферальный бонус активирован!</b>\n"
+                "Вы получили бонус за регистрацию по приглашению."
+            )
+        else:
+            # Fallback — старый путь, если get_or_create_user не смог привязать
+            referral_bonus_text = await _activate_referral_code(
+                message.bot,
+                message.from_user,
+                referral_code,
+            )
+
+    welcome_text = _build_main_menu_text(user.credits, referral_bonus_text)
 
     try:
         await message.answer(
@@ -3575,6 +3624,60 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     # Запоминаем, что пользователь в главном меню
     _set_user_menu(message.from_user.id, "main_menu")
+
+
+@router.message(Command("check_ref"), StateFilter(None))
+async def cmd_check_ref(message: types.Message):
+    """Команда /check_ref <CODE> — диагностика реферального кода."""
+    args = message.text.split()[1:] if len(message.text.split()) > 1 else []
+    if not args:
+        await message.answer(
+            "🔍 <b>Проверка реферального кода</b>\n\n"
+            "Использование: <code>/check_ref КОД</code>\n"
+            "Например: <code>/check_ref JXZWPGFA</code>\n\n"
+            "Покажет, существует ли такой код и кому принадлежит.",
+            parse_mode="HTML",
+        )
+        return
+
+    code = args[0].strip().upper()
+    referrer = await get_user_by_referral_code(code)
+    if not referrer:
+        await message.answer(
+            f"❌ Код <code>{code}</code> не найден в базе данных.\n\n"
+            "Возможные причины:\n"
+            "• код введён с ошибкой\n"
+            "• пользователь удалил свой код\n"
+            "• код был изменён",
+            parse_mode="HTML",
+        )
+        return
+
+    # Считаем сколько рефералов привёл этот пользователь
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM users WHERE referred_by = ?",
+            (referrer.id,),
+        )
+        ref_count = (await cursor.fetchone())["cnt"] or 0
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM users WHERE referred_by = ? AND created_at >= datetime('now', '-1 hour')",
+            (referrer.id,),
+        )
+        hourly_count = (await cursor.fetchone())["cnt"] or 0
+
+    await message.answer(
+        f"✅ <b>Код найден!</b>\n\n"
+        f"Код: <code>{code}</code>\n"
+        f"Владелец: <code>{referrer.telegram_id}</code>\n"
+        f"Рефералов: {ref_count}\n"
+        f"За последний час: {hourly_count}\n"
+        f"(лимит: {REFERRAL_ANTIFRAUD_MAX_PER_HOUR}/час, {REFERRAL_ANTIFRAUD_MAX_PER_DAY}/день)\n\n"
+        f"Антифрод блокировка кода: {'ДА' if code in REFERRAL_ANTIFRAUD_BLOCK_CODES else 'НЕТ'}\n"
+        f"Антифрод блокировка владельца: {'ДА' if referrer.telegram_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS else 'НЕТ'}",
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("help"), StateFilter(None))

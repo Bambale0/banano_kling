@@ -1070,8 +1070,32 @@ async def init_db():
         await db.commit()
 
 
-async def get_or_create_user(telegram_id: int) -> User:
-    """Получает или создаёт пользователя (thread-safe)"""
+async def get_or_create_user(
+    telegram_id: int,
+    referral_code: str | None = None,
+) -> User:
+    """Получает или создаёт пользователя (thread-safe).
+    
+    Если передан referral_code и пользователь создаётся впервые,
+    привязка к рефереру происходит атомарно в одной транзакции.
+    Если пользователь уже существует, но referred_by IS NULL и нет оплат,
+    также пытается привязать (через process_referral).
+    """
+    code = (referral_code or "").strip().upper()
+    referrer_id: int | None = None
+
+    # Ищем реферрера заранее, чтобы не делать лишних запросов в транзакции
+    if code:
+        async with db_backend.connect(DATABASE_PATH) as db:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE referral_code = ? AND telegram_id != ?",
+                (code, telegram_id),
+            )
+            ref_row = await cursor.fetchone()
+            if ref_row:
+                referrer_id = ref_row["id"]
+
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
 
@@ -1083,10 +1107,47 @@ async def get_or_create_user(telegram_id: int) -> User:
         referred_by = None  # инициализация перед обеими ветками
 
         if row:
+            referred_by = row["referred_by"] if "referred_by" in row.keys() else None
+            referral_earned = (
+                row["referral_earned"] if "referral_earned" in row.keys() else 0
+            )
+            has_paid = bool(row["has_paid"]) if "has_paid" in row.keys() else False
+
+            # Если пользователь существует, но referred_by IS NULL, и есть код — пробуем привязать
+            if not referred_by and referrer_id and referrer_id != row["id"] and not has_paid:
+                # Проверяем, нет ли completed-транзакций
+                txn_cursor = await db.execute(
+                    "SELECT 1 FROM transactions t WHERE t.user_id = ? AND t.status = 'completed' LIMIT 1",
+                    (row["id"],),
+                )
+                has_completed_payment = await txn_cursor.fetchone() is not None
+                if not has_completed_payment:
+                    await db.execute(
+                        "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND referred_by IS NULL",
+                        (referrer_id, 0, row["id"]),
+                    )
+                    if db.total_changes > 0:
+                        await db.execute(
+                            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+                            (referrer_id, row["id"]),
+                        )
+                        await db.execute(
+                            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
+                        )
+                        await db.commit()
+                        referred_by = referrer_id
+                        logger.info(
+                            "Referral attached to existing user: telegram_id=%s referrer_id=%s code=%s",
+                            telegram_id,
+                            referrer_id,
+                            code,
+                        )
+
             referral_code = (
                 row["referral_code"] if "referral_code" in row.keys() else None
             )
-            referred_by = row["referred_by"] if "referred_by" in row.keys() else None
+            referred_by = row["referred_by"] if "referred_by" in row.keys() else referred_by
             referral_earned = (
                 row["referral_earned"] if "referral_earned" in row.keys() else 0
             )
@@ -1155,20 +1216,43 @@ async def get_or_create_user(telegram_id: int) -> User:
         # Создаём нового пользователя с бонусными кредитами
         # Используем INSERT OR IGNORE для защиты от race condition
         try:
-            referral_code = await generate_referral_code(db)
+            new_referral_code = await generate_referral_code(db)
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 15, ?)",
-                (telegram_id, referral_code),
+                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, 15, ?, ?)",
+                (telegram_id, new_referral_code, referrer_id),
             )
             await db.commit()
-            logger.info(f"Created new user: {telegram_id}")
-            # Give 3 credits to referrer
-            if referred_by:
-                await db.execute(
-                    "UPDATE users SET credits = credits + 3, referral_earned = referral_earned + 3, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (referred_by,),
+            logger.info(
+                "Created new user: telegram_id=%s referred_by=%s code=%s",
+                telegram_id,
+                referrer_id,
+                code if referrer_id else "none",
+            )
+            # Give 3 credits to referrer immediately in same transaction
+            if referrer_id:
+                # Получаем ID нового пользователя через отдельный запрос
+                new_user_cursor = await db.execute(
+                    "SELECT id FROM users WHERE telegram_id = ?",
+                    (telegram_id,),
                 )
-                await db.commit()
+                new_user_row = await new_user_cursor.fetchone()
+                new_user_id = new_user_row["id"] if new_user_row else None
+                if new_user_id:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+                        (referrer_id, new_user_id),
+                    )
+                    await db.execute(
+                        "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Referral bonus applied: referrer_id=%s new_user_telegram_id=%s bonus=%s",
+                        referrer_id,
+                        telegram_id,
+                        PARTNER_INVITER_BONUS,
+                    )
         except db_backend.IntegrityError:
             # Пользователь уже создан другим параллельным запросом
             logger.debug(f"User {telegram_id} already exists (race condition handled)")
