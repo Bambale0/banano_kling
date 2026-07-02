@@ -2033,12 +2033,25 @@ async def _notify_partner_if_new_referral(
     
     Используется как уведомительный вызов после того, как get_or_create_user
     уже выполнил привязку атомарно.
+    
+    Важно: если реферальный код принадлежит самому пользователю — уведомление НЕ отправляется.
     """
     code = str(referral_code or "").strip().upper()
     if not code:
         return
+    referred_id = getattr(referred, "id", None)
+    if not referred_id:
+        return
+    # Защита от самопривязки: свой код на себя
     referrer = await get_user_by_referral_code(code)
     if not referrer:
+        return
+    if referrer.telegram_id == referred_id:
+        logger.info(
+            "Referral self-notification skipped: user_id=%s code=%s",
+            referred_id,
+            code,
+        )
         return
     try:
         await _notify_partner_about_new_referral(
@@ -2049,14 +2062,14 @@ async def _notify_partner_if_new_referral(
         logger.info(
             "Referral partner notified: referrer_telegram_id=%s referred_id=%s code=%s",
             referrer.telegram_id,
-            getattr(referred, "id", None),
+            referred_id,
             code,
         )
     except Exception:
         logger.exception(
             "Failed to notify partner about referral: referrer=%s referred=%s code=%s",
             getattr(referrer, "telegram_id", None),
-            getattr(referred, "id", None),
+            referred_id,
             code,
         )
 
@@ -2091,7 +2104,19 @@ async def _activate_referral_code(
             code,
             bool(referrer),
         )
-        return ""
+        # Возвращаем сообщение с пояснением
+        if not referrer:
+            return (
+                "\n❌ <b>Реферальный код не найден</b>\n"
+                "Проверьте ссылку — возможно, она устарела."
+            )
+        return (
+            "\nℹ️ <b>Реферальный бонус не начислен</b>\n"
+            "Вы уже зарегистрированы в боте. Бонус даётся только при первом входе "
+            "по ссылке-приглашению.\n\n"
+            "💡 Если вы ещё не нажимали «Запустить» — удалите чат с ботом "
+            "и перейдите по ссылке заново."
+        )
 
     if referrer:
         await _notify_partner_about_new_referral(

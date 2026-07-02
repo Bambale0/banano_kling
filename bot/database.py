@@ -1147,7 +1147,7 @@ async def get_or_create_user(
             referral_code = (
                 row["referral_code"] if "referral_code" in row.keys() else None
             )
-            referred_by = row["referred_by"] if "referred_by" in row.keys() else referred_by
+            # referred_by уже обновлён выше (referrer_id), если привязка сработала
             referral_earned = (
                 row["referral_earned"] if "referral_earned" in row.keys() else 0
             )
