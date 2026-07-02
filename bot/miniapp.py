@@ -812,7 +812,13 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
                 f"Подпишитесь на @{REQUIRED_CHANNEL_USERNAME}, чтобы пользоваться ботом."
             )
 
-    user = await get_or_create_user(telegram_id)
+    resolved_start_param = payload.get("start_param") or start_param_fallback
+
+    # Извлекаем реферальный код из start_param до создания пользователя
+    # и передаём в get_or_create_user (как в /start), чтобы привязка была атомарной
+    referral_code = _referral_code_from_start_param(resolved_start_param) or None
+    user = await get_or_create_user(telegram_id, referral_code=referral_code)
+
     try:
         await update_user_profile(
             telegram_id,
@@ -824,7 +830,6 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     except Exception:
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
 
-    resolved_start_param = payload.get("start_param") or start_param_fallback
     if not payload.get("start_param") and not start_param_fallback:
         logger.warning(
             "Mini App start_param missing: user_id=%s username=%s payload_keys=%s",
@@ -832,19 +837,59 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
             telegram_user.get("username"),
             list(payload.keys()),
         )
-    if start_param_fallback and not payload.get("start_param"):
+    if referral_code and user.referred_by:
         logger.info(
-            "Mini App start_param fallback used: user_id=%s username=%s fallback=%s",
+            "Mini App referral applied via get_or_create_user: user_id=%s code=%s referrer_id=%s",
             telegram_id,
-            telegram_user.get("username"),
+            referral_code,
+            user.referred_by,
+        )
+        # Уведомляем реферрера, если привязка произошла через get_or_create_user
+        try:
+            referrer = await get_user_by_referral_code(referral_code)
+            if referrer and referrer.telegram_id != telegram_id:
+                from types import SimpleNamespace
+                referred_sn = SimpleNamespace(
+                    id=telegram_id,
+                    username=telegram_user.get("username"),
+                    first_name=telegram_user.get("first_name"),
+                    last_name=telegram_user.get("last_name"),
+                    full_name=" ".join(
+                        str(telegram_user.get(key) or "").strip()
+                        for key in ("first_name", "last_name")
+                        if str(telegram_user.get(key) or "").strip()
+                    ),
+                )
+                await _notify_partner_about_new_referral(
+                    app["bot"],
+                    referrer_telegram_id=referrer.telegram_id,
+                    referred=referred_sn,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to notify partner about miniapp referral: user_id=%s code=%s",
+                telegram_id,
+                referral_code,
+            )
+    elif referral_code:
+        logger.info(
+            "Mini App referral not applied (fallback): user_id=%s code=%s",
+            telegram_id,
+            referral_code,
+        )
+        # Fallback на старый путь для уведомления
+        await _activate_start_param_referral(
+            app,
+            telegram_id=telegram_id,
+            telegram_user=telegram_user,
+            start_param=resolved_start_param,
+        )
+    elif start_param_fallback and not payload.get("start_param"):
+        logger.info(
+            "Mini App start_param fallback used (no ref code): user_id=%s fallback=%s",
+            telegram_id,
             start_param_fallback,
         )
-    await _activate_start_param_referral(
-        app,
-        telegram_id=telegram_id,
-        telegram_user=telegram_user,
-        start_param=resolved_start_param,
-    )
     return telegram_id, {"payload": payload, "user": user}
 
 
