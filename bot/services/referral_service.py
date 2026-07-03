@@ -1,0 +1,852 @@
+"""Единый сервис реферальной логики.
+
+Все проверки, привязки и логирование реферальных событий
+проходят через этот модуль. Другие части кода (handlers, database)
+должны вызывать функции отсюда, а не дублировать логику.
+"""
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from bot import db as db_backend
+from bot.database import (
+    DATABASE_PATH,
+    PARTNER_INVITER_BONUS,
+    REFERRAL_ANTIFRAUD_BLOCK_CODES,
+    REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
+    REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
+    REFERRAL_ANTIFRAUD_MAX_PER_DAY,
+)
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Разрешённые причины (reason) для referral_events
+# ---------------------------------------------------------------------------
+VALID_REASONS = frozenset(
+    {
+        "attached",
+        "empty_code",
+        "code_not_found",
+        "self_ref",
+        "already_has_referrer_same",
+        "already_has_referrer_other",
+        "already_paid",
+        "completed_payment_exists",
+        "blocked_code",
+        "blocked_referrer",
+        "hourly_limit",
+        "daily_limit",
+        "cycle_detected",
+        "db_race_lost",
+        "invalid_state",
+        "error",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# ReferralResult — структурированный результат попытки привязки
+# ---------------------------------------------------------------------------
+@dataclass
+class ReferralResult:
+    clicked_code: Optional[str] = None
+    clicked_referrer_id: Optional[int] = None
+    existing_referrer_id: Optional[int] = None
+    referred_user_id: int = 0
+    attached: bool = False
+    reason: str = "empty_code"
+    is_self_click: bool = False
+    is_repeat_click: bool = False
+    notify_partner: bool = False
+    # Дополнительные детали для логирования / отчётов
+    referrer_telegram_id: Optional[int] = None
+    source: Optional[str] = None
+    start_param: Optional[str] = None
+
+    def __post_init__(self):
+        if self.reason not in VALID_REASONS:
+            raise ValueError(f"Invalid referral reason: {self.reason}")
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
+async def _referral_chain_contains(
+    db: db_backend.Connection,
+    start_user_id: int,
+    target_user_id: int,
+) -> bool:
+    """Проверяет, есть ли target_user_id в цепочке рефералов start_user_id."""
+    from bot.database import _referral_chain_contains as _chain_fn
+
+    return await _chain_fn(
+        db, start_user_id=start_user_id, target_user_id=target_user_id
+    )
+
+
+async def _ensure_referral_events_table(db: db_backend.Connection) -> None:
+    """Создаёт таблицу referral_events, если её нет (idempotent)."""
+    try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS referral_events (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                visitor_user_id BIGINT,
+                visitor_telegram_id BIGINT NOT NULL,
+                clicked_code TEXT,
+                clicked_referrer_id BIGINT,
+                existing_referrer_id BIGINT,
+                attached BOOLEAN DEFAULT FALSE,
+                reason TEXT NOT NULL,
+                source TEXT,
+                start_param TEXT,
+                is_self_click BOOLEAN DEFAULT FALSE,
+                is_repeat_click BOOLEAN DEFAULT FALSE,
+                metadata JSONB DEFAULT '{}'::jsonb
+            )
+        """)
+    except db_backend.OperationalError:
+        # SQLite fallback: BIGSERIAL → INTEGER PRIMARY KEY AUTOINCREMENT
+        # JSONB → TEXT, BIGINT → INTEGER
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS referral_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                visitor_user_id INTEGER,
+                visitor_telegram_id INTEGER NOT NULL,
+                clicked_code TEXT,
+                clicked_referrer_id INTEGER,
+                existing_referrer_id INTEGER,
+                attached INTEGER DEFAULT 0,
+                reason TEXT NOT NULL,
+                source TEXT,
+                start_param TEXT,
+                is_self_click INTEGER DEFAULT 0,
+                is_repeat_click INTEGER DEFAULT 0,
+                metadata TEXT DEFAULT '{}'
+            )
+        """)
+
+    for idx_name, idx_col in [
+        ("idx_referral_events_created_at", "created_at"),
+        ("idx_referral_events_visitor_telegram_id", "visitor_telegram_id"),
+        ("idx_referral_events_clicked_referrer_id", "clicked_referrer_id"),
+        ("idx_referral_events_reason", "reason"),
+        ("idx_referral_events_attached", "attached"),
+        ("idx_referral_events_clicked_code", "clicked_code"),
+    ]:
+        try:
+            await db.execute(
+                f"CREATE INDEX IF NOT EXISTS {idx_name} ON referral_events({idx_col})"
+            )
+        except db_backend.OperationalError:
+            pass
+
+
+async def _ensure_partner_commissions_table(db: db_backend.Connection) -> None:
+    """Создаёт таблицу partner_commissions, если её нет (idempotent)."""
+    try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS partner_commissions (
+                id BIGSERIAL PRIMARY KEY,
+                transaction_id BIGINT NOT NULL,
+                order_id TEXT NOT NULL,
+                referrer_id BIGINT NOT NULL,
+                referred_id BIGINT NOT NULL,
+                level INT NOT NULL,
+                base_amount_rub NUMERIC(12,2) NOT NULL,
+                percent NUMERIC(5,2) NOT NULL,
+                amount_rub NUMERIC(12,2) NOT NULL,
+                tier TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(transaction_id, referrer_id, level)
+            )
+        """)
+    except db_backend.OperationalError:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS partner_commissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_id INTEGER NOT NULL,
+                order_id TEXT NOT NULL,
+                referrer_id INTEGER NOT NULL,
+                referred_id INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                base_amount_rub REAL NOT NULL,
+                percent REAL NOT NULL,
+                amount_rub REAL NOT NULL,
+                tier TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(transaction_id, referrer_id, level)
+            )
+        """)
+
+    for idx_name, idx_col in [
+        ("idx_partner_commissions_referrer_id", "referrer_id"),
+        ("idx_partner_commissions_referred_id", "referred_id"),
+        ("idx_partner_commissions_transaction_id", "transaction_id"),
+        ("idx_partner_commissions_created_at", "created_at"),
+    ]:
+        try:
+            await db.execute(
+                f"CREATE INDEX IF NOT EXISTS {idx_name} ON partner_commissions({idx_col})"
+            )
+        except db_backend.OperationalError:
+            pass
+
+
+async def init_referral_tables_if_needed() -> None:
+    """Вызывается из init_db() для гарантии, что таблицы есть."""
+    async with db_backend.connect(DATABASE_PATH) as db:
+        await _ensure_referral_events_table(db)
+        await _ensure_partner_commissions_table(db)
+        await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Запись события в referral_events
+# ---------------------------------------------------------------------------
+async def record_referral_event(
+    result: ReferralResult,
+    visitor_telegram_id: int,
+    visitor_user_id: Optional[int] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    """Логирует любое обращение по реферальной ссылке в referral_events."""
+    import json
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        await _ensure_referral_events_table(db)
+        meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+
+        is_postgres = db_backend.is_postgres()
+        attached_val = str(result.attached).upper() if is_postgres else (1 if result.attached else 0)
+        self_val = str(result.is_self_click).upper() if is_postgres else (1 if result.is_self_click else 0)
+        repeat_val = str(result.is_repeat_click).upper() if is_postgres else (1 if result.is_repeat_click else 0)
+
+        try:
+            await db.execute(
+                """
+                INSERT INTO referral_events (
+                    visitor_user_id, visitor_telegram_id, clicked_code,
+                    clicked_referrer_id, existing_referrer_id, attached,
+                    reason, source, start_param, is_self_click, is_repeat_click, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    visitor_user_id,
+                    visitor_telegram_id,
+                    result.clicked_code,
+                    result.clicked_referrer_id,
+                    result.existing_referrer_id,
+                    attached_val if is_postgres else (1 if result.attached else 0),
+                    result.reason,
+                    result.source,
+                    result.start_param,
+                    self_val if is_postgres else (1 if result.is_self_click else 0),
+                    repeat_val if is_postgres else (1 if result.is_repeat_click else 0),
+                    meta_json,
+                ),
+            )
+            await db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to record referral event: visitor=%s reason=%s",
+                visitor_telegram_id,
+                result.reason,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Единая функция проверки и привязки реферала (validate + attach)
+# ---------------------------------------------------------------------------
+async def process_referral_click(
+    visitor_telegram_id: int,
+    referral_code: str | None,
+    *,
+    source: str | None = None,
+    start_param: str | None = None,
+) -> ReferralResult:
+    """Главная точка входа: проверяет и привязывает реферала.
+
+    Эта функция ДОЛЖНА использоваться всеми путями:
+      - /start ref_CODE
+      - miniapp start_param
+      - feed_/remix_/posts_ deep links
+      - новый пользователь при регистрации
+      - существующий пользователь без referred_by
+
+    Возвращает ReferralResult, который говорит:
+      - была ли привязка (attached)
+      - причина (reason)
+      - нужно ли уведомлять партнёра (notify_partner)
+    """
+    code = str(referral_code or "").strip().upper()
+
+    # Базовый результат для пустого кода
+    if not code:
+        result = ReferralResult(
+            clicked_code=None,
+            reason="empty_code",
+            referred_user_id=0,
+            source=source,
+            start_param=start_param,
+        )
+        await record_referral_event(result, visitor_telegram_id)
+        return result
+
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+
+        # 1. Ищем реферера по коду
+        referrer_cursor = await db.execute(
+            "SELECT id, telegram_id, referral_code FROM users WHERE referral_code = ?",
+            (code,),
+        )
+        referrer_row = await referrer_cursor.fetchone()
+
+        if not referrer_row:
+            result = ReferralResult(
+                clicked_code=code,
+                reason="code_not_found",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id)
+            return result
+
+        referrer_id = int(referrer_row["id"])
+        referrer_telegram_id = int(referrer_row["telegram_id"])
+
+        # 2. Ищем посетителя
+        visitor_cursor = await db.execute(
+            """
+            SELECT
+                u.id, u.telegram_id, u.referred_by,
+                COALESCE(u.has_paid, 0) AS has_paid,
+                EXISTS(
+                    SELECT 1 FROM transactions t
+                    WHERE t.user_id = u.id AND t.status = 'completed'
+                    LIMIT 1
+                ) AS has_completed_payment
+            FROM users u
+            WHERE u.telegram_id = ?
+            """,
+            (visitor_telegram_id,),
+        )
+        visitor_row = await visitor_cursor.fetchone()
+
+        if not visitor_row:
+            # Пользователь ещё не создан — это ок, вызывающий код создаст пользователя
+            # и затем вызовет process_referral_click_in_transaction
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                referrer_telegram_id=referrer_telegram_id,
+                reason="invalid_state",  # вызывающий должен создать user и повторить
+                source=source,
+                start_param=start_param,
+            )
+            return result
+
+        visitor_user_id = int(visitor_row["id"])
+        existing_referrer_id = (
+            int(visitor_row["referred_by"]) if visitor_row["referred_by"] else None
+        )
+
+        # 3. Self-ref
+        if visitor_row["telegram_id"] == referrer_telegram_id:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                is_self_click=True,
+                reason="self_ref",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 4. Уже привязан к тому же рефереру
+        if existing_referrer_id and existing_referrer_id == referrer_id:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                is_repeat_click=True,
+                reason="already_has_referrer_same",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 5. Уже привязан к другому рефереру
+        if existing_referrer_id:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="already_has_referrer_other",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 6. Уже платил
+        if visitor_row["has_paid"] or visitor_row["has_completed_payment"]:
+            reason = (
+                "completed_payment_exists"
+                if visitor_row["has_completed_payment"]
+                else "already_paid"
+            )
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason=reason,
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 7. Blocklist
+        if code in REFERRAL_ANTIFRAUD_BLOCK_CODES:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="blocked_code",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        if referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="blocked_referrer",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 8. Антифрод-лимиты
+        hourly_cursor = await db.execute(
+            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 hour')",
+            (referrer_id,),
+        )
+        hourly_count = int((await hourly_cursor.fetchone())["cnt"])
+        if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="hourly_limit",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        daily_cursor = await db.execute(
+            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
+            (referrer_id,),
+        )
+        daily_count = int((await daily_cursor.fetchone())["cnt"])
+        if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="daily_limit",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 9. Cycle detection
+        if await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=visitor_user_id):
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="cycle_detected",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # 10. ПРИВЯЗКА: атомарный UPDATE + INSERT + бонус рефереру
+        update_cursor = await db.execute(
+            """
+            UPDATE users
+            SET referred_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+              AND referred_by IS NULL
+              AND id != ?
+              AND COALESCE(has_paid, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM transactions t
+                  WHERE t.user_id = users.id AND t.status = 'completed'
+                  LIMIT 1
+              )
+            """,
+            (referrer_id, visitor_telegram_id, referrer_id),
+        )
+        if update_cursor.rowcount != 1:
+            await db.rollback()
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="db_race_lost",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        insert_cursor = await db.execute(
+            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+            (referrer_id, visitor_user_id),
+        )
+        if insert_cursor.rowcount != 1:
+            await db.rollback()
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="db_race_lost",
+                source=source,
+                start_param=start_param,
+            )
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+            return result
+
+        # Начисляем бонус рефереру
+        await db.execute(
+            "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
+        )
+        await db.commit()
+
+        result = ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            existing_referrer_id=existing_referrer_id,
+            referred_user_id=visitor_user_id,
+            attached=True,
+            reason="attached",
+            notify_partner=True,
+            referrer_telegram_id=referrer_telegram_id,
+            source=source,
+            start_param=start_param,
+        )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+
+        logger.info(
+            "Referral attached: visitor=%s code=%s referrer_id=%s",
+            visitor_telegram_id,
+            code,
+            referrer_id,
+        )
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Функция для использования внутри транзакции (когда пользователь только создан)
+# ---------------------------------------------------------------------------
+async def attach_referral_in_transaction(
+    db: db_backend.Connection,
+    visitor_telegram_id: int,
+    visitor_user_id: int,
+    referral_code: str | None,
+    *,
+    source: str | None = None,
+    start_param: str | None = None,
+) -> ReferralResult:
+    """Привязывает реферала внутри уже открытой транзакции.
+
+    Используется при создании нового пользователя, когда транзакция уже открыта.
+    Не открывает новое соединение — работает с переданным db.
+    """
+    code = str(referral_code or "").strip().upper()
+
+    if not code:
+        return ReferralResult(
+            clicked_code=None,
+            referred_user_id=visitor_user_id,
+            reason="empty_code",
+            source=source,
+            start_param=start_param,
+        )
+
+    db.row_factory = db_backend.Row
+
+    # Ищем реферера
+    referrer_cursor = await db.execute(
+        "SELECT id, telegram_id FROM users WHERE referral_code = ? AND telegram_id != ?",
+        (code, visitor_telegram_id),
+    )
+    referrer_row = await referrer_cursor.fetchone()
+
+    if not referrer_row:
+        return ReferralResult(
+            clicked_code=code,
+            referred_user_id=visitor_user_id,
+            reason="code_not_found",
+            source=source,
+            start_param=start_param,
+        )
+
+    referrer_id = int(referrer_row["id"])
+    referrer_telegram_id = int(referrer_row["telegram_id"])
+
+    # Self-ref
+    if referrer_telegram_id == visitor_telegram_id:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            is_self_click=True,
+            reason="self_ref",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Blocklist
+    if code in REFERRAL_ANTIFRAUD_BLOCK_CODES:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="blocked_code",
+            source=source,
+            start_param=start_param,
+        )
+
+    if referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="blocked_referrer",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Hourly limit
+    hourly_cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 hour')",
+        (referrer_id,),
+    )
+    hourly_count = int((await hourly_cursor.fetchone())["cnt"])
+    if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="hourly_limit",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Daily limit
+    daily_cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
+        (referrer_id,),
+    )
+    daily_count = int((await daily_cursor.fetchone())["cnt"])
+    if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="daily_limit",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Cycle detection
+    if await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=visitor_user_id):
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="cycle_detected",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Атомарная привязка
+    update_cursor = await db.execute(
+        """
+        UPDATE users
+        SET referred_by = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND referred_by IS NULL AND id != ?
+        """,
+        (referrer_id, visitor_user_id, referrer_id),
+    )
+
+    if update_cursor.rowcount != 1:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="db_race_lost",
+            source=source,
+            start_param=start_param,
+        )
+
+    insert_cursor = await db.execute(
+        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+        (referrer_id, visitor_user_id),
+    )
+
+    if insert_cursor.rowcount != 1:
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="db_race_lost",
+            source=source,
+            start_param=start_param,
+        )
+
+    # Начисляем бонус рефереру
+    await db.execute(
+        "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
+    )
+
+    result = ReferralResult(
+        clicked_code=code,
+        clicked_referrer_id=referrer_id,
+        referred_user_id=visitor_user_id,
+        attached=True,
+        reason="attached",
+        notify_partner=True,
+        referrer_telegram_id=referrer_telegram_id,
+        source=source,
+        start_param=start_param,
+    )
+
+    logger.info(
+        "Referral attached in transaction: visitor=%s code=%s referrer_id=%s",
+        visitor_telegram_id,
+        code,
+        referrer_id,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Валидация без привязки (для диагностики)
+# ---------------------------------------------------------------------------
+async def validate_referral_attach(
+    visitor_telegram_id: int,
+    referral_code: str | None,
+) -> ReferralResult:
+    """Только проверяет возможность привязки, НЕ выполняет её.
+
+    Полезна для UI / диагностики перед фактической привязкой.
+    """
+    code = str(referral_code or "").strip().upper()
+    if not code:
+        return ReferralResult(reason="empty_code")
+
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+
+        referrer_cursor = await db.execute(
+            "SELECT id, telegram_id FROM users WHERE referral_code = ?",
+            (code,),
+        )
+        referrer_row = await referrer_cursor.fetchone()
+        if not referrer_row:
+            return ReferralResult(clicked_code=code, reason="code_not_found")
+
+        referrer_id = int(referrer_row["id"])
+        referrer_telegram_id = int(referrer_row["telegram_id"])
+
+        visitor_cursor = await db.execute(
+            "SELECT id, referred_by, COALESCE(has_paid, 0) AS has_paid FROM users WHERE telegram_id = ?",
+            (visitor_telegram_id,),
+        )
+        visitor_row = await visitor_cursor.fetchone()
+        if not visitor_row:
+            return ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                reason="invalid_state",
+            )
+
+        visitor_user_id = int(visitor_row["id"])
+        existing = int(visitor_row["referred_by"]) if visitor_row["referred_by"] else None
+
+        if referrer_telegram_id == visitor_telegram_id:
+            return ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing,
+                referred_user_id=visitor_user_id,
+                is_self_click=True,
+                reason="self_ref",
+            )
+
+        if existing:
+            if existing == referrer_id:
+                return ReferralResult(
+                    clicked_code=code,
+                    clicked_referrer_id=referrer_id,
+                    existing_referrer_id=existing,
+                    referred_user_id=visitor_user_id,
+                    is_repeat_click=True,
+                    reason="already_has_referrer_same",
+                )
+            return ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing,
+                referred_user_id=visitor_user_id,
+                reason="already_has_referrer_other",
+            )
+
+        if visitor_row["has_paid"]:
+            return ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="already_paid",
+            )
+
+        # Валидация прошла — но привязку не делаем
+        return ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            reason="attached",  # потенциально может быть привязан
+        )

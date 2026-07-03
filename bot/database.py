@@ -1069,6 +1069,10 @@ async def init_db():
             """)
         await db.commit()
 
+        # Referral service tables (referral_events, partner_commissions)
+        from bot.services.referral_service import init_referral_tables_if_needed
+        await init_referral_tables_if_needed()
+
 
 async def get_or_create_user(
     telegram_id: int,
@@ -1252,42 +1256,53 @@ async def get_or_create_user(
         # Используем INSERT OR IGNORE для защиты от race condition
         try:
             new_referral_code = await generate_referral_code(db)
+            # АНТИФРОД: перед созданием с referrer_id проверяем все лимиты
+            safe_referrer_id = referrer_id  # может быть обнулён ниже
+            if safe_referrer_id:
+                if code in REFERRAL_ANTIFRAUD_BLOCK_CODES or safe_referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
+                    logger.warning(
+                        "Referral blocked by antifraud blocklist (new user): telegram_id=%s code=%s referrer_id=%s",
+                        telegram_id, code, safe_referrer_id,
+                    )
+                    safe_referrer_id = None
+                else:
+                    hourly_cursor = await db.execute(
+                        "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 hour')",
+                        (safe_referrer_id,),
+                    )
+                    hourly_count = int((await hourly_cursor.fetchone())["cnt"])
+                    if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
+                        logger.warning(
+                            "Referral blocked by antifraud hourly limit (new user): telegram_id=%s referrer_id=%s hourly=%s limit=%s",
+                            telegram_id, safe_referrer_id, hourly_count, REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
+                        )
+                        safe_referrer_id = None
+                    else:
+                        daily_cursor = await db.execute(
+                            "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
+                            (safe_referrer_id,),
+                        )
+                        daily_count = int((await daily_cursor.fetchone())["cnt"])
+                        if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
+                            logger.warning(
+                                "Referral blocked by antifraud daily limit (new user): telegram_id=%s referrer_id=%s daily=%s limit=%s",
+                                telegram_id, safe_referrer_id, daily_count, REFERRAL_ANTIFRAUD_MAX_PER_DAY,
+                            )
+                            safe_referrer_id = None
+
+            # ВСЕГДА создаём пользователя с referred_by=NULL.
+            # Привязка реферала делается ОТДЕЛЬНО через единый process_referral_click
+            # (из bot/services/referral_service.py) после получения user_id.
+            # Это закрывает антифрод-дыру: раньше проверки обходились при INSERT.
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, 15, ?, ?)",
-                (telegram_id, new_referral_code, referrer_id),
+                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, 15, ?, NULL)",
+                (telegram_id, new_referral_code),
             )
             await db.commit()
             logger.info(
-                "Created new user: telegram_id=%s referred_by=%s code=%s",
+                "Created new user: telegram_id=%s (referral will be attached separately)",
                 telegram_id,
-                referrer_id,
-                code if referrer_id else "none",
             )
-            # Give 3 credits to referrer immediately in same transaction
-            if referrer_id:
-                # Получаем ID нового пользователя через отдельный запрос
-                new_user_cursor = await db.execute(
-                    "SELECT id FROM users WHERE telegram_id = ?",
-                    (telegram_id,),
-                )
-                new_user_row = await new_user_cursor.fetchone()
-                new_user_id = new_user_row["id"] if new_user_row else None
-                if new_user_id:
-                    await db.execute(
-                        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
-                        (referrer_id, new_user_id),
-                    )
-                    await db.execute(
-                        "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
-                    )
-                    await db.commit()
-                    logger.info(
-                        "Referral bonus applied: referrer_id=%s new_user_telegram_id=%s bonus=%s",
-                        referrer_id,
-                        telegram_id,
-                        PARTNER_INVITER_BONUS,
-                    )
         except db_backend.IntegrityError:
             # Пользователь уже создан другим параллельным запросом
             logger.debug(f"User {telegram_id} already exists (race condition handled)")
@@ -1879,6 +1894,241 @@ async def mark_user_paid(telegram_id: int) -> bool:
         return True
 
 
+async def complete_payment_atomic(
+    order_id: str,
+) -> dict:
+    """Атомарно завершает платёж в одной транзакции.
+
+    Возвращает данные, необходимые для post-commit уведомлений.
+    Порядок: pending -> processing -> add_credits -> referral commission ->
+             partner_commissions ledger -> promo redemption -> completed.
+    """
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            # 1. SELECT transaction FOR UPDATE (имитация через проверку статуса)
+            txn_cursor = await db.execute(
+                "SELECT * FROM transactions WHERE order_id = ?",
+                (order_id,),
+            )
+            txn_row = await txn_cursor.fetchone()
+            if not txn_row:
+                await db.rollback()
+                return {"ok": False, "reason": "not_found"}
+
+            if txn_row["status"] == "completed":
+                await db.rollback()
+                return {
+                    "ok": True,
+                    "already_completed": True,
+                    "transaction": Transaction(
+                        id=txn_row["id"],
+                        order_id=txn_row["order_id"],
+                        user_id=txn_row["user_id"],
+                        payment_id=txn_row["payment_id"],
+                        provider=txn_row["provider"] if "provider" in txn_row.keys() else "cryptobot",
+                        credits=txn_row["credits"],
+                        amount_rub=txn_row["amount_rub"],
+                        status=txn_row["status"],
+                        created_at=datetime.fromisoformat(txn_row["created_at"]),
+                    ),
+                    "telegram_id": None,
+                    "referral_bonus": {},
+                    "promo_bonus": {},
+                }
+
+            if txn_row["status"] not in ("pending", "processing"):
+                await db.rollback()
+                return {"ok": False, "reason": f"invalid_status:{txn_row['status']}"}
+
+            # 2. pending -> processing (защита от двойного начисления)
+            update_result = await db.execute(
+                "UPDATE transactions SET status = 'processing' WHERE order_id = ? AND status = 'pending'",
+                (order_id,),
+            )
+            if update_result.rowcount != 1:
+                # Уже был переведён кем-то в processing/completed
+                if txn_row["status"] == "processing":
+                    # Другой процесс уже обрабатывает — выходим
+                    await db.rollback()
+                    return {"ok": False, "reason": "already_processing"}
+
+            transaction = Transaction(
+                id=txn_row["id"],
+                order_id=txn_row["order_id"],
+                user_id=txn_row["user_id"],
+                payment_id=txn_row["payment_id"],
+                provider=txn_row["provider"] if "provider" in txn_row.keys() else "cryptobot",
+                credits=txn_row["credits"],
+                amount_rub=txn_row["amount_rub"],
+                status="processing",
+                created_at=datetime.fromisoformat(txn_row["created_at"]),
+                promo_code_id=txn_row["promo_code_id"] if "promo_code_id" in txn_row.keys() else None,
+                promo_code=txn_row["promo_code"] if "promo_code" in txn_row.keys() else None,
+                promo_bonus_credits=int(txn_row["promo_bonus_credits"] or 0) if "promo_bonus_credits" in txn_row.keys() else 0,
+            )
+
+            # Получаем telegram_id
+            user_cursor = await db.execute(
+                "SELECT telegram_id, referred_by, has_paid FROM users WHERE id = ?",
+                (txn_row["user_id"],),
+            )
+            user_row = await user_cursor.fetchone()
+            if not user_row:
+                await db.rollback()
+                return {"ok": False, "reason": "user_not_found"}
+
+            telegram_id = int(user_row["telegram_id"])
+            referred_by = user_row["referred_by"] if "referred_by" in user_row.keys() else None
+            user_already_paid = bool(user_row["has_paid"]) if "has_paid" in user_row.keys() else False
+
+            # 3. add_credits
+            await db.execute(
+                "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+                (transaction.credits, telegram_id),
+            )
+
+            # 4. referral commission + partner_commissions ledger
+            referral_bonus: dict[str, Any] = {"mode": "none", "value": 0, "percent": 0}
+            if referred_by:
+                base_value = float(transaction.amount_rub)
+                ref1_id = int(referred_by)
+
+                ref1_cursor = await db.execute(
+                    "SELECT telegram_id, partner_total_revenue_rub, partner_tier, referred_by FROM users WHERE id = ?",
+                    (ref1_id,),
+                )
+                ref1_row = await ref1_cursor.fetchone()
+                ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
+                ref1_tier = get_partner_tier_by_total(ref1_revenue)
+                ref1_percent = get_partner_percent_by_tier(ref1_tier)
+                level1_bonus = round(base_value * ref1_percent / 100.0, 2)
+
+                # Начисление ref1
+                await db.execute(
+                    "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
+                    "partner_balance_rub = partner_balance_rub + ?, "
+                    "partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (base_value, level1_bonus, ref1_tier, ref1_id),
+                )
+
+                # Ledger: partner_commissions для level 1
+                try:
+                    await db.execute(
+                        """
+                        INSERT INTO partner_commissions (transaction_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
+                        VALUES (?, ?, ?, 1, ?, ?, ?)
+                        ON CONFLICT(transaction_id, referrer_id, level) DO NOTHING
+                        """,
+                        (txn_row["id"], ref1_id, txn_row["user_id"], base_value, float(ref1_percent), level1_bonus),
+                    )
+                except db_backend.OperationalError:
+                    pass  # таблица partner_commissions ещё не создана на SQLite
+
+                ref2_bonus = 0.0
+                ref2_row = None
+                ref2_telegram_id = None
+                if ref1_row and ref1_row["referred_by"]:
+                    ref2_id = int(ref1_row["referred_by"])
+                    level2_bonus = round(base_value * PARTNER_LEVEL2_PERCENT / 100.0, 2)
+                    ref2_cursor = await db.execute(
+                        "SELECT telegram_id, partner_total_revenue_rub, partner_tier FROM users WHERE id = ?",
+                        (ref2_id,),
+                    )
+                    ref2_row = await ref2_cursor.fetchone()
+                    ref2_revenue = float(ref2_row["partner_total_revenue_rub"] or 0) if ref2_row else 0.0
+                    ref2_tier = get_partner_tier_by_total(ref2_revenue)
+                    ref2_telegram_id = int(ref2_row["telegram_id"]) if ref2_row and ref2_row["telegram_id"] else None
+
+                    await db.execute(
+                        "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
+                        "partner_balance_rub = partner_balance_rub + ?, "
+                        "partner_tier = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (base_value, level2_bonus, ref2_tier, ref2_id),
+                    )
+
+                    # Ledger: partner_commissions для level 2
+                    try:
+                        await db.execute(
+                            """
+                            INSERT INTO partner_commissions (transaction_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
+                            VALUES (?, ?, ?, 2, ?, ?, ?)
+                            ON CONFLICT(transaction_id, referrer_id, level) DO NOTHING
+                            """,
+                            (txn_row["id"], ref2_id, txn_row["user_id"], base_value, float(PARTNER_LEVEL2_PERCENT), level2_bonus),
+                        )
+                    except db_backend.OperationalError:
+                        pass
+
+                    ref2_bonus = level2_bonus
+
+                referral_bonus = {
+                    "mode": "partner",
+                    "value": level1_bonus,
+                    "percent": ref1_percent,
+                    "referrer_tier": ref1_tier,
+                    "referrer_user_id": ref1_id,
+                    "referrer_telegram_id": int(ref1_row["telegram_id"]) if ref1_row and ref1_row["telegram_id"] else None,
+                    "level2_value": ref2_bonus,
+                    "level2_percent": PARTNER_LEVEL2_PERCENT,
+                    "level2_referrer_user_id": ref2_id if ref2_bonus > 0 else None,
+                    "level2_referrer_telegram_id": ref2_telegram_id,
+                }
+
+            # 5. promo redemption
+            promo_bonus: dict[str, Any] = {}
+            promo_code_id = int(txn_row["promo_code_id"] or 0) if "promo_code_id" in txn_row.keys() and txn_row["promo_code_id"] else 0
+            bonus_credits = int(txn_row["promo_bonus_credits"] or 0) if "promo_bonus_credits" in txn_row.keys() else 0
+            if promo_code_id and bonus_credits > 0:
+                promo_cursor = await db.execute(
+                    "INSERT OR IGNORE INTO promo_redemptions (promo_code_id, transaction_id, user_id, amount_rub, bonus_credits) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (promo_code_id, txn_row["id"], txn_row["user_id"], float(txn_row["amount_rub"]), bonus_credits),
+                )
+                if promo_cursor.rowcount > 0:
+                    await db.execute(
+                        "UPDATE promo_codes SET usage_count = usage_count + 1, "
+                        "total_bonus_credits = total_bonus_credits + ?, "
+                        "total_amount_rub = total_amount_rub + ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (bonus_credits, float(txn_row["amount_rub"]), promo_code_id),
+                    )
+                promo_bonus = {
+                    "code": (txn_row["promo_code"] or "") if "promo_code" in txn_row.keys() else "",
+                    "bonus_credits": bonus_credits,
+                    "inserted": promo_cursor.rowcount > 0,
+                }
+
+            # 6. mark has_paid
+            if not user_already_paid:
+                await db.execute(
+                    "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (txn_row["user_id"],),
+                )
+
+            # 7. processing -> completed
+            await db.execute(
+                "UPDATE transactions SET status = 'completed' WHERE order_id = ? AND status = 'processing'",
+                (order_id,),
+            )
+
+            await db.commit()
+
+            transaction.status = "completed"
+            return {
+                "ok": True,
+                "already_completed": False,
+                "transaction": transaction,
+                "telegram_id": telegram_id,
+                "referral_bonus": referral_bonus,
+                "promo_bonus": promo_bonus,
+            }
+        except Exception:
+            await db.rollback()
+            raise
+
+
 async def credit_referral_commission(
     telegram_id: int,
     transaction_credits: int,
@@ -1886,7 +2136,10 @@ async def credit_referral_commission(
     bonus_percent: int = PARTNER_LEVEL1_PERCENT,
     level2_percent: int = PARTNER_LEVEL2_PERCENT,
 ) -> dict:
-    """Начисляет партнёру 1 уровня bonus_percent% и 2 уровня level2_percent% с каждой оплаты."""
+    """Начисляет партнёру 1 уровня и 2 уровня с каждой оплаты.
+
+    Процент определяется по текущему tier до начисления (не по переданному bonus_percent).
+    """
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
@@ -1910,17 +2163,19 @@ async def credit_referral_commission(
             if transaction_amount_rub is not None
             else transaction_credits
         )
-        level1_bonus = round(base_value * bonus_percent / 100.0, 2)
-        level2_bonus = 0.0
 
         ref1_id = user["referred_by"]
-        ref1_tier_cursor = await db.execute(
-            "SELECT telegram_id, partner_total_revenue_rub, referred_by FROM users WHERE id = ?",
+        ref1_cursor = await db.execute(
+            "SELECT telegram_id, partner_total_revenue_rub, partner_tier, referred_by FROM users WHERE id = ?",
             (ref1_id,),
         )
-        ref1_row = await ref1_tier_cursor.fetchone()
+        ref1_row = await ref1_cursor.fetchone()
         ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
+        # Определяем tier ДО начисления, потом берём процент из tier
         ref1_tier = get_partner_tier_by_total(ref1_revenue)
+        ref1_percent = get_partner_percent_by_tier(ref1_tier)
+        level1_bonus = round(base_value * ref1_percent / 100.0, 2)
+
         await db.execute(
             "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
             "partner_balance_rub = partner_balance_rub + ?, "
@@ -1928,15 +2183,18 @@ async def credit_referral_commission(
             (base_value, level1_bonus, ref1_tier, ref1_id),
         )
 
+        level2_bonus = 0.0
+        ref2_row = None
         if ref1_row and ref1_row["referred_by"]:
             ref2_id = ref1_row["referred_by"]
-            level2_bonus = round(base_value * level2_percent / 100.0, 2)
-            ref2_tier_cursor = await db.execute(
-                "SELECT telegram_id, partner_total_revenue_rub FROM users WHERE id = ?",
+            ref2_cursor = await db.execute(
+                "SELECT telegram_id, partner_total_revenue_rub, partner_tier FROM users WHERE id = ?",
                 (ref2_id,),
             )
-            ref2_row = await ref2_tier_cursor.fetchone()
+            ref2_row = await ref2_cursor.fetchone()
             ref2_revenue = float(ref2_row["partner_total_revenue_rub"] or 0) if ref2_row else 0.0
+            # level2_percent фиксированный 7%, не зависит от tier
+            level2_bonus = round(base_value * level2_percent / 100.0, 2)
             ref2_tier = get_partner_tier_by_total(ref2_revenue)
             await db.execute(
                 "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
@@ -1954,7 +2212,8 @@ async def credit_referral_commission(
         return {
             "mode": "partner",
             "value": level1_bonus,
-            "percent": bonus_percent,
+            "percent": ref1_percent,
+            "referrer_tier": ref1_tier,
             "referrer_user_id": ref1_id,
             "referrer_telegram_id": (
                 int(ref1_row["telegram_id"]) if ref1_row and ref1_row["telegram_id"] else None

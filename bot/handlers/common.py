@@ -3515,9 +3515,30 @@ async def cmd_start(message: types.Message, state: FSMContext):
             if extracted_code:
                 referral_code_from_args = extracted_code
 
-    # Создаём или получаем пользователя — теперь атомарно с привязкой реферала
-    user = await get_or_create_user(message.from_user.id, referral_code=referral_code_from_args)
+    # Создаём или получаем пользователя (referred_by=NULL для новых)
+    user = await get_or_create_user(message.from_user.id)
     await _sync_telegram_profile(message.from_user)
+
+    # Пытаемся привязать реферала через единый сервис (если есть код и пользователь новый/без привязки)
+    if user and not user.referred_by and referral_code_from_args:
+        from bot.services.referral_service import process_referral_click
+        ref_result = await process_referral_click(
+            message.from_user.id,
+            referral_code_from_args,
+            source="start",
+            start_param=referral_code_from_args,
+        )
+        if ref_result.attached and ref_result.notify_partner and ref_result.referrer_telegram_id:
+            from bot.database import get_user_by_referral_code
+            referrer = await get_user_by_referral_code(ref_result.clicked_code or "")
+            if referrer:
+                await _notify_partner_about_new_referral(
+                    message.bot,
+                    referrer_telegram_id=referrer.telegram_id,
+                    referred=message.from_user,
+                )
+        # Обновляем пользователя после возможной привязки
+        user = await get_or_create_user(message.from_user.id)
 
     if args and args[0].startswith("success_"):
         # Извлекаем order_id из аргумента

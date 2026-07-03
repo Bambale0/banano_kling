@@ -16,6 +16,7 @@ from bot.config import config
 from bot.database import (
     PROMO_BONUS_BY_CREDITS,
     add_credits,
+    complete_payment_atomic,
     create_miniapp_notification,
     create_transaction,
     credit_first_payment_referral_bonus,
@@ -478,44 +479,34 @@ async def reconcile_lava_pending_transactions(
 
 
 async def _complete_transaction(order_id: str, bot: Bot | None = None) -> dict[str, Any]:
-    transaction = await get_transaction_by_order(order_id)
-    if not transaction:
-        return {"ok": False, "reason": "not_found"}
+    """Атомарно завершает платёж через complete_payment_atomic.
 
-    telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
-    if not telegram_id:
-        return {"ok": False, "reason": "telegram_not_found", "transaction": transaction}
+    Все начисления (credits, referral, promo, partner_commissions) происходят в одной
+    DB-транзакции. Уведомления отправляются только после успешного commit.
+    """
+    result = await complete_payment_atomic(order_id)
 
-    updated = await update_transaction_status(order_id, "completed")
-    if not updated:
-        return {
-            "ok": True,
-            "already_completed": True,
-            "transaction": transaction,
-            "telegram_id": telegram_id,
-            "referral_bonus": {},
-            "promo_bonus": {},
-        }
+    if not result.get("ok"):
+        return result
 
-    await add_credits(telegram_id, transaction.credits)
-    referral_bonus = await credit_first_payment_referral_bonus(
-        telegram_id, transaction.credits, transaction.amount_rub
-    )
-    promo_bonus = await record_promo_redemption(transaction)
-    await _notify_referrers_about_purchase(
-        bot,
-        buyer_telegram_id=telegram_id,
-        transaction=transaction,
-        referral_bonus=referral_bonus,
-    )
-    return {
-        "ok": True,
-        "already_completed": False,
-        "transaction": transaction,
-        "telegram_id": telegram_id,
-        "referral_bonus": referral_bonus,
-        "promo_bonus": promo_bonus,
-    }
+    if result.get("already_completed"):
+        return result
+
+    # Post-commit: уведомления партнёрам (вне транзакции)
+    transaction = result.get("transaction")
+    telegram_id = result.get("telegram_id")
+    referral_bonus = result.get("referral_bonus") or {}
+    promo_bonus = result.get("promo_bonus") or {}
+
+    if transaction and telegram_id:
+        await _notify_referrers_about_purchase(
+            bot,
+            buyer_telegram_id=telegram_id,
+            transaction=transaction,
+            referral_bonus=referral_bonus,
+        )
+
+    return result
 
 async def _render_topup_menu(message: types.Message, state: FSMContext | None = None):
     packages = preset_manager.get_packages()
@@ -1201,23 +1192,18 @@ async def handle_cryptobot_webhook(request: web.Request):
             )
             return web.Response(status=200)
 
-        # Атомарная смена статуса — защита от двойного начисления при повторных вебхуках
-        updated = await update_transaction_status(order_id, "completed")
-        if not updated:
+        # Атомарное завершение — защита от двойного начисления при повторных вебхуках
+        completion = await _complete_transaction(order_id, bot=request.app.get("bot"))
+        if completion.get("already_completed"):
             logger.info("CryptoBot webhook: order %s already processed, skipping", order_id)
             return web.Response(status=200)
+        if not completion.get("ok"):
+            logger.error("CryptoBot webhook: failed to complete order %s reason=%s", order_id, completion.get("reason"))
+            return web.Response(status=200)
 
-        await add_credits(telegram_id, transaction.credits)
-        referral_bonus = await credit_first_payment_referral_bonus(
-            telegram_id, transaction.credits, transaction.amount_rub
-        )
-        promo_bonus = await record_promo_redemption(transaction)
-        await _notify_referrers_about_purchase(
-            request.app.get("bot"),
-            buyer_telegram_id=telegram_id,
-            transaction=transaction,
-            referral_bonus=referral_bonus,
-        )
+        transaction = completion["transaction"]
+        referral_bonus = completion.get("referral_bonus") or {}
+        promo_bonus = completion.get("promo_bonus") or {}
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus
@@ -1364,22 +1350,18 @@ async def handle_lava_webhook(request: web.Request):
             )
             return web.Response(status=200)
 
-        updated = await update_transaction_status(order_id, "completed")
-        if not updated:
+        # Атомарное завершение — защита от двойного начисления при повторных вебхуках
+        completion = await _complete_transaction(order_id, bot=request.app.get("bot"))
+        if completion.get("already_completed"):
             logger.info("Lava webhook: order %s already processed, skipping", order_id)
             return web.Response(status=200)
+        if not completion.get("ok"):
+            logger.error("Lava webhook: failed to complete order %s reason=%s", order_id, completion.get("reason"))
+            return web.Response(status=200)
 
-        await add_credits(telegram_id, transaction.credits)
-        referral_bonus = await credit_first_payment_referral_bonus(
-            telegram_id, transaction.credits, transaction.amount_rub
-        )
-        promo_bonus = await record_promo_redemption(transaction)
-        await _notify_referrers_about_purchase(
-            request.app.get("bot"),
-            buyer_telegram_id=telegram_id,
-            transaction=transaction,
-            referral_bonus=referral_bonus,
-        )
+        transaction = completion["transaction"]
+        referral_bonus = completion.get("referral_bonus") or {}
+        promo_bonus = completion.get("promo_bonus") or {}
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus
@@ -1529,22 +1511,18 @@ async def handle_yookassa_webhook(request: web.Request):
         if not paid:
             return web.Response(status=200)
 
-        updated = await update_transaction_status(order_id, "completed")
-        if not updated:
+        # Атомарное завершение — защита от двойного начисления при повторных вебхуках
+        completion = await _complete_transaction(order_id, bot=request.app.get("bot"))
+        if completion.get("already_completed"):
             logger.info("YooKassa webhook: order %s already processed, skipping", order_id)
             return web.Response(status=200)
+        if not completion.get("ok"):
+            logger.error("YooKassa webhook: failed to complete order %s reason=%s", order_id, completion.get("reason"))
+            return web.Response(status=200)
 
-        await add_credits(telegram_id, transaction.credits)
-        referral_bonus = await credit_first_payment_referral_bonus(
-            telegram_id, transaction.credits, transaction.amount_rub
-        )
-        promo_bonus = await record_promo_redemption(transaction)
-        await _notify_referrers_about_purchase(
-            request.app.get("bot"),
-            buyer_telegram_id=telegram_id,
-            transaction=transaction,
-            referral_bonus=referral_bonus,
-        )
+        transaction = completion["transaction"]
+        referral_bonus = completion.get("referral_bonus") or {}
+        promo_bonus = completion.get("promo_bonus") or {}
 
         bonus_text = _build_promo_bonus_text(promo_bonus) + _build_bonus_text(
             referral_bonus
