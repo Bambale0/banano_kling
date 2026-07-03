@@ -2624,7 +2624,6 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         feed = await get_user_feed_generations(
             ctx["user"].id,
             limit=limit,
-            include_unpublished_owned=True,
         )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
