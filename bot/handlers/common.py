@@ -3603,9 +3603,22 @@ async def cmd_start(message: types.Message, state: FSMContext):
             args[0].replace("feed_", "", 1)
         )
         if referral_code:
-            await _notify_partner_if_new_referral(
-                message.bot, message.from_user, referral_code,
+            from bot.services.referral_service import process_referral_click
+            ref_result = await process_referral_click(
+                message.from_user.id,
+                referral_code,
+                source="feed_deeplink",
+                start_param=referral_code,
             )
+            if ref_result.attached and ref_result.notify_partner and ref_result.referrer_telegram_id:
+                from bot.database import get_user_by_referral_code
+                referrer = await get_user_by_referral_code(ref_result.clicked_code or "")
+                if referrer:
+                    await _notify_partner_about_new_referral(
+                        message.bot,
+                        referrer_telegram_id=referrer.telegram_id,
+                        referred=message.from_user,
+                    )
         await _render_feed_deeplink(
             message,
             user,
@@ -3618,9 +3631,22 @@ async def cmd_start(message: types.Message, state: FSMContext):
             args[0].replace("remix_", "", 1)
         )
         if referral_code:
-            await _notify_partner_if_new_referral(
-                message.bot, message.from_user, referral_code,
+            from bot.services.referral_service import process_referral_click
+            ref_result = await process_referral_click(
+                message.from_user.id,
+                referral_code,
+                source="remix_deeplink",
+                start_param=referral_code,
             )
+            if ref_result.attached and ref_result.notify_partner and ref_result.referrer_telegram_id:
+                from bot.database import get_user_by_referral_code
+                referrer = await get_user_by_referral_code(ref_result.clicked_code or "")
+                if referrer:
+                    await _notify_partner_about_new_referral(
+                        message.bot,
+                        referrer_telegram_id=referrer.telegram_id,
+                        referred=message.from_user,
+                    )
         await _render_feed_deeplink(
             message,
             user,
@@ -3640,9 +3666,22 @@ async def cmd_start(message: types.Message, state: FSMContext):
             args[0].replace("posts_", "", 1)
         )
         if referral_code:
-            await _notify_partner_if_new_referral(
-                message.bot, message.from_user, referral_code,
+            from bot.services.referral_service import process_referral_click
+            ref_result = await process_referral_click(
+                message.from_user.id,
+                referral_code,
+                source="posts_deeplink",
+                start_param=referral_code,
             )
+            if ref_result.attached and ref_result.notify_partner and ref_result.referrer_telegram_id:
+                from bot.database import get_user_by_referral_code
+                referrer = await get_user_by_referral_code(ref_result.clicked_code or "")
+                if referrer:
+                    await _notify_partner_about_new_referral(
+                        message.bot,
+                        referrer_telegram_id=referrer.telegram_id,
+                        referred=message.from_user,
+                    )
         await _render_profile_feed_deeplink(
             message,
             user,
