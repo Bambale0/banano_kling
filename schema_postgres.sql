@@ -171,12 +171,14 @@ CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_code ON referral_events(c
 CREATE TABLE IF NOT EXISTS partner_commissions (
     id BIGSERIAL PRIMARY KEY,
     transaction_id BIGINT NOT NULL REFERENCES transactions(id),
+    order_id TEXT NOT NULL,
     referrer_id BIGINT NOT NULL REFERENCES users(id),
     referred_id BIGINT NOT NULL REFERENCES users(id),
     level INT NOT NULL CHECK (level IN (1, 2)),
     base_amount_rub NUMERIC(12,2) NOT NULL,
     percent NUMERIC(5,2) NOT NULL,
     amount_rub NUMERIC(12,2) NOT NULL,
+    tier TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(transaction_id, referrer_id, level)
 );

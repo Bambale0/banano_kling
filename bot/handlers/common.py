@@ -48,7 +48,6 @@ from bot.database import (
     is_channel_subscription_required,
     like_feed_generation,
     like_prompt,
-    process_referral,
     _merge_task_id_aliases,
     save_user_settings,
     update_user_profile,
@@ -2120,13 +2119,19 @@ async def _activate_referral_code(
         code,
     )
     referrer = await get_user_by_referral_code(code)
-    processed = await process_referral(referred.id, code)
-    if not processed:
+    from bot.services.referral_service import process_referral_click
+    ref_result = await process_referral_click(
+        referred.id,
+        code,
+        source="start_command",
+    )
+    if not ref_result.attached:
         logger.info(
-            "Referral activation not applied: user_id=%s username=%s code=%s referrer_found=%s",
+            "Referral activation not applied: user_id=%s username=%s code=%s reason=%s referrer_found=%s",
             getattr(referred, "id", None),
             getattr(referred, "username", None),
             code,
+            ref_result.reason,
             bool(referrer),
         )
         # Возвращаем сообщение с пояснением

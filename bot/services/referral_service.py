@@ -618,10 +618,10 @@ async def attach_referral_in_transaction(
 
     db.row_factory = db_backend.Row
 
-    # Ищем реферера
+    # Ищем реферера (без фильтра telegram_id — self-ref проверяем ниже)
     referrer_cursor = await db.execute(
-        "SELECT id, telegram_id FROM users WHERE referral_code = ? AND telegram_id != ?",
-        (code, visitor_telegram_id),
+        "SELECT id, telegram_id FROM users WHERE referral_code = ?",
+        (code,),
     )
     referrer_row = await referrer_cursor.fetchone()
 
