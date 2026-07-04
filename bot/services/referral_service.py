@@ -606,13 +606,15 @@ async def attach_referral_in_transaction(
     code = str(referral_code or "").strip().upper()
 
     if not code:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=None,
             referred_user_id=visitor_user_id,
             reason="empty_code",
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     db.row_factory = db_backend.Row
 
@@ -624,20 +626,22 @@ async def attach_referral_in_transaction(
     referrer_row = await referrer_cursor.fetchone()
 
     if not referrer_row:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             referred_user_id=visitor_user_id,
             reason="code_not_found",
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     referrer_id = int(referrer_row["id"])
     referrer_telegram_id = int(referrer_row["telegram_id"])
 
     # Self-ref
     if referrer_telegram_id == visitor_telegram_id:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -646,10 +650,12 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Blocklist
     if code in REFERRAL_ANTIFRAUD_BLOCK_CODES:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -657,9 +663,11 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     if referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -667,6 +675,8 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Hourly limit
     hourly_cursor = await db.execute(
@@ -675,7 +685,7 @@ async def attach_referral_in_transaction(
     )
     hourly_count = int((await hourly_cursor.fetchone())["cnt"])
     if hourly_count >= REFERRAL_ANTIFRAUD_MAX_PER_HOUR:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -683,6 +693,8 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Daily limit
     daily_cursor = await db.execute(
@@ -691,7 +703,7 @@ async def attach_referral_in_transaction(
     )
     daily_count = int((await daily_cursor.fetchone())["cnt"])
     if daily_count >= REFERRAL_ANTIFRAUD_MAX_PER_DAY:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -699,10 +711,12 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Cycle detection
     if await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=visitor_user_id):
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -710,6 +724,8 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Атомарная привязка
     update_cursor = await db.execute(
@@ -722,7 +738,7 @@ async def attach_referral_in_transaction(
     )
 
     if update_cursor.rowcount != 1:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -730,6 +746,8 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     insert_cursor = await db.execute(
         "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
@@ -737,7 +755,7 @@ async def attach_referral_in_transaction(
     )
 
     if insert_cursor.rowcount != 1:
-        return ReferralResult(
+        result = ReferralResult(
             clicked_code=code,
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
@@ -745,6 +763,8 @@ async def attach_referral_in_transaction(
             source=source,
             start_param=start_param,
         )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        return result
 
     # Начисляем бонус рефереру
     await db.execute(
@@ -763,6 +783,7 @@ async def attach_referral_in_transaction(
         source=source,
         start_param=start_param,
     )
+    await record_referral_event(result, visitor_telegram_id, visitor_user_id)
 
     logger.info(
         "Referral attached in transaction: visitor=%s code=%s referrer_id=%s",
