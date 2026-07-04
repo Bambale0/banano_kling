@@ -3059,6 +3059,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                     {"ok": False, "error": "Добавьте своё фото или референс для remix"},
                     status=400,
                 )
+            # P2-03: propagate original source_feed_gen_id for multi-hop remix lineage
+            immediate_parent_id = source_feed_gen_id
+            source_feed_gen_id = int(source_feed_task.get("source_feed_gen_id") or source_feed_gen_id)
 
         img_service = str(
             body.get("img_service")
@@ -3158,7 +3161,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
             prompt_source_id=(None if source_feed_gen_id else prompt_id),
             source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=source_feed_gen_id,
+            parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type=("remix" if source_feed_gen_id else None),
         )
 
@@ -3175,7 +3178,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 
         if source_feed_gen_id:
             await credit_feed_prompt_repeat(
-                source_feed_gen_id,
+                immediate_parent_id,
                 user.id,
                 repeat_task_id=str(launch_result.get("task_id") or ""),
                 credits_spent=unit_cost,
@@ -3250,6 +3253,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             source_request_data = source_feed_task.get("request_data") or {}
             if not isinstance(source_request_data, dict):
                 source_request_data = {}
+            # P2-03: propagate original source_feed_gen_id for multi-hop remix lineage
+            immediate_parent_id = source_feed_gen_id
+            source_feed_gen_id = int(source_feed_card.get("source_feed_gen_id") or source_feed_gen_id)
 
         model = str(
             body.get("v_model")
@@ -3568,7 +3574,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
             omni_character_name=omni_character_name,
             omni_character_audio_ids=omni_character_audio_ids,
             source_feed_gen_id=source_feed_gen_id,
-            parent_generation_id=source_feed_gen_id,
+            parent_generation_id=(immediate_parent_id if source_feed_gen_id else None),
             action_type=("repeat" if source_feed_gen_id else None),
         )
 
@@ -3585,7 +3591,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
         if source_feed_gen_id:
             await credit_feed_prompt_repeat(
-                source_feed_gen_id,
+                immediate_parent_id,
                 user.id,
                 repeat_task_id=str(launch_result.get("task_id") or ""),
                 credits_spent=cost,
