@@ -140,6 +140,32 @@ CREATE TABLE IF NOT EXISTS referrals (
 );
 
 -- ============================================================
+-- REFERRAL EVENTS (transition tracking)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS referral_events (
+    id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    visitor_user_id BIGINT,
+    visitor_telegram_id BIGINT NOT NULL,
+    clicked_code TEXT,
+    clicked_referrer_id BIGINT,
+    existing_referrer_id BIGINT,
+    attached BOOLEAN DEFAULT FALSE,
+    reason TEXT NOT NULL,
+    source TEXT,
+    start_param TEXT,
+    is_self_click BOOLEAN DEFAULT FALSE,
+    is_repeat_click BOOLEAN DEFAULT FALSE,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_referral_events_created_at ON referral_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_referral_events_visitor_telegram_id ON referral_events(visitor_telegram_id);
+CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_referrer_id ON referral_events(clicked_referrer_id);
+CREATE INDEX IF NOT EXISTS idx_referral_events_reason ON referral_events(reason);
+CREATE INDEX IF NOT EXISTS idx_referral_events_attached ON referral_events(attached);
+CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_code ON referral_events(clicked_code);
+
+-- ============================================================
 -- PARTNER COMMISSIONS LEDGER
 -- ============================================================
 CREATE TABLE IF NOT EXISTS partner_commissions (

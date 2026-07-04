@@ -21,11 +21,13 @@ _LASTROWID_TABLES = {
     "generation_history",
     "generation_tasks",
     "miniapp_notifications",
+    "partner_commissions",
     "partner_withdrawals",
     "promo_codes",
     "promo_redemptions",
     "prompt_likes",
     "prompt_repeat_events",
+    "referral_events",
     "referrals",
     "saved_references",
     "transactions",
@@ -34,11 +36,14 @@ _LASTROWID_TABLES = {
     "users",
 }
 _BOOL_COLUMNS = (
+    "attached",
     "has_paid",
     "is_active",
     "is_public",
     "is_public_feed",
     "is_prompt_library",
+    "is_repeat_click",
+    "is_self_click",
     "feed_prompt_visible",
     "feed_references_visible",
     "referral_purchase_notifications_enabled",
@@ -468,6 +473,54 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_references_visible" BOOLEAN DEFAULT FALSE'
             )
+            # Новые таблицы: referral_events, partner_commissions
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS referral_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    visitor_user_id BIGINT,
+                    visitor_telegram_id BIGINT NOT NULL,
+                    clicked_code TEXT,
+                    clicked_referrer_id BIGINT,
+                    existing_referrer_id BIGINT,
+                    attached BOOLEAN DEFAULT FALSE,
+                    reason TEXT NOT NULL,
+                    source TEXT,
+                    start_param TEXT,
+                    is_self_click BOOLEAN DEFAULT FALSE,
+                    is_repeat_click BOOLEAN DEFAULT FALSE,
+                    metadata JSONB DEFAULT '{}'::jsonb
+                )
+            """)
+            await cur.execute("""
+                CREATE TABLE IF NOT EXISTS partner_commissions (
+                    id BIGSERIAL PRIMARY KEY,
+                    transaction_id BIGINT NOT NULL,
+                    order_id TEXT NOT NULL,
+                    referrer_id BIGINT NOT NULL,
+                    referred_id BIGINT NOT NULL,
+                    level INT NOT NULL,
+                    base_amount_rub NUMERIC(12,2) NOT NULL,
+                    percent NUMERIC(5,2) NOT NULL,
+                    amount_rub NUMERIC(12,2) NOT NULL,
+                    tier TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(transaction_id, referrer_id, level)
+                )
+            """)
+            for idx_stmt in [
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_created_at ON referral_events(created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_visitor_telegram_id ON referral_events(visitor_telegram_id)",
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_referrer_id ON referral_events(clicked_referrer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_reason ON referral_events(reason)",
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_attached ON referral_events(attached)",
+                "CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_code ON referral_events(clicked_code)",
+                "CREATE INDEX IF NOT EXISTS idx_partner_commissions_referrer_id ON partner_commissions(referrer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_partner_commissions_referred_id ON partner_commissions(referred_id)",
+                "CREATE INDEX IF NOT EXISTS idx_partner_commissions_transaction_id ON partner_commissions(transaction_id)",
+                "CREATE INDEX IF NOT EXISTS idx_partner_commissions_created_at ON partner_commissions(created_at)",
+            ]:
+                await cur.execute(idx_stmt)
             await cur.execute(
                 """
                 CREATE OR REPLACE FUNCTION public.json_valid(payload text)

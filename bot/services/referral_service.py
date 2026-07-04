@@ -88,47 +88,69 @@ async def _referral_chain_contains(
 
 
 async def _ensure_referral_events_table(db: db_backend.Connection) -> None:
-    """Создаёт таблицу referral_events, если её нет (idempotent)."""
-    try:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS referral_events (
-                id BIGSERIAL PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                visitor_user_id BIGINT,
-                visitor_telegram_id BIGINT NOT NULL,
-                clicked_code TEXT,
-                clicked_referrer_id BIGINT,
-                existing_referrer_id BIGINT,
-                attached BOOLEAN DEFAULT FALSE,
-                reason TEXT NOT NULL,
-                source TEXT,
-                start_param TEXT,
-                is_self_click BOOLEAN DEFAULT FALSE,
-                is_repeat_click BOOLEAN DEFAULT FALSE,
-                metadata JSONB DEFAULT '{}'::jsonb
-            )
-        """)
-    except db_backend.OperationalError:
-        # SQLite fallback: BIGSERIAL → INTEGER PRIMARY KEY AUTOINCREMENT
-        # JSONB → TEXT, BIGINT → INTEGER
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS referral_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                visitor_user_id INTEGER,
-                visitor_telegram_id INTEGER NOT NULL,
-                clicked_code TEXT,
-                clicked_referrer_id INTEGER,
-                existing_referrer_id INTEGER,
-                attached INTEGER DEFAULT 0,
-                reason TEXT NOT NULL,
-                source TEXT,
-                start_param TEXT,
-                is_self_click INTEGER DEFAULT 0,
-                is_repeat_click INTEGER DEFAULT 0,
-                metadata TEXT DEFAULT '{}'
-            )
-        """)
+    """Создаёт таблицу referral_events, если её нет (idempotent).
+
+    На PostgreSQL использует прямой psycopg-курсор, потому что aiosqlite-адаптер
+    пропускает DDL-запросы (translate_sql возвращает None для CREATE TABLE/INDEX).
+    На SQLite — через обычный db.execute.
+    """
+    if db_backend.is_postgres():
+        import os
+
+        import psycopg
+
+        dsn = os.getenv("DATABASE_URL", "")
+        async with await psycopg.AsyncConnection.connect(dsn) as raw_conn:
+            async with raw_conn.cursor() as cur:
+                await cur.execute("""
+                    CREATE TABLE IF NOT EXISTS referral_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        visitor_user_id BIGINT,
+                        visitor_telegram_id BIGINT NOT NULL,
+                        clicked_code TEXT,
+                        clicked_referrer_id BIGINT,
+                        existing_referrer_id BIGINT,
+                        attached BOOLEAN DEFAULT FALSE,
+                        reason TEXT NOT NULL,
+                        source TEXT,
+                        start_param TEXT,
+                        is_self_click BOOLEAN DEFAULT FALSE,
+                        is_repeat_click BOOLEAN DEFAULT FALSE,
+                        metadata JSONB DEFAULT '{}'::jsonb
+                    )
+                """)
+                for idx_stmt in [
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_created_at ON referral_events(created_at)",
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_visitor_telegram_id ON referral_events(visitor_telegram_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_referrer_id ON referral_events(clicked_referrer_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_reason ON referral_events(reason)",
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_attached ON referral_events(attached)",
+                    "CREATE INDEX IF NOT EXISTS idx_referral_events_clicked_code ON referral_events(clicked_code)",
+                ]:
+                    await cur.execute(idx_stmt)
+                await raw_conn.commit()
+        return
+
+    # SQLite path
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            visitor_user_id INTEGER,
+            visitor_telegram_id INTEGER NOT NULL,
+            clicked_code TEXT,
+            clicked_referrer_id INTEGER,
+            existing_referrer_id INTEGER,
+            attached INTEGER DEFAULT 0,
+            reason TEXT NOT NULL,
+            source TEXT,
+            start_param TEXT,
+            is_self_click INTEGER DEFAULT 0,
+            is_repeat_click INTEGER DEFAULT 0,
+            metadata TEXT DEFAULT '{}'
+        )
+    """)
 
     for idx_name, idx_col in [
         ("idx_referral_events_created_at", "created_at"),
@@ -147,41 +169,29 @@ async def _ensure_referral_events_table(db: db_backend.Connection) -> None:
 
 
 async def _ensure_partner_commissions_table(db: db_backend.Connection) -> None:
-    """Создаёт таблицу partner_commissions, если её нет (idempotent)."""
-    try:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS partner_commissions (
-                id BIGSERIAL PRIMARY KEY,
-                transaction_id BIGINT NOT NULL,
-                order_id TEXT NOT NULL,
-                referrer_id BIGINT NOT NULL,
-                referred_id BIGINT NOT NULL,
-                level INT NOT NULL,
-                base_amount_rub NUMERIC(12,2) NOT NULL,
-                percent NUMERIC(5,2) NOT NULL,
-                amount_rub NUMERIC(12,2) NOT NULL,
-                tier TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(transaction_id, referrer_id, level)
-            )
-        """)
-    except db_backend.OperationalError:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS partner_commissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transaction_id INTEGER NOT NULL,
-                order_id TEXT NOT NULL,
-                referrer_id INTEGER NOT NULL,
-                referred_id INTEGER NOT NULL,
-                level INTEGER NOT NULL,
-                base_amount_rub REAL NOT NULL,
-                percent REAL NOT NULL,
-                amount_rub REAL NOT NULL,
-                tier TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(transaction_id, referrer_id, level)
-            )
-        """)
+    """Создаёт таблицу partner_commissions, если её нет (idempotent).
+
+    На PostgreSQL таблица уже создана через _ensure_postgres_helpers().
+    """
+    if db_backend.is_postgres():
+        return
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS partner_commissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transaction_id INTEGER NOT NULL,
+            order_id TEXT NOT NULL,
+            referrer_id INTEGER NOT NULL,
+            referred_id INTEGER NOT NULL,
+            level INTEGER NOT NULL,
+            base_amount_rub REAL NOT NULL,
+            percent REAL NOT NULL,
+            amount_rub REAL NOT NULL,
+            tier TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(transaction_id, referrer_id, level)
+        )
+    """)
 
     for idx_name, idx_col in [
         ("idx_partner_commissions_referrer_id", "referrer_id"),

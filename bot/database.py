@@ -2017,11 +2017,11 @@ async def complete_payment_atomic(
                 try:
                     await db.execute(
                         """
-                        INSERT INTO partner_commissions (transaction_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
-                        VALUES (?, ?, ?, 1, ?, ?, ?)
+                        INSERT INTO partner_commissions (transaction_id, order_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
+                        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
                         ON CONFLICT(transaction_id, referrer_id, level) DO NOTHING
                         """,
-                        (txn_row["id"], ref1_id, txn_row["user_id"], base_value, float(ref1_percent), level1_bonus),
+                        (txn_row["id"], order_id, ref1_id, txn_row["user_id"], base_value, float(ref1_percent), level1_bonus),
                     )
                 except db_backend.OperationalError:
                     pass  # таблица partner_commissions ещё не создана на SQLite
@@ -2052,11 +2052,11 @@ async def complete_payment_atomic(
                     try:
                         await db.execute(
                             """
-                            INSERT INTO partner_commissions (transaction_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
-                            VALUES (?, ?, ?, 2, ?, ?, ?)
+                            INSERT INTO partner_commissions (transaction_id, order_id, referrer_id, referred_id, level, base_amount_rub, percent, amount_rub)
+                            VALUES (?, ?, ?, ?, 2, ?, ?, ?)
                             ON CONFLICT(transaction_id, referrer_id, level) DO NOTHING
                             """,
-                            (txn_row["id"], ref2_id, txn_row["user_id"], base_value, float(PARTNER_LEVEL2_PERCENT), level2_bonus),
+                            (txn_row["id"], order_id, ref2_id, txn_row["user_id"], base_value, float(PARTNER_LEVEL2_PERCENT), level2_bonus),
                         )
                     except db_backend.OperationalError:
                         pass
