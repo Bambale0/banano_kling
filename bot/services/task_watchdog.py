@@ -31,8 +31,8 @@ async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[s
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
-            SELECT id, user_id, task_id, external_task_id, service_name, model,
-                   prompt, cost, credits_spent, created_at
+            SELECT id, user_id, task_id, model,
+                   prompt, cost, request_data, created_at
             FROM generation_tasks
             WHERE status = 'processing'
               AND created_at <= ?
@@ -156,59 +156,38 @@ async def run_watchdog_cycle() -> int:
     recovered = 0
 
     for task in stuck:
-        task_id = task["id"]
-        user_id = task["user_id"]
-        external_task_id = task.get("external_task_id") or ""
-        service_name = task.get("service_name") or ""
-        cost = float(task.get("cost") or task.get("credits_spent") or 0)
+        tid = task["id"]
+        uid = task["user_id"]
+        model = task.get("model") or ""
+        raw_request = task.get("request_data") or "{}"
+        cost = float(task.get("cost") or 0)
         created_at = task.get("created_at")
+        request_data: dict = {}
+        if isinstance(raw_request, str):
+            try:
+                request_data = json.loads(raw_request)
+            except (TypeError, json.JSONDecodeError):
+                request_data = {}
+        elif isinstance(raw_request, dict):
+            request_data = raw_request
+
+        external_task_id = task.get("task_id") or ""
+        service_name = model or request_data.get("img_service") or request_data.get("service_name") or ""
 
         # Задачи старше MAX_STUCK_MINUTES — принудительно в failed
         if created_at and created_at <= max_stuck_cutoff:
-            if await force_fail_task(task_id, user_id, cost):
+            if await force_fail_task(tid, uid, cost):
                 logger.warning(
-                    "Watchdog: force-failed task %s (user=%s, service=%s, cost=%s) "
+                    "Watchdog: force-failed task %s (user=%s, model=%s, cost=%s) "
                     "— stuck for >%s min",
-                    task_id, user_id, service_name, cost, MAX_STUCK_MINUTES,
+                    tid, uid, model, cost, MAX_STUCK_MINUTES,
                 )
                 recovered += 1
             continue
 
-        # Пробуем проверить статус у провайдера
-        if external_task_id:
-            try:
-                provider_status = await check_task_with_provider(
-                    external_task_id, service_name
-                )
-                if provider_status == "completed":
-                    # Завершаем задачу (без отправки результата пользователю)
-                    async with db_backend.connect(DATABASE_PATH) as db:
-                        await db.execute(
-                            """
-                            UPDATE generation_tasks
-                            SET status = 'completed', completed_at = CURRENT_TIMESTAMP
-                            WHERE id = ? AND status = 'processing'
-                            """,
-                            (task_id,),
-                        )
-                        await db.commit()
-                    logger.info(
-                        "Watchdog: task %s recovered as completed (provider=%s)",
-                        task_id, service_name,
-                    )
-                    recovered += 1
-                elif provider_status == "failed":
-                    if await force_fail_task(task_id, user_id, cost):
-                        logger.warning(
-                            "Watchdog: task %s recovered as failed (provider=%s)",
-                            task_id, service_name,
-                        )
-                        recovered += 1
-            except Exception:
-                logger.debug(
-                    "Watchdog: error checking task %s with provider %s",
-                    task_id, service_name, exc_info=True,
-                )
+        # Пробуем проверить статус у провайдера (если есть доступ)
+        # На данный момент проверка статуса отключена до добавления external_task_id
+        # в схему generation_tasks. Пока только force-fail для старых задач.
 
     if recovered:
         logger.info(
