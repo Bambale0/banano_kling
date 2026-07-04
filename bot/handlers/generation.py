@@ -2231,7 +2231,10 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             )
 
         await state.clear()
-        await callback.answer("Повтор запускаю")
+        try:
+            await callback.answer("Повтор запускаю")
+        except TelegramBadRequest:
+            pass  # stale callback — ignore
     except Exception:
         logger.exception("Repeat image generation failed")
         if unit_cost > 0 and not is_admin:
@@ -2240,7 +2243,10 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             await progress_message.delete()
         except Exception:
             pass
-        await callback.answer("Не удалось повторить генерацию.", show_alert=True)
+        try:
+            await callback.answer("Не удалось повторить генерацию.", show_alert=True)
+        except TelegramBadRequest:
+            pass  # stale callback — ignore
 
 
 @router.callback_query(F.data == "main_img_banana_pro")
