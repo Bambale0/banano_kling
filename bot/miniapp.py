@@ -716,7 +716,8 @@ async def _activate_start_param_referral(
     telegram_user: dict[str, Any],
     start_param: Any,
 ) -> None:
-    referral_code = _referral_code_from_start_param(start_param)
+    from bot.services.referral_service import referral_code_from_start_param
+    referral_code = referral_code_from_start_param(start_param)
     if not referral_code:
         if start_param:
             logger.info(
@@ -796,7 +797,7 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
 
     # Извлекаем реферальный код из start_param до создания пользователя
     # и передаём в get_or_create_user (как в /start), чтобы привязка была атомарной
-    referral_code = _referral_code_from_start_param(resolved_start_param) or None
+    referral_code = referral_code_from_start_param(resolved_start_param) or None
     user = await get_or_create_user(telegram_id, referral_code=referral_code)
 
     try:
