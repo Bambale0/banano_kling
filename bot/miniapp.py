@@ -3794,6 +3794,12 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         )
 
     except Exception as e:
+        logger.exception(f"Mini App Motion Control failed: {e}")
+        if 'telegram_id' in locals() and 'cost' in locals():
+            try:
+                await add_credits(telegram_id, cost)
+            except Exception:
+                pass
         return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
 
 
