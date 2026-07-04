@@ -1,0 +1,1019 @@
+'use client'
+
+import type {
+  BootstrapResponse,
+  CreatePaymentResponse,
+  FeedComment,
+  FeedItem,
+  PaymentProvider,
+  ProfileSummary,
+  PromptItem,
+  SavedReference,
+  ScenarioType,
+  Task,
+  TaskDetail,
+  UploadedFile,
+} from './types'
+
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string
+        initDataUnsafe?: { start_param?: string }
+        ready?: () => void
+        expand?: () => void
+        openInvoice?: (url: string, callback?: (status: string) => void) => void
+      }
+    }
+    __BANANO_MINIAPP_CONFIG__?: {
+      botUsername?: string
+      miniAppUrl?: string
+    }
+  }
+}
+
+function getWebApp() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return window.Telegram?.WebApp || null
+}
+
+function getLaunchParams(): URLSearchParams {
+  if (typeof window === 'undefined') {
+    return new URLSearchParams()
+  }
+
+  const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
+  const hashParams = new URLSearchParams(rawHash)
+  const searchParams = new URLSearchParams(window.location.search)
+
+  for (const [key, value] of searchParams.entries()) {
+    if (!hashParams.has(key)) {
+      hashParams.set(key, value)
+    }
+  }
+
+  return hashParams
+}
+
+function getTelegramLaunchValue(name: string): string {
+  const params = getLaunchParams()
+  return String(params.get(name) || '').trim()
+}
+
+function getInitDataFromLocation(): string {
+  // tgWebAppData may appear in hash OR search params depending on Telegram version
+  const raw = getTelegramLaunchValue('tgWebAppData')
+  if (!raw) return ''
+  return raw
+}
+
+export function getInitData(): string {
+  // Prefer initData from location hash (tgWebAppData) — it's available
+  // before window.Telegram.WebApp is fully initialized. This is critical
+  // on slow networks/VPN where the Telegram SDK CDN may be delayed.
+  const fromLocation = getInitDataFromLocation()
+  if (fromLocation) return fromLocation
+  return getWebApp()?.initData || ''
+}
+
+export function hasTelegramInitData(): boolean {
+  return Boolean(getInitData())
+}
+
+export function waitForTelegramInitData(timeoutMs = 10000): Promise<boolean> {
+  if (hasTelegramInitData()) {
+    return Promise.resolve(true)
+  }
+  if (typeof window === 'undefined') {
+    return Promise.resolve(false)
+  }
+
+  const startedAt = Date.now()
+  return new Promise((resolve) => {
+    const check = () => {
+      if (hasTelegramInitData()) {
+        resolve(true)
+        return
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        resolve(false)
+        return
+      }
+      window.setTimeout(check, 50)
+    }
+    check()
+  })
+}
+
+export function getStartParamFallback(): string {
+  const direct = String(getWebApp()?.initDataUnsafe?.start_param || "").trim()
+  if (direct) return direct
+  if (typeof window === "undefined") return ""
+  const launchParams = getLaunchParams()
+  const tg = String(launchParams.get("tgWebAppStartParam") || launchParams.get("startapp") || "").trim()
+  if (tg) return tg
+  const start = String(launchParams.get("start") || "").trim()
+  if (start.startsWith("ref_")) return start
+  const initData = getInitDataFromLocation()
+  const initDataStartParam = initData ? String(new URLSearchParams(initData).get("start_param") || "").trim() : ""
+  if (initDataStartParam) return initDataStartParam
+  const ref = String(launchParams.get("ref") || "").trim().toUpperCase()
+  return ref ? `ref_${ref}` : ""
+}
+
+export function getRuntimeBotUsername(): string {
+  if (typeof window === 'undefined') return ''
+  return String(window.__BANANO_MINIAPP_CONFIG__?.botUsername || '').trim().replace(/^@/, '')
+}
+
+export function buildTelegramMiniAppUrl(startParam = getStartParamFallback()): string {
+  const username = getRuntimeBotUsername()
+  if (!username) return ''
+  const param = String(startParam || '').trim()
+  return param
+    ? `https://t.me/${username}?startapp=${encodeURIComponent(param)}`
+    : `https://t.me/${username}?startapp`
+}
+
+export function getApiBasePath(): string {
+  if (typeof window === 'undefined') {
+    return '/mini-app/api'
+  }
+  const override = process.env.NEXT_PUBLIC_MINIAPP_API_BASE
+  if (override) {
+    return override.replace(/\/$/, '')
+  }
+  const path = window.location.pathname || '/mini-app/'
+  const root = path.endsWith('/') ? path.slice(0, -1) : path
+  if (root.includes('/mini-app')) {
+    const idx = root.indexOf('/mini-app')
+    return `${root.slice(0, idx)}/mini-app/api`
+  }
+  return '/mini-app/api'
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get('content-type') || ''
+  const text = await response.text()
+  let data: unknown
+
+  try {
+    if (!contentType.includes('application/json') && !/^\s*[\[{]/.test(text)) {
+      throw new Error('Non-JSON response')
+    }
+    data = JSON.parse(text)
+  } catch (error) {
+    console.error('Mini App API returned invalid JSON', {
+      status: response.status,
+      url: response.url,
+      contentType,
+      preview: text.slice(0, 160),
+      error,
+    })
+    throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
+  }
+
+  const payload = data as { ok?: boolean; error?: string }
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || 'Не удалось выполнить действие')
+  }
+  return data as T
+}
+
+async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+  const nextPayload = { ...payload }
+  const startParamFallback = getStartParamFallback()
+  if (startParamFallback && !nextPayload.start_param_fallback) {
+    nextPayload.start_param_fallback = startParamFallback
+  }
+  const response = await fetch(`${getApiBasePath()}/${path.replace(/^\/+/, '')}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(nextPayload),
+    cache: 'no-store',
+    credentials: 'same-origin',
+  })
+  return parseJson<T>(response)
+}
+
+export async function bootstrapApp(): Promise<BootstrapResponse> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  return postJson<BootstrapResponse>('bootstrap', { init_data: initData })
+}
+
+export async function createPayment(payload: {
+  packageId: string
+  provider: PaymentProvider
+  promoCode?: string
+}): Promise<CreatePaymentResponse> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  return postJson<CreatePaymentResponse>('create-payment', {
+    init_data: initData,
+    package_id: payload.packageId,
+    provider: payload.provider,
+    promo_code: payload.promoCode || '',
+  })
+}
+
+export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; task: TaskDetail }>('task-detail', {
+    init_data: initData,
+    task_id: taskId,
+  })
+  return response.task
+}
+
+export async function uploadFile(
+  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio',
+  file: File
+): Promise<UploadedFile> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const formData = new FormData()
+  formData.append('init_data', initData)
+  formData.append('file_kind', fileKind)
+  formData.append('file', file)
+
+  const response = await fetch(`${getApiBasePath()}/upload`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+    body: formData,
+    cache: 'no-store',
+    credentials: 'same-origin',
+  })
+  const data = await parseJson<{
+    ok: true
+    url: string
+    kind: 'image' | 'video' | 'audio'
+    filename: string
+    reference?: SavedReference | null
+  }>(response)
+
+  return {
+    id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    name: data.filename,
+    url: data.url,
+    type: data.kind,
+    size: file.size,
+    saved_reference_id: data.reference?.id || null,
+    created_at: data.reference?.created_at || null,
+    source: data.reference?.source,
+  }
+}
+
+export async function generateImage(payload: {
+  model: string
+  ratio: string
+  quality: string
+  nsfwChecker?: boolean
+  nsfwEnabled?: boolean
+  promptId?: number | null
+  sourceFeedGenId?: number | null
+  prompt: string
+  references: string[]
+}): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done'
+    task_id: string
+    saved_url?: string
+    credits: number
+    cost: number
+    model_label: string
+    prompt_hidden?: boolean
+    prompt_actions_allowed?: boolean
+    source_feed_gen_id?: number | null
+  }>('generate-image', {
+    init_data: initData,
+    img_service: payload.model,
+    img_ratio: payload.ratio,
+    img_quality: payload.quality,
+    img_nsfw_checker: payload.nsfwChecker ?? false,
+    nsfw_enabled: payload.nsfwEnabled ?? false,
+    prompt: payload.prompt,
+    prompt_id: payload.promptId || null,
+    source_feed_gen_id: payload.sourceFeedGenId || null,
+    reference_images: payload.references,
+  })
+
+  const promptHidden = Boolean(response.prompt_hidden)
+
+  const task: Task = {
+    task_id: response.task_id,
+    type: 'image',
+    model: payload.model,
+    model_label: response.model_label,
+    aspect_ratio: payload.ratio,
+    status: response.status === 'done' ? 'completed' : 'pending',
+    result_url: response.saved_url || null,
+    created_at: new Date().toISOString(),
+    prompt_preview: promptHidden
+      ? ''
+      : payload.prompt.slice(0, 100) + (payload.prompt.length > 100 ? '...' : ''),
+    cost: response.cost,
+    prompt_hidden: promptHidden,
+    prompt_actions_allowed: response.prompt_actions_allowed ?? !promptHidden,
+  }
+
+  return {
+    task,
+    detail:
+      response.status === 'done'
+        ? {
+            ...task,
+            prompt: promptHidden ? '' : payload.prompt,
+            request_data: {
+              reference_images: payload.references,
+              source_feed_gen_id: response.source_feed_gen_id || payload.sourceFeedGenId || null,
+            },
+          }
+        : null,
+    credits: response.credits,
+  }
+}
+
+export async function fetchPrompts(payload: {
+  source?: 'catalog' | 'top' | 'popular' | 'tag' | 'my'
+  tag?: string
+  category?: string
+  page?: number
+  limit?: number
+} = {}): Promise<PromptItem[]> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompts: PromptItem[] }>('prompts', {
+    init_data: initData,
+    source: payload.source || 'catalog',
+    tag: payload.tag || '',
+    category: payload.category || '',
+    page: payload.page || 1,
+    limit: payload.limit || 24,
+  })
+  return response.prompts
+}
+
+export async function fetchPromptDetail(promptId: number): Promise<PromptItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompt: PromptItem }>('prompts/detail', {
+    init_data: initData,
+    prompt_id: promptId,
+  })
+  return response.prompt
+}
+
+export async function likePrompt(promptId: number): Promise<PromptItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompt: PromptItem }>('prompts/like', {
+    init_data: initData,
+    prompt_id: promptId,
+  })
+  return response.prompt
+}
+
+export async function submitPrompt(payload: {
+  title: string
+  description: string
+  promptText: string
+  previewUrl?: string
+  model?: string
+  tags?: string[]
+}): Promise<PromptItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompt: PromptItem }>('prompts/submit', {
+    init_data: initData,
+    title: payload.title,
+    description: payload.description,
+    prompt_text: payload.promptText,
+    preview_url: payload.previewUrl || '',
+    model: payload.model || '',
+    tags: payload.tags || [],
+  })
+  return response.prompt
+}
+
+export async function deactivatePrompt(promptId: number): Promise<PromptItem | null> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompt: PromptItem | null }>('prompts/deactivate', {
+    init_data: initData,
+    prompt_id: promptId,
+  })
+  return response.prompt
+}
+
+export async function fetchFeed(payload: {
+  source?: 'recent' | 'top_day' | 'top'
+  limit?: number
+} = {}): Promise<FeedItem[]> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed', {
+    init_data: initData,
+    source: payload.source || 'recent',
+    limit: payload.limit ?? 80,
+  })
+  return response.feed
+}
+
+export async function fetchFeedItem(genId: number): Promise<FeedItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed_item: FeedItem }>('feed/item', {
+    init_data: initData,
+    gen_id: genId,
+  })
+  return response.feed_item
+}
+
+export async function fetchMyFeed(limit = 999999): Promise<FeedItem[]> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed/my', {
+    init_data: initData,
+    limit,
+  })
+  return response.feed
+}
+
+export async function fetchProfileFeed(
+  referralCode: string,
+  limit = 120
+): Promise<{ profile: ProfileSummary; feed: FeedItem[] }> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; profile: ProfileSummary; feed: FeedItem[] }>('feed/profile', {
+    init_data: initData,
+    referral_code: referralCode,
+    limit,
+  })
+  return { profile: response.profile, feed: response.feed }
+}
+
+export async function likeFeedItem(genId: number): Promise<FeedItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed_item: FeedItem }>('feed/like', {
+    init_data: initData,
+    gen_id: genId,
+  })
+  return response.feed_item
+}
+
+export async function shareFeedItem(genId: number): Promise<{ item: FeedItem; link: string }> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{
+    ok: true
+    feed_item: FeedItem
+    link: string
+    post_link?: string
+    repeat_link?: string
+    miniapp_link?: string
+    miniapp_post_link?: string
+    miniapp_repeat_link?: string
+  }>('feed/share', {
+    init_data: initData,
+    gen_id: genId,
+  })
+  const isImage = String(response.feed_item?.gen_type || '').toLowerCase() === 'image'
+  const preferredLink = isImage
+    ? response.repeat_link || response.post_link || response.link
+    : response.post_link || response.link
+  return { item: response.feed_item, link: preferredLink }
+}
+
+export async function fetchFeedComments(genId: number, limit = 40): Promise<FeedComment[]> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; comments: FeedComment[] }>('feed/comments', {
+    init_data: initData,
+    gen_id: genId,
+    limit,
+  })
+  return response.comments
+}
+
+export async function addFeedComment(
+  genId: number,
+  text: string
+): Promise<{ comment: FeedComment; commentsCount: number }> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; comment: FeedComment; comments_count: number }>('feed/comment', {
+    init_data: initData,
+    gen_id: genId,
+    text,
+  })
+  return { comment: response.comment, commentsCount: response.comments_count }
+}
+
+export async function removeFeedItem(genId: number): Promise<void> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  await postJson<{ ok: true; removed: boolean }>('feed/remove', {
+    init_data: initData,
+    gen_id: genId,
+  })
+}
+
+export async function publishGeneration(
+  taskId: string,
+  options: {
+    promptVisible?: boolean
+    referencesVisible?: boolean
+  } = {}
+): Promise<FeedItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed_item: FeedItem }>('generations/share', {
+    init_data: initData,
+    task_id: taskId,
+    prompt_visible: Boolean(options.promptVisible),
+    references_visible: Boolean(options.referencesVisible),
+  })
+  return response.feed_item
+}
+
+export async function unpublishGeneration(taskId: string): Promise<void> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  await postJson<{ ok: true; removed: boolean }>('feed/remove', {
+    init_data: initData,
+    task_id: taskId,
+  })
+}
+
+export async function saveGenerationPrompt(taskId: string): Promise<void> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  await postJson<{ ok: true }>('generations/share-library', {
+    init_data: initData,
+    task_id: taskId,
+  })
+}
+
+export async function removeGenerationPrompt(taskId: string): Promise<void> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  await postJson<{ ok: true; removed: boolean }>('generations/remove-library', {
+    init_data: initData,
+    task_id: taskId,
+  })
+}
+
+export async function remixFeedItem(payload: {
+  genId: number
+  model: string
+  ratio: string
+  quality: string
+  references?: string[]
+}): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done'
+    task_id: string
+    saved_url?: string
+    credits: number
+    cost: number
+    model_label: string
+    prompt_hidden: boolean
+    prompt_actions_allowed: boolean
+    source_feed_gen_id: number
+  }>('feed/remix', {
+    init_data: initData,
+    gen_id: payload.genId,
+    img_service: payload.model,
+    img_ratio: payload.ratio,
+    img_quality: payload.quality,
+    reference_images: payload.references || [],
+  })
+
+  const task: Task = {
+    task_id: response.task_id,
+    type: 'image',
+    model: payload.model,
+    model_label: response.model_label,
+    aspect_ratio: payload.ratio,
+    status: response.status === 'done' ? 'completed' : 'pending',
+    result_url: response.saved_url || null,
+    created_at: new Date().toISOString(),
+    prompt_preview: '',
+    cost: response.cost,
+    prompt_hidden: response.prompt_hidden,
+    prompt_actions_allowed: response.prompt_actions_allowed,
+  }
+
+  return {
+    task,
+    detail:
+      response.status === 'done'
+        ? {
+            ...task,
+            prompt: '',
+            request_data: {
+              source_feed_gen_id: response.source_feed_gen_id,
+              reference_images: payload.references || [],
+            },
+          }
+        : null,
+    credits: response.credits,
+  }
+}
+
+export async function executeMiniAppAction(action: string): Promise<void> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  await postJson<{ ok: true }>('action', {
+    init_data: initData,
+    action,
+  })
+}
+
+export async function generateVideo(payload: {
+  model: string
+  scenario: ScenarioType
+  ratio: string
+  duration: number
+  sourceFeedGenId?: number | null
+  grokMode?: string
+  grokResolution?: string
+  veoGenerationType?: string
+  veoTranslation?: boolean
+  veoResolution?: string
+  veoSeed?: number | null
+  veoWatermark?: string
+  klingNegativePrompt?: string
+  klingCfgScale?: number
+  omniResolution?: string
+  omniSeed?: number | null
+  omniAudioIds?: string[]
+  omniCharacterIds?: string[]
+  omniBaseVoice?: string
+  omniVoiceName?: string
+  omniVoiceDescription?: string
+  omniExampleDialogue?: string
+  omniCharacterName?: string
+  omniCharacterAudioIds?: string[]
+  prompt: string
+  startImage: string | null
+  references: string[]
+  videoReferences: string[]
+  audioReference?: string | null
+}): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done'
+    task_id: string
+    saved_url?: string
+    task_type?: 'image' | 'video' | 'audio' | 'character'
+    credits: number
+    cost: number
+    model_label: string
+    prompt_hidden?: boolean
+    prompt_actions_allowed?: boolean
+    source_feed_gen_id?: number | null
+  }>('generate-video', {
+    init_data: initData,
+    v_model: payload.model,
+    v_type: payload.scenario,
+    v_ratio: payload.ratio,
+    v_duration: payload.duration,
+    source_feed_gen_id: payload.sourceFeedGenId || null,
+    grok_mode: payload.grokMode,
+    grok_resolution: payload.grokResolution,
+    veo_generation_type: payload.veoGenerationType,
+    veo_translation: payload.veoTranslation,
+    veo_resolution: payload.veoResolution,
+    veo_seed: payload.veoSeed,
+    veo_watermark: payload.veoWatermark,
+    kling_negative_prompt: payload.klingNegativePrompt,
+    kling_cfg_scale: payload.klingCfgScale,
+    omni_resolution: payload.omniResolution,
+    omni_seed: payload.omniSeed,
+    omni_audio_ids: payload.omniAudioIds || [],
+    omni_character_ids: payload.omniCharacterIds || [],
+    omni_base_voice: payload.omniBaseVoice,
+    omni_voice_name: payload.omniVoiceName,
+    omni_voice_description: payload.omniVoiceDescription,
+    omni_example_dialogue: payload.omniExampleDialogue,
+    omni_character_name: payload.omniCharacterName,
+    omni_character_audio_ids: payload.omniCharacterAudioIds || [],
+    prompt: payload.prompt,
+    v_image_url: payload.startImage || '',
+    reference_images: payload.references,
+    v_reference_videos: payload.videoReferences,
+    audio_url: payload.audioReference || '',
+    audio_references: payload.audioReference ? [payload.audioReference] : [],
+  })
+
+  const task: Task = {
+    task_id: response.task_id,
+    type: response.task_type || (payload.scenario === 'audio' ? 'audio' : payload.scenario === 'character' ? 'character' : 'video'),
+    model: payload.model,
+    model_label: response.model_label,
+    aspect_ratio: payload.ratio,
+    status: response.status === 'done' ? 'completed' : 'pending',
+    result_url: response.saved_url || null,
+    created_at: new Date().toISOString(),
+    prompt_preview:
+      payload.prompt.slice(0, 100) + (payload.prompt.length > 100 ? '...' : ''),
+    cost: response.cost,
+    duration: payload.duration,
+    prompt_hidden: response.prompt_hidden,
+    prompt_actions_allowed: response.prompt_actions_allowed,
+  }
+
+  return {
+    task,
+    detail:
+      response.status === 'done'
+        ? {
+            ...task,
+            prompt: payload.prompt,
+            request_data: {
+              reference_images: [
+                ...(payload.startImage ? [payload.startImage] : []),
+                ...payload.references,
+              ],
+              v_reference_videos: payload.videoReferences,
+              audio_reference: payload.audioReference || null,
+              source_feed_gen_id: response.source_feed_gen_id || payload.sourceFeedGenId || null,
+              omni_audio_ids: payload.omniAudioIds || [],
+              omni_character_ids: payload.omniCharacterIds || [],
+              omni_character_audio_ids: payload.omniCharacterAudioIds || [],
+            },
+          }
+        : null,
+    credits: response.credits,
+  }
+}
+
+export async function askAIAssistant(payload: {
+  message: string
+  history: { role: 'user' | 'assistant'; text: string }[]
+  audioUrl?: string | null
+  audioContentType?: string | null
+}): Promise<{ reply: string }> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{ ok: true; reply: string }>('ai-assistant', {
+    init_data: initData,
+    message: payload.message,
+    history: payload.history,
+    audio_url: payload.audioUrl || '',
+    audio_content_type: payload.audioContentType || '',
+  })
+
+  return { reply: response.reply }
+}
+
+export async function generateMotion(payload: {
+  prompt: string
+  imageUrl: string
+  videoUrl: string
+  mode: '720p' | '1080p'
+  direction: 'video' | 'image'
+  model: 'motion_control_v26' | 'motion_control_v30'
+  videoDuration?: number
+}): Promise<{
+  task: Task
+  detail?: TaskDetail | null
+  credits: number
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{
+    ok: true
+    status: 'queued' | 'done'
+    task_id: string
+    saved_url?: string
+    credits: number
+    cost: number
+    model_label: string
+  }>('generate-motion', {
+    init_data: initData,
+    prompt: payload.prompt,
+    motion_model: payload.model,
+    motion_image_url: payload.imageUrl,
+    motion_video_url: payload.videoUrl,
+    motion_mode: payload.mode,
+    motion_direction: payload.direction,
+    ...(payload.videoDuration ? { motion_duration: payload.videoDuration } : {}),
+  })
+
+  const task: Task = {
+    task_id: response.task_id,
+    type: 'video',
+    model: payload.model,
+    model_label: response.model_label,
+    aspect_ratio: '1:1',
+    status: response.status === 'done' ? 'completed' : 'pending',
+    result_url: response.saved_url || null,
+    created_at: new Date().toISOString(),
+    prompt_preview:
+      payload.prompt.slice(0, 100) + (payload.prompt.length > 100 ? '...' : ''),
+    cost: response.cost,
+    duration: 5,
+  }
+
+  return {
+    task,
+    detail:
+      response.status === 'done'
+        ? {
+            ...task,
+            prompt: payload.prompt,
+            request_data: {
+              v_type: 'motion_control',
+              motion_model: payload.model,
+              motion_image_url: payload.imageUrl,
+              motion_video_url: payload.videoUrl,
+              motion_mode: payload.mode,
+              motion_direction: payload.direction,
+            },
+          }
+        : null,
+    credits: response.credits,
+  }
+}
+
+export async function photoToPrompt(payload: {
+  imageUrl: string
+  preserve?: string
+  goal?: string
+}): Promise<{
+  prompt_en: string
+  prompt_ru: string
+  negative_prompt: string
+  model_hint: string
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{
+    ok: true
+    prompt_en: string
+    prompt_ru: string
+    negative_prompt: string
+    model_hint: string
+  }>('photo-to-prompt', {
+    init_data: initData,
+    image_url: payload.imageUrl,
+    preserve: payload.preserve || '',
+    goal: payload.goal || '',
+  })
+
+  return {
+    prompt_en: response.prompt_en,
+    prompt_ru: response.prompt_ru,
+    negative_prompt: response.negative_prompt,
+    model_hint: response.model_hint,
+  }
+}
+
+export async function fetchPartnerOverview(): Promise<{
+  is_partner: boolean
+  referrals_count: number
+  balance_rub: number
+  prompt_repeat_balance_rub: number
+  prompt_repeat_total_rub: number
+  channel_url: string
+  referral_link: string
+  status: string
+}> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+
+  const response = await postJson<{
+    ok: true
+    is_partner: boolean
+    referrals_count: number
+    balance_rub: number
+    prompt_repeat_balance_rub: number
+    prompt_repeat_total_rub: number
+    channel_url: string
+    referral_link: string
+    status: string
+  }>('partner-overview', {
+    init_data: initData,
+  })
+
+  return {
+    is_partner: response.is_partner,
+    referrals_count: response.referrals_count,
+    balance_rub: response.balance_rub,
+    prompt_repeat_balance_rub: response.prompt_repeat_balance_rub || 0,
+    prompt_repeat_total_rub: response.prompt_repeat_total_rub || 0,
+    channel_url: response.channel_url || '',
+    referral_link: response.referral_link,
+    status: response.status,
+  }
+}
+
+export async function saveProfileChannel(channelUrl: string): Promise<string> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; channel_url: string }>('profile/channel', {
+    init_data: initData,
+    channel_url: channelUrl,
+  })
+  return response.channel_url || ''
+}

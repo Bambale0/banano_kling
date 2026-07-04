@@ -87,3 +87,4 @@ gpt.txt
 
 ObsidianCodexVault/
 .env.postgres
+!frontend/miniapp-v0/lib
