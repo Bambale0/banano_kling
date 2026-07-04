@@ -3639,6 +3639,11 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         return raw if raw.startswith("/") else f"/{raw}"
 
     app = web.Application(client_max_size=60 * 1024 * 1024)
+
+    # Rate limiter middleware — applies to all routes except /health GET
+    from bot.services.rate_limiter import rate_limiter_middleware
+    app.middlewares.append(rate_limiter_middleware)
+
     app["bot"] = bot
     app["dp"] = dp
 
@@ -3689,9 +3694,15 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         handle_kie_market_webhook,
     )
 
-    # Health check endpoint
+    # Health check endpoint (restricted by secret header)
+    HEALTH_SECRET = config.HEALTH_CHECK_SECRET or ""
+
     async def health_check(request: web.Request) -> web.Response:
-        return web.Response(text="OK")
+        if HEALTH_SECRET:
+            auth = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if auth != HEALTH_SECRET:
+                return web.json_response({"error": "unauthorized"}, status=401)
+        return web.json_response({"status": "ok", "service": "tanya-bot"})
 
     app.router.add_get("/health", health_check)
 
@@ -3721,6 +3732,10 @@ async def main():
         logger.info("Task watchdog started")
     except Exception:
         logger.exception("Failed to start task watchdog")
+
+    # Запускаем очистку rate limiter'а
+    from bot.services.rate_limiter import start_cleanup_task
+    start_cleanup_task()
 
     # Создаём бота
     bot = Bot(

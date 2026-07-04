@@ -80,6 +80,8 @@ class Config:
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
     KIE_AI_WEBHOOK_SECRET: str = os.getenv("KIE_AI_WEBHOOK_SECRET", "")
+    # If set, /health endpoint requires Authorization: Bearer <secret>
+    HEALTH_CHECK_SECRET: str = os.getenv("HEALTH_CHECK_SECRET", "")
     KIE_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_WEBHOOK_HMAC_KEY", "")
     KIE_MARKET_WEBHOOK_PATH: str = os.getenv("KIE_MARKET_WEBHOOK_PATH", "/webhooks/kie")
     
