@@ -11,6 +11,46 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bot import db as db_backend
+
+
+# ---------------------------------------------------------------------------
+# Парсинг реферального кода из start_param (deep link)
+# ---------------------------------------------------------------------------
+def referral_code_from_start_param(start_param: Any) -> str:
+    """Извлекает реферальный код из start_param Telegram Mini App.
+
+    Поддерживаемые форматы:
+      - ref_CODE             → CODE
+      - feed_ID_ref_CODE     → CODE
+      - remix_ID_ref_CODE    → CODE
+      - posts_ID_ref_CODE    → CODE
+      - profile_ID_ref_CODE  → CODE (or profile code itself)
+      - prompt_ID            → "" (no referral)
+      - start=CODE / startapp=CODE  → CODE
+
+    Возвращает пустую строку, если код не найден.
+    Это ЕДИНСТВЕННАЯ точка парсинга start_param для рефералов.
+    """
+    raw = str(start_param or "").strip()
+    if not raw:
+        return ""
+
+    raw = raw.removeprefix("start=").removeprefix("startapp=").strip()
+
+    if raw.startswith("ref_"):
+        return raw.replace("ref_", "", 1).strip().upper()
+
+    if raw.startswith(("profile_", "posts_")):
+        payload = raw.split("_", 1)[1]
+        profile_code, sep, referral_code = payload.partition("_ref_")
+        return (referral_code if sep else profile_code).strip().upper()
+
+    for prefix in ("feed_", "remix_", "prompt_"):
+        if raw.startswith(prefix):
+            _, sep, referral_code = raw.replace(prefix, "", 1).partition("_ref_")
+            return referral_code.strip().upper() if sep else ""
+
+    return ""
 from bot.database import (
     DATABASE_PATH,
     PARTNER_INVITER_BONUS,

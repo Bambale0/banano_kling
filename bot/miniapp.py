@@ -706,27 +706,7 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
     return parsed
 
 
-def _referral_code_from_start_param(start_param: Any) -> str:
-    raw = str(start_param or "").strip()
-    if not raw:
-        return ""
-
-    raw = raw.removeprefix("start=").removeprefix("startapp=").strip()
-
-    if raw.startswith("ref_"):
-        return raw.replace("ref_", "", 1).strip().upper()
-
-    if raw.startswith(("profile_", "posts_")):
-        payload = raw.split("_", 1)[1]
-        profile_code, sep, referral_code = payload.partition("_ref_")
-        return (referral_code if sep else profile_code).strip().upper()
-
-    for prefix in ("feed_", "remix_", "prompt_"):
-        if raw.startswith(prefix):
-            _, sep, referral_code = raw.replace(prefix, "", 1).partition("_ref_")
-            return referral_code.strip().upper() if sep else ""
-
-    return ""
+from bot.services.referral_service import referral_code_from_start_param
 
 
 async def _activate_start_param_referral(

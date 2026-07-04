@@ -3490,17 +3490,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
         args,
     )
 
-    # Определяем реферальный код из любого типа deep link
+    # Определяем реферальный код из любого типа deep link (единая функция)
+    from bot.services.referral_service import referral_code_from_start_param
     referral_code_from_args: str | None = None
     if args:
-        arg = args[0]
-        if arg.startswith("ref_"):
-            referral_code_from_args = arg.replace("ref_", "", 1)
-        elif arg.startswith("feed_") or arg.startswith("remix_") or arg.startswith("posts_"):
-            prefix = arg.split("_")[0]
-            _, extracted_code = _split_feed_deeplink(arg.replace(f"{prefix}_", "", 1))
-            if extracted_code:
-                referral_code_from_args = extracted_code
+        code = referral_code_from_start_param(args[0])
+        if code:
+            referral_code_from_args = code
 
     # Создаём или получаем пользователя (referred_by=NULL для новых)
     user = await get_or_create_user(message.from_user.id)
