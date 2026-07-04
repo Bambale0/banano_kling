@@ -2968,7 +2968,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
-            source_feed_gen_id=int(source["id"]),
+            source_feed_gen_id=int(source.get("source_feed_gen_id") or source["id"]),
             parent_generation_id=int(source["id"]),
             action_type="remix",
         )
