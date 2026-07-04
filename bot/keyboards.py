@@ -76,7 +76,7 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
                 web_app=WebAppInfo(url=_mini_app_url_with_referral(mini_app_referral_code) or config.mini_app_url),
             )
         )
-    # 🖼 Создать фото — первая ячейка левой колонки
+    # 🖼 Создать фото - первая ячейка левой колонки
     builder.row(
         InlineKeyboardButton(text="🖼 Создать фото", callback_data="create_image_text_new"),
         InlineKeyboardButton(text="🎬 Создать видео", callback_data="create_video_new"),
@@ -200,7 +200,6 @@ def get_admin_keyboard(subscription_required: bool | None = None):
     builder.button(text="🎟 Промокоды", callback_data="admin_promocodes")
     builder.button(text="📚 Промпты", callback_data="admin_prompts")
     builder.button(text="🤖 ИИ-админ", callback_data="admin_ai")
-    builder.button(text="🍌 Nano Banana 2 test", callback_data="admin_nano_banana2_test")
     builder.button(text="📘 Инструкция ИИ", callback_data="admin_ai_help")
     builder.button(
         text=subscription_label,
@@ -213,15 +212,7 @@ def get_admin_keyboard(subscription_required: bool | None = None):
     return builder.as_markup()
 
 
-def get_admin_nano_banana2_test_keyboard():
-    """Тест Nano Banana 2 через api.apiyi.com."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Обновить", callback_data="admin_nano_banana2_test")
-    builder.button(text="🔙 Админ-панель", callback_data="admin_back")
-    builder.adjust(2, 1)
-    return builder.as_markup()
-
-
+    
 def get_required_subscription_keyboard(
     channel_url: str = REQUIRED_CHANNEL_URL,
 ) -> types.InlineKeyboardMarkup:
@@ -425,14 +416,6 @@ def get_video_media_step_keyboard(
     if current_v_type == "motion":
         image_status = "загружено" if has_start_image else "не загружено"
         video_status = "загружено" if reference_video_count else "не загружено"
-        builder.button(
-            text=f"🖼 Фото персонажа: {image_status}",
-            callback_data="motion_upload_image",
-        )
-        builder.button(
-            text=f"🎬 Видео движения: {video_status}",
-            callback_data="motion_upload_video",
-        )
         builder.button(text="▶️ К промпту", callback_data="video_media_continue")
         builder.button(text="🤖 Сменить модель", callback_data="video_change_model")
         builder.button(text="🏠 Главное меню", callback_data="back_main")
@@ -1159,7 +1142,7 @@ def get_topup_keyboard():
 
 
 def get_payment_packages_keyboard(packages: list, promo_active: bool = False):
-    """Клавиатура выбора пакета бананов — ведёт на выбор способа оплаты."""
+    """Клавиатура выбора пакета бананов - ведёт на выбор способа оплаты."""
     builder = InlineKeyboardBuilder()
 
     for pkg in packages:
@@ -1459,7 +1442,7 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
 def get_partner_consent_keyboard():
     """Клавиатура подтверждения участия в партнёрской программе."""
     builder = InlineKeyboardBuilder()
-    # Всегда показываем оферту через внутренний callback — чтобы оферта была
+    # Всегда показываем оферту через внутренний callback - чтобы оферта была
     # доступна пользователю независимо от внешних настроек/хостинга.
     builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
     builder.button(
@@ -1666,7 +1649,7 @@ def get_category_keyboard(category: str, presets: list, user_credits: int):
     for preset in presets:
         affordable = "✅" if user_credits >= preset.cost else "❌"
         builder.button(
-            text=f"{preset.name} — {preset.cost}🍌 {affordable}",
+            text=f"{preset.name} - {preset.cost}🍌 {affordable}",
             callback_data=f"preset_{preset.id}",
         )
     builder.button(text="🔙 Назад в меню", callback_data="back_main")

@@ -102,7 +102,6 @@ USER_BOT_COMMAND_SCOPES = (
 )
 USER_BOT_COMMAND_LANGUAGES = (None, "ru")
 
-
 async def _set_commands_chat_menu_button() -> None:
     """Keep Telegram's system menu button on quick commands; Mini App stays inside bot UI."""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/setChatMenuButton"
@@ -116,12 +115,10 @@ async def _set_commands_chat_menu_button() -> None:
     if not payload.get("ok"):
         raise RuntimeError(payload.get("description") or "setChatMenuButton failed")
 
-
 async def _complete_reconciled_order(order_id: str, bot: Bot) -> dict:
     from bot.handlers.payments import _complete_transaction
 
     return await _complete_transaction(order_id, bot=bot)
-
 
 async def _yookassa_reconcile_loop(bot: Bot) -> None:
     while True:
@@ -149,7 +146,6 @@ async def _yookassa_reconcile_loop(bot: Bot) -> None:
             logger.exception("YooKassa reconcile loop failed")
         await asyncio.sleep(YOOKASSA_RECONCILE_INTERVAL_SECONDS)
 
-
 async def _lava_reconcile_loop(bot: Bot) -> None:
     while True:
         try:
@@ -174,7 +170,6 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
             logger.exception("Lava reconcile loop failed")
         await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
 
-
 async def _memory_dump_loop(bot: Bot) -> None:
     while True:
         await asyncio.sleep(MEMORY_DUMP_INTERVAL_SECONDS)
@@ -198,7 +193,6 @@ async def _memory_dump_loop(bot: Bot) -> None:
                 )
             except Exception:
                 logger.exception("Failed to send memory dump to admin_id=%s", admin_id)
-
 
 async def _db_backup_loop() -> None:
     backup_script = Path(__file__).resolve().parents[1] / "scripts" / "backup_db.sh"
@@ -249,7 +243,6 @@ async def _db_backup_loop() -> None:
                 stdout_text[-1000:],
                 stderr_text[-1000:],
             )
-
 
 def _configure_logging() -> None:
     if os.environ.get("BANANO_DISABLE_FILE_LOGGING") == "1":
@@ -305,11 +298,9 @@ def _configure_logging() -> None:
         named_logger.handlers.clear()
         named_logger.propagate = True
 
-
 _configure_logging()
 logger = logging.getLogger(__name__)
 ensure_memory_tracing()
-
 
 class FallbackFSMStorage(BaseStorage):
     """Keep handlers responsive if Redis FSM storage fails after startup."""
@@ -378,7 +369,6 @@ class FallbackFSMStorage(BaseStorage):
                 await storage.close()
             except Exception:
                 logger.exception("Failed to close FSM storage")
-
 
 class AccessGuardMiddleware(BaseMiddleware):
     """Blocks banned users, maintenance traffic and unsubscribed users."""
@@ -488,7 +478,6 @@ class AccessGuardMiddleware(BaseMiddleware):
             except Exception:
                 logger.debug("Failed to answer subscription message", exc_info=True)
 
-
 def _preview_log_payload(value, limit: int = 1200) -> str:
     def _redact_payload(obj):
         if isinstance(obj, dict):
@@ -545,7 +534,6 @@ def _preview_log_payload(value, limit: int = 1200) -> str:
         return text
     return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
 
-
 def _safe_log_url(value: str) -> str:
     parsed = urlparse(str(value or ""))
     if not parsed.scheme:
@@ -556,10 +544,8 @@ def _safe_log_url(value: str) -> str:
     path = parsed.path or ""
     return f"{parsed.scheme}://{host}{path}"
 
-
 def _preview_log_headers(headers, limit: int = 1200) -> str:
     return _preview_log_payload(dict(headers), limit=limit)
-
 
 def _build_dispatcher_storage():
     try:
@@ -574,7 +560,6 @@ def _build_dispatcher_storage():
     except Exception as exc:
         logger.warning("Redis FSM storage unavailable, fallback to MemoryStorage: %s", exc)
         return MemoryStorage()
-
 
 def _get_task_model_label(model: str | None, task_type: str | None = None) -> str:
     """Возвращает аккуратное имя модели для пользовательских уведомлений."""
@@ -610,7 +595,6 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
     return mapping.get(
         model, model if task_type != "image" else model.replace("_", " ").title()
     )
-
 
 async def _resolve_task_telegram_id(task, *, context: str = "") -> int | None:
     """Resolve the Telegram chat for a generation task.
@@ -682,7 +666,6 @@ async def _resolve_task_telegram_id(task, *, context: str = "") -> int | None:
     )
     return None
 
-
 def _extract_first(obj, keys):
     """Рекурсивно извлекает первое непустое значение по списку ключей."""
     if isinstance(obj, dict):
@@ -700,7 +683,6 @@ def _extract_first(obj, keys):
             if found not in (None, ""):
                 return found
     return None
-
 
 def _extract_gemini_omni_asset_id(obj, asset_kind: str):
     """Extract Gemini Omni Audio ID or Character ID from async KIE payloads."""
@@ -739,7 +721,6 @@ def _extract_gemini_omni_asset_id(obj, asset_kind: str):
             return str(found)
     return None
 
-
 def _extract_task_request_data(task) -> dict:
     """Safely decode stored request_data for debug logging."""
     if not task or not getattr(task, "request_data", None):
@@ -748,7 +729,6 @@ def _extract_task_request_data(task) -> dict:
         return json.loads(task.request_data)
     except Exception:
         return {}
-
 
 def _normalize_user_prompt(candidate: str) -> str:
     if not isinstance(candidate, str):
@@ -772,7 +752,6 @@ def _normalize_user_prompt(candidate: str) -> str:
                 return tail
     return text
 
-
 def _extract_used_prompt(task) -> str:
     request_data = _extract_task_request_data(task)
     for candidate in (
@@ -787,7 +766,6 @@ def _extract_used_prompt(task) -> str:
             return normalized
     return ""
 
-
 def _get_result_prompt_caption(task) -> tuple[str, str]:
     used_prompt = _extract_used_prompt(task)
     if not used_prompt:
@@ -796,10 +774,8 @@ def _get_result_prompt_caption(task) -> tuple[str, str]:
     escaped = html.escape(used_prompt.strip())
     return f"<pre>{escaped}</pre>", "Промпт"
 
-
 async def _send_full_prompt_message(bot_instance: Bot, telegram_id: int, task, reference_urls: list[str] | None = None) -> None:
     return
-
 
 async def _download_remote_bytes(url: str, timeout_seconds: int = 30) -> bytes | None:
     headers = {
@@ -832,7 +808,6 @@ async def _download_remote_bytes(url: str, timeout_seconds: int = 30) -> bytes |
         logger.error(f"Failed to download remote file {url}: {e}")
         return None
 
-
 def _is_local_static_result_url(url: str) -> bool:
     candidate = str(url or "").strip()
     if not candidate:
@@ -840,13 +815,11 @@ def _is_local_static_result_url(url: str) -> bool:
     base_url = str(getattr(config, "static_base_url", "") or "").rstrip("/")
     return bool(base_url) and candidate.startswith(f"{base_url}/uploads/")
 
-
 def _guess_storage_extension(result_url: str, task_type: str = "image") -> str:
     candidate = Path(urlparse(str(result_url or "")).path).suffix.lower().lstrip(".")
     if candidate in {"jpg", "jpeg", "png", "webp", "gif", "bmp", "mp4", "mov", "webm", "mkv", "avi", "m4v"}:
         return candidate
     return "mp4" if str(task_type or "").lower() == "video" else "png"
-
 
 async def _persist_result_url_if_needed(result_url: str | None, *, task_type: str = "image") -> str | None:
     candidate = str(result_url or "").strip()
@@ -878,7 +851,6 @@ async def _persist_result_url_if_needed(result_url: str | None, *, task_type: st
         logger.exception("Failed to persist result url locally: %s", candidate)
 
     return candidate
-
 
 def _build_preview_photo_bytes(image_bytes: bytes, max_photo_size: int = 10 * 1024 * 1024) -> bytes | None:
     if not image_bytes:
@@ -922,7 +894,6 @@ def _build_preview_photo_bytes(image_bytes: bytes, max_photo_size: int = 10 * 10
         logger.error(f"Failed to build preview photo bytes: {e}")
         return None
 
-
 def _guess_result_filename(result_url: str, fallback_base: str = "original") -> str:
     from urllib.parse import urlparse
     parsed = urlparse(str(result_url or ""))
@@ -930,7 +901,6 @@ def _guess_result_filename(result_url: str, fallback_base: str = "original") -> 
     if "." not in name:
         name = f"{name}.png"
     return name
-
 
 async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: str, image_bytes: bytes | None = None) -> bool:
     if not result_url:
@@ -954,7 +924,6 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
         logger.error(f"Failed to send original file to {telegram_id}: {e}")
         return False
 
-
 def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> bool:
     if not task:
         return False
@@ -962,7 +931,6 @@ def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> b
     if getattr(task, "source_feed_gen_id", None):
         return False
     return bool(_extract_used_prompt(task))
-
 
 def _format_named_links(urls: list[str], label: str) -> str:
     if not urls:
@@ -973,7 +941,6 @@ def _format_named_links(urls: list[str], label: str) -> str:
         parts.append(f"<a href='{safe_url}'>#{idx}</a>")
     return f"{label}: " + ", ".join(parts)
 
-
 def _get_task_resolution(task) -> str:
     request_data = _extract_task_request_data(task)
     for key in ("resolution", "quality"):
@@ -982,13 +949,11 @@ def _get_task_resolution(task) -> str:
             return value.strip()
     return ""
 
-
 def _get_task_mode_label(task, reference_urls: list[str]) -> str:
     task_type = str(getattr(task, "type", "") or "").lower()
     if task_type == "video":
         return "Изображение → Видео" if reference_urls else "Текст → Видео"
     return "Изображение → Изображение" if reference_urls else "Текст → Изображение"
-
 
 async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, result_url: str | None = None) -> None:
     prompt = (_extract_used_prompt(task) or "").strip()
@@ -1068,7 +1033,6 @@ async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, r
             disable_web_page_preview=True,
         )
 
-
 def _collect_http_urls(value) -> list[str]:
     urls: list[str] = []
     if isinstance(value, str):
@@ -1089,7 +1053,6 @@ def _collect_http_urls(value) -> list[str]:
             urls.extend(_collect_http_urls(item))
     return urls
 
-
 def _normalize_reference_key(url: str) -> str:
     candidate = str(url or "").strip().split("?")[0].rstrip("/")
     name = candidate.rsplit("/", 1)[-1]
@@ -1098,7 +1061,6 @@ def _normalize_reference_key(url: str) -> str:
         if len(parts) >= 5:
             name = parts[-1]
     return name.lower()
-
 
 def _score_reference_url(url: str) -> tuple[int, int]:
     candidate = str(url or "")
@@ -1110,7 +1072,6 @@ def _score_reference_url(url: str) -> tuple[int, int]:
     if candidate.startswith("https://"):
         score += 1
     return (score, -len(candidate))
-
 
 def _dedupe_urls(urls: list[str], limit: int = 6) -> list[str]:
     best_by_key: dict[str, str] = {}
@@ -1162,10 +1123,8 @@ def _extract_reference_image_urls(task=None, webhook_data: dict | None = None) -
 
     return _dedupe_urls(urls, limit=4)
 
-
 def _format_reference_links(urls: list[str]) -> str:
     return ""
-
 
 def _sanitize_base_caption(base_caption: str) -> str:
     base = str(base_caption or "").strip()
@@ -1174,7 +1133,6 @@ def _sanitize_base_caption(base_caption: str) -> str:
         if idx != -1:
             base = base[:idx].rstrip()
     return base
-
 
 def _with_original_link(base_caption: str, result_url: str | None) -> str:
     base = str(base_caption or "").strip()
@@ -1185,19 +1143,16 @@ def _with_original_link(base_caption: str, result_url: str | None) -> str:
     safe_url = html.escape(str(result_url), quote=True)
     return f"{base}\n\n🔗 <a href='{safe_url}'>Открыть оригинал</a>"
 
-
 def _html_fragment(value, limit: int | None = None) -> str:
     text = "" if value is None else str(value)
     if limit is not None and len(text) > limit:
         text = text[:limit]
     return html.escape(text)
 
-
 def _task_callback_id(task, fallback_task_id: str | None = None) -> str:
     if task and getattr(task, "id", None):
         return str(task.id)
     return str(fallback_task_id or "")
-
 
 def _build_plain_result_link_text(
     *,
@@ -1218,7 +1173,6 @@ def _build_plain_result_link_text(
     ]
     text = "\n".join(lines)
     return text[:4000]
-
 
 async def _send_plain_result_link(
     bot_instance: Bot,
@@ -1244,7 +1198,6 @@ async def _send_plain_result_link(
         disable_web_page_preview=False,
     )
 
-
 def _build_failure_notification_text(
     *,
     service_name: str,
@@ -1262,17 +1215,14 @@ def _build_failure_notification_text(
         f"{refund_text}"
     )
 
-
 def _build_single_result_caption(base_caption: str, task, reference_urls: list[str] | None = None, max_length: int = 980) -> str:
     return _sanitize_base_caption(base_caption)[:max_length]
-
 
 async def _send_reference_preview(bot_instance: Bot, telegram_id: int, urls: list[str]) -> None:
     return
 
 def _is_retryable_kie_blank_task_failure(fail_code, fail_msg) -> bool:
     return str(fail_code) == "422" and "task id is blank" in str(fail_msg or "").lower()
-
 
 def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     if not task or getattr(task, "type", None) != "image":
@@ -1295,7 +1245,6 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     )
     return str(fail_code) == "500" and any(marker in normalized for marker in retryable_markers)
 
-
 def _is_retryable_wan_timeout_failure(task, fail_code, fail_msg) -> bool:
     if not task or getattr(task, "type", None) != "image":
         return False
@@ -1303,7 +1252,6 @@ def _is_retryable_wan_timeout_failure(task, fail_code, fail_msg) -> bool:
     if model_name != "wan_27":
         return False
     return str(fail_code) == "500" and "timed out" in str(fail_msg or "").lower()
-
 
 async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str | None:
     if not task or getattr(task, "type", None) != "image":
@@ -1365,7 +1313,6 @@ async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str
         retry_attempt + 1,
     )
     return new_task_id
-
 
 async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str | None:
     if not task or getattr(task, "type", None) != "image":
@@ -1468,7 +1415,6 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     )
     return new_task_id
 
-
 async def _remove_old_files(
     base_dir: str,
     max_age_seconds: int,
@@ -1509,7 +1455,6 @@ async def _remove_old_files(
     except Exception:
         logger.exception("Error during cleanup for %s", base_dir)
 
-
 async def _cleanup_loop():
     """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
     while True:
@@ -1542,7 +1487,6 @@ async def _cleanup_loop():
         except Exception:
             logger.exception("Cleanup iteration failed")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
-
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     """Действия при старте бота"""
@@ -1650,7 +1594,6 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     except Exception:
         logger.exception("Failed to schedule background tasks")
 
-
 async def on_shutdown(bot: Bot):
     """Действия при остановке"""
     logger.info("Bot shutting down...")
@@ -1674,7 +1617,6 @@ async def on_shutdown(bot: Bot):
         logger.exception("Failed to close Redis client")
     await bot.delete_webhook()
     await bot.session.close()
-
 
 async def errors_handler(event: types.ErrorEvent):
     """Глобальный обработчик ошибок"""
@@ -1703,7 +1645,6 @@ async def errors_handler(event: types.ErrorEvent):
     # Логируем другие ошибки
     logger.exception(f"Unhandled error: {error}")
     return True
-
 
 def setup_dispatcher() -> Dispatcher:
     """Настройка диспетчера с роутерами"""
@@ -1735,7 +1676,6 @@ def setup_dispatcher() -> Dispatcher:
     dp.include_router(common_router)  # Общие команды - ПОСЛЕДНИЙ!
 
     return dp
-
 
 async def handle_telegram_webhook(
     request: web.Request, bot: Bot, dp: Dispatcher
@@ -1799,7 +1739,6 @@ async def handle_telegram_webhook(
         logger.exception(f"Webhook error: {e}")
         # Возвращаем 200 даже при ошибках, чтобы Telegram не спамил
         return web.Response(text="OK", status=200)
-
 
 async def handle_kling_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kling/PiAPI/Replicate/Kie.ai"""
@@ -1895,6 +1834,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 from bot.keyboards import get_video_result_keyboard
 
                 task = await get_task_by_id(task_id)
+                # P1-04: Idempotency — skip if already completed
+                if task and task.status == "completed":
+                    logger.info(f"Webhook: task {task_id} already completed, skipping")
+                    return web.Response(status=200)
                 model_display = task.model if task and task.model else "Kling"
                 if model_display == "aleph":
                     model_display = "Aleph Video"
@@ -1913,7 +1856,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             video_url,
                             task_type=task.type if task else "video",
                         )
-                        bot_instance = Bot(token=config.BOT_TOKEN)
+                        bot_instance = request.app["bot"]
                         try:
                             caption = f"✅ <b>Видео ({_html_fragment(model_display)}) готово!</b>\\n\\nID: <code>{_html_fragment(task_id)}</code>"
                             if task.duration:
@@ -1979,8 +1922,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             logger.error(
                                 f"Failed to notify {model_display} user {telegram_id}: {e}"
                             )
-                        finally:
-                            await bot_instance.session.close()
                 return web.Response(status=200)
 
         # Detect Kie.ai format (code:200/501, data.taskId, data.resultJson or failMsg)
@@ -2005,6 +1946,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
+                # P1-04: Idempotency — skip if already completed
+                if task and task.status == "completed":
+                    logger.info(f"Webhook: task {task_id} already completed, skipping")
+                    return web.Response(status=200)
                 model_display = _get_task_model_label(
                     task.model if task else None,
                     task.type if task else None,
@@ -2024,7 +1969,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             video_url,
                             task_type=task.type if task else "video",
                         )
-                        bot_instance = Bot(token=config.BOT_TOKEN)
+                        bot_instance = request.app["bot"]
                         try:
                             if status in {"success", "completed"} and video_url:
                                 # Success case
@@ -2202,8 +2147,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 )
                         except Exception as e:
                             logger.error(f"Failed to notify user {telegram_id}: {e}")
-                        finally:
-                            await bot_instance.session.close()
                 return web.Response(status=200)
 
         # Fallback to PiAPI/Replicate parsing
@@ -2258,6 +2201,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             task = await get_task_by_id(task_id)
+            # P1-04: Idempotency — skip if already completed
+            if task and task.status == "completed":
+                logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
 
             if not task:
                 logger.info(
@@ -2303,7 +2250,7 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             # Отправляем видео пользователю
-            bot_instance = Bot(token=config.BOT_TOKEN)
+            bot_instance = request.app["bot"]
             video_kb = None
 
             try:
@@ -2423,7 +2370,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                     await complete_video_task(task_id, video_url)
                 except Exception as complete_error:
                     logger.error(f"Failed to store completed video task {task_id}: {complete_error}")
-                await bot_instance.session.close()
         else:
             logger.error(f"Kling task {task_id} failed with status: {status}")
 
@@ -2434,12 +2380,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
             )
 
             task = await get_task_by_id(task_id)
+            # P1-04: Idempotency — skip if already completed
+            if task and task.status == "completed":
+                logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
             if task and task.cost:
                 telegram_id = await _resolve_task_telegram_id(
                     task, context="kling_failure"
                 )
                 if telegram_id:
-                    bot_instance = Bot(token=config.BOT_TOKEN)
+                    bot_instance = request.app["bot"]
                     try:
                         fail_msg = data.get(
                             "msg", str(status) if status else "Unknown error"
@@ -2463,8 +2413,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                         logger.error(
                             f"Failed to notify Kling failure to {telegram_id}: {e}"
                         )
-                    finally:
-                        await bot_instance.session.close()
 
             # Check for sensitive content error
             # webhook_data['error'] or webhook_data['logs'] may be dicts (or other types)
@@ -2492,12 +2440,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                 )
 
                 task = await get_task_by_id(task_id)
+                # P1-04: Idempotency — skip if already completed
+                if task and task.status == "completed":
+                    logger.info(f"Webhook: task {task_id} already completed, skipping")
+                    return web.Response(status=200)
                 if task:
                     telegram_id = await _resolve_task_telegram_id(
                         task, context="kling_sensitive_failure"
                     )
                     if telegram_id:
-                        bot_instance = Bot(token=config.BOT_TOKEN)
+                        bot_instance = request.app["bot"]
                         try:
                             # Try to get preset cost from preset manager (presets.json)
                             preset = preset_manager.get_preset(task.preset_id)
@@ -2519,8 +2471,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             logger.error(
                                 f"Failed to notify user about sensitive content: {notify_error}"
                             )
-                        finally:
-                            await bot_instance.session.close()
 
         return web.Response(status=200)
 
@@ -2530,7 +2480,6 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
         # repeatedly retrying the same payload. The error is logged above
         # for investigation.
         return web.Response(status=200)
-
 
 async def handle_seedream_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Novita AI (Seedream) API
@@ -2613,6 +2562,10 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             from bot.database import complete_video_task, get_task_by_id
 
             task = await get_task_by_id(task_id)
+            # P1-04: Idempotency — skip if already completed
+            if task and task.status == "completed":
+                logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
 
             if not task:
                 logger.warning(f"Task {task_id} not found in database")
@@ -2672,7 +2625,7 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
             await complete_video_task(task_id, image_url)
 
             # Отправляем изображение пользователю
-            bot_instance = Bot(token=config.BOT_TOKEN)
+            bot_instance = request.app["bot"]
 
             try:
                 image_bytes = None
@@ -2725,8 +2678,6 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
-            finally:
-                await bot_instance.session.close()
 
         elif status == "TASK_STATUS_FAILED":
             reason = task_info.get("reason", "Unknown error")
@@ -2737,7 +2688,6 @@ async def handle_seedream_webhook(request: web.Request) -> web.Response:
     except Exception as e:
         logger.exception(f"Seedream webhook error: {e}")
         return web.Response(status=500)
-
 
 async def handle_novita_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Novita AI (FLUX.2 Pro) API
@@ -2820,6 +2770,10 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             from bot.database import complete_video_task, get_task_by_id
 
             task = await get_task_by_id(task_id)
+            # P1-04: Idempotency — skip if already completed
+            if task and task.status == "completed":
+                logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
 
             if not task:
                 logger.warning(f"Task {task_id} not found in database")
@@ -2852,7 +2806,7 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
             await complete_video_task(task_id, image_url)
 
             # Отправляем изображение пользователю
-            bot_instance = Bot(token=config.BOT_TOKEN)
+            bot_instance = request.app["bot"]
 
             try:
                 image_bytes = None
@@ -2907,8 +2861,6 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
                     )
                 except Exception as fallback_error:
                     logger.error(f"Failed to send fallback message: {fallback_error}")
-            finally:
-                await bot_instance.session.close()
 
         elif status == "TASK_STATUS_FAILED":
             reason = task_info.get("reason", "Unknown error")
@@ -2919,7 +2871,6 @@ async def handle_novita_webhook(request: web.Request) -> web.Response:
     except Exception as e:
         logger.exception(f"Novita FLUX webhook error: {e}")
         return web.Response(status=500)
-
 
 async def handle_wanx_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от PiAPI WanX API"""
@@ -2980,6 +2931,10 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             )
 
             task = await get_task_by_id(task_id)
+            # P1-04: Idempotency — skip if already completed
+            if task and task.status == "completed":
+                logger.info(f"Webhook: task {task_id} already completed, skipping")
+                return web.Response(status=200)
             if not task:
                 logger.info(f"Ignoring orphan webhook for WanX task {task_id}: task not found in database")
                 return web.Response(status=200)
@@ -3002,7 +2957,7 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
 
             video_url = await _persist_result_url_if_needed(video_url, task_type="video")
 
-            bot_instance = Bot(token=config.BOT_TOKEN)
+            bot_instance = request.app["bot"]
             try:
                 from bot.keyboards import get_video_result_keyboard
 
@@ -3041,15 +2996,12 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
                     logger.error(
                         f"Failed to send WanX fallback message: {fallback_error}"
                     )
-            finally:
-                await bot_instance.session.close()
 
         return web.Response(status=200)
 
     except Exception as e:
         logger.exception(f"WanX webhook error: {e}")
         return web.Response(status=500)
-
 
 async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     """Обработчик уведомлений от Kie.ai (Nano Banana 2) API"""
@@ -3154,6 +3106,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         # Find task in DB early for both success and failure
         task = await get_task_by_id(task_id)
+        # P1-04: Idempotency — skip if already completed
+        if task and task.status == "completed":
+            logger.info(f"Webhook: task {task_id} already completed, skipping")
+            return web.Response(status=200)
         telegram_id = None
         if task:
             telegram_id = await _resolve_task_telegram_id(
@@ -3239,21 +3195,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                         if asset_kind == "audio"
                         else "Character ID готов"
                     )
-                    bot_instance = Bot(token=config.BOT_TOKEN)
-                    try:
-                        await bot_instance.send_message(
-                            chat_id=telegram_id,
-                            text=(
-                                f"✅ <b>{title}</b>\n"
-                                f"• Модель: <code>{html.escape(model_label)}</code>\n"
-                                f"• ID: <code>{html.escape(asset_id)}</code>\n\n"
-                                "Этот ID можно использовать в Gemini Omni Video."
-                            ),
-                            parse_mode="HTML",
-                            reply_markup=get_gemini_omni_result_keyboard(),
-                        )
-                    finally:
-                        await bot_instance.session.close()
+                    bot_instance = request.app["bot"]
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=(
+                            f"✅ <b>{title}</b>\n"
+                            f"• Модель: <code>{html.escape(model_label)}</code>\n"
+                            f"• ID: <code>{html.escape(asset_id)}</code>\n\n"
+                            "Этот ID можно использовать в Gemini Omni Video."
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=get_gemini_omni_result_keyboard(),
+                    )
 
                     await complete_video_task(task_id, asset_id)
                     logger.info(
@@ -3268,21 +3221,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     f"No result URL found in {service_name} result: {webhook_data.get('resultJson', 'N/A')}"
                 )
                 if telegram_id:
-                    bot_instance = Bot(token=config.BOT_TOKEN)
-                    try:
-                        await bot_instance.send_message(
-                            chat_id=telegram_id,
-                            text=(
-                                "Не получилось завершить генерацию.\n"
-                                f"• Модель: <code>{service_name}</code>\n"
-                                f"• ID: <code>{task_id}</code>\n\n"
-                                "Мы не получили готовый файл от сервиса.\n"
-                                "Попробуйте повторить запуск немного позже."
-                            ),
-                            parse_mode="HTML",
-                        )
-                    finally:
-                        await bot_instance.session.close()
+                    bot_instance = request.app["bot"]
+                    await bot_instance.send_message(
+                        chat_id=telegram_id,
+                        text=(
+                            "Не получилось завершить генерацию.\n"
+                            f"• Модель: <code>{service_name}</code>\n"
+                            f"• ID: <code>{task_id}</code>\n\n"
+                            "Мы не получили готовый файл от сервиса.\n"
+                            "Попробуйте повторить запуск немного позже."
+                        ),
+                        parse_mode="HTML",
+                    )
                 return web.Response(status=200)
 
             if not task:
@@ -3362,7 +3312,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 else get_image_result_keyboard(result_url, task_id=_task_callback_id(task, task_id))
             )
 
-            bot_instance = Bot(token=config.BOT_TOKEN)
+            bot_instance = request.app["bot"]
             try:
                 sent_media = False
                 if is_video:
@@ -3527,8 +3477,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     logger.error(
                         f"Failed to store completed {service_name} task {task_id}: {complete_e}"
                     )
-            finally:
-                await bot_instance.session.close()
         else:
             # Enhanced failure logging and user notification
             fail_code = (
@@ -3603,7 +3551,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 await add_credits(telegram_id, task.cost)
 
             if telegram_id:
-                bot_instance = Bot(token=config.BOT_TOKEN)
+                bot_instance = request.app["bot"]
                 try:
                     refund_text = (
                         "\n\nБананы за эту попытку уже возвращены."
@@ -3637,8 +3585,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     logger.info(f"Failure notification sent to {telegram_id}")
                 except Exception as notify_e:
                     logger.error(f"Failed to notify user {telegram_id}: {notify_e}")
-                finally:
-                    await bot_instance.session.close()
             else:
                 logger.warning(
                     f"No telegram_id for failed task {task_id} (user_id: {task.user_id if task else 'unknown'})"
@@ -3651,7 +3597,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     except Exception as e:
         logger.exception(f"Kie.ai webhook error: {e}")
         return web.Response(status=200)
-
 
 async def handle_kie_market_webhook(request: web.Request) -> web.Response:
     """Webhook for KIE Market models such as nano-banana-2-lite."""
@@ -3683,7 +3628,6 @@ async def handle_kie_market_webhook(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("KIE Market webhook error: %s", exc)
         return web.Response(status=200)
-
 
 def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     """Настройка aiohttp сервера для вебхуков"""
@@ -3753,7 +3697,6 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     return app
 
-
 async def main():
     """Главная функция"""
     # Создаём директорию для логов если её нет
@@ -3813,7 +3756,6 @@ async def main():
         logger.info("Starting in polling mode...")
         await dp.start_polling(bot)
 
-
 if __name__ == "__main__":
     try:
         asyncio.run(main())
@@ -3822,4 +3764,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.exception(f"Bot crashed: {e}")
 
-# TODO: register Lava webhook route manually: app.router.add_post(config.LAVA_WEBHOOK_PATH, handle_lava_webhook)
