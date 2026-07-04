@@ -3673,6 +3673,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
     if args and args[0].startswith("ref_"):
         referral_code = args[0].replace("ref_", "", 1)
         main_menu_referral_code = referral_code.strip().upper() or None
+        # Уведомление реферрера о новом реферале (как в feed_/remix_/posts_)
+        await _notify_partner_if_new_referral(
+            message.bot, message.from_user, referral_code,
+        )
         # Уведомление реферрера, если привязка уже произошла в get_or_create_user
         if user.referred_by:
             referral_bonus_text = (

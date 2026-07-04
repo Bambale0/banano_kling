@@ -165,6 +165,12 @@ async def _notify_referrers_about_purchase(
                 f"<code>{_format_money(target['bonus_value'])}</code> ₽"
             )
             await bot.send_message(target_telegram_id, text, parse_mode="HTML")
+            logger.info(
+                "Referral purchase notification sent: referrer=%s buyer=%s order=%s",
+                target_telegram_id,
+                buyer_telegram_id,
+                getattr(transaction, "order_id", "?"),
+            )
         except Exception as exc:
             if _is_ignored_telegram_error(exc):
                 logger.warning(
@@ -328,8 +334,16 @@ def _is_pending_past_ttl(transaction, ttl_days: int | None = None) -> bool:
 
 
 async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
+    """Обрабатывает зависшие pending-транзакции CryptoBot.
 
-    stats = {"checked": 0, "failed": 0, "kept": 0}
+    - Если на стороне CryptoBot платёж `paid`, завершает через
+      `complete_payment_atomic()` с защитой `already_completed`.
+    - Если платёж истёк или отменён — помечает как `failed` в атомарном
+      статус-переходе, чтобы не было race-условия с вебхуком.
+    - Если платёж всё ещё активен — оставляет как есть (пользователь
+      ещё может оплатить).
+    """
+    stats = {"checked": 0, "completed": 0, "failed": 0, "kept": 0}
 
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
@@ -356,25 +370,62 @@ async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
             continue
 
         payment_id = row["payment_id"]
+        order_id = row["order_id"]
         invoice = await cryptobot_service.get_invoice(payment_id)
         status = str((invoice or {}).get("status") or "").lower()
 
         if status in {"paid"}:
-            stats["kept"] += 1
+            # Платёж успешен на стороне CryptoBot — завершаем атомарно.
+            # complete_payment_atomic использует pending→processing→completed
+            # с already_completed-защитой, поэтому race с вебхуком безопасен.
+            completion = await complete_payment_atomic(order_id)
+            if completion.get("ok") and not completion.get("already_completed"):
+                stats["completed"] += 1
+                logger.info(
+                    "Cleanup completed CryptoBot payment order=%s via complete_payment_atomic",
+                    order_id,
+                )
+            elif completion.get("already_completed"):
+                # Вебхук уже обработал — всё в порядке
+                stats["completed"] += 1
+                logger.info(
+                    "Cleanup: CryptoBot order=%s already completed via webhook",
+                    order_id,
+                )
+            else:
+                # complete_payment_atomic вернул ошибку — не трогаем
+                stats["kept"] += 1
+                logger.warning(
+                    "Cleanup: complete_payment_atomic failed for order=%s reason=%s",
+                    order_id,
+                    completion.get("reason"),
+                )
             continue
 
         if status in {"active", "expired", "cancelled", "canceled", "invalid", ""}:
-            if await update_transaction_status(row["order_id"], "failed"):
-                stats["failed"] += 1
-            else:
-                stats["kept"] += 1
+            # Платеж истёк или отменён — помечаем failed, но только если
+            # он всё ещё pending (не был обработан вебхуком).
+            # Используем прямое UPDATE с проверкой status='pending',
+            # чтобы не перезаписать результат вебхука.
+            async with db_backend.connect() as db:
+                cursor = await db.execute(
+                    "UPDATE transactions SET status = 'failed' WHERE order_id = ? AND status = 'pending'",
+                    (order_id,),
+                )
+                await db.commit()
+                if cursor.rowcount > 0:
+                    stats["failed"] += 1
+                else:
+                    # Уже был изменён вебхуком или другим процессом
+                    stats["kept"] += 1
             continue
 
         stats["kept"] += 1
 
     logger.info(
-        "CryptoBot stale pending cleanup finished: checked=%s failed=%s kept=%s ttl_days=%s",
+        "CryptoBot stale pending cleanup finished: checked=%s completed=%s failed=%s kept=%s ttl_days=%s",
         stats["checked"],
+        stats["completed"],
         stats["failed"],
         stats["kept"],
         config.CRYPTOBOT_PENDING_TTL_DAYS,
