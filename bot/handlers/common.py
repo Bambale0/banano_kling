@@ -4865,7 +4865,7 @@ async def back_to_category(callback: types.CallbackQuery, state: FSMContext):
 
     try:
         user_credits = await get_user_credits(callback.from_user.id)
-    except:
+    except Exception:
         pass
 
     from bot.keyboards import get_category_keyboard

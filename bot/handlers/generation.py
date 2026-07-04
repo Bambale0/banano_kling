@@ -22,6 +22,7 @@ from PIL import Image
 
 from bot import db as db_backend
 from bot.config import config
+from bot.quality_pricing import QUALITY_COSTS
 from bot.database import (
     add_credits,
     add_generation_history,
@@ -3179,7 +3180,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 3.5 if str(img_quality or "2K").upper() == "4K" else 2.5
+        unit_cost = QUALITY_COSTS.get(str(img_quality or "2K").upper(), 2)
     total_cost = unit_cost * current_count
 
     # nano_quality_cost_info_v2
@@ -3190,7 +3191,7 @@ def _build_image_creation_text(data: dict) -> str:
         "nano_banana_pro",
         "nano-banana-pro",
     }:
-        unit_cost = 3.5 if str(img_quality or "2K").upper() == "4K" else 2.5
+        unit_cost = QUALITY_COSTS.get(str(img_quality or "2K").upper(), 2)
         total_cost = unit_cost * current_count
 
     info_lines = [
@@ -5747,7 +5748,7 @@ async def use_default_values(callback: types.CallbackQuery, state: FSMContext):
 
     try:
         final_prompt = preset.format_prompt(**placeholder_values)
-    except:
+    except Exception:
         final_prompt = preset.prompt.replace("{", "").replace("}", "")
 
     await state.update_data(
@@ -7415,7 +7416,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         "banana_2",
         "nanobanana",
     }:
-        unit_cost = 3.5 if img_quality_upper == "4K" else 2.5
+        unit_cost = QUALITY_COSTS.get(img_quality_upper, 2)
     total_cost = unit_cost * img_count
 
     if user.credits < total_cost:

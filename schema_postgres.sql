@@ -10,7 +10,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     telegram_id BIGINT UNIQUE NOT NULL,
-    credits REAL DEFAULT 0,
+    credits INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     referral_code TEXT,
@@ -294,8 +294,8 @@ CREATE TABLE IF NOT EXISTS feed_remix_events (
     remix_generation_task_id BIGINT NOT NULL,
     source_author_id BIGINT NOT NULL,
     remix_author_id BIGINT NOT NULL,
-    credits_spent REAL DEFAULT 0,
-    royalty_credits REAL DEFAULT 0,
+    credits_spent INTEGER DEFAULT 0,
+    royalty_credits INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(source_generation_task_id, remix_generation_task_id)
 );
@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS prompt_repeat_events (
     source_type TEXT NOT NULL,
     source_id BIGINT NOT NULL,
     repeat_task_id TEXT,
-    credits_spent REAL DEFAULT 0,
+    credits_spent INTEGER DEFAULT 0,
     amount_rub REAL NOT NULL DEFAULT 10,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -3386,7 +3386,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                             if tmp_file and os.path.exists(tmp_file):
                                 try:
                                     os.remove(tmp_file)
-                                except:
+                                except Exception:
                                     pass
                 else:
                     # Image
