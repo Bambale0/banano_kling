@@ -3771,6 +3771,14 @@ async def main():
     await init_db()
     logger.info("Database initialized successfully")
 
+    # Запускаем Task Watchdog для зависших задач генерации
+    try:
+        from bot.services.task_watchdog import watchdog_loop
+        asyncio.create_task(watchdog_loop())
+        logger.info("Task watchdog started")
+    except Exception:
+        logger.exception("Failed to start task watchdog")
+
     # Создаём бота
     bot = Bot(
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)

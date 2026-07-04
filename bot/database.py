@@ -778,6 +778,23 @@ async def init_db():
             except db_backend.OperationalError:
                 pass
 
+        # Unique index на payment_id: защита от двойного начисления при повторных вебхуках
+        # SQLite допускает NULL в уникальных индексах (NULL != NULL)
+        try:
+            await db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_provider "
+                "ON transactions(payment_id, provider) WHERE payment_id IS NOT NULL"
+            )
+        except db_backend.OperationalError:
+            try:
+                # Fallback для SQLite без partial indexes
+                await db.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_provider "
+                    "ON transactions(payment_id, provider)"
+                )
+            except db_backend.OperationalError:
+                pass
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS promo_codes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
