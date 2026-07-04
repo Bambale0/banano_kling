@@ -1321,6 +1321,25 @@ async def handle_lava_webhook(request: web.Request):
             logger.warning("Lava webhook received invalid JSON")
             return web.Response(status=200)
 
+        # Validate HMAC signature if configured (Lava docs: HMAC-SHA256 of raw body)
+        try:
+            lava_secret = config.LAVA_WEBHOOK_SECRET
+            if lava_secret:
+                import hashlib
+                import hmac
+                raw_str = raw_body.decode("utf-8")
+                sig = data.get("signature", "")
+                expected = hmac.new(lava_secret.encode(), raw_str.encode(), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(sig, expected):
+                    logger.warning(
+                        "Rejected Lava webhook: invalid HMAC signature contract_id=%s",
+                        lava_service.webhook_contract_id(data) or "unknown",
+                    )
+                    return web.Response(status=200)
+        except Exception:
+            logger.exception("Error while validating Lava webhook signature")
+            return web.Response(status=200)
+
         if not (
             lava_service.is_success_webhook(data)
             or lava_service.is_failed_webhook(data)

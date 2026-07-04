@@ -3056,6 +3056,21 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
     try:
         logger.info("Kie.ai webhook headers: %s", _preview_log_headers(request.headers))
 
+        # Verify webhook secret if configured (passed as ?secret= in callback URL)
+        try:
+            secret = config.KIE_AI_WEBHOOK_SECRET
+            if secret:
+                query_secret = request.query.get("secret", "")
+                if not hmac.compare_digest(query_secret, secret):
+                    logger.warning(
+                        "Kie.ai webhook rejected: invalid or missing secret param (len=%s)",
+                        len(query_secret),
+                    )
+                    return web.Response(status=403)
+        except Exception:
+            logger.exception("Error while checking Kie.ai webhook secret")
+            return web.Response(status=403)
+
         raw_body = await request.read()
         if not raw_body:
             logger.warning("Kie.ai webhook received empty body")

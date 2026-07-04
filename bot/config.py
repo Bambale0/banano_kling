@@ -66,6 +66,7 @@ class Config:
     LAVA_OFFER_ID_PRO: str = os.getenv("LAVA_OFFER_ID_PRO", "")
     LAVA_OFFER_ID_STUDIO: str = os.getenv("LAVA_OFFER_ID_STUDIO", "")
     LAVA_OFFER_ID_BUSINESS: str = os.getenv("LAVA_OFFER_ID_BUSINESS", "")
+    LAVA_WEBHOOK_SECRET: str = os.getenv("LAVA_WEBHOOK_SECRET", "")
 
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
@@ -78,6 +79,7 @@ class Config:
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
+    KIE_AI_WEBHOOK_SECRET: str = os.getenv("KIE_AI_WEBHOOK_SECRET", "")
     KIE_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_WEBHOOK_HMAC_KEY", "")
     KIE_MARKET_WEBHOOK_PATH: str = os.getenv("KIE_MARKET_WEBHOOK_PATH", "/webhooks/kie")
     
@@ -272,7 +274,11 @@ class Config:
         path = self.KIE_AI_WEBHOOK_PATH
         if not path.startswith("/"):
             path = "/" + path
-        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+        url = f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+        if self.KIE_AI_WEBHOOK_SECRET:
+            import urllib.parse
+            url += f"?secret={urllib.parse.quote(self.KIE_AI_WEBHOOK_SECRET)}"
+        return url
 
     @property
     def kie_market_notification_url(self) -> str:
