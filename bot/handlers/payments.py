@@ -1321,24 +1321,32 @@ async def handle_lava_webhook(request: web.Request):
             logger.warning("Lava webhook received invalid JSON")
             return web.Response(status=200)
 
-        # Validate HMAC signature if configured (Lava docs: HMAC-SHA256 of raw body)
+        # Validate HMAC signature (MANDATORY — Lava docs: HMAC-SHA256 of raw body)
+        import hashlib
+        import hmac
+
+        lava_secret = config.LAVA_WEBHOOK_SECRET
+        if not lava_secret:
+            logger.error("LAVA_WEBHOOK_SECRET is not configured — rejecting all webhooks")
+            return web.Response(
+                status=403,
+                text='{"error": "webhook secret not configured"}',
+                content_type="application/json",
+            )
+
         try:
-            lava_secret = config.LAVA_WEBHOOK_SECRET
-            if lava_secret:
-                import hashlib
-                import hmac
-                raw_str = raw_body.decode("utf-8")
-                sig = data.get("signature", "")
-                expected = hmac.new(lava_secret.encode(), raw_str.encode(), hashlib.sha256).hexdigest()
-                if not hmac.compare_digest(sig, expected):
-                    logger.warning(
-                        "Rejected Lava webhook: invalid HMAC signature contract_id=%s",
-                        lava_service.webhook_contract_id(data) or "unknown",
-                    )
-                    return web.Response(status=200)
+            raw_str = raw_body.decode("utf-8")
+            sig = data.get("signature", "")
+            expected = hmac.new(lava_secret.encode(), raw_str.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(sig, expected):
+                logger.warning(
+                    "Rejected Lava webhook: invalid HMAC signature contract_id=%s",
+                    lava_service.webhook_contract_id(data) or "unknown",
+                )
+                return web.Response(status=401)
         except Exception:
             logger.exception("Error while validating Lava webhook signature")
-            return web.Response(status=200)
+            return web.Response(status=401)
 
         if not (
             lava_service.is_success_webhook(data)

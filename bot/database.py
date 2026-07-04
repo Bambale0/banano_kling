@@ -4443,13 +4443,13 @@ async def record_promo_redemption(transaction: Transaction) -> dict[str, Any]:
     }
 
 
-async def get_user_credits(telegram_id: int) -> float:
+async def get_user_credits(telegram_id: int) -> int:
     """Получает баланс кредитов пользователя"""
     user = await get_or_create_user(telegram_id)
-    return Credits(user.credits)
+    return int(user.credits)
 
 
-async def add_credits(telegram_id: int, amount: float) -> bool:
+async def add_credits(telegram_id: int, amount: int) -> bool:
     """Добавляет кредиты пользователю"""
     async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
@@ -4462,7 +4462,7 @@ async def add_credits(telegram_id: int, amount: float) -> bool:
 
 
 async def deduct_credits(
-    telegram_id: int, amount: float, check_balance: bool = True
+    telegram_id: int, amount: int, check_balance: bool = True
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
