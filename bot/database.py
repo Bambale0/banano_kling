@@ -4451,6 +4451,9 @@ async def get_user_credits(telegram_id: int) -> int:
 
 async def add_credits(telegram_id: int, amount: int) -> bool:
     """Добавляет кредиты пользователю"""
+    if amount <= 0:
+        logger.warning(f"add_credits: non-positive amount {amount} for user {telegram_id}")
+        return False
     async with db_backend.connect(DATABASE_PATH) as db:
         await db.execute(
             "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
@@ -4465,6 +4468,9 @@ async def deduct_credits(
     telegram_id: int, amount: int, check_balance: bool = True
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
+    if amount <= 0:
+        logger.warning(f"deduct_credits: non-positive amount {amount} for user {telegram_id}")
+        return False
     from bot.config import config
 
     # Админы не платят
@@ -4505,7 +4511,7 @@ async def deduct_credits(
         return True
 
 
-async def check_can_afford(telegram_id: int, amount: float) -> bool:
+async def check_can_afford(telegram_id: int, amount: int) -> bool:
     """Проверяет, может ли пользователь позволить себе операцию"""
     from bot.config import config
 
