@@ -199,6 +199,8 @@ async def run_watchdog_cycle() -> int:
 
 async def watchdog_loop():
     """Бесконечный цикл watchdog, запускается при старте бота."""
+    # Задержка при старте — даём БД инициализироваться
+    await asyncio.sleep(15)
     logger.info(
         "Task watchdog started: interval=%ss, threshold=%smin, max_stuck=%smin",
         WATCHDOG_INTERVAL_SECONDS, STUCK_THRESHOLD_MINUTES, MAX_STUCK_MINUTES,
