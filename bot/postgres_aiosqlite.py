@@ -400,11 +400,27 @@ def _translate_sqlite_scalars(sql: str) -> str:
         flags=re.IGNORECASE,
     )
     sql = re.sub(r"date\('now'\)", "CURRENT_DATE", sql, flags=re.IGNORECASE)
+    sql = re.sub(
+        r"datetime\('now',\s*'-([0-9]+)\s+(hour|minute|second)s?'\)",
+        r"(CURRENT_TIMESTAMP - INTERVAL '\1 \2')",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"datetime\('now',\s*'\+([0-9]+)\s+(hour|minute|second)s?'\)",
+        r"(CURRENT_TIMESTAMP + INTERVAL '\1 \2')",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(r"datetime\('now'\)", "CURRENT_TIMESTAMP", sql, flags=re.IGNORECASE)
     return sql
 
 
 def _escape_percent_literals(sql: str) -> str:
-    return re.sub(r"%(?![%sbt])", "%%", sql)
+    # Escape % that are NOT psycopg placeholders (%s) or literal percents (%%).
+    # SQL LIKE wildcards (% inside quotes) will also be escaped — this is fine
+    # because LIKE params should use %s placeholders, not literal %.
+    return re.sub(r"%(?![%s])", "%%", sql)
 
 
 def _should_skip_statement(sql: str) -> bool:
