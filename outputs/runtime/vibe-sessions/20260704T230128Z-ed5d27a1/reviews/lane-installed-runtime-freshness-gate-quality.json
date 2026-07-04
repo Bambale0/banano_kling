@@ -1,0 +1,9 @@
+{
+  "lane_id": "lane-installed-runtime-freshness-gate",
+  "review_kind": "quality",
+  "passed": true,
+  "governance_scope": "root",
+  "generated_at": "2026-07-04T23:01:35Z",
+  "source_lane_receipt_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/child-lanes/lane-installed-runtime-freshness-gate/lane-receipt.json",
+  "notes": "Code quality review confirms the delegated lane passed its verification contract."
+}

@@ -1,0 +1,13 @@
+{
+  "lane": "cognee",
+  "stage": "skeleton_check",
+  "task": "Check vibe ready",
+  "top_k": 3,
+  "max_chars_per_item": 220,
+  "keywords": [
+    "check",
+    "vibe",
+    "ready"
+  ],
+  "project_key_source": null
+}

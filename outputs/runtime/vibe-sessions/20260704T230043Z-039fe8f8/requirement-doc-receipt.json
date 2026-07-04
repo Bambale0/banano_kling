@@ -1,0 +1,90 @@
+{
+  "stage": "requirement_doc",
+  "run_id": "20260704T230043Z-039fe8f8",
+  "governance_scope": "root",
+  "mode": "interactive_governed",
+  "requirement_doc_path": "/root/tanya/banano_kling/docs/requirements/2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+  "child_requirement_handoff_path": null,
+  "canonical_write_allowed": true,
+  "inherited_requirement_doc_path": null,
+  "runtime_input_packet_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230043Z-039fe8f8/runtime-input-packet.json",
+  "code_task_tdd_decision": {
+    "mode": "required",
+    "source": "runtime_inference",
+    "reason": "The task includes implementation or defect-correction intent that requires code-task TDD evidence.",
+    "exception": null
+  },
+  "skill_usage_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230043Z-039fe8f8/skill-usage.json",
+  "skill_usage": {
+    "schema_version": 2,
+    "state_model": "binary_used_unused",
+    "used": [
+      {
+        "skill_id": "tdd-guide",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2",
+        "evidence": [
+          {
+            "stage": "requirement_doc",
+            "artifact_path": "2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+            "impact": "Requirement doc adopts the loaded tdd-guide SKILL.md as the workflow authority for downstream planning and completion evidence."
+          }
+        ]
+      }
+    ],
+    "unused": [
+      {
+        "skill_id": "verification-before-completion",
+        "reason": "selected_but_no_artifact_impact"
+      }
+    ],
+    "used_skills": [
+      "tdd-guide"
+    ],
+    "unused_skills": [
+      "verification-before-completion"
+    ],
+    "loaded_skills": [
+      {
+        "skill_id": "verification-before-completion",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "747860a51c07b4691e5ac36ccddec8e1ddd4c1940037ae56f4161eab5dfb8ce4",
+        "load_status": "loaded_full_skill_md",
+        "loaded_at_stage": "skeleton_check",
+        "loaded_byte_count": 4535,
+        "loaded_line_count": 143
+      },
+      {
+        "skill_id": "tdd-guide",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2",
+        "load_status": "loaded_full_skill_md",
+        "loaded_at_stage": "skeleton_check",
+        "loaded_byte_count": 1820,
+        "loaded_line_count": 61
+      }
+    ],
+    "evidence": [
+      {
+        "skill_id": "tdd-guide",
+        "stage": "requirement_doc",
+        "artifact_ref": "2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+        "impact_summary": "Requirement doc adopts the loaded tdd-guide SKILL.md as the workflow authority for downstream planning and completion evidence.",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2"
+      }
+    ],
+    "unused_reasons": [
+      {
+        "skill_id": "verification-before-completion",
+        "reason": "selected_but_no_artifact_impact"
+      }
+    ]
+  },
+  "memory_context_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230043Z-039fe8f8/memory-activation/requirement-context-pack.json",
+  "memory_context_item_count": 2,
+  "memory_context_estimated_tokens": 59,
+  "memory_disclosure_level": "decision_focused",
+  "memory_capsule_count": 1,
+  "generated_at": "2026-07-04T23:00:49Z"
+}

@@ -1,0 +1,35 @@
+{
+  "stage": "requirement_doc",
+  "source_stage": "bounded_memory_recall",
+  "owner": "state_store",
+  "disclosure_level": "decision_focused",
+  "generated_at": "2026-07-04T23:01:33Z",
+  "capsule_count": 1,
+  "selected_capsules": [
+    {
+      "capsule_id": "9b94b5e5651053d7",
+      "owner": "state_store",
+      "lane": null,
+      "kind": "fallback_digest",
+      "updated_at": null,
+      "title": "Task focus: Deep code audit of Tanya TG bot. Fast-track mode. Enter unattended mode. Q1: str... Deliverable: Governed implementation artifac...",
+      "why_now": "Matched state_store memory for requirement_doc.",
+      "expansion_ref": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/memory-activation/skeleton-local-digest.json#9b94b5e5651053d7",
+      "summary_lines": [
+        "Task focus: Deep code audit of Tanya TG bot. Fast-track mode. Enter unattended mode. Q1: str... Deliverable: Governed implementation artifacts, verification evidence, and cleanup receipts. Constraints: Do not bypass the...",
+        "Git branch: ",
+        "All required governed runtime prerequisite paths are present."
+      ]
+    }
+  ],
+  "items": [
+    "Task focus: Deep code audit of Tanya TG bot. Fast-track mode. Enter unattended mode. Q1: str... Deliverable: Governed implementation artifacts, verification evidence, and cleanup receipts. Constraints: Do not bypass the...",
+    "Git branch: "
+  ],
+  "estimated_tokens": 59,
+  "budget": {
+    "top_k": 2,
+    "max_tokens": 120,
+    "max_chars_per_item": 260
+  }
+}

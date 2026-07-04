@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "state_model": "binary_used_unused",
+  "used": [
+    {
+      "skill_id": "code-reviewer",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "242fde77990971457da21dad50c503549d09544addce52d8c8ed21522b02fa49",
+      "evidence": [
+        {
+          "stage": "requirement_doc",
+          "artifact_path": "2026-07-04-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+          "impact": "Requirement doc adopts the loaded code-reviewer SKILL.md as the workflow authority for downstream planning and completion evidence."
+        }
+      ]
+    }
+  ],
+  "unused": null,
+  "used_skills": [
+    "code-reviewer"
+  ],
+  "unused_skills": [],
+  "loaded_skills": [
+    {
+      "skill_id": "code-reviewer",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "242fde77990971457da21dad50c503549d09544addce52d8c8ed21522b02fa49",
+      "load_status": "loaded_full_skill_md",
+      "loaded_at_stage": "skeleton_check",
+      "loaded_byte_count": 5572,
+      "loaded_line_count": 231
+    }
+  ],
+  "evidence": [
+    {
+      "skill_id": "code-reviewer",
+      "stage": "requirement_doc",
+      "artifact_ref": "2026-07-04-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+      "impact_summary": "Requirement doc adopts the loaded code-reviewer SKILL.md as the workflow authority for downstream planning and completion evidence.",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "242fde77990971457da21dad50c503549d09544addce52d8c8ed21522b02fa49"
+    }
+  ],
+  "unused_reasons": null
+}

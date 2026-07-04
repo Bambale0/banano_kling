@@ -1,0 +1,69 @@
+{
+  "stage": "requirement_doc",
+  "run_id": "20260704T225100Z-eedc0ba7",
+  "governance_scope": "root",
+  "mode": "interactive_governed",
+  "requirement_doc_path": "/root/tanya/banano_kling/docs/requirements/2026-07-04-check-vibe-ready.md",
+  "child_requirement_handoff_path": null,
+  "canonical_write_allowed": true,
+  "inherited_requirement_doc_path": null,
+  "runtime_input_packet_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T225100Z-eedc0ba7/runtime-input-packet.json",
+  "code_task_tdd_decision": {
+    "mode": "not_applicable",
+    "source": "runtime_inference",
+    "reason": "No host decision or runtime inference required code-task TDD evidence for this task.",
+    "exception": null
+  },
+  "skill_usage_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T225100Z-eedc0ba7/skill-usage.json",
+  "skill_usage": {
+    "schema_version": 2,
+    "state_model": "binary_used_unused",
+    "used": [
+      {
+        "skill_id": "scholarly-publishing",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/scholarly-publishing/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "c253ac324a32842a963ecd047ac7e96a31032e59ee38794b38d347a123294425",
+        "evidence": [
+          {
+            "stage": "requirement_doc",
+            "artifact_path": "2026-07-04-check-vibe-ready.md",
+            "impact": "Requirement doc adopts the loaded scholarly-publishing SKILL.md as the workflow authority for downstream planning and completion evidence."
+          }
+        ]
+      }
+    ],
+    "unused": null,
+    "used_skills": [
+      "scholarly-publishing"
+    ],
+    "unused_skills": [],
+    "loaded_skills": [
+      {
+        "skill_id": "scholarly-publishing",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/scholarly-publishing/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "c253ac324a32842a963ecd047ac7e96a31032e59ee38794b38d347a123294425",
+        "load_status": "loaded_full_skill_md",
+        "loaded_at_stage": "skeleton_check",
+        "loaded_byte_count": 6518,
+        "loaded_line_count": 137
+      }
+    ],
+    "evidence": [
+      {
+        "skill_id": "scholarly-publishing",
+        "stage": "requirement_doc",
+        "artifact_ref": "2026-07-04-check-vibe-ready.md",
+        "impact_summary": "Requirement doc adopts the loaded scholarly-publishing SKILL.md as the workflow authority for downstream planning and completion evidence.",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/scholarly-publishing/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "c253ac324a32842a963ecd047ac7e96a31032e59ee38794b38d347a123294425"
+      }
+    ],
+    "unused_reasons": null
+  },
+  "memory_context_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T225100Z-eedc0ba7/memory-activation/requirement-context-pack.json",
+  "memory_context_item_count": 2,
+  "memory_context_estimated_tokens": 10,
+  "memory_disclosure_level": "decision_focused",
+  "memory_capsule_count": 1,
+  "generated_at": "2026-07-04T22:51:06Z"
+}

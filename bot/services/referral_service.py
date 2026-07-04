@@ -620,7 +620,7 @@ async def process_referral_click(
             return result
 
         insert_cursor = await db.execute(
-            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+            "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 3)",
             (referrer_id, visitor_user_id),
         )
         if insert_cursor.rowcount != 1:
@@ -831,7 +831,7 @@ async def attach_referral_in_transaction(
         return result
 
     insert_cursor = await db.execute(
-        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+        "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 3)",
         (referrer_id, visitor_user_id),
     )
 

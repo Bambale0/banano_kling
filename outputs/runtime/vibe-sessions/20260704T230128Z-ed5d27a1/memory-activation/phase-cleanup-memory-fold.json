@@ -1,0 +1,20 @@
+{
+  "stage": "phase_cleanup",
+  "fold_kind": "deepagent_memory_fold_local",
+  "generated_at": "2026-07-04T23:01:37Z",
+  "working_memory": [
+    "Requirement doc: /root/tanya/banano_kling/docs/requirements/2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+    "Execution plan: /root/tanya/banano_kling/docs/plans/2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended-execution-plan.md",
+    "Runtime status: completed"
+  ],
+  "tool_memory": [
+    "Execution manifest: /root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/execution-manifest.json",
+    "Cleanup receipt: /root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/cleanup-receipt.json"
+  ],
+  "evidence_anchors": [
+    "/root/tanya/banano_kling/docs/requirements/2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+    "/root/tanya/banano_kling/docs/plans/2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended-execution-plan.md",
+    "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/execution-manifest.json",
+    "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/cleanup-receipt.json"
+  ]
+}

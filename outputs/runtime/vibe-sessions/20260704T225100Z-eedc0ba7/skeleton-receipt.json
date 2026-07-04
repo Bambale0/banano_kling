@@ -1,0 +1,58 @@
+{
+  "stage": "skeleton_check",
+  "run_id": "20260704T225100Z-eedc0ba7",
+  "mode": "interactive_governed",
+  "task": "Check vibe ready",
+  "generated_at": "2026-07-04T22:51:02Z",
+  "repo_root": "/root/.openclaw/skills/vibe",
+  "git_branch": null,
+  "git_status": [],
+  "required_paths": [
+    {
+      "path": "SKILL.md",
+      "exists": true
+    },
+    {
+      "path": "protocols/runtime.md",
+      "exists": true
+    },
+    {
+      "path": "protocols/think.md",
+      "exists": true
+    },
+    {
+      "path": "protocols/do.md",
+      "exists": true
+    },
+    {
+      "path": "protocols/team.md",
+      "exists": true
+    },
+    {
+      "path": "protocols/retro.md",
+      "exists": true
+    },
+    {
+      "path": "config/runtime-contract.json",
+      "exists": true
+    },
+    {
+      "path": "config/runtime-modes.json",
+      "exists": true
+    },
+    {
+      "path": "config/requirement-doc-policy.json",
+      "exists": true
+    },
+    {
+      "path": "config/plan-execution-policy.json",
+      "exists": true
+    },
+    {
+      "path": "config/phase-cleanup-policy.json",
+      "exists": true
+    }
+  ],
+  "existing_requirement_docs": [],
+  "existing_plan_docs": []
+}
