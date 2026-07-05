@@ -679,14 +679,6 @@ export default function App() {
         // Ignore malformed websocket events.
       }
     }
-    socket.onclose = () => {
-      console.log("TMA WS closed, reconnecting in 5s");
-      setTimeout(() => { window.location.reload(); }, 5000);
-    };
-    socket.onerror = () => {
-      console.log("TMA WS error");
-      socket.close();
-    };
     return () => socket.close()
   }, [Boolean(appData), lang])
 
@@ -931,7 +923,7 @@ function FeedPreview({ url, variant = 'default', onOpen }: { url: unknown; varia
         alt=""
         loading={variant === 'pin' ? undefined : 'lazy'}
         decoding="async"
-        fetchPriority={variant === 'pin' ? 'auto' : undefined}
+        fetchpriority={variant === 'pin' ? 'auto' : undefined}
         onLoad={() => setLoaded(true)}
         onError={handleError}
       />

@@ -796,25 +796,35 @@ class KlingService:
             return await self._kie_post("/api/v1/jobs/createTask", payload)
 
         if model == "seedance2":
+            allowed_seedance_ratios = {"1:1", "4:3", "3:4", "16:9", "9:16", "21:9", "adaptive"}
+            safe_aspect_ratio = aspect_ratio if aspect_ratio in allowed_seedance_ratios else "16:9"
+            safe_resolution = seedance_resolution if seedance_resolution in {"480p", "720p"} else "720p"
+            try:
+                safe_duration = max(4, min(15, int(duration)))
+            except (TypeError, ValueError):
+                safe_duration = 5
+
             input_data = {
                 "prompt": prompt,
-                "aspect_ratio": aspect_ratio,
-                "duration": duration,
+                "aspect_ratio": safe_aspect_ratio,
+                "duration": safe_duration,
                 "generate_audio": generate_audio,
-                "resolution": seedance_resolution or "720p",
+                "resolution": safe_resolution,
                 "nsfw_checker": seedance_nsfw_checker,
-                "web_search": seedance_web_search,
             }
             if image_url:
                 input_data["first_frame_url"] = image_url
             if end_image_url:
                 input_data["last_frame_url"] = end_image_url
-            if image_input:
+            has_frame_refs = bool(image_url or end_image_url)
+            if image_input and not has_frame_refs:
                 input_data["reference_image_urls"] = image_input[:9]
-            if video_urls:
-                input_data["reference_video_urls"] = video_urls[:1]
+            if video_urls and not has_frame_refs and not image_input:
+                input_data["reference_video_urls"] = video_urls[:3]
+            if seedance_web_search and not has_frame_refs and not image_input and not video_urls:
+                input_data["web_search"] = True
             payload = {
-                "model": "bytedance/seedance-2",
+                "model": "bytedance/seedance-2-mini",
                 "input": input_data,
             }
             if webhook_url:

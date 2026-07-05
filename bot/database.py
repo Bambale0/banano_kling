@@ -3124,15 +3124,17 @@ async def update_task_result_url(task_id: str, new_url: str) -> bool:
         return True
 
 
-async def fail_generation_task(task_id: str) -> bool:
+async def fail_generation_task(task_id: str, error_message: str | None = None) -> bool:
     """Отмечает задачу как завершённую с ошибкой."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         await db.execute(
             """UPDATE generation_tasks
-               SET status = 'failed', completed_at = CURRENT_TIMESTAMP
+               SET status = 'failed',
+                   error_message = COALESCE(?, error_message),
+                   completed_at = CURRENT_TIMESTAMP
                WHERE task_id = ?""",
-            (task_id,),
+            (error_message, task_id),
         )
         cursor = await db.execute(
             "SELECT * FROM generation_tasks WHERE task_id = ?",

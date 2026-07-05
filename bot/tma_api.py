@@ -1756,7 +1756,10 @@ async def handle_tma_admin_generation_action(request: web.Request) -> web.Respon
     if action == "refund":
         ok = await database.refund_generation_billing(task_id, reason="tma_admin_refund")
     elif action == "fail":
-        ok = await database.fail_generation_task(task_id)
+        ok = await database.fail_generation_task(
+            task_id,
+            str(payload.get("error_message") or "Помечено ошибкой администратором"),
+        )
     elif action == "complete":
         result_url = str(payload.get("result_url") or task.result_url or "")
         if not result_url:

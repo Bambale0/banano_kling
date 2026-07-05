@@ -57,12 +57,12 @@ IMAGE_MODEL_CONFIGS = {
         "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:2"],
         "defaults": {
             "aspect_ratio": "auto",
-            "resolution": "4K",
+            "resolution": "1K",
             "output_format": "png",
         },
         "options": {
             "aspect_ratio": ["auto", "1:1", "16:9", "9:16", "4:3", "3:2"],
-            "resolution": ["2K", "4K"],
+            "resolution": ["1K", "2K", "4K"],
             "output_format": ["png", "jpg"],
         },
         "service": "banana_2",

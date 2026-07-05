@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Dict, List, Optional
 
@@ -32,12 +33,27 @@ class NanoBanana2Service:
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()
-                else:
-                    error = await resp.text()
-                    logger.error(
-                        f"Nano Banana 2 POST {endpoint} failed: {resp.status} - {error}"
-                    )
-                    return None
+                error = await resp.text()
+                logger.error(
+                    "Nano Banana 2 POST %s failed: %s - %s",
+                    endpoint,
+                    resp.status,
+                    error,
+                )
+                try:
+                    payload = json.loads(error)
+                    if isinstance(payload, dict):
+                        payload.setdefault("code", resp.status)
+                        payload["_http_status"] = resp.status
+                        return payload
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                return {
+                    "code": resp.status,
+                    "msg": error,
+                    "data": None,
+                    "_http_status": resp.status,
+                }
         except Exception as e:
             logger.exception(f"Nano Banana 2 POST error: {e}")
             return None
@@ -78,31 +94,73 @@ class NanoBanana2Service:
         # Normalize relative URLs to absolute (Kie.ai cannot fetch relative paths)
         normalized_input = [normalize_kie_image_url(url) for url in (image_input or [])]
 
-        payload = {
-            "model": "nano-banana-2",
-            "input": {
-                "prompt": prompt,
-                "image_input": normalized_input,
-                "aspect_ratio": aspect_ratio,
-                "resolution": resolution,
-                "output_format": output_format,
-            },
-        }
-        if callback_url:
-            payload["callBackUrl"] = callback_url
+        def _build_payload(selected_resolution: str) -> Dict:
+            return {
+                "model": "nano-banana-2",
+                "input": {
+                    "prompt": prompt,
+                    "image_input": normalized_input,
+                    "aspect_ratio": aspect_ratio,
+                    "resolution": selected_resolution,
+                    "output_format": output_format,
+                },
+            }
 
-        resp = await self._post("/api/v1/jobs/createTask", payload)
-        if not resp or not isinstance(resp, dict):
-            logger.error(f"Nano Banana 2 create_task failed, resp: {resp}")
-            return None
-        data = resp.get("data")
-        if not isinstance(data, dict):
-            logger.error(f"Nano Banana 2 invalid data: {data} (full resp: {resp})")
-            return None
-        task_id = data.get("taskId")
-        if not task_id:
-            logger.error(f"No taskId in response: {resp}")
-        return task_id
+        def _retry_resolutions(selected_resolution: str) -> list[str]:
+            candidates = [selected_resolution]
+            for fallback in ("2K", "1K"):
+                if fallback not in candidates:
+                    candidates.append(fallback)
+            return candidates
+
+        def _is_validation_error(response: Dict) -> bool:
+            code = response.get("code") or response.get("_http_status")
+            msg = str(response.get("msg") or response.get("message") or "")
+            return str(code) == "422" or "validation" in msg.lower()
+
+        last_resp: Optional[Dict] = None
+        for selected_resolution in _retry_resolutions(resolution):
+            payload = _build_payload(selected_resolution)
+            if callback_url:
+                payload["callBackUrl"] = callback_url
+
+            resp = await self._post("/api/v1/jobs/createTask", payload)
+            last_resp = resp
+            if not resp or not isinstance(resp, dict):
+                logger.error("Nano Banana 2 create_task failed, resp: %s", resp)
+                return None
+
+            if resp.get("code") not in (None, 200):
+                logger.error(
+                    "Nano Banana 2 create_task rejected: code=%s msg=%s resolution=%s",
+                    resp.get("code"),
+                    resp.get("msg"),
+                    selected_resolution,
+                )
+                if _is_validation_error(resp) and selected_resolution != "1K":
+                    continue
+                return None
+
+            data = resp.get("data")
+            if not isinstance(data, dict):
+                logger.error(
+                    "Nano Banana 2 invalid data: %s (full resp: %s)", data, resp
+                )
+                return None
+            task_id = data.get("taskId")
+            if not task_id:
+                logger.error("No taskId in response: %s", resp)
+                return None
+            if selected_resolution != resolution:
+                logger.info(
+                    "Nano Banana 2 task created after fallback resolution %s -> %s",
+                    resolution,
+                    selected_resolution,
+                )
+            return task_id
+
+        logger.error("Nano Banana 2 create_task exhausted retries, last_resp: %s", last_resp)
+        return None
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
         resp = await self._get(

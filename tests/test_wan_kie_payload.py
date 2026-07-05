@@ -5,6 +5,55 @@ from bot.services.kling_service import KlingService
 
 
 @pytest.mark.asyncio
+async def test_seedance_2_mini_payload_matches_kie_docs(monkeypatch):
+    captured = {}
+    service = KlingService(kie_key="test-key")
+
+    async def fake_post(endpoint, payload):
+        captured["endpoint"] = endpoint
+        captured["payload"] = payload
+        return {"task_id": "task_seedance_mini", "status": "pending"}
+
+    monkeypatch.setattr(service, "_kie_post", fake_post)
+
+    result = await service.generate_video(
+        prompt="animate this portrait with cinematic light",
+        model="seedance2",
+        duration=3,
+        aspect_ratio="3:4",
+        image_url="https://example.com/start.png",
+        end_image_url="https://example.com/end.png",
+        image_input=["https://example.com/extra-ref.png"],
+        video_urls=["https://example.com/ref.mp4"],
+        generate_audio=True,
+        seedance_resolution="1080p",
+        seedance_nsfw_checker=False,
+        seedance_web_search=True,
+        webhook_url="https://example.com/webhook",
+    )
+
+    assert result["task_id"] == "task_seedance_mini"
+    assert captured["endpoint"] == "/api/v1/jobs/createTask"
+    assert captured["payload"]["model"] == "bytedance/seedance-2-mini"
+    assert captured["payload"]["callBackUrl"] == "https://example.com/webhook"
+
+    input_data = captured["payload"]["input"]
+    assert input_data == {
+        "prompt": "animate this portrait with cinematic light",
+        "aspect_ratio": "3:4",
+        "duration": 4,
+        "generate_audio": True,
+        "resolution": "720p",
+        "nsfw_checker": False,
+        "first_frame_url": "https://example.com/start.png",
+        "last_frame_url": "https://example.com/end.png",
+    }
+    assert "reference_image_urls" not in input_data
+    assert "reference_video_urls" not in input_data
+    assert "web_search" not in input_data
+
+
+@pytest.mark.asyncio
 async def test_wan_27_i2v_payload_matches_kie_docs(monkeypatch):
     captured = {}
     service = KlingService(kie_key="test-key")

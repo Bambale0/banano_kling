@@ -933,7 +933,10 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                         ),
                                         parse_mode="HTML",
                                     )
-                                await fail_generation_task(task_id)
+                                await fail_generation_task(
+                                    task_id,
+                                    f"{fail_code}: {fail_msg}".strip(": "),
+                                )
                                 logger.info(
                                     f"Kie.ai fail notified to {telegram_id}, task {task_id} marked failed"
                                 )
@@ -1931,7 +1934,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                     f"No telegram_id for failed task {task_id} (user_id: {task.user_id})"
                 )
 
-            await fail_generation_task(task_id)
+            await fail_generation_task(
+                task_id,
+                f"{fail_code}: {fail_msg}".strip(": "),
+            )
         else:
             logger.info(
                 "Ignoring non-terminal %s webhook task_id=%s status=%s",

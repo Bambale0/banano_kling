@@ -71,11 +71,11 @@ VIDEO_MODEL_CONFIGS = {
         "options": {"sound": [True, False]},
     },
     "seedance2": {
-        "label": "🌱 Seedance 2.0",
+        "label": "🌱 Seedance 2.0 Mini",
         "v_types": ["imgtxt"],
         "requires_refs": True,
         "supports_refs": True,
-        "aspect_ratios": ["16:9", "9:16", "1:1"],
+        "aspect_ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"],
         "durations": [5, 10, 15],
         "defaults": {
             "resolution": "720p",
@@ -84,7 +84,7 @@ VIDEO_MODEL_CONFIGS = {
             "web_search": False,
         },
         "options": {
-            "resolution": ["720p", "1080p"],
+            "resolution": ["720p", "480p"],
             "sound": [True, False],
             "nsfw_checker": [False, True],
             "web_search": [False, True],
