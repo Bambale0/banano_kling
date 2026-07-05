@@ -88,3 +88,10 @@ gpt.txt
 ObsidianCodexVault/
 .env.postgres
 !frontend/miniapp-v0/lib
+
+# Vibe governance artifacts
+outputs/runtime/
+# Vibe artifacts
+outputs/
+docs/requirements/
+docs/plans/
