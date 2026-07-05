@@ -2462,23 +2462,9 @@ async def _build_feed_keyboard(
         rows.append(
             [
                 types.InlineKeyboardButton(
-                    text="📱 Открыть пост в Mini App",
-                    url=_feed_miniapp_link(username, gen_id, author_referral_code),
-                )
-            ]
-        )
-        rows.append(
-            [
-                types.InlineKeyboardButton(
                     text="🔗 Ссылка на пост в боте",
                     copy_text=types.CopyTextButton(
                         text=_feed_share_link(username, gen_id, author_referral_code)
-                    ),
-                ),
-                types.InlineKeyboardButton(
-                    text="📱 Mini App ссылка",
-                    copy_text=types.CopyTextButton(
-                        text=_feed_miniapp_link(username, gen_id, author_referral_code)
                     ),
                 ),
             ]

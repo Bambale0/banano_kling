@@ -1364,10 +1364,9 @@ def get_image_result_keyboard(
             text="🗑 Убрать из промптов" if is_prompt_library else "📚 В промпты",
             callback_data=f"promptrm_{task_id}" if is_prompt_library else f"promptsave_{task_id}",
         )
-        builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
         builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2, 2, 2, 1)
+    builder.adjust(1, 2, 2, 1)
     return builder.as_markup()
 
 
@@ -1375,9 +1374,8 @@ def get_failed_image_retry_keyboard(task_id: str):
     """Клавиатура для неудачной фото-генерации."""
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Другой промпт", callback_data=f"retry_prompt_image_{task_id}")
-    builder.button(text="🔁 Повторить", callback_data=f"repeat_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(2, 1)
+    builder.adjust(1, 1)
     return builder.as_markup()
 
 
