@@ -1,0 +1,17 @@
+{
+  "stage": "skeleton_check",
+  "owner": "state_store",
+  "status": "fallback_local_digest",
+  "generated_at": "2026-07-04T23:00:44Z",
+  "source_receipt_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230043Z-039fe8f8/skeleton-receipt.json",
+  "items": [
+    "Task focus: Deep code audit of Tanya TG bot. Fast-track mode. Enter unattended mode. Q1: str... Deliverable: Governed implementation artifacts, verification evidence, and cleanup receipts. Constraints: Do not bypass the...",
+    "Git branch: ",
+    "All required governed runtime prerequisite paths are present."
+  ],
+  "budget": {
+    "top_k": 3,
+    "max_tokens": 96,
+    "max_chars_per_item": 220
+  }
+}

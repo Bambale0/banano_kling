@@ -1,0 +1,252 @@
+import asyncio
+import logging
+import uuid
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from bot import db as db_backend
+from yookassa import Configuration, Payment
+
+from bot import database as db
+from bot.config import config
+
+logger = logging.getLogger(__name__)
+
+
+class YooKassaService:
+    """Асинхронная обёртка над YooKassa SDK."""
+
+    def __init__(self, shop_id: str, secret_key: str, return_url: str = ""):
+        self.shop_id = shop_id
+        self.secret_key = secret_key
+        self.return_url = return_url
+        self.enabled = bool(shop_id and secret_key)
+
+        if self.enabled:
+            Configuration.account_id = shop_id
+            Configuration.secret_key = secret_key
+
+    async def create_payment(
+        self,
+        amount_rub: float,
+        order_id: str,
+        description: str,
+        return_url: Optional[str] = None,
+        notification_url: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            logger.warning("YooKassa is not configured")
+            return None
+
+        payload = {
+            "amount": {"value": f"{amount_rub:.2f}", "currency": "RUB"},
+            "capture": True,
+            "confirmation": {
+                "type": "redirect",
+                "return_url": return_url or self.return_url or "https://t.me/",
+            },
+            "description": description[:128],
+            "metadata": {"order_id": order_id},
+        }
+
+        if notification_url:
+            # Some integrations expect notification URL to be present in metadata;
+            # also include it at top-level when provided — harmless and can help
+            # third-party SDKs or API versions that accept it there.
+            payload["metadata"]["notification_url"] = notification_url
+            payload["notification_url"] = notification_url
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                payment = Payment.create(payload, str(uuid.uuid4()))
+                logger.info("YooKassa payment created: %s", payment.id)
+                return {
+                    "Success": True,
+                    "PaymentId": payment.id,
+                    "PaymentURL": payment.confirmation.confirmation_url,
+                    "Raw": payment,
+                }
+            except Exception as exc:
+                last_exc = exc
+                exc_str = str(exc)
+                is_transient = any(
+                    code in exc_str for code in ("502", "503", "504", "429")
+                )
+                if is_transient and attempt < 2:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                break
+
+        logger.exception("YooKassa payment creation failed: %s", last_exc)
+        return {"Success": False, "Message": str(last_exc)}
+
+    async def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
+        if not self.enabled:
+            return None
+
+        try:
+            payment = Payment.find_one(payment_id)
+            return {
+                "id": payment.id,
+                "status": payment.status,
+                "paid": getattr(payment, "paid", False)
+                or getattr(payment, "paid_at", False),
+                "metadata": getattr(payment, "metadata", {}) or {},
+                "amount": getattr(payment, "amount", None),
+                "Raw": payment,
+            }
+        except Exception as exc:
+            logger.exception("YooKassa payment lookup failed: %s", exc)
+            return None
+
+    async def poll_pending_transactions(
+        self,
+        limit: int = 100,
+        complete_order: Optional[Callable[[str], Awaitable[Dict[str, Any]]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Reconcile pending YooKassa transactions by querying YooKassa API.
+
+        This will look for transactions in the local DB with provider='yookassa' and
+        status='pending' and try to fetch their current state from YooKassa. If a
+        payment is confirmed/paid, the transaction will be marked 'completed' and
+        user credits will be credited. If the payment is failed/canceled, the
+        transaction will be marked 'failed'.
+
+        Returns list of results for diagnostics.
+        """
+        if not self.enabled:
+            logger.warning("YooKassa is not configured — skipping poll")
+            return []
+
+        results: List[Dict[str, Any]] = []
+
+        async with db_backend.connect() as conn:
+            conn.row_factory = db_backend.Row
+            cursor = await conn.execute(
+                "SELECT id, order_id, user_id, payment_id, credits, amount_rub FROM transactions WHERE provider = 'yookassa' AND status = 'pending' AND payment_id IS NOT NULL LIMIT ?",
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+
+        for row in rows:
+            order_id = row["order_id"]
+            payment_id = row["payment_id"]
+            user_id = row["user_id"]
+            credits = row["credits"]
+            amount_rub = row["amount_rub"]
+
+            try:
+                payment = await self.get_payment(payment_id)
+            except Exception as exc:
+                logger.exception("Error fetching payment %s: %s", payment_id, exc)
+                results.append(
+                    {"order_id": order_id, "payment_id": payment_id, "error": str(exc)}
+                )
+                continue
+
+            if not payment:
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "status": "not_found",
+                    }
+                )
+                continue
+
+            status = (payment.get("status") or "").lower()
+            paid = bool(payment.get("paid"))
+
+            # treat paid/succeeded as completed
+            if paid or status in ("succeeded", "paid", "captured"):
+                if complete_order:
+                    completion = await complete_order(order_id)
+                    action = (
+                        "already_completed"
+                        if completion.get("already_completed")
+                        else "completed"
+                    )
+                    logger.info(
+                        "Reconciled YooKassa payment %s -> %s (order=%s)",
+                        payment_id,
+                        action,
+                        order_id,
+                    )
+                    results.append(
+                        {
+                            "order_id": order_id,
+                            "payment_id": payment_id,
+                            "action": action,
+                            "completion": completion,
+                        }
+                    )
+                    continue
+
+                transaction = await db.get_transaction_by_order(order_id)
+                updated = await db.update_transaction_status(order_id, "completed")
+                if updated:
+                    telegram_id = await db.get_telegram_id_by_user_id(user_id)
+                    if telegram_id:
+                        await db.add_credits(telegram_id, credits)
+                        await db.credit_first_payment_referral_bonus(
+                            telegram_id, credits, amount_rub
+                        )
+                    if transaction:
+                        await db.record_promo_redemption(transaction)
+                logger.info(
+                    "Reconciled YooKassa payment %s -> completed (order=%s)",
+                    payment_id,
+                    order_id,
+                )
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "action": "completed" if updated else "already_completed",
+                    }
+                )
+                continue
+
+            # treat canceled/failed
+            if status in ("canceled", "failed", "rejected"):
+                await db.update_transaction_status(order_id, "failed")
+                logger.info(
+                    "Reconciled YooKassa payment %s -> failed (order=%s, status=%s)",
+                    payment_id,
+                    order_id,
+                    status,
+                )
+                results.append(
+                    {
+                        "order_id": order_id,
+                        "payment_id": payment_id,
+                        "action": "failed",
+                        "status": status,
+                    }
+                )
+                continue
+
+            # otherwise still pending
+            results.append(
+                {
+                    "order_id": order_id,
+                    "payment_id": payment_id,
+                    "action": "still_pending",
+                    "status": status,
+                }
+            )
+
+        return results
+
+    @staticmethod
+    def extract_order_id(payment: Any) -> Optional[str]:
+        metadata = getattr(payment, "metadata", None) or {}
+        order_id = metadata.get("order_id")
+        return str(order_id) if order_id else None
+
+
+yookassa_service = YooKassaService(
+    shop_id=config.YOOKASSA_SHOP_ID,
+    secret_key=config.YOOKASSA_SECRET_KEY,
+    return_url=config.YOOKASSA_RETURN_URL,
+)

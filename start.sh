@@ -1,96 +1,169 @@
-#!/bin/bash
-
-# Скрипт запуска бота в локальном режиме
-
+#!/usr/bin/env bash
+set -euo pipefail
 cd "$(dirname "$0")"
+load_env_file() {
+    local env_file="$1"
+    local line key value
 
-# Цвета для вывода
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+    [ -f "$env_file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [ -n "$line" ] || continue
+        case "$line" in \#*) continue ;; esac
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            export "$key=$value"
+        fi
+    done < "$env_file"
+}
 
-echo -e "${GREEN}=== Запуск Telegram Bot ===${NC}"
-
-# Проверяем наличие .env файла
-if [ ! -f ".env" ]; then
-    echo -e "${RED}Ошибка: Файл .env не найден!${NC}"
-    echo -e "${YELLOW}Скопируйте .env.example в .env и заполните переменные:${NC}"
-    echo "  cp .env.example .env"
-    exit 1
-fi
-
-# Создаём виртуальное окружение если нет
-if [ ! -d "venv" ]; then
-    echo -e "${YELLOW}Создание виртуального окружения...${NC}"
-    python3 -m venv venv
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Ошибка создания venv!${NC}"
-        exit 1
-    fi
-fi
-
-# Активируем виртуальное окружение
-source venv/bin/activate
-
-# Устанавливаем зависимости
-echo -e "${YELLOW}Проверка зависимостей...${NC}"
-pip install -q -r requirements.txt
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Ошибка установки зависимостей!${NC}"
-    exit 1
-fi
-
-# Создаём директорию для логов
+load_env_file .env
+load_env_file .env.postgres
 mkdir -p logs
+[ -f venv/bin/activate ] && source venv/bin/activate
 
-# Очищаем логи при старте
-> logs/bot_output.log
+PROJECT_DIR="$(pwd)"
+BOT_PORT="${WEBHOOK_PORT:-1888}"
+SYSTEMD_SERVICE="${BANANO_SYSTEMD_SERVICE:-banano-kling.service}"
 
-# Проверяем, не запущен ли уже бот
-if [ -f "bot.pid" ]; then
-    OLD_PID=$(cat bot.pid)
-    if ps -p $OLD_PID > /dev/null 2>&1; then
-        echo -e "${YELLOW}Бот уже запущен (PID: $OLD_PID)${NC}"
-        echo "Используйте ./stop.sh для остановки"
+if command -v systemctl >/dev/null 2>&1; then
+    SERVICE_STATE="$(systemctl show "$SYSTEMD_SERVICE" --property=LoadState --value 2>/dev/null || true)"
+    if [ "$SERVICE_STATE" = "loaded" ]; then
+        systemctl start "$SYSTEMD_SERVICE"
+        sleep 2
+        if systemctl is-active --quiet "$SYSTEMD_SERVICE"; then
+            BOT_PID="$(systemctl show "$SYSTEMD_SERVICE" --property=MainPID --value 2>/dev/null || true)"
+            if [ -n "$BOT_PID" ] && [ "$BOT_PID" != "0" ]; then
+                echo "$BOT_PID" > bot.pid
+                echo "Bot running via systemd PID=$BOT_PID"
+            else
+                echo "Bot running via systemd"
+            fi
+            exit 0
+        fi
+        systemctl status "$SYSTEMD_SERVICE" --no-pager || true
         exit 1
-    else
-        rm -f bot.pid
     fi
 fi
 
-# Загружаем переменные окружения из .env
-export $(grep -v '^#' .env | xargs)
+is_our_bot_pid() {
+    local pid="$1"
+    local cmdline=""
+    local proc_cwd=""
 
-# Проверяем BOT_TOKEN
-if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "your_telegram_bot_token_here" ]; then
-    echo -e "${RED}Ошибка: BOT_TOKEN не установлен в .env!${NC}"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    if [ -r "/proc/$pid/cmdline" ]; then
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    fi
+
+    if [ -L "/proc/$pid/cwd" ]; then
+        proc_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)"
+    fi
+
+    case "$cmdline" in
+        *"python"*"-m bot.main"*)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    [ "$proc_cwd" = "$PROJECT_DIR" ]
+}
+
+find_our_bot_pid() {
+    for proc_dir in /proc/[0-9]*; do
+        local pid="${proc_dir##*/}"
+        if is_our_bot_pid "$pid"; then
+            echo "$pid"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_listening_pid_on_port() {
+    local line=""
+    local pid=""
+
+    while IFS= read -r line; do
+        pid="$(printf '%s\n' "$line" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -1)"
+        if [ -n "$pid" ]; then
+            echo "$pid"
+            return 0
+        fi
+    done < <(ss -ltnp 2>/dev/null | grep -E "[:.]${BOT_PORT}[[:space:]]" || true)
+
+    return 1
+}
+
+find_listening_bot_pid() {
+    local pid=""
+
+    pid="$(find_listening_pid_on_port || true)"
+    if [ -n "$pid" ] && is_our_bot_pid "$pid"; then
+        echo "$pid"
+        return 0
+    fi
+
+    return 1
+}
+
+EXISTING_PID="$(find_listening_bot_pid || true)"
+if [ -z "$EXISTING_PID" ]; then
+    EXISTING_PID="$(find_our_bot_pid || true)"
+fi
+
+if [ -n "$EXISTING_PID" ]; then
+    echo "$EXISTING_PID" > bot.pid
+    echo "Bot already running PID=$EXISTING_PID"
+    exit 0
+fi
+
+PORT_OWNER_PID="$(find_listening_pid_on_port || true)"
+if [ -n "$PORT_OWNER_PID" ]; then
+    echo "Port $BOT_PORT is already in use by another process:"
+    ps -p "$PORT_OWNER_PID" -o pid=,cmd= || true
     exit 1
 fi
 
-# Запускаем бота в фоне
-echo -e "${GREEN}Запуск бота...${NC}"
-nohup python -m bot.main > logs/bot_output.log 2>&1 &
-BOT_PID=$!
+rm -f bot.pid
+nohup python -m bot.main >/dev/null 2>&1 &
+LAUNCH_PID="$!"
+BOT_PID=""
 
-# Сохраняем PID
-echo $BOT_PID > bot.pid
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    LISTENER_PID="$(find_listening_bot_pid || true)"
+    if [ -n "$LISTENER_PID" ]; then
+        BOT_PID="$LISTENER_PID"
+    fi
+    sleep 1
+done
 
-# Ждём немного и проверяем, что процесс запустился
-sleep 2
-if ps -p $BOT_PID > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ Бот успешно запущен!${NC}"
-    echo -e "  PID: ${YELLOW}$BOT_PID${NC}"
-    echo -e "  Логи: ${YELLOW}logs/bot.log${NC}, ${YELLOW}logs/bot_output.log${NC}"
-    echo ""
-    echo "Для просмотра логов в реальном времени:"
-    echo "  tail -f logs/bot.log"
-    echo ""
-    echo "Для остановки:"
-    echo "  ./stop.sh"
+if [ -z "$BOT_PID" ]; then
+    BOT_PID="$(find_our_bot_pid || true)"
+fi
+if [ -z "$BOT_PID" ]; then
+    BOT_PID="$LAUNCH_PID"
+fi
+
+if [ -n "$BOT_PID" ] && is_our_bot_pid "$BOT_PID"; then
+    echo "$BOT_PID" > bot.pid
+    echo "Bot started PID=$BOT_PID"
 else
-    echo -e "${RED}✗ Ошибка запуска бота!${NC}"
-    echo "Проверьте логи: logs/bot_output.log"
-    rm -f bot.pid
+    tail -100 logs/bot.log
     exit 1
 fi

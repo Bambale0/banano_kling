@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "status": "backend_write",
+  "lane": "cognee",
+  "store_path": "/root/.openclaw/skills/vibe/.vibeskills/memory/workspace-memory-plane.jsonl",
+  "project_key": "vibe",
+  "project_key_source": "workspace_plane",
+  "item_count": 3,
+  "items": [
+    "Persisted Cognee relation: deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended specified_by 2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+    "Persisted Cognee relation: deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended planned_in 2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended-execution-plan.md",
+    "Persisted Cognee relation: deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended executed_as execution-manifest.json"
+  ],
+  "capsule_count": 3,
+  "capsules": [
+    {
+      "capsule_id": "ef230b3faecbd1b1",
+      "owner": "Cognee",
+      "lane": "cognee",
+      "kind": "entity_relation_ingest",
+      "disclosure_level": "bounded",
+      "summary": "specified_by",
+      "updated_at": "2026-07-04T23:01:37Z"
+    },
+    {
+      "capsule_id": "b8376dffbe5250a6",
+      "owner": "Cognee",
+      "lane": "cognee",
+      "kind": "entity_relation_ingest",
+      "disclosure_level": "bounded",
+      "summary": "planned_in",
+      "updated_at": "2026-07-04T23:01:37Z"
+    },
+    {
+      "capsule_id": "2a89da78ebf934ff",
+      "owner": "Cognee",
+      "lane": "cognee",
+      "kind": "entity_relation_ingest",
+      "disclosure_level": "bounded",
+      "summary": "executed_as",
+      "updated_at": "2026-07-04T23:01:37Z"
+    }
+  ],
+  "suppressed_count": 0,
+  "workspace_memory_plane": {
+    "schema_version": 1,
+    "workspace_root": "/root/.openclaw/skills/vibe",
+    "workspace_sidecar_root": "/root/.openclaw/skills/vibe/.vibeskills",
+    "descriptor_path": "/root/.openclaw/skills/vibe/.vibeskills/project.json",
+    "workspace_id": "ws:6c02e9c0b73ffa7a616afac2",
+    "plane_path": "/root/.openclaw/skills/vibe/.vibeskills/memory/workspace-memory-plane.jsonl"
+  },
+  "driver_mode": "compatibility_shell",
+  "generated_at": "2026-07-04T23:01:37Z"
+}

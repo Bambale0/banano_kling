@@ -1,15 +1,22 @@
 [Unit]
-Description=Banano Kling Telegram Bot
-After=network.target
+Description=banano_kling Telegram Bot
+After=network-online.target redis-server.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/bot/banano_kling
-ExecStart=/root/bot/banano_kling/start.sh
-ExecStop=/root/bot/banano_kling/stop.sh
+WorkingDirectory=/root/tanya/banano_kling
+EnvironmentFile=-/root/tanya/banano_kling/.env
+EnvironmentFile=-/root/tanya/banano_kling/.env.postgres
+ExecStart=/root/tanya/banano_kling/venv/bin/python -m bot.main
+ExecStopPost=/bin/sh -c 'fuser -k 1888/tcp 2>/dev/null || true'
 Restart=always
-RestartSec=10
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+KillSignal=SIGTERM
+SendSIGKILL=yes
 
 [Install]
 WantedBy=multi-user.target

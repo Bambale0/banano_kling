@@ -1,0 +1,22 @@
+{
+  "lane": "cognee",
+  "stage": "skeleton_check",
+  "task": "Audit Tanya TG bot feed, referral, and database layer after PostgreSQL migration. Critical business impact: partners are angry due to referral/feed bugs since PostgreSQL migration.\n\nFocus areas:\n1. FEED (prompt_feed_database, feed_generation_tasks, feed_*) — check feed_/remix_/posts_ deeplinks, feed publication, feed card generation, feed retrieval queries, feed like/comment, feed referral code attachment\n2. REFERRALS (referral_service, referral_events table, referral code generation, partner notifications, commission tracking) — check referral data integrity, partner bonus attribution, referral links in feed, multi-hop lineage, partner notification delivery\n3. DATABASE TABLES after PostgreSQL migration (postgres_aiosqlite.py) — check SQL translation correctness (REPLACE INTO, datetime('now'), CURRENT_TIMESTAMP, LIMIT/OFFSET), column type compatibility, schema_postgres.sql vs actual queries, transaction isolation, deadlock risk\n4. KNOWN BUGS to verify fixed: feed_/remix_/posts_ deeplinks not attaching referrals (commit 6613bd8), referral age_seconds > 300 filter blocking notifications (commit e515133), multi-hop remix parent lineage (commit d8462a2)\n5. DATA INTEGRITY INVARIANTS: atomic create+charge, credit deduction with WHERE credits >= check, unique transaction indexes, webhook idempotency\n\nRelevant files:\n- bot/database.py\n- bot/postgres_aiosqlite.py\n- bot/miniapp.py\n- bot/handlers/common.py\n- bot/services/referral_service.py\n- bot/services/feed_persist.py\n- bot/services/task_watchdog.py\n- bot/services/rate_limiter.py\n- bot/quality_pricing.py\n- schema_postgres.sql\n- bot/config.py\n- bot/handlers/payments.py\n- tests/test_referral_system.py\n- tests/test_prompt_feed_database.py\n- tests/test_miniapp_referrals.py\n- tests/test_database.py\n\nOutput: structured audit report with defect severity (P0=critical, P1=high, P2=medium, P3=low, INFO), fix recommendations for each defect, and production readiness verdict. English for the report please.",
+  "top_k": 3,
+  "max_chars_per_item": 220,
+  "keywords": [
+    "audit",
+    "tanya",
+    "bot",
+    "feed",
+    "referral",
+    "and",
+    "database",
+    "layer",
+    "after",
+    "postgresql",
+    "migration",
+    "critical"
+  ],
+  "project_key_source": null
+}

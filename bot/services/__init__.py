@@ -2,24 +2,33 @@
 Services for the Telegram bot
 """
 
-from .batch_service import BatchEditingService, BatchJob, BatchStatus, batch_service
-from .gemini_service import GeminiService, gemini_service
+from .cryptobot_service import CryptoBotService, cryptobot_service
+from .gpt_image_service import GPTImageService, gpt_image_service
+from .gemini_omni_service import GeminiOmniService, gemini_omni_service
 from .kling_service import KlingService, kling_service
-from .preset_manager import Preset, PresetManager, preset_manager
-from .tbank_service import TBankService, tbank_service
+from .kie_market_service import KieMarketService, kie_market_service
+from .nano_banana_2_service import NanoBanana2Service, nano_banana_2_service
+from .nano_banana_pro_service import NanoBananaProService, nano_banana_pro_service
+from .seedream_service import SeedreamService, seedream_service
+from .veo_service import VeoService, veo_service
 
 __all__ = [
-    "preset_manager",
-    "PresetManager",
-    "Preset",
-    "tbank_service",
-    "TBankService",
-    "gemini_service",
-    "GeminiService",
+    "cryptobot_service",
+    "CryptoBotService",
+    "gpt_image_service",
+    "GPTImageService",
+    "gemini_omni_service",
+    "GeminiOmniService",
     "kling_service",
     "KlingService",
-    "batch_service",
-    "BatchGenerationService",
-    "BatchJob",
-    "BatchStatus",
+    "kie_market_service",
+    "KieMarketService",
+    "nano_banana_pro_service",
+    "NanoBananaProService",
+    "nano_banana_2_service",
+    "NanoBanana2Service",
+    "seedream_service",
+    "SeedreamService",
+    "veo_service",
+    "VeoService",
 ]

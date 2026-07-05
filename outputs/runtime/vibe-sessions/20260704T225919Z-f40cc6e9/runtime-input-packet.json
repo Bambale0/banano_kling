@@ -1,0 +1,647 @@
+{
+  "stage": "runtime_input_freeze",
+  "run_id": "20260704T225919Z-f40cc6e9",
+  "governance_scope": "root",
+  "task": "Audit Tanya TG bot feed, referral, and database layer after PostgreSQL migration. Critical business impact: partners are angry due to referral/feed bugs since PostgreSQL migration.\n\nFocus areas:\n1. FEED (prompt_feed_database, feed_generation_tasks, feed_*) — check feed_/remix_/posts_ deeplinks, feed publication, feed card generation, feed retrieval queries, feed like/comment, feed referral code attachment\n2. REFERRALS (referral_service, referral_events table, referral code generation, partner notifications, commission tracking) — check referral data integrity, partner bonus attribution, referral links in feed, multi-hop lineage, partner notification delivery\n3. DATABASE TABLES after PostgreSQL migration (postgres_aiosqlite.py) — check SQL translation correctness (REPLACE INTO, datetime('now'), CURRENT_TIMESTAMP, LIMIT/OFFSET), column type compatibility, schema_postgres.sql vs actual queries, transaction isolation, deadlock risk\n4. KNOWN BUGS to verify fixed: feed_/remix_/posts_ deeplinks not attaching referrals (commit 6613bd8), referral age_seconds > 300 filter blocking notifications (commit e515133), multi-hop remix parent lineage (commit d8462a2)\n5. DATA INTEGRITY INVARIANTS: atomic create+charge, credit deduction with WHERE credits >= check, unique transaction indexes, webhook idempotency\n\nRelevant files:\n- bot/database.py\n- bot/postgres_aiosqlite.py\n- bot/miniapp.py\n- bot/handlers/common.py\n- bot/services/referral_service.py\n- bot/services/feed_persist.py\n- bot/services/task_watchdog.py\n- bot/services/rate_limiter.py\n- bot/quality_pricing.py\n- schema_postgres.sql\n- bot/config.py\n- bot/handlers/payments.py\n- tests/test_referral_system.py\n- tests/test_prompt_feed_database.py\n- tests/test_miniapp_referrals.py\n- tests/test_database.py\n\nOutput: structured audit report with defect severity (P0=critical, P1=high, P2=medium, P3=low, INFO), fix recommendations for each defect, and production readiness verdict. English for the report please.",
+  "entry_intent_id": "vibe",
+  "requested_stage_stop": "requirement_doc",
+  "requested_grade_floor": null,
+  "generated_at": "2026-07-04T22:59:23Z",
+  "runtime_mode": "interactive_governed",
+  "internal_grade": "L",
+  "hierarchy": {
+    "governance_scope": "root",
+    "root_run_id": "20260704T225919Z-f40cc6e9",
+    "parent_run_id": null,
+    "parent_unit_id": null,
+    "inherited_requirement_doc_path": null,
+    "inherited_execution_plan_path": null,
+    "delegation_envelope_path": null
+  },
+  "canonical_router": {
+    "role": "internal_specialist_recommender",
+    "prompt": "Audit Tanya TG bot feed, referral, and database layer after PostgreSQL migration. Critical business impact: partners are angry due to referral/feed bugs since PostgreSQL migration.\n\nFocus areas:\n1. FEED (prompt_feed_database, feed_generation_tasks, feed_*) — check feed_/remix_/posts_ deeplinks, feed publication, feed card generation, feed retrieval queries, feed like/comment, feed referral code attachment\n2. REFERRALS (referral_service, referral_events table, referral code generation, partner notifications, commission tracking) — check referral data integrity, partner bonus attribution, referral links in feed, multi-hop lineage, partner notification delivery\n3. DATABASE TABLES after PostgreSQL migration (postgres_aiosqlite.py) — check SQL translation correctness (REPLACE INTO, datetime('now'), CURRENT_TIMESTAMP, LIMIT/OFFSET), column type compatibility, schema_postgres.sql vs actual queries, transaction isolation, deadlock risk\n4. KNOWN BUGS to verify fixed: feed_/remix_/posts_ deeplinks not attaching referrals (commit 6613bd8), referral age_seconds > 300 filter blocking notifications (commit e515133), multi-hop remix parent lineage (commit d8462a2)\n5. DATA INTEGRITY INVARIANTS: atomic create+charge, credit deduction with WHERE credits >= check, unique transaction indexes, webhook idempotency\n\nRelevant files:\n- bot/database.py\n- bot/postgres_aiosqlite.py\n- bot/miniapp.py\n- bot/handlers/common.py\n- bot/services/referral_service.py\n- bot/services/feed_persist.py\n- bot/services/task_watchdog.py\n- bot/services/rate_limiter.py\n- bot/quality_pricing.py\n- schema_postgres.sql\n- bot/config.py\n- bot/handlers/payments.py\n- tests/test_referral_system.py\n- tests/test_prompt_feed_database.py\n- tests/test_miniapp_referrals.py\n- tests/test_database.py\n\nOutput: structured audit report with defect severity (P0=critical, P1=high, P2=medium, P3=low, INFO), fix recommendations for each defect, and production readiness verdict. English for the report please.",
+    "task_type": "review",
+    "requested_skill": "vibe",
+    "host_id": "openclaw",
+    "target_root": "/root/.openclaw",
+    "unattended": false,
+    "host_decision_applied": false,
+    "host_decision_kind": null,
+    "host_decision_action": null,
+    "route_script_path": "/root/.openclaw/skills/vibe/scripts/router/resolve-pack-route.ps1"
+  },
+  "host_adapter": {
+    "requested_id": "openclaw",
+    "id": "openclaw",
+    "requested_host_id": "openclaw",
+    "effective_host_id": "openclaw",
+    "status": "preview",
+    "install_mode": "runtime-core",
+    "check_mode": "runtime-core",
+    "bootstrap_mode": "runtime-core",
+    "target_root": "/root/.openclaw",
+    "host_settings_path": "/root/.openclaw/.vibeskills/host-settings.json",
+    "closure_path": "/root/.openclaw/.vibeskills/host-closure.json"
+  },
+  "route_snapshot": {
+    "selected_pack": "code-quality",
+    "selected_skill": "code-reviewer",
+    "route_mode": "confirm_required",
+    "route_reason": "deep_discovery_confirm_required",
+    "confirm_required": true,
+    "confidence": 0.7175,
+    "truth_level": "authoritative",
+    "degradation_state": "standard",
+    "non_authoritative": false,
+    "fallback_active": false,
+    "hazard_alert_required": false,
+    "unattended_override_applied": false,
+    "host_decision_applied": false,
+    "host_decision_action": null,
+    "host_selected_skill": null,
+    "custom_admission_status": "no_custom_manifests"
+  },
+  "custom_admission": {
+    "status": "no_custom_manifests",
+    "target_root": "/root/.openclaw",
+    "admitted_candidate_count": 0,
+    "admitted_skill_ids": null
+  },
+  "continuation_context": null,
+  "host_reentry_action": null,
+  "host_revision_target_stage": null,
+  "host_revision_delta": [],
+  "host_decision": null,
+  "execution_phase_decomposition": null,
+  "code_task_tdd_decision": {
+    "mode": "not_applicable",
+    "source": "runtime_inference",
+    "reason": "No host decision or runtime inference required code-task TDD evidence for this task.",
+    "exception": null
+  },
+  "host_skill_execution_decision": null,
+  "skill_execution_lock": {
+    "schema_version": "v1",
+    "state": "active",
+    "source": "current_skill_routing_selected",
+    "source_run_id": null,
+    "locked_skill_ids": [
+      "code-reviewer"
+    ],
+    "locked_dispatch": [
+      {
+        "skill_id": "code-reviewer",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "reason": "router selected skill",
+        "task_slice": "top ranked specialist candidate from pack 'code-quality' via keyword_ranked",
+        "state": "selected",
+        "dispatch_phase": "verification",
+        "parallelizable_in_root_xl": false,
+        "native_usage_required": true,
+        "native_skill_entrypoint": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "skill_root": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer",
+        "bounded_role": "specialist_assist",
+        "must_preserve_workflow": true,
+        "binding_profile": "verification",
+        "lane_policy": "serial",
+        "write_scope": "specialist:verification",
+        "review_mode": "checkpoint_after_step",
+        "execution_priority": 90,
+        "required_inputs": [
+          "bounded specialist subtask contract",
+          "frozen requirement context",
+          "relevant source files or domain artifacts"
+        ],
+        "expected_outputs": [
+          "bounded specialist findings or code changes",
+          "verification notes aligned with the specialist skill"
+        ],
+        "verification_expectation": "Preserve the specialist skill's native workflow, boundaries, and validation style.",
+        "progressive_load_policy": [
+          "Open the specialist /root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md entrypoint first.",
+          "If this specialist is disclosed only by native_skill_entrypoint, keep same-session loading path-based and do not replace it with Skill(code-reviewer) unless that skill name is explicitly host-visible in the current session."
+        ],
+        "legacy_source": "route_ranked",
+        "locked_for_execution": true,
+        "lock_source": "current_skill_routing_selected",
+        "reconciliation_state": "current_surfaced",
+        "requires_resolution": true
+      }
+    ],
+    "resolution_required": true,
+    "resolution_states": [
+      "executed",
+      "not_applicable",
+      "deferred",
+      "failed"
+    ]
+  },
+  "skill_execution_lock_summary": {
+    "active": true,
+    "locked_skill_count": 1,
+    "locked_skill_ids": [
+      "code-reviewer"
+    ],
+    "source": "current_skill_routing_selected",
+    "source_run_id": "",
+    "resolution_required": true
+  },
+  "skill_routing": {
+    "schema_version": "simplified_skill_routing_v1",
+    "candidates": [
+      {
+        "skill_id": "code-reviewer",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "reason": "top ranked specialist candidate from pack 'code-quality' via keyword_ranked",
+        "task_slice": "top ranked specialist candidate from pack 'code-quality' via keyword_ranked",
+        "state": "candidate",
+        "dispatch_phase": "verification",
+        "parallelizable_in_root_xl": false,
+        "native_usage_required": true,
+        "native_skill_entrypoint": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "skill_root": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer",
+        "bounded_role": "specialist_assist",
+        "must_preserve_workflow": true,
+        "binding_profile": "verification",
+        "lane_policy": "serial",
+        "write_scope": "specialist:verification",
+        "review_mode": "checkpoint_after_step",
+        "execution_priority": 90,
+        "required_inputs": [
+          "bounded specialist subtask contract",
+          "frozen requirement context",
+          "relevant source files or domain artifacts"
+        ],
+        "expected_outputs": [
+          "bounded specialist findings or code changes",
+          "verification notes aligned with the specialist skill"
+        ],
+        "verification_expectation": "Preserve the specialist skill's native workflow, boundaries, and validation style.",
+        "progressive_load_policy": [
+          "Open the specialist /root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md entrypoint first.",
+          "If this specialist is disclosed only by native_skill_entrypoint, keep same-session loading path-based and do not replace it with Skill(code-reviewer) unless that skill name is explicitly host-visible in the current session."
+        ],
+        "legacy_source": "route_ranked"
+      },
+      {
+        "skill_id": "verification-before-completion",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+        "reason": "overlay recommendation from 'retrieval_advice'",
+        "task_slice": "overlay recommendation from 'retrieval_advice'",
+        "state": "candidate",
+        "dispatch_phase": "in_execution",
+        "parallelizable_in_root_xl": true,
+        "native_usage_required": true,
+        "native_skill_entrypoint": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+        "skill_root": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion",
+        "bounded_role": "specialist_assist",
+        "must_preserve_workflow": true,
+        "binding_profile": "default",
+        "lane_policy": "inherit_grade",
+        "write_scope": "specialist:verification-before-completion",
+        "review_mode": "native_contract",
+        "execution_priority": 50,
+        "required_inputs": [
+          "bounded specialist subtask contract",
+          "frozen requirement context",
+          "relevant source files or domain artifacts"
+        ],
+        "expected_outputs": [
+          "bounded specialist findings or code changes",
+          "verification notes aligned with the specialist skill"
+        ],
+        "verification_expectation": "Preserve the specialist skill's native workflow, boundaries, and validation style.",
+        "progressive_load_policy": [
+          "Open the specialist /root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md entrypoint first.",
+          "If this specialist is disclosed only by native_skill_entrypoint, keep same-session loading path-based and do not replace it with Skill(verification-before-completion) unless that skill name is explicitly host-visible in the current session."
+        ],
+        "legacy_source": "overlay:retrieval_advice"
+      }
+    ],
+    "selected": [
+      {
+        "skill_id": "code-reviewer",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "reason": "router selected skill",
+        "task_slice": "top ranked specialist candidate from pack 'code-quality' via keyword_ranked",
+        "state": "selected",
+        "dispatch_phase": "verification",
+        "parallelizable_in_root_xl": false,
+        "native_usage_required": true,
+        "native_skill_entrypoint": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "skill_root": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer",
+        "bounded_role": "specialist_assist",
+        "must_preserve_workflow": true,
+        "binding_profile": "verification",
+        "lane_policy": "serial",
+        "write_scope": "specialist:verification",
+        "review_mode": "checkpoint_after_step",
+        "execution_priority": 90,
+        "required_inputs": [
+          "bounded specialist subtask contract",
+          "frozen requirement context",
+          "relevant source files or domain artifacts"
+        ],
+        "expected_outputs": [
+          "bounded specialist findings or code changes",
+          "verification notes aligned with the specialist skill"
+        ],
+        "verification_expectation": "Preserve the specialist skill's native workflow, boundaries, and validation style.",
+        "progressive_load_policy": [
+          "Open the specialist /root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md entrypoint first.",
+          "If this specialist is disclosed only by native_skill_entrypoint, keep same-session loading path-based and do not replace it with Skill(code-reviewer) unless that skill name is explicitly host-visible in the current session."
+        ],
+        "legacy_source": "route_ranked"
+      }
+    ],
+    "rejected": [
+      {
+        "skill_id": "verification-before-completion",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+        "reason": "not_selected",
+        "task_slice": "overlay recommendation from 'retrieval_advice'",
+        "state": "rejected",
+        "dispatch_phase": "in_execution",
+        "parallelizable_in_root_xl": true,
+        "native_usage_required": true,
+        "native_skill_entrypoint": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+        "skill_root": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion",
+        "bounded_role": "specialist_assist",
+        "must_preserve_workflow": true,
+        "binding_profile": "default",
+        "lane_policy": "inherit_grade",
+        "write_scope": "specialist:verification-before-completion",
+        "review_mode": "native_contract",
+        "execution_priority": 50,
+        "required_inputs": [
+          "bounded specialist subtask contract",
+          "frozen requirement context",
+          "relevant source files or domain artifacts"
+        ],
+        "expected_outputs": [
+          "bounded specialist findings or code changes",
+          "verification notes aligned with the specialist skill"
+        ],
+        "verification_expectation": "Preserve the specialist skill's native workflow, boundaries, and validation style.",
+        "progressive_load_policy": [
+          "Open the specialist /root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md entrypoint first.",
+          "If this specialist is disclosed only by native_skill_entrypoint, keep same-session loading path-based and do not replace it with Skill(verification-before-completion) unless that skill name is explicitly host-visible in the current session."
+        ],
+        "legacy_source": ""
+      }
+    ]
+  },
+  "skill_usage": {
+    "schema_version": 2,
+    "state_model": "binary_used_unused",
+    "used": [],
+    "unused": [
+      {
+        "skill_id": "code-reviewer",
+        "reason": "selected_but_no_artifact_impact"
+      },
+      {
+        "skill_id": "verification-before-completion",
+        "reason": "not_selected"
+      }
+    ],
+    "used_skills": [],
+    "unused_skills": [
+      "code-reviewer",
+      "verification-before-completion"
+    ],
+    "loaded_skills": [
+      {
+        "skill_id": "code-reviewer",
+        "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/code-reviewer/SKILL.runtime-mirror.md",
+        "skill_md_sha256": "242fde77990971457da21dad50c503549d09544addce52d8c8ed21522b02fa49",
+        "load_status": "loaded_full_skill_md",
+        "loaded_at_stage": "skeleton_check",
+        "loaded_byte_count": 5572,
+        "loaded_line_count": 231
+      }
+    ],
+    "evidence": [],
+    "unused_reasons": [
+      {
+        "skill_id": "code-reviewer",
+        "reason": "selected_but_no_artifact_impact"
+      },
+      {
+        "skill_id": "verification-before-completion",
+        "reason": "not_selected"
+      }
+    ]
+  },
+  "specialist_decision": {
+    "decision_state": "blocked",
+    "resolution_mode": "blocked",
+    "recommendation_count": 2,
+    "candidate_skill_ids_reviewed": [
+      "code-reviewer",
+      "verification-before-completion"
+    ],
+    "selected_skill_ids": [],
+    "rejected_candidates": [],
+    "matched_skill_ids": [
+      "code-reviewer"
+    ],
+    "surfaced_skill_ids": [
+      "code-reviewer",
+      "verification-before-completion"
+    ],
+    "approved_dispatch_skill_ids": [],
+    "local_suggestion_skill_ids": [],
+    "blocked_skill_ids": [
+      "code-reviewer",
+      "verification-before-completion"
+    ],
+    "degraded_skill_ids": [],
+    "repo_asset_fallback": {
+      "used": false,
+      "asset_paths": [],
+      "reason": "",
+      "legal_basis": "",
+      "traceability_basis": []
+    },
+    "notes": "Specialist recommendations existed, but execution stayed blocked before live native dispatch could proceed.",
+    "source": "runtime_structural_projection",
+    "override_source_path": null
+  },
+  "overlay_decisions": [
+    {
+      "name": "openspec_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "task_not_applicable",
+      "preserve_routing_assignment": true,
+      "task_applicable": false
+    },
+    {
+      "name": "gsd_overlay_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "prompt_overlay_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "prompt_asset_boost_advice",
+      "enabled": false,
+      "mode": "off",
+      "enforcement": "none",
+      "reason": "policy_disabled",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false
+    },
+    {
+      "name": "memory_governance_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_advisory",
+      "preserve_routing_assignment": true,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "deep_discovery_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "confirm_required",
+      "reason": "deep_discovery_interview_required",
+      "preserve_routing_assignment": true,
+      "confirm_required": true,
+      "scope_applicable": true
+    },
+    {
+      "name": "ai_rerank_advice",
+      "enabled": true,
+      "mode": "soft",
+      "scope_applicable": true
+    },
+    {
+      "name": "data_scale_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "quality_debt_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_advisory",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "framework_interop_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "ml_lifecycle_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "python_clean_code_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_python_advisory",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "system_design_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "signal_below_threshold",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "cuda_kernel_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "none",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "retrieval_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_retrieval_confirm_recommended",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "exploration_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_confirm_recommended_ambiguous_intent",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "closure_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "outside_scope",
+      "preserve_routing_assignment": true,
+      "scope_applicable": false,
+      "task_applicable": false,
+      "grade_applicable": true
+    },
+    {
+      "name": "dialectic_team_advice",
+      "enabled": true,
+      "mode": "explicit_only",
+      "enforcement": "advisory",
+      "reason": "explicit_not_requested",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "daily_dialectic_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "soft_always_on_guard",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true,
+      "task_applicable": true,
+      "grade_applicable": true
+    },
+    {
+      "name": "llm_acceleration_advice",
+      "enabled": true,
+      "mode": "soft",
+      "reason": "outside_scope",
+      "confirm_required": false,
+      "scope_applicable": false
+    },
+    {
+      "name": "heartbeat_advice",
+      "enabled": true,
+      "mode": "soft",
+      "enforcement": "advisory",
+      "reason": "healthy_running",
+      "preserve_routing_assignment": true,
+      "confirm_required": false,
+      "scope_applicable": true
+    }
+  ],
+  "authority_flags": {
+    "runtime_entry": "vibe",
+    "explicit_runtime_skill": "vibe",
+    "router_truth_level": "authoritative",
+    "shadow_only": true,
+    "non_authoritative": false,
+    "allow_requirement_freeze": true,
+    "allow_plan_freeze": true,
+    "allow_global_dispatch": true,
+    "allow_completion_claim": true
+  },
+  "storage": {
+    "workspace_root": "/root/.openclaw/skills/vibe",
+    "workspace_sidecar_root": "/root/.openclaw/skills/vibe/.vibeskills",
+    "project_descriptor_path": "/root/.openclaw/skills/vibe/.vibeskills/project.json",
+    "artifact_root": "/root/tanya/banano_kling",
+    "artifact_root_source": "explicit_override",
+    "default_workspace_sidecar_artifact_root": false,
+    "host_sidecar_root": "/root/.openclaw/.vibeskills",
+    "workspace_memory_identity_root": "/root/.openclaw/skills/vibe/.vibeskills/project.json",
+    "workspace_memory_identity_scope": "workspace",
+    "workspace_memory_driver_contract": "workspace_shared_memory_v1",
+    "workspace_memory_logical_owners": [
+      "state_store",
+      "serena",
+      "ruflo",
+      "cognee"
+    ]
+  },
+  "divergence_shadow": {
+    "router_selected_skill": "code-reviewer",
+    "runtime_selected_skill": "vibe",
+    "skill_mismatch": true,
+    "confirm_required": true,
+    "explicit_runtime_override_applied": true,
+    "explicit_runtime_override_reason": "governed_runtime_entry",
+    "governance_scope_mismatch": false
+  },
+  "provenance": {
+    "source_of_truth": "vibe_runtime_with_internal_specialist_recommender",
+    "freeze_before_requirement_doc": true,
+    "proof_class": "structure"
+  }
+}

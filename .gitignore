@@ -19,25 +19,36 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.pyc
 # Virtual Environment
 venv/
 ENV/
 env/
 .venv/
-
+logs
 # Environment variables / Secrets
 .env
+.env.*
+!.env.example
 *.env.local
-
+venv/
 # Database
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
-
+backups/
+tests/
+!tests/
+tests/*
+!tests/live/
+tests/live/*
+!tests/live/test_kie_live_smoke.py
 # Logs
 logs/
 *.log
+reports/
 
 # Cache
 .cache/
@@ -63,3 +74,17 @@ bot.pid
 tmp/
 temp/
 *.tmp
+tmp_*.py
+*.bak
+*.bak_*
+*.bak2
+
+# Static uploads (generated content)
+static/
+static/uploads/
+*.conf0
+gpt.txt
+
+ObsidianCodexVault/
+.env.postgres
+!frontend/miniapp-v0/lib

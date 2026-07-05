@@ -1,0 +1,41 @@
+{
+  "command": "/opt/microsoft/powershell/7/pwsh",
+  "resolved_command": "/opt/microsoft/powershell/7/pwsh",
+  "resolved_arguments": [
+    "-NoProfile",
+    "-File",
+    "/root/.openclaw/skills/vibe/scripts/verify/vibe-installed-runtime-freshness-gate.ps1",
+    "-TargetRoot",
+    "/root/.openclaw"
+  ],
+  "resolved_working_directory": "/root/.openclaw/skills/vibe",
+  "stdout_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/child-lanes/lane-installed-runtime-freshness-gate/execution-logs/installed-runtime-freshness-gate.stdout.log",
+  "stderr_path": "/root/tanya/banano_kling/outputs/runtime/vibe-sessions/20260704T230128Z-ed5d27a1/child-lanes/lane-installed-runtime-freshness-gate/execution-logs/installed-runtime-freshness-gate.stderr.log",
+  "arguments_render_mode": "ArgumentList",
+  "rendered_arguments": null,
+  "preflight": {
+    "host_kind": "pwsh",
+    "resolved_command": "/opt/microsoft/powershell/7/pwsh",
+    "resolved_arguments": [
+      "-NoProfile",
+      "-File",
+      "/root/.openclaw/skills/vibe/scripts/verify/vibe-installed-runtime-freshness-gate.ps1",
+      "-TargetRoot",
+      "/root/.openclaw"
+    ],
+    "resolved_working_directory": "/root/.openclaw/skills/vibe",
+    "script_path": "/root/.openclaw/skills/vibe/scripts/verify/vibe-installed-runtime-freshness-gate.ps1",
+    "python_command_spec": null,
+    "executable_exists": true,
+    "executable_is_file": true,
+    "working_directory_exists": true,
+    "working_directory_is_directory": true,
+    "script_exists": true,
+    "script_is_file": true,
+    "script_used_as_executable": false,
+    "python_spec_expanded": true,
+    "passed": true,
+    "failures": []
+  },
+  "generated_at": "2026-07-04T23:01:35Z"
+}

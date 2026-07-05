@@ -1,0 +1,36 @@
+import pytest
+
+
+@pytest.fixture
+def temp_db_path(tmp_path):
+    """Temporary database path"""
+    return tmp_path / "test.db"
+
+
+@pytest.fixture(autouse=True)
+async def isolated_database(tmp_path, monkeypatch):
+    """Run every test against a fresh SQLite database, never the live bot.db."""
+    db_path = tmp_path / "test.db"
+    sqlite_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", sqlite_url)
+    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+
+    from bot import database
+    from bot import db as db_backend
+
+    monkeypatch.setattr(db_backend, "DATABASE_URL", sqlite_url)
+    monkeypatch.setattr(db_backend, "DATABASE_PATH", str(db_path))
+    monkeypatch.setattr(database, "DATABASE_PATH", str(db_path))
+    await database.init_db()
+    yield
+
+
+@pytest.fixture
+def mock_env(monkeypatch):
+    """Mock common environment variables"""
+    monkeypatch.setenv("BOT_TOKEN", "test_bot_token")
+    monkeypatch.setenv("ADMIN_IDS", "123456,789012")
+    monkeypatch.setenv("WEBHOOK_HOST", "https://test.example.com")
+    monkeypatch.setenv("WEBHOOK_PATH", "/webhook")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("PAYMENT_PROVIDER", "tbank")

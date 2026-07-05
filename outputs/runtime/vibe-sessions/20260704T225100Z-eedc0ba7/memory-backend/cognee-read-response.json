@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "status": "backend_read_empty",
+  "lane": "cognee",
+  "store_path": "/root/.openclaw/skills/vibe/.vibeskills/memory/workspace-memory-plane.jsonl",
+  "project_key": "vibe",
+  "project_key_source": "workspace_plane",
+  "item_count": 0,
+  "items": [],
+  "capsule_count": 0,
+  "capsules": [],
+  "suppressed_count": 0,
+  "workspace_memory_plane": {
+    "schema_version": 1,
+    "workspace_root": "/root/.openclaw/skills/vibe",
+    "workspace_sidecar_root": "/root/.openclaw/skills/vibe/.vibeskills",
+    "descriptor_path": "/root/.openclaw/skills/vibe/.vibeskills/project.json",
+    "workspace_id": "ws:6c02e9c0b73ffa7a616afac2",
+    "plane_path": "/root/.openclaw/skills/vibe/.vibeskills/memory/workspace-memory-plane.jsonl"
+  },
+  "driver_mode": "compatibility_shell",
+  "generated_at": "2026-07-04T22:51:02Z"
+}

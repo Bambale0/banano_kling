@@ -1,0 +1,38 @@
+'use client'
+
+import { useApp } from '@/lib/app-context'
+import { StudioTab } from './tabs/studio-tab'
+import { PhotoTab } from './tabs/photo-tab'
+import { VideoTab } from './tabs/video-tab'
+import { MotionTab } from './tabs/motion-tab'
+import { FeedTab } from './tabs/feed-tab'
+import { PromptsTab } from './tabs/prompts-tab'
+import { ServicesTab } from './tabs/services-tab'
+import { ProfileTab } from './tabs/profile-tab'
+import { AnimatePresence, motion } from 'framer-motion'
+
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, PromptsTab, ServicesTab, ProfileTab]
+
+export function TabContent() {
+  const { activeTab } = useApp()
+  const ActiveComponent = tabComponents[activeTab] || StudioTab
+
+  return (
+    <div className="relative">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeTab}
+          initial={false}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ 
+            duration: 0.25, 
+            ease: [0.25, 0.46, 0.45, 0.94] 
+          }}
+        >
+          <ActiveComponent />
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  )
+}

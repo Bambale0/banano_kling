@@ -1,0 +1,74 @@
+{
+  "schema_version": 2,
+  "state_model": "binary_used_unused",
+  "used": [
+    {
+      "skill_id": "tdd-guide",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2",
+      "evidence": [
+        {
+          "stage": "xl_plan",
+          "artifact_path": "2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended-execution-plan.md",
+          "impact": "Execution plan carries the loaded tdd-guide SKILL.md workflow authority into the planned verification and completion path."
+        }
+      ]
+    }
+  ],
+  "unused": [
+    {
+      "skill_id": "verification-before-completion",
+      "reason": "selected_but_no_artifact_impact"
+    }
+  ],
+  "used_skills": [
+    "tdd-guide"
+  ],
+  "unused_skills": [
+    "verification-before-completion"
+  ],
+  "loaded_skills": [
+    {
+      "skill_id": "verification-before-completion",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/verification-before-completion/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "747860a51c07b4691e5ac36ccddec8e1ddd4c1940037ae56f4161eab5dfb8ce4",
+      "load_status": "loaded_full_skill_md",
+      "loaded_at_stage": "skeleton_check",
+      "loaded_byte_count": 4535,
+      "loaded_line_count": 143
+    },
+    {
+      "skill_id": "tdd-guide",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2",
+      "load_status": "loaded_full_skill_md",
+      "loaded_at_stage": "skeleton_check",
+      "loaded_byte_count": 1820,
+      "loaded_line_count": 61
+    }
+  ],
+  "evidence": [
+    {
+      "skill_id": "tdd-guide",
+      "stage": "requirement_doc",
+      "artifact_ref": "2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended.md",
+      "impact_summary": "Requirement doc adopts the loaded tdd-guide SKILL.md as the workflow authority for downstream planning and completion evidence.",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2"
+    },
+    {
+      "skill_id": "tdd-guide",
+      "stage": "xl_plan",
+      "artifact_ref": "2026-07-05-deep-code-audit-of-tanya-tg-bot-fast-track-mode-enter-unattended-execution-plan.md",
+      "impact_summary": "Execution plan carries the loaded tdd-guide SKILL.md workflow authority into the planned verification and completion path.",
+      "skill_md_path": "/root/.openclaw/skills/vibe/bundled/skills/tdd-guide/SKILL.runtime-mirror.md",
+      "skill_md_sha256": "4e23eb7fbc3fb32077d74f48c41c7b389dbe408ecf3da4971ca0ca0c8ca622c2"
+    }
+  ],
+  "unused_reasons": [
+    {
+      "skill_id": "verification-before-completion",
+      "reason": "selected_but_no_artifact_impact"
+    }
+  ]
+}

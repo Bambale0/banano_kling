@@ -3,6 +3,7 @@ Validators for user input and data
 """
 
 import re
+from html import escape
 from typing import Optional, Tuple
 
 
@@ -86,7 +87,7 @@ def sanitize_input(text: str, max_length: int = 500) -> str:
     text = text[:max_length]
 
     # Экранируем HTML-теги
-    text = text.replace("<", "<").replace(">", ">")
+    text = escape(text)
 
     return text
 
@@ -118,7 +119,7 @@ def validate_aspect_ratio(ratio: str) -> bool:
     """
     Валидирует соотношение сторон
     """
-    valid_ratios = ["1:1", "16:9", "9:16", "3:4", "4:3", "21:9", "9:21"]
+    valid_ratios = ["1:1", "16:9", "9:16", "3:4", "4:3", "21:9", "9:21", "3:2"]
     return ratio in valid_ratios
 
 
@@ -127,3 +128,23 @@ def validate_duration(duration: int) -> bool:
     Валидирует длительность видео
     """
     return isinstance(duration, int) and 1 <= duration <= 60
+
+
+_EXPLICIT_PROMPT_PATTERNS = [
+    r"\b(nude|nudity|naked|nsfw|explicit|sexual|sex|porn|erotic|fetish)\b",
+    r"\b(topless|see[- ]?through|cameltoe|nipples?|areola|genitals?|vagina|penis|boobs?|tits?|ass|butt)\b",
+    r"\b(lingerie|underwear|thong|g[- ]?string)\b",
+    r"\b(раздвин\w*\s+ног\w*|показыва\w*\s+(свои\s+)?трусик\w*|покажи\w*\s+(свои\s+)?трусик\w*|демонстриру\w*\s+(реалистичн\w*\s+)?вагин\w*|откровенн\w*\s+(сним\w*|фотограф\w*|фото|portrait|shot))\b",
+    r"\b(эрот\w*|эротичн\w*|порно\w*|секс\w*|обнажен\w*|обнажён\w*|гол(?:ая|ые|ый|ое)|нага(?:я|яя|я)|наг(?:ой|ие|их)|откровенн\w*|гол\w*\s+груд\w*|сос(?:ок|ки|ков)|ягодиц\w*|вагин\w*|генитал\w*|полов\w*\s+орган\w*|трусик\w*|стринг\w*|нижн\w*\s+бель\w*)\b",
+]
+
+
+def detect_explicit_prompt_policy_violation(prompt: str) -> Optional[str]:
+    """Detect clearly sexual/explicit prompts that should be rejected before provider calls."""
+    normalized = " ".join((prompt or "").lower().split())
+    if not normalized:
+        return None
+    for pattern in _EXPLICIT_PROMPT_PATTERNS:
+        if re.search(pattern, normalized, re.IGNORECASE):
+            return pattern
+    return None
