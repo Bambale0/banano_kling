@@ -798,6 +798,22 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     # Извлекаем реферальный код из start_param до создания пользователя
     # и передаём в get_or_create_user (как в /start), чтобы привязка была атомарной
     referral_code = referral_code_from_start_param(resolved_start_param) or None
+    # Проверяем, был ли у пользователя уже реферал до Mini App сессии
+    # чтобы не спамить партнёру уведомлениями при каждом открытии
+    _is_new_referral_visit = True
+    try:
+        if referral_code:
+            async with db_backend.connect(DATABASE_PATH) as _db:
+                _db.row_factory = db_backend.Row
+                _cursor = await _db.execute(
+                    "SELECT referred_by FROM users WHERE telegram_id = ? AND referred_by IS NOT NULL",
+                    (telegram_id,),
+                )
+                if await _cursor.fetchone():
+                    _is_new_referral_visit = False
+    except Exception:
+        _is_new_referral_visit = True
+
     user = await get_or_create_user(telegram_id, referral_code=referral_code)
 
     try:
@@ -818,9 +834,9 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
             telegram_user.get("username"),
             list(payload.keys()),
         )
-    if referral_code and user.referred_by:
+    if referral_code and user.referred_by and _is_new_referral_visit:
         logger.info(
-            "Mini App referral applied via get_or_create_user: user_id=%s code=%s referrer_id=%s",
+            "Mini App referral notification (new): user_id=%s code=%s referrer_id=%s",
             telegram_id,
             referral_code,
             user.referred_by,
