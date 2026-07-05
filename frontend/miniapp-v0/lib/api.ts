@@ -109,17 +109,71 @@ export function waitForTelegramInitData(timeoutMs = 10000): Promise<boolean> {
 }
 
 export function getStartParamFallback(): string {
+  if (typeof window === "undefined") return ""
+
+  // 1. Check Telegram initDataUnsafe.start_param (standard Telegram API)
   const direct = String(getWebApp()?.initDataUnsafe?.start_param || "").trim()
   if (direct) return direct
-  if (typeof window === "undefined") return ""
+
+  // 2. Check our early snapshot (captured BEFORE Telegram SDK modifies the URL)
+  try {
+    const snap = (window as any).__BANANO_INITIAL_LAUNCH__
+    if (snap) {
+      // Check hash for tgWebAppStartParam (Telegram passes startapp in hash launch params)
+      const hashSnap = String(snap.hash || "").trim()
+      if (hashSnap.startsWith("#")) {
+        const hashParams = new URLSearchParams(hashSnap.slice(1))
+        const fromHash = String(hashParams.get("tgWebAppStartParam") || "").trim()
+        if (fromHash) return fromHash
+      }
+    }
+  } catch (_) {}
+
+  // 3. Check Telegram SDK initParams (raw launch params from URL hash at SDK init)
+  try {
+    const sdk = (window as any).Telegram?.WebApp
+    const rawStartParam = sdk?.initParams?.tgWebAppStartParam
+    if (rawStartParam && typeof rawStartParam === 'string' && rawStartParam.trim()) {
+      return rawStartParam.trim()
+    }
+  } catch (_) {}
+
+  // 4. Check sessionStorage snapshots (captured at page load, before any script modifications)
+  for (const key of ['__banano_initial_hash', '__telegram__initParams']) {
+    try {
+      const raw = window.sessionStorage.getItem(key)
+      if (!raw) continue
+      let parsed: any = raw
+      if (key === '__telegram__initParams') {
+        parsed = JSON.parse(raw)
+        const sp = parsed?.tgWebAppStartParam
+        if (sp && typeof sp === 'string' && sp.trim()) return sp.trim()
+      } else {
+        // __banano_initial_hash
+        if (typeof parsed === 'string' && parsed.startsWith('#')) {
+          const hp = new URLSearchParams(parsed.slice(1))
+          const sp = String(hp.get('tgWebAppStartParam') || '').trim()
+          if (sp) return sp
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 5. Fallback: parse current URL hash/search params
   const launchParams = getLaunchParams()
   const tg = String(launchParams.get("tgWebAppStartParam") || launchParams.get("startapp") || "").trim()
   if (tg) return tg
+
+  // 6. Check start=ref_ in URL
   const start = String(launchParams.get("start") || "").trim()
   if (start.startsWith("ref_")) return start
+
+  // 7. Parse tgWebAppData for start_param
   const initData = getInitDataFromLocation()
   const initDataStartParam = initData ? String(new URLSearchParams(initData).get("start_param") || "").trim() : ""
   if (initDataStartParam) return initDataStartParam
+
+  // 8. Check ref=CODE in URL
   const ref = String(launchParams.get("ref") || "").trim().toUpperCase()
   return ref ? `ref_${ref}` : ""
 }

@@ -1908,7 +1908,8 @@ async def miniapp_index(request: web.Request) -> web.Response:
     root = _resolve_miniapp_static_root()
     index_path = root / "index.html"
     logger.info(
-        "Miniapp index requested, resolved static root=%s index_exists=%s",
+        "Miniapp index requested, query_string=%s resolved static root=%s index_exists=%s",
+        str(request.query_string),
         str(root),
         str(index_path.exists()),
     )
@@ -1919,6 +1920,32 @@ async def miniapp_index(request: web.Request) -> web.Response:
             "botUsername": str(me.username or ""),
             "miniAppUrl": config.mini_app_url,
         }
+        snapshot_script = (
+            '<script id="miniapp-snapshot">'
+            '(function(){'
+            '  var h=location.href,s=location.search,ha=location.hash;'
+            '  window.__BANANO_INITIAL_LAUNCH__={href:h,search:s,hash:ha};'
+            '  try{'
+            '    window.sessionStorage.setItem("__banano_initial_href",h);'
+            '    window.sessionStorage.setItem("__banano_initial_search",s);'
+            '    window.sessionStorage.setItem("__banano_initial_hash",ha);'
+            '  }catch(e){}'
+            '})();'
+            '</script>'
+        )
+        debug_script = (
+            '<script id="miniapp-debug-log">'
+            'console.log("MINIAPP_DEBUG_URL:", window.location.href);'
+            'console.log("MINIAPP_DEBUG_REFERRER:", document.referrer);'
+            'console.log("MINIAPP_DEBUG_HASH:", window.location.hash);'
+            'console.log("MINIAPP_DEBUG_SEARCH:", window.location.search);'
+            'console.log("MINIAPP_DEBUG_TG:", typeof window.Telegram !== "undefined" ? !!window.Telegram.WebApp : "no TG");'
+            'if (window.Telegram?.WebApp?.initDataUnsafe) {'
+            '  console.log("MINIAPP_DEBUG_INITDATA_UNSAFE:", JSON.stringify(window.Telegram.WebApp.initDataUnsafe));'
+            '}'
+            'try{sessionStorage.setItem("miniapp_debug_url",window.location.href)}catch(e){}'
+            '</script>'
+        )
         script = (
             '<script id="miniapp-runtime-config">'
             "window.__BANANO_MINIAPP_CONFIG__="
@@ -1926,10 +1953,11 @@ async def miniapp_index(request: web.Request) -> web.Response:
             "</script>"
         )
         html_text = index_path.read_text(encoding="utf-8")
+        all_scripts = f"{snapshot_script}{debug_script}{script}"
         if "</head>" in html_text:
-            html_text = html_text.replace("</head>", f"{script}</head>", 1)
+            html_text = html_text.replace("</head>", f"{all_scripts}</head>", 1)
         else:
-            html_text = f"{script}{html_text}"
+            html_text = f"{all_scripts}{html_text}"
         response = web.Response(text=html_text, content_type="text/html")
     except Exception:
         logger.exception("Miniapp runtime config injection failed")
