@@ -593,6 +593,15 @@ export function FeedTab() {
               <MessageCircle className="h-4 w-4" />
               {previewItem.comments_count || 0}
             </Button>
+            <Button
+              type="button"
+              className="h-10 rounded-full px-4"
+              disabled={!isLive}
+              onClick={() => handleRemix(previewItem)}
+            >
+              <Repeat2 className="h-4 w-4" />
+              <span>Повторить</span>
+            </Button>
 
           </div>
         </div>

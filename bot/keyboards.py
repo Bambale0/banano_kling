@@ -1366,7 +1366,7 @@ def get_image_result_keyboard(
         )
         builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2, 2, 1)
+    builder.adjust(1, 2, 2, 2, 1)
     return builder.as_markup()
 
 

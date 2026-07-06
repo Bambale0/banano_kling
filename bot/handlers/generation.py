@@ -8201,6 +8201,14 @@ async def open_avatar_service(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+
+
+@router.callback_query(F.data == "img_quality_1k")
+async def set_image_quality_1k(callback: types.CallbackQuery, state: FSMContext):
+    await state.update_data(img_quality="1K")
+    await callback.answer("Выбрано 1K")
+    await _show_image_creation_screen(callback, state)
+
 @router.callback_query(F.data == "img_quality_2k")
 async def set_image_quality_2k(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(img_quality="2K")
