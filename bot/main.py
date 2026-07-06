@@ -1463,7 +1463,7 @@ async def _cleanup_loop():
                 "static/uploads",
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
-                skip_dirnames={"refs"},
+                skip_dirnames={"refs", "feed"},
             )
             await _remove_old_files(
                 "logs",
