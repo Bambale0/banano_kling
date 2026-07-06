@@ -95,3 +95,8 @@ outputs/runtime/
 outputs/
 docs/requirements/
 docs/plans/
+
+# Claw tools (cloned from https://github.com/Bambale0/claw)
+claw/
+claw-tools/
+/root/claw-tools
