@@ -274,7 +274,9 @@ async def record_referral_event(
     import json
 
     if db is not None:
-        await _ensure_referral_events_table(db)
+        # Таблица referral_events гарантированно создана в _ensure_postgres_helpers()
+        # при первом подключении к PG. Дополнительный вызов _ensure_referral_events_table
+        # открывает отдельное psycopg-соединение, что избыточно и может ломать транзакцию.
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
 
         is_postgres = db_backend.is_postgres()
@@ -312,7 +314,7 @@ async def record_referral_event(
 
     # Fallback: own connection (when called outside a transaction)
     async with db_backend.connect(DATABASE_PATH) as own_db:
-        await _ensure_referral_events_table(own_db)
+        # Таблица гарантированно существует через _ensure_postgres_helpers()
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
 
         is_postgres = db_backend.is_postgres()

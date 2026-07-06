@@ -1090,6 +1090,10 @@ def get_create_image_keyboard(
         q = str(img_quality or "2K").upper()
         builder.row(
             InlineKeyboardButton(
+                text=("◉ 1K" if q == "1K" else "○ 1K"),
+                callback_data="img_quality_1k",
+            ),
+            InlineKeyboardButton(
                 text=("◉ 2K" if q == "2K" else "○ 2K"),
                 callback_data="img_quality_2k",
             ),

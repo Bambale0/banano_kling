@@ -1539,11 +1539,14 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
 
     # Устанавливаем вебхук для Telegram (если используем webhook mode)
     if config.WEBHOOK_HOST:
-        webhook_kwargs = {}
-        if dispatcher is not None:
-            webhook_kwargs["allowed_updates"] = dispatcher.resolve_used_update_types()
-        await bot.set_webhook(config.webhook_url, **webhook_kwargs)
-        logger.info(f"Webhook set to {config.webhook_url}")
+        try:
+            webhook_kwargs = {}
+            if dispatcher is not None:
+                webhook_kwargs["allowed_updates"] = dispatcher.resolve_used_update_types()
+            await bot.set_webhook(config.webhook_url, **webhook_kwargs)
+            logger.info(f"Webhook set to {config.webhook_url}")
+        except Exception:
+            logger.exception("Failed to set webhook on startup")
 
     # Загружаем пресеты
     preset_manager.load_all()
@@ -3762,7 +3765,10 @@ async def main():
             config.WEBHOOK_BIND_HOST,
             config.WEBHOOK_PORT,
         )
-        await on_startup(bot, dp)
+        try:
+            await on_startup(bot, dp)
+        except Exception:
+            logger.exception("Startup sequence failed; bot will continue running with limited functionality")
 
         # Держим бота запущенным
         await asyncio.Event().wait()
