@@ -33,6 +33,7 @@ class KlingService:
 
     KIE_BASE_URL = "https://api.kie.ai"
     CREATE_TASK_ENDPOINT = "/api/v1/jobs/createTask"
+    CREATE_TASK_TIMEOUT_SECONDS = 90
 
     ASPECT_RATIOS = {"16:9", "9:16", "1:1"}
     KLING_25_DURATIONS = {5, 10}
@@ -98,7 +99,9 @@ class KlingService:
                     url,
                     json=payload,
                     headers=self.kie_headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
+                    timeout=aiohttp.ClientTimeout(
+                        total=self.CREATE_TASK_TIMEOUT_SECONDS
+                    ),
                 ) as resp:
                     text = await resp.text()
                     return self._parse_kie_create_response(text)

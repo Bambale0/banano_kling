@@ -407,7 +407,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, db=db)
+            await record_referral_event(result, visitor_telegram_id)
             return result
 
         referrer_id = int(referrer_row["id"])
@@ -442,6 +442,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
+            await record_referral_event(result, visitor_telegram_id)
             return result
 
         visitor_user_id = int(visitor_row["id"])
@@ -461,7 +462,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 4. Уже привязан к тому же рефереру
@@ -476,7 +477,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 5. Уже привязан к другому рефереру
@@ -490,7 +491,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 6. Уже платил
@@ -509,7 +510,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 7. Blocklist
@@ -523,7 +524,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         if referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
@@ -536,7 +537,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 8. Антифрод-лимиты
@@ -555,7 +556,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         daily_cursor = await db.execute(
@@ -573,7 +574,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 9. Cycle detection
@@ -587,7 +588,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # 10. ПРИВЯЗКА: атомарный UPDATE + INSERT + бонус рефереру
@@ -618,7 +619,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         insert_cursor = await db.execute(
@@ -636,7 +637,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
             return result
 
         # Начисляем бонус рефереру
@@ -658,7 +659,7 @@ async def process_referral_click(
             source=source,
             start_param=start_param,
         )
-        await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
 
         logger.info(
             "Referral attached: visitor=%s code=%s referrer_id=%s",

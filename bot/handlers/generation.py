@@ -2249,6 +2249,257 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             pass  # stale callback — ignore
 
 
+@router.callback_query(F.data.startswith("repeat_result_"))
+async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый повтор генерации изображения с теми же параметрами (из кнопки «🔁 Повторить»)."""
+    task_id = callback.data.replace("repeat_result_", "", 1)
+    task = await get_task_by_id(task_id)
+
+    if not task or task.type != "image":
+        await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
+        return
+
+    try:
+        request_data = json.loads(task.request_data) if task.request_data else {}
+    except Exception:
+        await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
+        return
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    img_service = request_data.get("img_service", task.model or "banana_pro")
+    prompt = request_data.get("prompt", task.prompt or "")
+    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    img_quality = request_data.get("img_quality", "2K")
+    img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
+    nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
+
+    if task.user_id == user.id:
+        reference_images = _source_reference_images_from_request(request_data)
+    else:
+        reference_images = []
+
+    reference_images, missing_reference_images = _available_reference_images(reference_images)
+    if missing_reference_images:
+        reference_images = []
+
+    if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
+        await callback.answer("Для этой модели нужны референсы, а они уже не доступны.", show_alert=True)
+        return
+
+    unit_cost = task.cost or 0
+    is_admin = config.is_admin(callback.from_user.id)
+    if unit_cost > 0 and not is_admin:
+        can_afford = await check_can_afford(callback.from_user.id, unit_cost)
+        if not can_afford:
+            await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
+            return
+        if not await deduct_credits(callback.from_user.id, unit_cost):
+            await callback.answer("Не удалось списать бананы.", show_alert=True)
+            return
+
+    callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+    model_label = get_image_model_label(img_service)
+    source_feed_gen_id = task.id if task.is_public_feed and task.user_id != user.id else None
+
+    progress_message = await callback.message.answer(
+        "🔁 <b>Повторяю генерацию</b>\n"
+        f"• Модель: <code>{model_label}</code>\n"
+        f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+        f"• Референсы: <code>{len(reference_images)}</code>",
+        parse_mode="HTML",
+    )
+
+    try:
+        launch_result = await _start_image_generation_task(
+            user=user,
+            telegram_id=callback.from_user.id,
+            img_service=img_service,
+            prompt=_build_image_variant_prompt(prompt, 0, 1),
+            img_ratio=img_ratio,
+            reference_images=reference_images,
+            unit_cost=unit_cost,
+            img_quality=img_quality,
+            img_nsfw_checker=img_nsfw_checker,
+            nsfw_enabled=nsfw_enabled,
+            callback_url=callback_url,
+            source_feed_gen_id=source_feed_gen_id,
+            parent_generation_id=source_feed_gen_id,
+            action_type="repeat" if source_feed_gen_id else None,
+        )
+        await progress_message.delete()
+
+        if launch_result["status"] == "queued":
+            if source_feed_gen_id:
+                await credit_feed_prompt_repeat(
+                    task.id,
+                    user.id,
+                    repeat_task_id=str(launch_result.get("task_id") or ""),
+                    credits_spent=unit_cost,
+                )
+            await callback.message.answer(
+                "🚀 <b>Повторная генерация запущена</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• ID: <code>{launch_result['task_id']}</code>\n"
+                f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
+                "Результат придёт в этот чат.",
+                parse_mode="HTML",
+            )
+        elif launch_result["status"] == "done":
+            if source_feed_gen_id:
+                await credit_feed_prompt_repeat(
+                    task.id,
+                    user.id,
+                    repeat_task_id=str(launch_result.get("task_id") or ""),
+                    credits_spent=unit_cost,
+                )
+            result_bytes = launch_result["result_bytes"]
+            saved_url = launch_result["saved_url"]
+            await callback.message.answer_photo(
+                photo=types.BufferedInputFile(result_bytes, filename="repeated.png"),
+                caption=(
+                    "✅ <b>Повтор готов</b>\n"
+                    f"• Модель: <code>{model_label}</code>\n"
+                    f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
+                ),
+                parse_mode="HTML",
+                reply_markup=get_image_result_keyboard(
+                    saved_url, task_id=launch_result["task_id"]
+                ),
+            )
+            await _send_original_document(
+                callback.message.answer_document,
+                result_bytes,
+                saved_url,
+                filename="repeated_original.png",
+            )
+        else:
+            if unit_cost > 0 and not is_admin:
+                await add_credits(callback.from_user.id, unit_cost)
+            await callback.message.answer(
+                "❌ Не получилось повторить генерацию. Бананы за попытку уже возвращены."
+            )
+
+        try:
+            await callback.answer("Повтор запускаю")
+        except TelegramBadRequest:
+            pass
+    except Exception:
+        logger.exception("Quick repeat image generation failed")
+        if unit_cost > 0 and not is_admin:
+            await add_credits(callback.from_user.id, unit_cost)
+        try:
+            await progress_message.delete()
+        except Exception:
+            pass
+        try:
+            await callback.answer("Не удалось повторить генерацию.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+
+
+@router.callback_query(F.data.startswith("repeat_video_result_"))
+async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMContext):
+    """Быстрый повтор генерации видео с теми же параметрами (из кнопки «🔁 Повторить»)."""
+    task_id = callback.data.replace("repeat_video_result_", "", 1)
+    task = await get_task_by_id(task_id)
+
+    if not task or task.type != "video":
+        await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
+        return
+
+    try:
+        request_data = json.loads(task.request_data) if task.request_data else {}
+    except Exception:
+        await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
+        return
+
+    user = await get_or_create_user(callback.from_user.id)
+
+    v_model = request_data.get("v_model", task.model or "v3_std")
+    v_type = request_data.get("v_type", "text")
+    prompt = request_data.get("user_prompt", task.prompt or "")
+    v_duration = int(request_data.get("v_duration", task.duration or 5))
+    v_ratio = request_data.get("v_ratio", task.aspect_ratio or "16:9")
+
+    if task.user_id == user.id:
+        reference_images = _source_reference_images_from_request(request_data)
+        v_image_url = request_data.get("v_image_url")
+    else:
+        reference_images = []
+        v_image_url = None
+
+    reference_images, _ = _available_reference_images(reference_images)
+
+    unit_cost = task.cost or 0
+    is_admin = config.is_admin(callback.from_user.id)
+    if unit_cost > 0 and not is_admin:
+        can_afford = await check_can_afford(callback.from_user.id, unit_cost)
+        if not can_afford:
+            await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
+            return
+        if not await deduct_credits(callback.from_user.id, unit_cost):
+            await callback.answer("Не удалось списать бананы.", show_alert=True)
+            return
+
+    model_label = get_video_model_label(v_model)
+    progress_message = await callback.message.answer(
+        "🔁 <b>Повторяю генерацию видео</b>\n"
+        f"• Модель: <code>{model_label}</code>\n"
+        f"• Длительность: <code>{v_duration}с</code>\n"
+        f"• Формат: <code>{v_ratio.replace(':', '∶')}</code>",
+        parse_mode="HTML",
+    )
+
+    try:
+        # Перенаправляем в общую логику запуска видео через state
+        await state.update_data(
+            generation_type="video",
+            video_flow_step="configure",
+            v_type=v_type,
+            v_model=v_model,
+            v_duration=v_duration,
+            v_ratio=v_ratio,
+            v_image_url=v_image_url,
+            reference_images=reference_images,
+            v_reference_videos=[],
+            user_prompt=prompt,
+            v_mode=request_data.get("v_mode", "720p"),
+            grok_mode=request_data.get("grok_mode", "normal"),
+            grok_resolution=request_data.get("grok_resolution", "480p"),
+            veo_generation_type=request_data.get("veo_generation_type", "TEXT_2_VIDEO"),
+            veo_translation=request_data.get("veo_translation", True),
+            veo_resolution=request_data.get("veo_resolution", "720p"),
+            veo_seed=request_data.get("veo_seed"),
+            veo_watermark=request_data.get("veo_watermark", ""),
+            kling_negative_prompt=request_data.get("kling_negative_prompt", ""),
+            kling_cfg_scale=float(request_data.get("kling_cfg_scale", 0.5)),
+            omni_resolution=request_data.get("omni_resolution", "720p"),
+            omni_seed=request_data.get("omni_seed"),
+            omni_audio_ids=request_data.get("omni_audio_ids", []),
+            omni_character_ids=request_data.get("omni_character_ids", []),
+            omni_base_voice=request_data.get("omni_base_voice", "achernar"),
+            omni_voice_name=request_data.get("omni_voice_name", ""),
+            omni_character_name=request_data.get("omni_character_name", ""),
+            avatar_audio_url=request_data.get("avatar_audio_url"),
+        )
+
+        await progress_message.delete()
+        await run_no_preset_video_from_callback(callback, state, prompt, unit_cost, is_admin)
+    except Exception:
+        logger.exception("Quick repeat video generation failed")
+        if unit_cost > 0 and not is_admin:
+            await add_credits(callback.from_user.id, unit_cost)
+        try:
+            await progress_message.delete()
+        except Exception:
+            pass
+        try:
+            await callback.answer("Не удалось повторить генерацию видео.", show_alert=True)
+        except TelegramBadRequest:
+            pass
+
+
 @router.callback_query(F.data == "main_img_banana_pro")
 async def show_main_img_banana_pro(callback: types.CallbackQuery, state: FSMContext):
     await _open_image_model_from_main(callback, state, model="banana_pro")
@@ -6266,6 +6517,258 @@ async def process_avatar_audio_upload(message: types.Message, state: FSMContext)
         await _show_video_media_screen(message, state, edit=False)
     else:
         await _show_video_creation_screen(message, state, edit=False)
+
+
+async def run_no_preset_video_from_callback(
+    callback: types.CallbackQuery, state: FSMContext, prompt: str, cost: int, is_admin: bool
+):
+    """Запускает видео-повтор из callback-кнопки «🔁 Повторить». 
+    Делегирует в общую логику run_no_preset_video_from_message."""
+    data = await state.get_data()
+
+    v_type = data.get("v_type", "text")
+    v_model = data.get("v_model", "v3_std")
+    v_duration = _normalize_video_duration_value(v_model, int(data.get("v_duration", 5)))
+    v_ratio = data.get("v_ratio", "16:9")
+    v_image_url = data.get("v_image_url")
+    v_reference_videos = data.get("v_reference_videos", [])
+    reference_images = data.get("reference_images", [])
+    avatar_audio_url = data.get("avatar_audio_url")
+
+    user = await get_or_create_user(callback.from_user.id)
+    
+    try:
+        from bot.services.kling_service import kling_service
+        from bot.services.seedance_service import seedance_service
+
+        if v_model == "gemini_omni_video":
+            omni_images = _collect_gemini_omni_image_urls(v_image_url, reference_images)
+            omni_video_urls = _collect_gemini_omni_video_urls(v_reference_videos)
+            omni_video_list = _build_gemini_omni_video_list(omni_video_urls, v_duration)
+            omni_character_ids = data.get("omni_character_ids", [])
+            omni_audio_ids = data.get("omni_audio_ids", [])
+            omni_seed = data.get("omni_seed")
+            omni_resolution = data.get("omni_resolution", "720p")
+
+            validation_error = _validate_gemini_omni_video_inputs(
+                image_urls=omni_images,
+                video_urls=omni_video_urls,
+                character_ids=omni_character_ids,
+                audio_ids=omni_audio_ids,
+            )
+            if validation_error:
+                await callback.message.answer(f"❌ {validation_error}")
+                if not is_admin:
+                    await add_credits(callback.from_user.id, cost)
+                return
+
+            result = await gemini_omni_service.generate_video(
+                prompt=prompt,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                resolution=omni_resolution,
+                image_urls=omni_images or None,
+                audio_ids=omni_audio_ids,
+                video_list=omni_video_list or None,
+                character_ids=omni_character_ids,
+                seed=omni_seed,
+                callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+            )
+        elif v_model.startswith("veo3"):
+            veo_image_urls = []
+            veo_gen_type = data.get("veo_generation_type", "TEXT_2_VIDEO")
+            if veo_gen_type == "FIRST_AND_LAST_FRAMES_2_VIDEO":
+                if v_image_url:
+                    veo_image_urls.append(v_image_url)
+                if reference_images:
+                    for ref_url in reference_images:
+                        if ref_url not in veo_image_urls:
+                            veo_image_urls.append(ref_url)
+                            if len(veo_image_urls) >= 2:
+                                break
+            elif veo_gen_type == "REFERENCE_2_VIDEO":
+                if v_image_url:
+                    veo_image_urls.append(v_image_url)
+                for ref_url in reference_images:
+                    if ref_url not in veo_image_urls:
+                        veo_image_urls.append(ref_url)
+                    if len(veo_image_urls) >= 3:
+                        break
+            result = await veo_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                generation_type=veo_gen_type,
+                image_urls=veo_image_urls or None,
+                aspect_ratio=v_ratio,
+                enable_translation=data.get("veo_translation", True),
+                watermark=data.get("veo_watermark") or None,
+                resolution=data.get("veo_resolution", "720p"),
+                seeds=data.get("veo_seed"),
+                callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+            )
+        elif v_model == "grok_imagine":
+            if not v_image_url:
+                await callback.message.answer("❌ Grok Imagine требует стартовое изображение.")
+                if not is_admin:
+                    await add_credits(callback.from_user.id, cost)
+                return
+            result = await grok_service.generate_image_to_video(
+                image_urls=[v_image_url] + (reference_images or [])[:6],
+                prompt=prompt,
+                mode=data.get("grok_mode", "normal"),
+                duration=v_duration,
+                resolution="720p",
+                aspect_ratio=v_ratio,
+                callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+            )
+        elif v_model == "grok_imagine_v15":
+            if not v_image_url:
+                await callback.message.answer("❌ Grok Imagine 1.5 требует стартовое изображение.")
+                if not is_admin:
+                    await add_credits(callback.from_user.id, cost)
+                return
+            result = await grok_service.generate_image_to_video_v15(
+                image_urls=[v_image_url],
+                prompt=prompt,
+                duration=v_duration,
+                resolution=data.get("grok_resolution", "480p"),
+                aspect_ratio=v_ratio,
+                callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+            )
+        elif v_model == "seedance_2":
+            seedance_refs = [v_image_url] if v_image_url else []
+            for ref_url in (reference_images or []):
+                if ref_url and ref_url not in seedance_refs:
+                    seedance_refs.append(ref_url)
+            result = await seedance_service.generate_video(
+                prompt=prompt,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                resolution="720p",
+                generate_audio=True,
+                first_frame_url=v_image_url if v_type == "imgtxt" and v_image_url and not seedance_refs[1:] else None,
+                reference_image_urls=seedance_refs or None,
+                reference_video_urls=normalize_reference_urls(v_reference_videos, max_count=get_max_video_references(v_model)) or None,
+                callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+            )
+        elif v_model in {"avatar_std", "avatar_pro"}:
+            if not v_image_url:
+                await callback.message.answer("❌ Для Kling AI Avatar нужно фото аватара.")
+                if not is_admin:
+                    await add_credits(callback.from_user.id, cost)
+                return
+            if not avatar_audio_url:
+                await callback.message.answer("❌ Для Kling AI Avatar нужно аудио.")
+                if not is_admin:
+                    await add_credits(callback.from_user.id, cost)
+                return
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                image_url=v_image_url,
+                video_urls=[avatar_audio_url],
+                webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
+            )
+        else:
+            result = await kling_service.generate_video(
+                prompt=prompt,
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                image_url=v_image_url,
+                video_urls=v_reference_videos if v_type in {"video", "motion"} else None,
+                image_input=reference_images if v_type != "imgtxt" else None,
+                negative_prompt=data.get("kling_negative_prompt") or None,
+                cfg_scale=float(data.get("kling_cfg_scale", 0.5)),
+                webhook_url=config.kling_notification_url if config.WEBHOOK_HOST else None,
+            )
+
+        if result and "task_id" in result:
+            await add_generation_task(
+                user.id,
+                callback.from_user.id,
+                result["task_id"],
+                "video",
+                "no_preset_video",
+                model=v_model,
+                duration=v_duration,
+                aspect_ratio=v_ratio,
+                prompt=prompt,
+                cost=cost,
+                request_data={
+                    "source": "telegram",
+                    "v_type": v_type,
+                    "v_model": v_model,
+                    "user_prompt": prompt,
+                    "v_duration": v_duration,
+                    "v_ratio": v_ratio,
+                    "v_image_url": v_image_url,
+                    "reference_images": reference_images,
+                    "v_mode": data.get("v_mode", "720p"),
+                },
+            )
+            model_label = get_video_model_label(v_model)
+            await callback.message.answer(
+                "🚀 <b>Повторное видео запущено</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• ID: <code>{result['task_id']}</code>\n"
+                f"• Списано: <code>{cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
+                "Результат придёт в этот чат.",
+                parse_mode="HTML",
+            )
+            try:
+                await callback.answer("Повтор видео запускаю")
+            except TelegramBadRequest:
+                pass
+        elif result and result.get("status") == "done":
+            video_url = result.get("video_url") or result.get("result_url")
+            if video_url:
+                await callback.message.answer_video(
+                    video=video_url,
+                    caption=(
+                        "✅ <b>Повтор готов</b>\n"
+                        f"• Модель: <code>{get_video_model_label(v_model)}</code>\n"
+                        f"• Списано: <code>{cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=get_video_result_keyboard(
+                        video_url,
+                        user_credits=await get_user_credits(callback.from_user.id),
+                        task_id=result.get("task_id"),
+                        model=v_model,
+                    ),
+                )
+            else:
+                await callback.message.answer("✅ Видео готово, но ссылка не получена.")
+            try:
+                await callback.answer("Повтор видео готов")
+            except TelegramBadRequest:
+                pass
+        else:
+            error_info = ""
+            if isinstance(result, dict):
+                error_info = make_user_friendly_generation_error(
+                    result.get("message") or result.get("error") or ""
+                ) or ""
+            if not is_admin:
+                await add_credits(callback.from_user.id, cost)
+            await callback.message.answer(
+                f"❌ Не получилось повторить видео. Бананы за попытку уже возвращены."
+                + (f"\nПричина: <code>{html.escape(error_info[:300])}</code>" if error_info else ""),
+                parse_mode="HTML",
+            )
+    except Exception:
+        logger.exception("Video repeat from callback failed")
+        if not is_admin:
+            await add_credits(callback.from_user.id, cost)
+        await callback.message.answer(
+            "❌ Не получилось повторить видео. Бананы за попытку уже возвращены."
+        )
+    
+    await state.clear()
 
 
 async def run_no_preset_video_from_message(

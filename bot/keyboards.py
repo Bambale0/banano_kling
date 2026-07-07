@@ -1340,9 +1340,13 @@ def get_video_result_keyboard(
         builder.button(text="✨ Получить 1080p", callback_data=f"veo1080_{task_id}")
         builder.button(text="🖥 Получить 4K", callback_data=f"veo4k_{task_id}")
         builder.button(text="➕ Продлить", callback_data=f"veoextend_{task_id}")
+    if task_id:
+        builder.button(text="🔁 Повторить", callback_data=f"repeat_video_result_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     if task_id and model and model.startswith("veo3"):
-        builder.adjust(1, 1, 2, 1, 1)
+        builder.adjust(1, 1, 2, 1, 1, 1)
+    elif task_id:
+        builder.adjust(1, 1, 1, 1)
     else:
         builder.adjust(1)
     return builder.as_markup()
@@ -1369,8 +1373,9 @@ def get_image_result_keyboard(
             callback_data=f"promptrm_{task_id}" if is_prompt_library else f"promptsave_{task_id}",
         )
         builder.button(text="🆕 Новый промпт", callback_data=f"retry_prompt_image_{task_id}")
+        builder.button(text="🔁 Повторить", callback_data=f"repeat_result_{task_id}")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 2, 2, 2, 1)
+    builder.adjust(1, 2, 2, 2, 2, 1)
     return builder.as_markup()
 
 

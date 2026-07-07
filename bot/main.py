@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import html
 import json
 import logging
@@ -3765,11 +3766,6 @@ async def main():
             config.WEBHOOK_BIND_HOST,
             config.WEBHOOK_PORT,
         )
-        try:
-            await on_startup(bot, dp)
-        except Exception:
-            logger.exception("Startup sequence failed; bot will continue running with limited functionality")
-
         # Держим бота запущенным
         await asyncio.Event().wait()
     else:
@@ -3784,4 +3780,3 @@ if __name__ == "__main__":
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.exception(f"Bot crashed: {e}")
-

@@ -1,6 +1,6 @@
 """Task watchdog: фоновый процесс для обработки зависших задач генерации.
 
-Сканирует generation_tasks в статусе 'processing' старше N минут,
+Сканирует generation_tasks в статусе 'pending'/'processing' старше N минут,
 пытается запросить статус у провайдера через API,
 и переводит в failed с возвратом credits, если задача не имеет финального статуса.
 
@@ -24,8 +24,23 @@ STUCK_THRESHOLD_MINUTES = 30  # задача считается зависшей
 MAX_STUCK_MINUTES = 120  # принудительно failed через 2 часа
 
 
+def _parse_created_at(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                return datetime.strptime(normalized.split(".", 1)[0], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                logger.warning("Watchdog: cannot parse created_at=%r", value)
+    return None
+
+
 async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[str, Any]]:
-    """Возвращает задачи в processing, созданные больше N минут назад."""
+    """Возвращает provider-задачи, созданные больше N минут назад."""
     since = datetime.utcnow() - timedelta(minutes=minutes)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -34,7 +49,8 @@ async def get_stuck_tasks(minutes: int = STUCK_THRESHOLD_MINUTES) -> list[Dict[s
             SELECT id, user_id, task_id, model,
                    prompt, cost, request_data, created_at
             FROM generation_tasks
-            WHERE status = 'processing'
+            WHERE status IN ('pending', 'processing')
+              AND task_id NOT LIKE 'img_%'
               AND created_at <= ?
             ORDER BY created_at ASC
             LIMIT 50
@@ -125,7 +141,7 @@ async def force_fail_task(task_id: int, user_id: int, cost: float) -> bool:
             UPDATE generation_tasks
             SET status = 'failed',
                 completed_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'processing'
+            WHERE id = ? AND status IN ('pending', 'processing')
             """,
             (task_id,),
         )
@@ -161,7 +177,7 @@ async def run_watchdog_cycle() -> int:
         model = task.get("model") or ""
         raw_request = task.get("request_data") or "{}"
         cost = float(task.get("cost") or 0)
-        created_at = task.get("created_at")
+        created_at = _parse_created_at(task.get("created_at"))
         request_data: dict = {}
         if isinstance(raw_request, str):
             try:

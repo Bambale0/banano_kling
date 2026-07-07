@@ -53,7 +53,6 @@ from bot.database import (
     like_feed_generation,
     like_prompt,
     list_saved_references,
-    process_referral,
     reject_prompt,
     remove_from_feed,
     remove_from_library,
@@ -706,7 +705,12 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
     return parsed
 
 
-from bot.services.referral_service import referral_code_from_start_param
+from bot.services.referral_service import (
+    process_referral_click,
+    referral_code_from_start_param,
+)
+
+_referral_code_from_start_param = referral_code_from_start_param
 
 
 async def _activate_start_param_referral(
@@ -716,7 +720,6 @@ async def _activate_start_param_referral(
     telegram_user: dict[str, Any],
     start_param: Any,
 ) -> None:
-    from bot.services.referral_service import referral_code_from_start_param
     referral_code = referral_code_from_start_param(start_param)
     if not referral_code:
         if start_param:
@@ -735,8 +738,17 @@ async def _activate_start_param_referral(
             start_param,
             referral_code,
         )
-        referrer = await get_user_by_referral_code(referral_code)
-        processed = await process_referral(telegram_id, referral_code)
+        ref_result = await process_referral_click(
+            telegram_id,
+            referral_code,
+            source="miniapp",
+            start_param=str(start_param or ""),
+        )
+        referrer = (
+            await get_user_by_referral_code(ref_result.clicked_code or referral_code)
+            if ref_result.attached
+            else None
+        )
     except Exception:
         logger.exception(
             "Failed to activate Mini App referral for user_id=%s start_param=%s",
@@ -745,18 +757,18 @@ async def _activate_start_param_referral(
         )
         return
 
-    if not processed:
+    if not ref_result.attached:
         logger.info(
-            "Mini App referral not applied: user_id=%s username=%s start_param=%s code=%s referrer_found=%s",
+            "Mini App referral not applied: user_id=%s username=%s start_param=%s code=%s reason=%s",
             telegram_id,
             telegram_user.get("username"),
             start_param,
             referral_code,
-            bool(referrer),
+            ref_result.reason,
         )
         return
 
-    if processed and referrer:
+    if ref_result.notify_partner and referrer:
         referred = SimpleNamespace(
             id=telegram_id,
             username=telegram_user.get("username"),
