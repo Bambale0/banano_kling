@@ -61,6 +61,51 @@ def test_process_referral_adds_bonus_and_links_user(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_process_referral_click_records_attached_event(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referral_clicks.db")
+        from bot.services import referral_service as referral_service_module
+
+        referral_service = importlib.reload(referral_service_module)
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(4101)
+        referred = await db.get_or_create_user(4102)
+
+        result = await referral_service.process_referral_click(
+            referred.telegram_id,
+            referrer.referral_code,
+            source="test",
+            start_param=f"ref_{referrer.referral_code}",
+        )
+
+        assert result.attached is True
+
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = db_backend.Row
+            cursor = await conn.execute(
+                """
+                SELECT clicked_code, reason, attached, source, start_param
+                FROM referral_events
+                WHERE visitor_telegram_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (referred.telegram_id,),
+            )
+            row = await cursor.fetchone()
+
+        assert row is not None
+        assert row["clicked_code"] == referrer.referral_code
+        assert row["reason"] == "attached"
+        assert row["attached"] in (1, True)
+        assert row["source"] == "test"
+        assert row["start_param"] == f"ref_{referrer.referral_code}"
+
+    asyncio.run(run())
+
+
 @pytest.mark.asyncio
 async def test_referral_notification_uses_username_not_telegram_id():
     from bot.handlers.common import _notify_partner_about_new_referral

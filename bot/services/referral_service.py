@@ -393,6 +393,19 @@ async def process_referral_click(
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
 
+        async def _record_and_commit(
+            result: ReferralResult,
+            visitor_user_id: int | None = None,
+        ) -> ReferralResult:
+            await record_referral_event(
+                result,
+                visitor_telegram_id,
+                visitor_user_id,
+                db=db,
+            )
+            await db.commit()
+            return result
+
         # 1. Ищем реферера по коду
         referrer_cursor = await db.execute(
             "SELECT id, telegram_id, referral_code FROM users WHERE referral_code = ?",
@@ -407,8 +420,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id)
-            return result
+            return await _record_and_commit(result)
 
         referrer_id = int(referrer_row["id"])
         referrer_telegram_id = int(referrer_row["telegram_id"])
@@ -442,8 +454,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id)
-            return result
+            return await _record_and_commit(result)
 
         visitor_user_id = int(visitor_row["id"])
         existing_referrer_id = (
@@ -462,8 +473,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 4. Уже привязан к тому же рефереру
         if existing_referrer_id and existing_referrer_id == referrer_id:
@@ -477,8 +487,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 5. Уже привязан к другому рефереру
         if existing_referrer_id:
@@ -491,8 +500,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 6. Уже платил
         if visitor_row["has_paid"] or visitor_row["has_completed_payment"]:
@@ -510,8 +518,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 7. Blocklist
         if code in REFERRAL_ANTIFRAUD_BLOCK_CODES:
@@ -524,8 +531,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         if referrer_id in REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS:
             result = ReferralResult(
@@ -537,8 +543,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 8. Антифрод-лимиты
         hourly_cursor = await db.execute(
@@ -556,8 +561,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         daily_cursor = await db.execute(
             "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', '-1 day')",
@@ -574,8 +578,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 9. Cycle detection
         if await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=visitor_user_id):
@@ -588,8 +591,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # 10. ПРИВЯЗКА: атомарный UPDATE + INSERT + бонус рефереру
         update_cursor = await db.execute(
@@ -619,8 +621,7 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         insert_cursor = await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 3)",
@@ -637,15 +638,13 @@ async def process_referral_click(
                 source=source,
                 start_param=start_param,
             )
-            await record_referral_event(result, visitor_telegram_id, visitor_user_id)
-            return result
+            return await _record_and_commit(result, visitor_user_id)
 
         # Начисляем бонус рефереру
         await db.execute(
             "UPDATE users SET credits = credits + ?, referral_earned = referral_earned + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (PARTNER_INVITER_BONUS, PARTNER_INVITER_BONUS, referrer_id),
         )
-        await db.commit()
 
         result = ReferralResult(
             clicked_code=code,
@@ -659,7 +658,7 @@ async def process_referral_click(
             source=source,
             start_param=start_param,
         )
-        await record_referral_event(result, visitor_telegram_id, visitor_user_id)
+        await _record_and_commit(result, visitor_user_id)
 
         logger.info(
             "Referral attached: visitor=%s code=%s referrer_id=%s",

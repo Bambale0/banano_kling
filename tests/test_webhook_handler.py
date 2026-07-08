@@ -10,11 +10,13 @@ import pytest
 from aiohttp import web
 
 import bot.database
+import bot.main as main
 from bot.config import config
 from bot.main import (
     _build_failure_notification_text,
     _build_plain_result_link_text,
     _extract_gemini_omni_asset_id,
+    _send_video_file_from_url,
     _TELEGRAM_WEBHOOK_TASKS,
     handle_kling_webhook,
     handle_telegram_webhook,
@@ -155,3 +157,70 @@ def test_plain_result_link_text_does_not_use_html_markup():
     assert "task<1>" in text
     assert "<code>" not in text
     assert "parse_mode" not in text
+
+
+class _FakeContent:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def iter_chunked(self, _size):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeResponse:
+    status = 200
+
+    def __init__(self, chunks):
+        self.content_length = sum(len(chunk) for chunk in chunks)
+        self.content = _FakeContent(chunks)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeClientSession:
+    chunks = [b"small-video"]
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def get(self, *args, **kwargs):
+        return _FakeResponse(self.chunks)
+
+
+class _FakeBot:
+    def __init__(self):
+        self.video_calls = []
+
+    async def send_video(self, **kwargs):
+        self.video_calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_send_video_file_from_url_uploads_small_remote_file(monkeypatch):
+    monkeypatch.setattr(main.aiohttp, "ClientSession", _FakeClientSession)
+    bot = _FakeBot()
+
+    delivered = await _send_video_file_from_url(
+        bot,
+        123,
+        "https://cdn.example.com/result.mp4",
+        caption="ready",
+        max_upload_bytes=1024,
+    )
+
+    assert delivered is True
+    assert len(bot.video_calls) == 1
+    assert bot.video_calls[0]["chat_id"] == 123
+    assert bot.video_calls[0]["caption"] == "ready"
+    assert bot.video_calls[0]["video"].__class__.__name__ == "FSInputFile"

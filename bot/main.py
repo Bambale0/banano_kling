@@ -925,6 +925,89 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
         logger.error(f"Failed to send original file to {telegram_id}: {e}")
         return False
 
+async def _send_video_file_from_url(
+    bot_instance: Bot,
+    telegram_id: int,
+    video_url: str,
+    *,
+    caption: str,
+    reply_markup=None,
+    timeout_seconds: int = 120,
+    max_upload_bytes: int = 50 * 1024 * 1024,
+) -> bool:
+    if not isinstance(video_url, str) or not video_url.lower().startswith(
+        ("http://", "https://")
+    ):
+        return False
+
+    import tempfile
+
+    from aiogram.types import FSInputFile
+
+    tmp_file = None
+    suffix = f".{_guess_storage_extension(video_url, task_type='video')}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Telegram Bot SDK/1.0)",
+        "Accept": "*/*",
+    }
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(
+                video_url,
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+            ) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Download failed: status {resp.status}")
+
+                content_length = getattr(resp, "content_length", None)
+                if content_length and content_length > max_upload_bytes:
+                    logger.warning(
+                        "Video file is too large for upload fallback: size=%s limit=%s url=%s",
+                        content_length,
+                        max_upload_bytes,
+                        video_url,
+                    )
+                    return False
+
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                tmp_file = tmp.name
+                try:
+                    downloaded = 0
+                    async for chunk in resp.content.iter_chunked(1024 * 64):
+                        if not chunk:
+                            continue
+                        downloaded += len(chunk)
+                        if downloaded > max_upload_bytes:
+                            raise RuntimeError(
+                                f"Video file exceeds upload fallback limit: {downloaded} > {max_upload_bytes}"
+                            )
+                        await asyncio.to_thread(tmp.write, chunk)
+                finally:
+                    await asyncio.to_thread(tmp.close)
+
+        await bot_instance.send_video(
+            chat_id=telegram_id,
+            video=FSInputFile(tmp_file),
+            caption=caption,
+            parse_mode="HTML",
+            supports_streaming=True,
+            reply_markup=reply_markup,
+        )
+        return True
+    except Exception as e:
+        logger.error(
+            "Failed to download and send video file to %s: %s",
+            telegram_id,
+            e,
+        )
+        return False
+    finally:
+        if tmp_file and os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                logger.exception("Failed to remove temporary video file")
+
 def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> bool:
     if not task:
         return False
@@ -1886,11 +1969,16 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                             )
 
                             delivered = False
+                            media_caption = _build_single_result_caption(
+                                _with_original_link(caption, video_url),
+                                task,
+                                reference_preview_urls,
+                            )
                             try:
                                 await bot_instance.send_video(
                                     chat_id=telegram_id,
                                     video=video_url,
-                                    caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
+                                    caption=media_caption,
                                     parse_mode="HTML",
                                     supports_streaming=True,
                                     reply_markup=video_kb,
@@ -1900,6 +1988,14 @@ async def handle_kling_webhook(request: web.Request) -> web.Response:
                                 logger.error(
                                     f"Failed to send {model_display} video media to {telegram_id}: {send_e}"
                                 )
+                                delivered = await _send_video_file_from_url(
+                                    bot_instance,
+                                    telegram_id,
+                                    video_url,
+                                    caption=media_caption,
+                                    reply_markup=video_kb,
+                                )
+                            if not delivered:
                                 try:
                                     await _send_plain_result_link(
                                         bot_instance,
@@ -2965,37 +3061,47 @@ async def handle_wanx_webhook(request: web.Request) -> web.Response:
             try:
                 from bot.keyboards import get_video_result_keyboard
 
+                reply_markup = get_video_result_keyboard(
+                    video_url,
+                    task_id=_task_callback_id(task, task_id),
+                    model=task.model if task else None,
+                    is_public_feed=task.is_public_feed if task else False,
+                )
+                media_caption = _build_single_result_caption(
+                    _with_original_link(caption, video_url),
+                    task,
+                    reference_preview_urls,
+                )
                 await bot_instance.send_video(
                     chat_id=telegram_id,
                     video=video_url,
-                    caption=_build_single_result_caption(_with_original_link(caption, video_url), task, reference_preview_urls),
+                    caption=media_caption,
                     parse_mode="HTML",
                     supports_streaming=True,
-                    reply_markup=get_video_result_keyboard(
-                        video_url,
-                        task_id=_task_callback_id(task, task_id),
-                        model=task.model if task else None,
-                        is_public_feed=task.is_public_feed if task else False,
-                    ),
+                    reply_markup=reply_markup,
                 )
                 await complete_video_task(task_id, video_url)
                 logger.info(f"WanX video sent to user {telegram_id}")
             except Exception as e:
                 logger.error(f"Failed to send WanX video: {e}")
                 try:
-                    from bot.keyboards import get_video_result_keyboard
-
-                    await bot_instance.send_message(
-                        chat_id=telegram_id,
-                        text=f"🎬 Ваше видео WanX готово!{video_url}",
-                        reply_markup=get_video_result_keyboard(
-                            video_url,
-                            task_id=_task_callback_id(task, task_id),
-                            model=task.model if task else None,
-                            is_public_feed=task.is_public_feed if task else False,
-                        ),
-                        parse_mode="HTML",
+                    delivered = await _send_video_file_from_url(
+                        bot_instance,
+                        telegram_id,
+                        video_url,
+                        caption=media_caption,
+                        reply_markup=reply_markup,
                     )
+                    if delivered:
+                        await complete_video_task(task_id, video_url)
+                        logger.info(f"WanX video downloaded and sent to user {telegram_id}")
+                    else:
+                        await bot_instance.send_message(
+                            chat_id=telegram_id,
+                            text=f"🎬 Ваше видео WanX готово!\n{video_url}",
+                            reply_markup=reply_markup,
+                            parse_mode="HTML",
+                        )
                 except Exception as fallback_error:
                     logger.error(
                         f"Failed to send WanX fallback message: {fallback_error}"
