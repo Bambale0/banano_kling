@@ -48,6 +48,37 @@ export const mockPaymentPackages: PaymentPackage[] = [
 
 export const mockImageModels: ImageModel[] = [
   {
+    id: 'nano-banana-2-lite',
+    label: 'Nano Banana 2 Lite 🔥 НОВИНКА',
+    description: 'Быстрая новинка для лёгких image-задач и быстрых итераций',
+    cost: 1,
+    ratios: [
+      '1:1',
+      '16:9',
+      '9:16',
+      '4:3',
+      '3:4',
+      '4:5',
+      '5:4',
+      '3:2',
+      '2:3',
+      '21:9',
+    ],
+    requires_reference: false,
+    max_references: 14,
+  },
+  {
+    id: 'seedream_5_pro',
+    label: 'Seedream 5 Pro 🔥 НОВИНКА',
+    description: 'Фотореалистичная генерация с нуля и image-to-image в одном режиме',
+    cost: 2,
+    ratios: ['1:1', '9:16', '16:9', '3:4', '4:3', '2:3', '3:2', '21:9'],
+    requires_reference: false,
+    max_references: 5,
+    qualities: ['basic', 'high'],
+    quality_costs: { basic: 2, high: 2.5 },
+  },
+  {
     id: 'banana_pro',
     label: 'Nano Banana Pro',
     description: 'Универсальная модель для качественных изображений',

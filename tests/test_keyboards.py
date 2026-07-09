@@ -11,6 +11,8 @@ import pytest
 from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_create_hub_keyboard, get_create_video_keyboard,
                            get_help_keyboard, get_image_result_keyboard,
+                           get_image_model_label,
+                           get_image_model_selection_keyboard,
                            get_main_menu_keyboard,
                            get_payment_packages_keyboard,
                            get_payment_provider_keyboard, get_support_keyboard,
@@ -228,6 +230,30 @@ def test_get_create_video_keyboard_for_gemini_omni_video_shows_doc_settings():
     assert "omni_seed_edit" in callback_ids
     assert "omni_audio_ids_edit" in callback_ids
     assert "omni_character_ids_edit" in callback_ids
+
+
+def test_seedream_5_pro_label_and_model_picker_entry():
+    assert get_image_model_label("seedream_5_pro") == "Seedream 5 Pro 🔥 НОВИНКА"
+
+    kb = get_image_model_selection_keyboard()
+    buttons = [btn for row in kb.inline_keyboard for btn in row]
+
+    assert any(
+        btn.callback_data == "model_seedream_5_pro" and "Seedream 5 Pro" in btn.text
+        for btn in buttons
+    )
+
+
+def test_image_model_picker_keeps_both_novelties_at_top():
+    kb = get_image_model_selection_keyboard()
+    callback_ids = [
+        btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
+    ]
+
+    assert callback_ids[:2] == [
+        "model_nano_banana_2_lite",
+        "model_seedream_5_pro",
+    ]
 
 
 def test_get_create_video_keyboard_keeps_legacy_grok_modes():

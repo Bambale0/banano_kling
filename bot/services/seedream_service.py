@@ -14,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 class SeedreamService(KlingService):
-    """Seedream 4.5 Edit via Kie.ai Market API."""
+    """Seedream image generation/editing via Kie.ai Market API."""
 
-    SUPPORTED_MODELS = {"seedream/4.5-edit"}
+    SUPPORTED_TEXT_TO_IMAGE_MODELS = {"seedream/5-pro-text-to-image"}
+    SUPPORTED_IMAGE_TO_IMAGE_MODELS = {
+        "seedream/4.5-edit",
+        "seedream/5-pro-image-to-image",
+    }
+    SUPPORTED_MODELS = SUPPORTED_TEXT_TO_IMAGE_MODELS | SUPPORTED_IMAGE_TO_IMAGE_MODELS
     SUPPORTED_ASPECT_RATIOS = {
         "1:1",
         "4:3",
@@ -36,6 +41,99 @@ class SeedreamService(KlingService):
     }
     MAX_REFERENCE_IMAGES = 5
 
+    def _normalize_quality(self, quality: str) -> str:
+        quality = self.QUALITY_ALIASES.get(str(quality or "").strip().upper(), quality)
+        if quality not in self.SUPPORTED_QUALITIES:
+            logger.warning(
+                "Unsupported Seedream quality %s, fallback to basic", quality
+            )
+            return "basic"
+        return quality
+
+    async def _prepare_effective_image_urls(
+        self,
+        image_urls: List[str],
+    ) -> Optional[List[str]]:
+        limited_image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
+        supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
+        uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
+            supported_urls
+        )
+        effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
+        if effective_image_urls:
+            transport = (
+                "kie_file_upload_urls"
+                if uploaded_urls != supported_urls
+                else "public_urls"
+            )
+            logger.info(
+                "Seedream image refs: original=%d effective=%d transport=%s",
+                len(image_urls),
+                len(effective_image_urls),
+                transport,
+            )
+            return effective_image_urls
+
+        fallback_image_urls = [
+            url
+            for url in limited_image_urls
+            if not (isinstance(url, str) and is_local_upload_source(url))
+        ]
+        if not fallback_image_urls:
+            logger.error("Seedream aborted: all local reference files are missing")
+            return None
+
+        logger.info(
+            "Seedream image refs: original=%d effective=%d transport=fallback_public_urls",
+            len(image_urls),
+            len(fallback_image_urls),
+        )
+        return fallback_image_urls
+
+    async def generate_text_to_image(
+        self,
+        prompt: str,
+        *,
+        aspect_ratio: str = "1:1",
+        quality: str = "basic",
+        callBackUrl: Optional[str] = None,
+        model: str = "seedream/5-pro-text-to-image",
+    ) -> Optional[Dict]:
+        """Create Seedream text-to-image task."""
+        if model not in self.SUPPORTED_TEXT_TO_IMAGE_MODELS:
+            logger.error("Unsupported Seedream model: %s", model)
+            return None
+        if not prompt or not prompt.strip():
+            logger.error("Seedream prompt is required")
+            return None
+        if len(prompt) > 3000:
+            prompt = prompt[:3000]
+        if aspect_ratio not in self.SUPPORTED_ASPECT_RATIOS:
+            logger.warning(
+                "Unsupported Seedream aspect ratio %s, fallback to 1:1", aspect_ratio
+            )
+            aspect_ratio = "1:1"
+        quality = self._normalize_quality(quality)
+
+        safe_prompt = " ".join(prompt.split())
+        logger.info(
+            "Seedream prompt normalized: len=%d -> %d chars",
+            len(prompt),
+            len(safe_prompt),
+        )
+
+        payload = {
+            "model": model,
+            "input": {
+                "prompt": safe_prompt,
+                "aspect_ratio": aspect_ratio,
+                "quality": quality,
+            },
+        }
+        if callBackUrl:
+            payload["callBackUrl"] = callBackUrl
+        return await self._kie_post("/api/v1/jobs/createTask", payload)
+
     async def generate_image(
         self,
         prompt: str,
@@ -47,9 +145,9 @@ class SeedreamService(KlingService):
         callBackUrl: Optional[str] = None,
         model: str = "seedream/4.5-edit",
     ) -> Optional[Dict]:
-        """Create Seedream 4.5 Edit task."""
-        if model not in self.SUPPORTED_MODELS:
-            logger.error("Unsupported Seedream model: %s", model)
+        """Create Seedream image-to-image/edit task."""
+        if model not in self.SUPPORTED_IMAGE_TO_IMAGE_MODELS:
+            logger.error("Unsupported Seedream image-to-image model: %s", model)
             return None
         if not prompt or not prompt.strip():
             logger.error("Seedream prompt is required")
@@ -64,50 +162,18 @@ class SeedreamService(KlingService):
                 "Unsupported Seedream aspect ratio %s, fallback to 1:1", aspect_ratio
             )
             aspect_ratio = "1:1"
-        quality = self.QUALITY_ALIASES.get(str(quality or "").strip().upper(), quality)
-        if quality not in self.SUPPORTED_QUALITIES:
-            logger.warning(
-                "Unsupported Seedream quality %s, fallback to basic", quality
-            )
-            quality = "basic"
+        quality = self._normalize_quality(quality)
 
         safe_prompt = " ".join(prompt.split())
-
         logger.info(
             "Seedream prompt normalized: len=%d -> %d chars",
             len(prompt),
             len(safe_prompt),
         )
 
-        limited_image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
-        supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
-        uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
-            supported_urls
-        )
-        effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
+        effective_image_urls = await self._prepare_effective_image_urls(image_urls)
         if not effective_image_urls:
-            fallback_image_urls = [
-                url
-                for url in limited_image_urls
-                if not (isinstance(url, str) and is_local_upload_source(url))
-            ]
-            if not fallback_image_urls:
-                logger.error(
-                    "Seedream aborted: all local reference files are missing"
-                )
-                return None
-            effective_image_urls = fallback_image_urls
-        transport = (
-            "kie_file_upload_urls"
-            if uploaded_urls != supported_urls
-            else "public_urls"
-        )
-        logger.info(
-            "Seedream image refs: original=%d effective=%d transport=%s",
-            len(image_urls),
-            len(effective_image_urls),
-            transport,
-        )
+            return None
 
         payload = {
             "model": model,

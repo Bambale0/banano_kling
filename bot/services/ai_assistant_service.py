@@ -21,6 +21,7 @@ FALLBACK_IMAGE_COSTS = {
     "banana_pro": 2.5,
     "banana_2": 2.5,
     "seedream_edit": 1.5,
+    "seedream_5_pro": 1.5,
     "grok_imagine_i2i": 3,
 }
 
@@ -46,6 +47,7 @@ IMAGE_SERVICE_LABELS = {
     "nanobanana": "Banana 2",
     "seedream": "Seedream",
     "seedream_edit": "Seedream 4.5",
+    "seedream_5_pro": "Seedream 5 Pro",
     "grok_imagine_i2i": "Grok Imagine i2i",
 }
 
@@ -444,6 +446,7 @@ class AIAssistantService:
             fallback=FALLBACK_IMAGE_COSTS["banana_2"],
         )
         seedream_cost = _resolve_image_cost(
+            "seedream_5_pro",
             "seedream_edit",
             "seedream_45",
             "seedream",
@@ -484,7 +487,7 @@ class AIAssistantService:
 🖼 Генерация изображений:
 - Banana Pro: {banana_pro_cost}🍌
 - Banana 2: {banana_2_cost}🍌
-- Seedream / Seedream 4.5: {seedream_cost}🍌
+- Seedream 5 Pro / Seedream 4.5: {seedream_cost}🍌
 - Grok Imagine i2i: {grok_i2i_cost}🍌
 
 🎬 Генерация видео:

@@ -113,6 +113,7 @@ from bot.payment_utils import (
     total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS
+from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
@@ -222,6 +223,38 @@ def _payment_package_payload(package: dict[str, Any]) -> dict[str, Any]:
 
 IMAGE_MODELS = (
     {
+        "id": "nano-banana-2-lite",
+        "label": "Nano Banana 2 Lite 🔥 НОВИНКА",
+        "description": "Быстрая новинка для лёгких image-задач и быстрых итераций",
+        "cost": preset_manager.get_generation_cost("nano-banana-2-lite"),
+        "ratios": [
+            "1:1",
+            "16:9",
+            "9:16",
+            "4:3",
+            "3:4",
+            "4:5",
+            "5:4",
+            "3:2",
+            "2:3",
+            "21:9",
+        ],
+        "requires_reference": False,
+        "max_references": 8,
+    },
+    {
+        "id": "seedream_5_pro",
+        "label": "Seedream 5 Pro 🔥 НОВИНКА",
+        "description": "Фотореалистичная генерация с нуля и image-to-image в одной модели",
+        "cost": 2,
+        "ratios": ["1:1", "9:16", "16:9", "3:4", "4:3", "2:3", "3:2", "21:9"],
+        "requires_reference": False,
+        "max_references": 5,
+        "qualities": ["basic", "high"],
+        "quality_costs": {"basic": 2, "high": 2.5},
+        "supports_nsfw_checker": False,
+    },
+    {
         "id": "banana_pro",
         "label": "Nano Banana Pro",
         "description": "Универсальная модель для качественных изображений",
@@ -304,6 +337,24 @@ IMAGE_MODELS = (
         "supports_nsfw_mode": True,
     },
 )
+
+
+def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
+    quality_value = str(img_quality or "").strip()
+    if img_service in ("banana_pro", "banana_2"):
+        return QUALITY_COSTS.get(
+            quality_value,
+            QUALITY_COSTS.get(quality_value.upper(), preset_manager.get_generation_cost(img_service)),
+        )
+    if img_service == "seedream_5_pro":
+        return SEEDREAM_5_PRO_QUALITY_COSTS.get(
+            quality_value,
+            SEEDREAM_5_PRO_QUALITY_COSTS.get(
+                quality_value.upper(),
+                preset_manager.get_generation_cost(img_service),
+            ),
+        )
+    return preset_manager.get_generation_cost(img_service)
 
 VIDEO_MODELS = (
     {
@@ -840,8 +891,8 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
         logger.exception("Unable to sync Mini App profile for %s", telegram_id)
 
     if not payload.get("start_param") and not start_param_fallback:
-        logger.warning(
-            "Mini App start_param missing: user_id=%s username=%s payload_keys=%s",
+        logger.info(
+            "Mini App opened without start_param: user_id=%s username=%s payload_keys=%s",
             telegram_id,
             telegram_user.get("username"),
             list(payload.keys()),
@@ -2073,7 +2124,14 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 for package in preset_manager.get_packages()
             ],
             "image_models": [
-                {**item, "cost": preset_manager.get_generation_cost(item["id"])}
+                {
+                    **item,
+                    "cost": (
+                        _resolve_image_unit_cost(item["id"], "basic")
+                        if item.get("id") == "seedream_5_pro"
+                        else _resolve_image_unit_cost(item["id"], "")
+                    ),
+                }
                 for item in IMAGE_MODELS
             ],
             "video_models": [
@@ -2979,11 +3037,7 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         if user_references:
             await touch_saved_references(telegram_id, user_references, kind="image")
 
-        unit_cost = (
-            QUALITY_COSTS.get(img_quality, preset_manager.get_generation_cost(img_service))
-            if img_service in ("banana_pro", "banana_2")
-            else preset_manager.get_generation_cost(img_service)
-        )
+        unit_cost = _resolve_image_unit_cost(img_service, img_quality)
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
             return web.json_response(
@@ -3164,12 +3218,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         if references:
             await touch_saved_references(telegram_id, references, kind="image")
 
-        if img_service in ("banana_pro", "banana_2"):
-            unit_cost = QUALITY_COSTS.get(
-                img_quality, preset_manager.get_generation_cost(img_service)
-            )
-        else:
-            unit_cost = preset_manager.get_generation_cost(img_service)
+        unit_cost = _resolve_image_unit_cost(img_service, img_quality)
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
             return web.json_response(

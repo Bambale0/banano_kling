@@ -18,9 +18,12 @@ interface ModelSelectProps {
   onChange: (value: string) => void
 }
 
+const NEW_MODEL_IDS = new Set(['nano-banana-2-lite', 'seedream_5_pro'])
+
 export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const selected = models.find(m => m.id === value)
+  const selectedIsNew = selected ? NEW_MODEL_IDS.has(selected.id) : false
 
   return (
     <div className="relative min-w-0">
@@ -35,7 +38,14 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
         )}
       >
         <div className="min-w-0 flex-1 text-left">
-          <p className="text-sm font-medium text-foreground">{selected?.label}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-foreground">{selected?.label}</p>
+            {selectedIsNew && (
+              <span className="shrink-0 rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold">
+                New
+              </span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground line-clamp-1">{selected?.description}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -70,7 +80,9 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                 "glass-strong border border-border/50 shadow-xl"
               )}
             >
-              {models.map((model) => (
+              {models.map((model) => {
+                const isNew = NEW_MODEL_IDS.has(model.id)
+                return (
                 <button
                   key={model.id}
                   onClick={() => {
@@ -85,7 +97,14 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                   )}
                 >
                   <div className="min-w-0 flex-1 text-left">
-                    <p className="text-sm font-medium text-foreground">{model.label}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-foreground">{model.label}</p>
+                      {isNew && (
+                        <span className="shrink-0 rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold">
+                          New
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground line-clamp-1">{model.description}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -98,7 +117,8 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                     )}
                   </div>
                 </button>
-              ))}
+                )
+              })}
             </motion.div>
           </>
         )}

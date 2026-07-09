@@ -587,6 +587,7 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "banana_2": "Banana 2",
         "nano-banana-2-lite": "Nano Banana 2 Lite 🔥",
         "seedream_edit": "Seedream 4.5",
+        "seedream_5_pro": "Seedream 5 Pro",
         "flux_pro": "GPT Image 2",
         "v26_pro": "Kling 2.5 Turbo Pro",
         "avatar_std": "Kling AI Avatar Standard",
@@ -1318,6 +1319,7 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
         "banana_2",
         "nano-banana-2-lite",
         "seedream_edit",
+        "seedream_5_pro",
     }:
         return False
     normalized = str(fail_msg or "").lower()
@@ -1412,6 +1414,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         "banana_2",
         "nano-banana-2-lite",
         "seedream_edit",
+        "seedream_5_pro",
     }:
         return None
 
@@ -1431,18 +1434,31 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     img_ratio = request_data.get("img_ratio") or getattr(task, "aspect_ratio", None) or "1:1"
     callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
 
-    if runtime_img_service == "seedream_edit":
+    if runtime_img_service in {"seedream_edit", "seedream_5_pro"}:
         from bot.services.seedream_service import seedream_service
 
-        result = await seedream_service.generate_image(
-            prompt=effective_prompt,
-            model="seedream/4.5-edit",
-            aspect_ratio=img_ratio,
-            image_urls=reference_images,
-            quality=str(request_data.get("img_quality") or "basic"),
-            nsfw_checker=False,
-            callBackUrl=callback_url,
-        )
+        if runtime_img_service == "seedream_edit" or reference_images:
+            result = await seedream_service.generate_image(
+                prompt=effective_prompt,
+                model=(
+                    "seedream/4.5-edit"
+                    if runtime_img_service == "seedream_edit"
+                    else "seedream/5-pro-image-to-image"
+                ),
+                aspect_ratio=img_ratio,
+                image_urls=reference_images,
+                quality=str(request_data.get("img_quality") or "basic"),
+                nsfw_checker=False,
+                callBackUrl=callback_url,
+            )
+        else:
+            result = await seedream_service.generate_text_to_image(
+                prompt=effective_prompt,
+                model="seedream/5-pro-text-to-image",
+                aspect_ratio=img_ratio,
+                quality=str(request_data.get("img_quality") or "basic"),
+                callBackUrl=callback_url,
+            )
     elif runtime_img_service in {"banana_2", "nano-banana-2-lite"}:
         from bot.services.nano_banana_2_service import nano_banana_2_service
 

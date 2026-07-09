@@ -23,6 +23,7 @@ CANONICAL_IMAGE_ALIASES = {
     "seedream": "seedream",
     "seedream_45": "seedream_45",
     "seedream_edit": "seedream_edit",
+    "seedream_5_pro": "seedream_edit",
     "flux_pro": "flux_pro",
     "grok_imagine_i2i": "grok_imagine_i2i",
     "wan_27": "wan_27",

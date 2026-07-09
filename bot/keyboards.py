@@ -273,6 +273,7 @@ IMAGE_MODEL_LABELS = {
     "banana_2": "Nano Banana 2",
     "nano-banana-2-lite": "Nano Banana 2 Lite 🔥 НОВИНКА",
     "seedream_edit": "Seedream 4.5",
+    "seedream_5_pro": "Seedream 5 Pro 🔥 НОВИНКА",
     "grok_imagine_i2i": "Grok Imagine",
     "wan_27": "Wan 2.7 Pro",
     "nanobanana": "Nano Banana Pro",
@@ -959,6 +960,18 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
 
     model_rows = [
         (
+            "nano-banana-2-lite",
+            "model_nano_banana_2_lite",
+            "🍌 Nano Banana 2 Lite 🔥 НОВИНКА",
+            preset_manager.get_generation_cost("nano-banana-2-lite"),
+        ),
+        (
+            "seedream_5_pro",
+            "model_seedream_5_pro",
+            "🌟 Seedream 5 Pro 🔥 НОВИНКА",
+            2,
+        ),
+        (
             "banana_pro",
             "model_banana_pro",
             "💎 Nano Banana Pro",
@@ -969,12 +982,6 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
             "model_banana_2",
             "🍌 Nano Banana 2",
             preset_manager.get_generation_cost("banana_2"),
-        ),
-        (
-            "nano-banana-2-lite",
-            "model_nano_banana_2_lite",
-            "🍌 Nano Banana 2 Lite 🔥 НОВИНКА",
-            preset_manager.get_generation_cost("nano-banana-2-lite"),
         ),
         (
             "seedream_edit",
@@ -1044,7 +1051,7 @@ def get_create_image_keyboard(
         if current_service == "flux_pro"
         else (
             ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
-            if current_service == "seedream_edit"
+            if current_service in {"seedream_edit", "seedream_5_pro"}
             else [
                 "1:1",
                 "16:9",
@@ -1115,7 +1122,7 @@ def get_create_image_keyboard(
     builder.row(*count_buttons[:2])
     builder.row(*count_buttons[2:])
 
-    if current_service == "seedream_edit":
+    if current_service in {"seedream_edit", "seedream_5_pro"}:
         basic_marker = "◉" if img_quality == "basic" else "○"
         high_marker = "◉" if img_quality == "high" else "○"
         builder.row(

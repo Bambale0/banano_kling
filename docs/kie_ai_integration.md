@@ -218,7 +218,19 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Поддержка AR** | 1:1, 4:3, 3:4, 16:9, 9:16, 2:3, 3:2, 21:9 |
 | **Цена** | 4🍌 |
 
-#### 2.2.5. Wan 2.7 Image (wan_27)
+#### 2.2.5. Seedream 5 Pro (seedream_5_pro)
+
+| Параметр | Значение |
+|---|---|
+| **Внутренний ID** | `seedream_5_pro` |
+| **Модели Kie.ai** | `seedream/5-pro-text-to-image` (text→img), `seedream/5-pro-image-to-image` (img→img) |
+| **Сервис** | `SeedreamService` |
+| **Параметры** | prompt, aspect_ratio, quality (basic/high), image_urls (опц. для i2i), callBackUrl |
+| **Роутинг** | Без `image_urls` → text-to-image, с `image_urls` → image-to-image |
+| **Поддержка AR** | 1:1, 4:3, 3:4, 16:9, 9:16, 2:3, 3:2, 21:9 |
+| **Цена** | Временно тот же tier, что и `seedream_edit` |
+
+#### 2.2.6. Wan 2.7 Image (wan_27)
 
 | Параметр | Значение |
 |---|---|
@@ -229,7 +241,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | **Особенности** | thinking_mode только для text-to-image; sequential → до 12 изображений |
 | **Цена** | 5🍌 |
 
-#### 2.2.6. Gemini Image (banana_api legacy)
+#### 2.2.7. Gemini Image (banana_api legacy)
 
 | Параметр | Значение |
 |---|---|
@@ -297,6 +309,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
 | `banana_2` / `nano_banana_2` | `nano-banana-2` | `NanoBanana2Service` | KieFileUploadService |
 | `flux_pro` / `gpt_image_2` | `gpt-image-2-text-to-image` / `gpt-image-2-image-to-image` | `GPTImageService` | — |
 | `seedream_edit` | `seedream/4.5-edit` | `SeedreamService` | KieFileUploadService |
+| `seedream_5_pro` | `seedream/5-pro-text-to-image` / `seedream/5-pro-image-to-image` | `SeedreamService` | KieFileUploadService |
 | `wan_27` / `wan` | `wan/2-7-image-pro` / `wan/2-7-image` | `Wan27Service` | — |
 | `flash` / `pro` (legacy) | `google/gemini-2.5-flash-image` / `google/gemini-3-pro-image-preview` | `GeminiService` | — |
 
@@ -334,6 +347,7 @@ FREEPIK_BASE_URL = "https://api.freepik.com/v1"
     "banana_pro": "Nano Banana Pro",
     "banana_2": "Nano Banana 2",
     "seedream_edit": "Seedream 4.5",
+    "seedream_5_pro": "Seedream 5 Pro",
     "grok_imagine_i2i": "Grok Imagine",
     "wan_27": "Wan 2.7 Pro",
     "nanobanana": "Nano Banana Pro",
@@ -408,6 +422,7 @@ payload = {
 - `banana_2` / `nano_banana_2` → `NanoBanana2Service`
 - `flux_pro` / `gpt_image_2` → `GPTImageService`
 - `seedream_edit` → `SeedreamService`
+- `seedream_5_pro` → `SeedreamService`
 - `wan_27` → `Wan27Service`
 - `grok_imagine_i2i` → `GrokService`
 - `flash` / `pro` (legacy) → `GeminiService`

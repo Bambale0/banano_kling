@@ -41,6 +41,7 @@ export interface ImageModel {
   requires_reference: boolean
   max_references: number
   qualities?: string[]
+  quality_costs?: Record<string, number>
   supports_nsfw_checker?: boolean
   supports_nsfw_mode?: boolean
 }

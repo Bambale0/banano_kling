@@ -97,6 +97,7 @@ Telegram-бот для генерации фото и видео с понятн
 | Nano Banana Pro | `banana_pro` | Генерация и edit через Gemini/Nano Banana Pro |
 | Nano Banana 2 | `banana_2` | Более легкий вариант Nano Banana |
 | Seedream 4.5 | `seedream_edit` | Image edit по документации Kie.ai |
+| Seedream 5 Pro | `seedream_5_pro` | Text-to-image без референсов и image-to-image при их загрузке |
 | GPT Image 2 | `flux_pro` | GPT Image 2 text-to-image и image-to-image |
 | Grok Imagine | `grok_imagine_i2i` | Генерация/редактирование через Grok |
 
@@ -134,6 +135,17 @@ Telegram-бот для генерации фото и видео с понятн
 - `aspect_ratio`
 - `quality`
 - `nsfw_checker`
+- создание задач через Kie.ai task API
+
+### Seedream 5 Pro
+
+Реализовано:
+
+- text-to-image через `seedream/5-pro-text-to-image`
+- image-to-image через `seedream/5-pro-image-to-image`
+- автоматическое переключение по наличию референсов
+- `aspect_ratio`
+- `quality`
 - создание задач через Kie.ai task API
 
 ### Kling 2.5 Turbo Pro

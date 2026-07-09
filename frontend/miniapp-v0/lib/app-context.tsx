@@ -91,6 +91,10 @@ function normalizeImageModels(models: BootstrapResponse['image_models']) {
       ...model,
       ratios: model.ratios?.length ? model.ratios : fallback.ratios,
       qualities: model.qualities ?? fallback.qualities,
+      quality_costs:
+        model.quality_costs && Object.keys(model.quality_costs).length
+          ? model.quality_costs
+          : fallback.quality_costs,
       supports_nsfw_checker:
         model.supports_nsfw_checker ?? fallback.supports_nsfw_checker,
       supports_nsfw_mode:

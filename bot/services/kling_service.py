@@ -60,6 +60,7 @@ class KlingService:
         "banana_pro",
         "banana_2",
         "seedream_edit",
+        "seedream_5_pro",
         "flux_pro",
         "gpt_image_2",
         "nano_banana_pro",
