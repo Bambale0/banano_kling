@@ -32,7 +32,7 @@ class TestGeminiServiceInit:
         assert "flash" in GeminiService.MODELS
         assert "pro" in GeminiService.MODELS
         assert "gemini-2.5-flash-image" in GeminiService.MODELS["flash"]
-        assert "gemini-3-pro-image-preview" in GeminiService.MODELS["pro"]
+        assert "nano-banana-pro" in GeminiService.MODELS["pro"]
 
     def test_native_models_config(self):
         """Тест: проверка нативных моделей"""
@@ -533,7 +533,7 @@ class TestSearchGrounding:
 
             result = await service.generate_with_search(
                 prompt="What is the weather today?",
-                model="gemini-3-pro-image-preview",
+                model="google/nano-banana-pro",
                 aspect_ratio="16:9",
             )
 
@@ -562,7 +562,7 @@ class TestHighResolution:
             result = await service.generate_high_res(
                 prompt="High quality landscape",
                 resolution="4K",
-                model="gemini-3-pro-image-preview",
+                model="google/nano-banana-pro",
                 aspect_ratio="16:9",
             )
 
@@ -745,7 +745,7 @@ class TestMultiturnChat:
         service._client = mock_client
 
         result = await service.create_chat(
-            chat_id="test_chat_123", model="gemini-3-pro-image-preview"
+            chat_id="test_chat_123", model="google/nano-banana-pro"
         )
 
         assert result is True

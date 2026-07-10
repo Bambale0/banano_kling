@@ -4,11 +4,11 @@ Services for the Telegram bot
 
 from .batch_service import BatchEditingService, BatchJob, BatchStatus, batch_service
 from .gemini_service import GeminiService, gemini_service
+from .image_analyzer_service import image_analyzer_service
+from .kie_service import KieService, kie_service
+from .kie_webhook import handle_kie_webhook
 from .kling_service import KlingService, kling_service
-from .novita_service import NovitaService, novita_service
-from .runway_service import RunwayService, runway_service
 from .tbank_service import TBankService, tbank_service
-from .wanx_service import WanXService, wanx_service
 
 __all__ = [
     "tbank_service",
@@ -17,14 +17,14 @@ __all__ = [
     "GeminiService",
     "kling_service",
     "KlingService",
-    "novita_service",
-    "NovitaService",
-    "runway_service",
-    "RunwayService",
-    "wanx_service",
-    "WanXService",
+    "kie_service",
+    "KieService",
+    "handle_kie_webhook",
+    "replicate_service",
+    "ReplicateService",
     "batch_service",
     "BatchEditingService",
     "BatchJob",
     "BatchStatus",
+    "image_analyzer_service",
 ]

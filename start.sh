@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Скрипт запуска бота в локальном режиме
+# Скрипт запуска VK бота
 
 cd "$(dirname "$0")"
 
@@ -10,7 +10,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}=== Запуск Telegram Bot ===${NC}"
+echo -e "${GREEN}=== Запуск VK Bot ===${NC}"
 
 # Проверяем наличие .env файла
 if [ ! -f ".env" ]; then
@@ -42,55 +42,57 @@ if [ $? -ne 0 ]; then
 fi
 
 # Создаём директорию для логов
-mkdir -p logs
+mkdir -p logs static/uploads
 
 # Очищаем логи при старте
-> logs/bot_output.log
+> logs/vk_bot.log
 
 # Проверяем, не запущен ли уже бот
-if [ -f "bot.pid" ]; then
-    OLD_PID=$(cat bot.pid)
+if [ -f "vk.pid" ]; then
+    OLD_PID=$(cat vk.pid)
     if ps -p $OLD_PID > /dev/null 2>&1; then
-        echo -e "${YELLOW}Бот уже запущен (PID: $OLD_PID)${NC}"
+        echo -e "${YELLOW}VK бот уже запущен (PID: $OLD_PID)${NC}"
         echo "Используйте ./stop.sh для остановки"
         exit 1
     else
-        rm -f bot.pid
+        rm -f vk.pid
     fi
 fi
 
-# Загружаем переменные окружения из .env
-export $(grep -v '^#' .env | xargs)
+# Загружаем переменные окружения из .env безопасно
+set -a
+source .env
+set +a
 
-# Проверяем BOT_TOKEN
-if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "your_telegram_bot_token_here" ]; then
-    echo -e "${RED}Ошибка: BOT_TOKEN не установлен в .env!${NC}"
+# Проверяем VK_GROUP_TOKEN
+if [ -z "$VK_GROUP_TOKEN" ] || [ "$VK_GROUP_TOKEN" = "your_vk_group_token_here" ]; then
+    echo -e "${RED}Ошибка: VK_GROUP_TOKEN не установлен в .env!${NC}"
     exit 1
 fi
 
 # Запускаем бота в фоне
-echo -e "${GREEN}Запуск бота...${NC}"
-nohup python -m bot.main > logs/bot_output.log 2>&1 &
+echo -e "${GREEN}Запуск VK бота...${NC}"
+nohup python bot/main_vk.py > logs/vk_bot.log 2>&1 &
 BOT_PID=$!
 
 # Сохраняем PID
-echo $BOT_PID > bot.pid
+echo $BOT_PID > vk.pid
 
 # Ждём немного и проверяем, что процесс запустился
-sleep 2
+sleep 3
 if ps -p $BOT_PID > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ Бот успешно запущен!${NC}"
+    echo -e "${GREEN}✓ VK бот успешно запущен!${NC}"
     echo -e "  PID: ${YELLOW}$BOT_PID${NC}"
-    echo -e "  Логи: ${YELLOW}logs/bot.log${NC}, ${YELLOW}logs/bot_output.log${NC}"
+    echo -e "  Логи: ${YELLOW}logs/vk_bot.log${NC}"
     echo ""
     echo "Для просмотра логов в реальном времени:"
-    echo "  tail -f logs/bot.log"
+    echo "  tail -f logs/vk_bot.log"
     echo ""
     echo "Для остановки:"
     echo "  ./stop.sh"
 else
-    echo -e "${RED}✗ Ошибка запуска бота!${NC}"
-    echo "Проверьте логи: logs/bot_output.log"
-    rm -f bot.pid
+    echo -e "${RED}✗ Ошибка запуска VK бота!${NC}"
+    echo "Проверьте логи: logs/vk_bot.log"
+    rm -f vk.pid
     exit 1
 fi

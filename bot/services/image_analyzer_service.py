@@ -58,13 +58,12 @@ PIXEL-BY-PIXEL DISSECTION - MAXIMUM DETAIL:
 
 class ImageAnalyzerService:
     def __init__(self):
-        self.api_key = config.OPENROUTER_API_KEY
-        self.url = "https://openrouter.ai/api/v1/chat/completions"
-        if not self.api_key:
-            logger.warning("OPENROUTER_API_KEY not set")
+        self.api_key = config.NANOBANANA_API_KEY
+        self.url = f"{config.NANOBANANA_BASE_URL}/chat/completions"
+        # Убираем warning при init, проверяем в analyze_image
 
     def analyze_image(
-        self, image_bytes: bytes, model: str = "google/gemini-3-pro-image-preview"
+        self, image_bytes: bytes, model: str = "google/nano-banana-pro"
     ) -> str:
         """Анализирует изображение и возвращает готовый промпт"""
         try:
@@ -112,10 +111,8 @@ class ImageAnalyzerService:
             }
 
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "x-api-key": self.api_key,
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/BananaBoombot_bot",  # Optional
-                "X-Title": "BananoBoom",  # Optional
             }
 
             response = requests.post(

@@ -8,8 +8,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Config:
-    # Telegram
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    # VKontakte
+    VK_GROUP_TOKEN: str = os.getenv("VK_GROUP_TOKEN", "")
+    VK_CONFIRMATION_TOKEN: str = os.getenv("VK_CONFIRMATION_TOKEN", "")
+    VK_SECRET_KEY: str = os.getenv("VK_SECRET_KEY", "")
 
     # T-Bank (эквайринг)
     TBANK_TERMINAL_KEY: str = os.getenv("TBANK_TERMINAL_KEY", "")
@@ -25,14 +27,9 @@ class Config:
     PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "tbank").lower()
 
     # AI Services API Keys
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
-    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
-    # Optional secret used to verify incoming Replicate webhooks (HMAC SHA256).
-    # If set, the webhook handler will validate signatures to prevent spoofing.
-    REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -52,7 +49,6 @@ class Config:
     )
 
     # API Endpoints
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     NANOBANANA_BASE_URL: str = "https://api.nanobanana.com/v1"
     FREEPIK_BASE_URL: str = "https://api.freepik.com/v1"
     KLING_BASE_URL: str = "https://api.freepik.com/v1"  # Legacy alias
@@ -87,7 +83,7 @@ class Config:
 
     @property
     def admin_ids(self) -> List[int]:
-        """Парсит список ID админов из строки"""
+        """Парсит список ID админов из строки (VK user IDs)"""
         if not self.ADMIN_IDS_STR:
             return []
         try:

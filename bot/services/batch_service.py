@@ -167,7 +167,7 @@ class BatchEditingService:
         job.progress_callback = progress_callback
 
         # Используем Pro модель с высоким качеством
-        model = "gemini-3-pro-image-preview"
+        model = "google/nano-banana-pro"
 
         # Пакетное редактирование — параллельная обработка
         await self._execute_parallel_editing(job, model)
@@ -195,6 +195,7 @@ class BatchEditingService:
                         image_input=item.image if not item.image_url else None,
                         image_input_url=item.image_url,
                         resolution="4K",
+                        user_id=job.user_id,
                     )
 
                     if result:
@@ -348,7 +349,7 @@ class BatchEditingService:
         # Отправляем изображение на улучшение
         result = await gemini_service.generate_image(
             prompt=upscale_prompt,
-            model="gemini-3-pro-image-preview",
+            model="google/nano-banana-pro",
             image_input=item.result,
         )
 

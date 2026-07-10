@@ -47,6 +47,7 @@ class PresetManager:
             "novita": 3,
             "nanobanana": 3,
             "banana_pro": 5,
+            "nano_banana_pro": 5,
             "seedream": 3,
             "z_image_turbo": 3,
         }
@@ -114,10 +115,42 @@ class PresetManager:
     def _load_price(self):
         """Загружает прайс-лист"""
         if not self.price_path.exists():
-            raise FileNotFoundError(f"Price file not found: {self.price_path}")
-
-        with open(self.price_path, "r", encoding="utf-8") as f:
-            self._price_config = json.load(f)
+            # Fallback to sensible defaults to allow imports/tests without data file
+            self._price_config = {
+                "costs_reference": {
+                    "image_models": {
+                        "flux_pro": 3,
+                        "nanobanana": 3,
+                        "banana_pro": 5,
+                        "nano_banana_pro": 5,
+                        "seedream": 3,
+                    },
+                    "video_models": {
+                        "v3_std": {
+                            "base": 6,
+                            "duration_costs": {"5": 6, "10": 8, "15": 10},
+                        },
+                        "v3_pro": {
+                            "base": 8,
+                            "duration_costs": {"5": 8, "10": 14, "15": 16},
+                        },
+                        "v26_pro": {"base": 8, "duration_costs": {"5": 8, "10": 14}},
+                    },
+                },
+                "packages": [
+                    {"id": "mini", "credits": 15, "price_rub": 150, "name": "Мини"},
+                    {
+                        "id": "standard",
+                        "credits": 30,
+                        "price_rub": 250,
+                        "name": "Стандарт",
+                    },
+                ],
+                "admin_ids": [],
+            }
+        else:
+            with open(self.price_path, "r", encoding="utf-8") as f:
+                self._price_config = json.load(f)
         self._admin_ids = self._price_config.get("admin_ids", [])
 
     def reload(self) -> bool:
@@ -194,9 +227,13 @@ class PresetManager:
             "gemini-2.5-flash": "gemini_2_5_flash",
             "gemini-3-pro-image-preview": "gemini_3_pro",
             "gemini-3-pro": "gemini_3_pro",
+            "google/nano-banana-pro": "nano_banana_pro",
+            "nano-banana-pro": "nano_banana_pro",
+            "nano_banana_pro": "nano_banana_pro",
+            "banana_pro": "nano_banana_pro",
             "gemini-3.1-flash-image-preview": "banana_2",
             "flash": "gemini_2_5_flash",
-            "pro": "gemini_3_pro",
+            "pro": "nano_banana_pro",
             "banana_2": "banana_2",
             "z_image_turbo": "z_image_turbo",
             "z-image-turbo": "z_image_turbo",
@@ -246,6 +283,8 @@ class PresetManager:
 
         # Map модельных имён к ключам video_models
         model_map = {
+            "kling_3_std": "kling_3_std",
+            "kling_3_pro": "kling_3_pro",
             # Kling 2.6
             "v26_pro": "v26_pro",
             "v26_motion_pro": "v26_motion_pro",

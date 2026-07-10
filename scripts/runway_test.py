@@ -10,6 +10,7 @@ You can pass --token or set REPLICATE_API_TOKEN in the environment. If WEBHOOK_H
 is set in environment/config and you prefer webhooks, you can omit --wait and
 configure replicate to call your webhook endpoint; otherwise use --wait to poll.
 """
+
 import argparse
 import asyncio
 import json

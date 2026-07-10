@@ -9,14 +9,14 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
-MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795159"))
+DATABASE_PATH = os.getenv("DATABASE_PATH", "vkbanana.db")
+MASTER_PARTNER_VK_ID = int(os.getenv("MASTER_PARTNER_VK_ID", "339795159"))
 
 
 @dataclass
 class User:
     id: int
-    telegram_id: int
+    vk_user_id: int
     credits: int
     created_at: datetime
     updated_at: datetime
@@ -35,7 +35,7 @@ class User:
 class Transaction:
     id: int
     order_id: str
-    user_id: int
+    vk_user_id: int
     payment_id: str
     provider: str
     credits: int
@@ -62,17 +62,15 @@ async def init_db():
     """Инициализация базы данных"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # Таблица пользователей
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
+                vk_user_id INTEGER UNIQUE NOT NULL,
                 credits INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """
-        )
+        """)
 
         # Referral system migrations for existing databases
         try:
@@ -123,8 +121,7 @@ async def init_db():
             pass
 
         # Таблица транзакций (платежи)
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id TEXT UNIQUE NOT NULL,
@@ -137,12 +134,10 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица задач генерации
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS generation_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -157,8 +152,7 @@ async def init_db():
                 completed_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Migration: add prompt column if not exists
         try:
@@ -179,8 +173,7 @@ async def init_db():
             pass
 
         # Таблица истории генераций
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS generation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -190,12 +183,10 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица настроек пользователя
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER UNIQUE NOT NULL,
@@ -207,8 +198,7 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # Referral system tables and migrations
         # Add columns to users if not exist
@@ -243,8 +233,7 @@ async def init_db():
             pass
 
         # Referrals table
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 referrer_id INTEGER NOT NULL,
@@ -255,8 +244,7 @@ async def init_db():
                 FOREIGN KEY (referred_id) REFERENCES users(id),
                 UNIQUE(referrer_id, referred_id)
             )
-        """
-        )
+        """)
 
         # Backfill missing referral codes for existing users later in get_or_create_user
 
@@ -268,8 +256,7 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass  # Колонка уже существует
 
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS partner_withdrawals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -281,12 +268,10 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         # Таблица batch_jobs
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS batch_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT UNIQUE NOT NULL,
@@ -298,21 +283,20 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
-        """
-        )
+        """)
 
         await db.commit()
         logger.info("Database initialized successfully")
 
 
-async def get_or_create_user(telegram_id: int) -> User:
+async def get_or_create_user(vk_user_id: int) -> User:
     """Получает или создаёт пользователя (thread-safe)"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         # Ищем пользователя
         cursor = await db.execute(
-            "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
+            "SELECT * FROM users WHERE vk_user_id = ?", (vk_user_id,)
         )
         row = await cursor.fetchone()
 
@@ -332,7 +316,7 @@ async def get_or_create_user(telegram_id: int) -> User:
             )
             return User(
                 id=row["id"],
-                telegram_id=row["telegram_id"],
+                vk_user_id=row["vk_user_id"],
                 credits=row["credits"],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -341,18 +325,26 @@ async def get_or_create_user(telegram_id: int) -> User:
                 referral_earned=referral_earned or 0,
                 has_paid=has_paid,
                 partner_agreed_at=partner_agreed_at,
-                partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
-                if "partner_total_revenue_rub" in row.keys()
-                else 0.0,
-                partner_balance_rub=float(row["partner_balance_rub"] or 0)
-                if "partner_balance_rub" in row.keys()
-                else 0.0,
-                partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
-                if "partner_withdrawn_rub" in row.keys()
-                else 0.0,
-                partner_tier=row["partner_tier"]
-                if "partner_tier" in row.keys() and row["partner_tier"]
-                else "basic",
+                partner_total_revenue_rub=(
+                    float(row["partner_total_revenue_rub"] or 0)
+                    if "partner_total_revenue_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_balance_rub=(
+                    float(row["partner_balance_rub"] or 0)
+                    if "partner_balance_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_withdrawn_rub=(
+                    float(row["partner_withdrawn_rub"] or 0)
+                    if "partner_withdrawn_rub" in row.keys()
+                    else 0.0
+                ),
+                partner_tier=(
+                    row["partner_tier"]
+                    if "partner_tier" in row.keys() and row["partner_tier"]
+                    else "basic"
+                ),
             )
 
         # Создаём нового пользователя с бонусными кредитами
@@ -360,58 +352,64 @@ async def get_or_create_user(telegram_id: int) -> User:
         try:
             referral_code = await generate_referral_code(db)
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code) VALUES (?, 10, ?)",
-                (telegram_id, referral_code),
+                "INSERT INTO users (vk_user_id, credits, referral_code) VALUES (?, 10, ?)",
+                (vk_user_id, referral_code),
             )
             await db.commit()
-            logger.info(f"Created new user: {telegram_id}")
+            logger.info(f"Created new user: {vk_user_id}")
         except aiosqlite.IntegrityError:
             # Пользователь уже создан другим параллельным запросом
-            logger.debug(f"User {telegram_id} already exists (race condition handled)")
+            logger.debug(f"User {vk_user_id} already exists (race condition handled)")
 
         # Получаем пользователя (созданного нами или другим запросом)
         cursor = await db.execute(
-            "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
+            "SELECT * FROM users WHERE vk_user_id = ?", (vk_user_id,)
         )
         row = await cursor.fetchone()
 
-        return User(
-            id=row["id"],
-            telegram_id=row["telegram_id"],
-            credits=row["credits"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            referral_code=row["referral_code"]
-            if "referral_code" in row.keys()
-            else None,
-            referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
-            referral_earned=row["referral_earned"]
-            if "referral_earned" in row.keys()
-            else 0,
-            has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
-            partner_agreed_at=(
-                datetime.fromisoformat(row["partner_agreed_at"])
-                if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
-                else None
-            ),
-            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
+    return User(
+        id=row["id"],
+        vk_user_id=row["vk_user_id"],
+        credits=row["credits"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        referral_code=row["referral_code"] if "referral_code" in row.keys() else None,
+        referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
+        referral_earned=(
+            row["referral_earned"] if "referral_earned" in row.keys() else 0
+        ),
+        has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
+        partner_agreed_at=(
+            datetime.fromisoformat(row["partner_agreed_at"])
+            if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
+            else None
+        ),
+        partner_total_revenue_rub=(
+            float(row["partner_total_revenue_rub"] or 0)
             if "partner_total_revenue_rub" in row.keys()
-            else 0.0,
-            partner_balance_rub=float(row["partner_balance_rub"] or 0)
+            else 0.0
+        ),
+        partner_balance_rub=(
+            float(row["partner_balance_rub"] or 0)
             if "partner_balance_rub" in row.keys()
-            else 0.0,
-            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
+            else 0.0
+        ),
+        partner_withdrawn_rub=(
+            float(row["partner_withdrawn_rub"] or 0)
             if "partner_withdrawn_rub" in row.keys()
-            else 0.0,
-            partner_tier=row["partner_tier"]
+            else 0.0
+        ),
+        partner_tier=(
+            row["partner_tier"]
             if "partner_tier" in row.keys() and row["partner_tier"]
-            else "basic",
-        )
+            else "basic"
+        ),
+    )
 
 
 async def get_master_partner_user() -> User:
     """Возвращает центрального партнёра, которому начисляются все реферальные бонусы."""
-    master = await get_or_create_user(MASTER_PARTNER_TELEGRAM_ID)
+    master = await get_or_create_user(MASTER_PARTNER_VK_ID)
     return master
 
 
@@ -455,61 +453,67 @@ async def get_user_by_referral_code(referral_code: str) -> Optional[User]:
         row = await cursor.fetchone()
         if not row:
             return None
-        return User(
-            id=row["id"],
-            telegram_id=row["telegram_id"],
-            credits=row["credits"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            referral_code=row["referral_code"]
-            if "referral_code" in row.keys()
-            else None,
-            referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
-            referral_earned=row["referral_earned"]
-            if "referral_earned" in row.keys()
-            else 0,
-            has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
-            partner_agreed_at=(
-                datetime.fromisoformat(row["partner_agreed_at"])
-                if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
-                else None
-            ),
-            partner_total_revenue_rub=float(row["partner_total_revenue_rub"] or 0)
+    return User(
+        id=row["id"],
+        vk_user_id=row["vk_user_id"],
+        credits=row["credits"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        referral_code=row["referral_code"] if "referral_code" in row.keys() else None,
+        referred_by=row["referred_by"] if "referred_by" in row.keys() else None,
+        referral_earned=(
+            row["referral_earned"] if "referral_earned" in row.keys() else 0
+        ),
+        has_paid=bool(row["has_paid"]) if "has_paid" in row.keys() else False,
+        partner_agreed_at=(
+            datetime.fromisoformat(row["partner_agreed_at"])
+            if row["partner_agreed_at"] and "partner_agreed_at" in row.keys()
+            else None
+        ),
+        partner_total_revenue_rub=(
+            float(row["partner_total_revenue_rub"] or 0)
             if "partner_total_revenue_rub" in row.keys()
-            else 0.0,
-            partner_balance_rub=float(row["partner_balance_rub"] or 0)
+            else 0.0
+        ),
+        partner_balance_rub=(
+            float(row["partner_balance_rub"] or 0)
             if "partner_balance_rub" in row.keys()
-            else 0.0,
-            partner_withdrawn_rub=float(row["partner_withdrawn_rub"] or 0)
+            else 0.0
+        ),
+        partner_withdrawn_rub=(
+            float(row["partner_withdrawn_rub"] or 0)
             if "partner_withdrawn_rub" in row.keys()
-            else 0.0,
-            partner_tier=row["partner_tier"]
+            else 0.0
+        ),
+        partner_tier=(
+            row["partner_tier"]
             if "partner_tier" in row.keys() and row["partner_tier"]
-            else "basic",
-        )
+            else "basic"
+        ),
+    )
 
 
-async def update_user_referral_code(telegram_id: int, referral_code: str) -> bool:
+async def update_user_referral_code(vk_user_id: int, referral_code: str) -> bool:
     """Сохраняет реферальный код пользователя."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET referral_code = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (referral_code, telegram_id),
+            "UPDATE users SET referral_code = ?, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (referral_code, vk_user_id),
         )
         await db.commit()
         return True
 
 
-async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool:
+async def set_user_referrer(vk_user_id: int, referrer_vk_id: int) -> bool:
     """Привязывает пользователя к рефереру один раз."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         user_cursor = await db.execute(
-            "SELECT id, referred_by FROM users WHERE telegram_id = ?", (telegram_id,)
+            "SELECT id, referred_by FROM users WHERE vk_user_id = ?", (vk_user_id,)
         )
         user_row = await user_cursor.fetchone()
         ref_cursor = await db.execute(
-            "SELECT id FROM users WHERE telegram_id = ?", (referrer_telegram_id,)
+            "SELECT id FROM users WHERE vk_user_id = ?", (referrer_vk_id,)
         )
         ref_row = await ref_cursor.fetchone()
 
@@ -521,8 +525,8 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
             return False
 
         await db.execute(
-            "UPDATE users SET referred_by = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (ref_row["id"], telegram_id),
+            "UPDATE users SET referred_by = ?, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (ref_row["id"], vk_user_id),
         )
         await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
@@ -533,7 +537,7 @@ async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool
 
 
 async def process_referral(
-    referred_telegram_id: int,
+    referred_vk_id: int,
     referral_code: str,
     signup_bonus: int = 5,
 ) -> bool:
@@ -556,8 +560,8 @@ async def process_referral(
             return False
 
         referred_cursor = await db.execute(
-            "SELECT id, referred_by FROM users WHERE telegram_id = ?",
-            (referred_telegram_id,),
+            "SELECT id, referred_by FROM users WHERE vk_user_id = ?",
+            (referred_vk_id,),
         )
         referred = await referred_cursor.fetchone()
         if not referred or referred["referred_by"]:
@@ -568,8 +572,8 @@ async def process_referral(
         master_partner = await get_master_partner_user()
 
         await db.execute(
-            "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (master_partner.id, signup_bonus, referred_telegram_id),
+            "UPDATE users SET referred_by = ?, credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (master_partner.id, signup_bonus, referred_vk_id),
         )
         await db.execute(
             "INSERT OR IGNORE INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, ?)",
@@ -583,26 +587,26 @@ async def process_referral(
 
         logger.info(
             "Referral processed centrally: referred=%s, master_partner=%s, bonus=%s",
-            referred_telegram_id,
-            master_partner.telegram_id,
+            referred_vk_id,
+            master_partner.vk_user_id,
             signup_bonus,
         )
         return True
 
 
-async def mark_user_paid(telegram_id: int) -> bool:
+async def mark_user_paid(vk_user_id: int) -> bool:
     """Помечает пользователя как оплатившего хотя бы один раз."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (telegram_id,),
+            "UPDATE users SET has_paid = 1, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (vk_user_id,),
         )
         await db.commit()
         return True
 
 
 async def credit_first_payment_referral_bonus(
-    telegram_id: int,
+    vk_user_id: int,
     transaction_credits: int,
     transaction_amount_rub: Optional[float] = None,
     bonus_percent: int = 10,
@@ -615,8 +619,8 @@ async def credit_first_payment_referral_bonus(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT id, referred_by, has_paid FROM users WHERE telegram_id = ?",
-            (telegram_id,),
+            "SELECT id, referred_by, has_paid FROM users WHERE vk_user_id = ?",
+            (vk_user_id,),
         )
         user = await cursor.fetchone()
         if not user or not user["referred_by"] or user["has_paid"]:
@@ -624,7 +628,7 @@ async def credit_first_payment_referral_bonus(
 
         master_partner = await get_master_partner_user()
         if not master_partner.partner_agreed_at:
-            await accept_partner_agreement(master_partner.telegram_id)
+            await accept_partner_agreement(master_partner.vk_user_id)
             master_partner = await get_master_partner_user()
 
         ref_cursor = await db.execute(
@@ -685,27 +689,27 @@ def get_partner_tier_by_total(total_revenue_rub: float) -> str:
     return "basic"
 
 
-async def accept_partner_agreement(telegram_id: int) -> bool:
+async def accept_partner_agreement(vk_user_id: int) -> bool:
     """Подтверждает участие в партнёрской программе."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         # Read current referral-related fields to ensure we don't accidentally overwrite them
         cursor = await db.execute(
-            "SELECT referral_code, referred_by, referral_earned, partner_agreed_at, partner_tier FROM users WHERE telegram_id = ?",
-            (telegram_id,),
+            "SELECT referral_code, referred_by, referral_earned, partner_agreed_at, partner_tier FROM users WHERE vk_user_id = ?",
+            (vk_user_id,),
         )
         before = await cursor.fetchone()
 
         await db.execute(
-            "UPDATE users SET partner_agreed_at = CURRENT_TIMESTAMP, partner_tier = COALESCE(partner_tier, 'basic'), updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (telegram_id,),
+            "UPDATE users SET partner_agreed_at = CURRENT_TIMESTAMP, partner_tier = COALESCE(partner_tier, 'basic'), updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (vk_user_id,),
         )
         await db.commit()
 
         # Read back and log unexpected changes
         cursor = await db.execute(
-            "SELECT referral_code, referred_by, referral_earned, partner_agreed_at, partner_tier FROM users WHERE telegram_id = ?",
-            (telegram_id,),
+            "SELECT referral_code, referred_by, referral_earned, partner_agreed_at, partner_tier FROM users WHERE vk_user_id = ?",
+            (vk_user_id,),
         )
         after = await cursor.fetchone()
 
@@ -717,10 +721,11 @@ async def accept_partner_agreement(telegram_id: int) -> bool:
                         logger.warning(
                             "accept_partner_agreement changed %s for %s: %s -> %s",
                             field,
-                            telegram_id,
+                            vk_user_id,
                             before[field],
                             after[field],
                         )
+
         except Exception:
             logger.exception(
                 "Error while validating referral fields after accept_partner_agreement"
@@ -729,7 +734,7 @@ async def accept_partner_agreement(telegram_id: int) -> bool:
         return True
 
 
-async def get_partner_overview(telegram_id: int) -> dict:
+async def get_partner_overview(vk_user_id: int) -> dict:
     """Возвращает данные партнёрского кабинета."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -737,11 +742,11 @@ async def get_partner_overview(telegram_id: int) -> dict:
         # Если пользователь ещё не активировал партнёрку, возвращаем данные master-партнёра
         master_partner = await get_master_partner_user()
         if not master_partner.partner_agreed_at:
-            await accept_partner_agreement(master_partner.telegram_id)
+            await accept_partner_agreement(master_partner.vk_user_id)
             master_partner = await get_master_partner_user()
 
         # Попытка получить целевого пользователя (тот, кто открыл экран партнёрки)
-        requested_user = await get_or_create_user(telegram_id)
+        requested_user = await get_or_create_user(vk_user_id)
 
         # Если пользователь сам активировал партнёрку, показываем его статистику,
         # иначе показываем статистику master-партнёра (текущее поведение по умолчанию)
@@ -783,9 +788,11 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
         return {
             "is_partner": bool(target_user.partner_agreed_at),
-            "partner_agreed_at": target_user.partner_agreed_at.isoformat()
-            if target_user.partner_agreed_at
-            else None,
+            "partner_agreed_at": (
+                target_user.partner_agreed_at.isoformat()
+                if target_user.partner_agreed_at
+                else None
+            ),
             "referrals_count": referrals_row["count"] or 0,
             "total_revenue_rub": round(target_user.partner_total_revenue_rub or 0, 2),
             "balance_rub": round(target_user.partner_balance_rub or 0, 2),
@@ -801,15 +808,16 @@ async def get_partner_overview(telegram_id: int) -> dict:
 
 
 async def create_partner_withdrawal(
-    telegram_id: int, amount_rub: float, method: str, requisites: str
+    vk_user_id: int, amount_rub: float, method: str, requisites: str
 ) -> bool:
     """Создаёт заявку на вывод партнёрского заработка."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         user = await get_master_partner_user()
         if not user.partner_agreed_at:
-            await accept_partner_agreement(user.telegram_id)
+            await accept_partner_agreement(user.vk_user_id)
             user = await get_master_partner_user()
+
         if not user.partner_agreed_at:
             return False
         if amount_rub > (user.partner_balance_rub or 0):
@@ -827,11 +835,11 @@ async def create_partner_withdrawal(
         return True
 
 
-async def get_referral_stats(telegram_id: int) -> dict:
+async def get_referral_stats(vk_user_id: int) -> dict:
     """Возвращает статистику по рефералам пользователя."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        user = await get_or_create_user(telegram_id)
+        user = await get_or_create_user(vk_user_id)
 
         cursor = await db.execute(
             "SELECT COUNT(*) as count, COALESCE(SUM(bonus_credits), 0) as total_bonus FROM referrals WHERE referrer_id = ?",
@@ -846,33 +854,33 @@ async def get_referral_stats(telegram_id: int) -> dict:
         }
 
 
-async def get_user_credits(telegram_id: int) -> int:
+async def get_user_credits(vk_user_id: int) -> int:
     """Получает баланс кредитов пользователя"""
-    user = await get_or_create_user(telegram_id)
+    user = await get_or_create_user(vk_user_id)
     return user.credits
 
 
-async def add_credits(telegram_id: int, amount: int) -> bool:
+async def add_credits(vk_user_id: int, amount: int) -> bool:
     """Добавляет кредиты пользователю"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
-            "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (amount, telegram_id),
+            "UPDATE users SET credits = credits + ?, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (amount, vk_user_id),
         )
         await db.commit()
-        logger.info(f"Added {amount} credits to user {telegram_id}")
+        logger.info(f"Added {amount} credits to user {vk_user_id}")
         return True
 
 
 async def deduct_credits(
-    telegram_id: int, amount: int, check_balance: bool = True
+    vk_user_id: int, amount: int, check_balance: bool = True
 ) -> bool:
     """Списывает кредиты с проверкой баланса"""
     from bot.config import config
 
     # Админы не платят
-    if config.is_admin(telegram_id):
-        logger.info(f"Admin {telegram_id} - free access (skipped {amount} credits)")
+    if config.is_admin(vk_user_id):
+        logger.info(f"Admin {vk_user_id} - free access (skipped {amount} credits)")
         return True
 
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -880,7 +888,7 @@ async def deduct_credits(
 
         # Проверяем баланс
         cursor = await db.execute(
-            "SELECT credits FROM users WHERE telegram_id = ?", (telegram_id,)
+            "SELECT credits FROM users WHERE vk_user_id = ?", (vk_user_id,)
         )
         row = await cursor.fetchone()
 
@@ -889,29 +897,29 @@ async def deduct_credits(
 
         # Списываем
         await db.execute(
-            "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-            (amount, telegram_id),
+            "UPDATE users SET credits = credits - ?, updated_at = CURRENT_TIMESTAMP WHERE vk_user_id = ?",
+            (amount, vk_user_id),
         )
         await db.commit()
-        logger.info(f"Deducted {amount} credits from user {telegram_id}")
+        logger.info(f"Deducted {amount} credits from user {vk_user_id}")
         return True
 
 
-async def check_can_afford(telegram_id: int, amount: int) -> bool:
+async def check_can_afford(vk_user_id: int, amount: int) -> bool:
     """Проверяет, может ли пользователь позволить себе операцию"""
     from bot.config import config
 
     # Админы всегда могут
-    if config.is_admin(telegram_id):
+    if config.is_admin(vk_user_id):
         return True
 
-    user = await get_or_create_user(telegram_id)
+    user = await get_or_create_user(vk_user_id)
     return user.credits >= amount
 
 
 async def create_transaction(
     order_id: str,
-    user_id: int,
+    vk_user_id: int,
     payment_id: str,
     provider: str,
     credits: int,
@@ -919,13 +927,14 @@ async def create_transaction(
     status: str = "pending",
 ) -> bool:
     """Создаёт транзакцию платежа"""
+    user = await get_or_create_user(vk_user_id)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO transactions 
                    (order_id, user_id, payment_id, provider, credits, amount_rub, status) 
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (order_id, user_id, payment_id, provider, credits, amount_rub, status),
+                (order_id, user.id, payment_id, provider, credits, amount_rub, status),
             )
             await db.commit()
             return True
@@ -950,9 +959,11 @@ async def get_transaction_by_order(order_id: str) -> Optional[Transaction]:
         return Transaction(
             id=row["id"],
             order_id=row["order_id"],
-            provider=row["provider"]
-            if "provider" in row.keys() and row["provider"]
-            else "tbank",
+            provider=(
+                row["provider"]
+                if "provider" in row.keys() and row["provider"]
+                else "tbank"
+            ),
             user_id=row["user_id"],
             payment_id=row["payment_id"],
             credits=row["credits"],
@@ -972,19 +983,19 @@ async def update_transaction_status(order_id: str, status: str) -> bool:
         return True
 
 
-async def get_telegram_id_by_user_id(user_id: int) -> Optional[int]:
-    """Получает telegram_id по внутреннему user_id"""
+async def get_vk_user_id_by_user_id(user_id: int) -> Optional[int]:
+    """Получает vk_user_id по внутреннему user_id"""
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT telegram_id FROM users WHERE id = ?", (user_id,)
+            "SELECT vk_user_id FROM users WHERE id = ?", (user_id,)
         )
         row = await cursor.fetchone()
-        return row["telegram_id"] if row else None
+        return row["vk_user_id"] if row else None
 
 
 async def add_generation_task(
-    user_id: int,
+    vk_user_id: int,
     task_id: str,
     type: str,
     preset_id: str,
@@ -992,13 +1003,14 @@ async def add_generation_task(
     cost: Optional[int] = None,
 ) -> bool:
     """Создаёт задачу генерации"""
+    user = await get_or_create_user(vk_user_id)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             await db.execute(
                 """INSERT INTO generation_tasks 
                    (user_id, task_id, type, preset_id, prompt, cost, status) 
                    VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
-                (user_id, task_id, type, preset_id, prompt, cost),
+                (user.id, task_id, type, preset_id, prompt, cost),
             )
             await db.commit()
             return True
@@ -1062,13 +1074,12 @@ async def add_generation_history(
         return True
 
 
-async def get_user_stats(telegram_id: int) -> dict:
+async def get_user_stats(vk_user_id: int) -> dict:
     """Получает статистику пользователя"""
+    user = await get_or_create_user(vk_user_id)
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-
-        # Получаем пользователя
-        user = await get_or_create_user(telegram_id)
 
         # Считаем количество генераций
         cursor = await db.execute(
@@ -1084,7 +1095,7 @@ async def get_user_stats(telegram_id: int) -> dict:
         )
         cost_row = await cursor.fetchone()
 
-        referral_stats = await get_referral_stats(telegram_id)
+        referral_stats = await get_referral_stats(vk_user_id)
 
         return {
             "credits": user.credits,
@@ -1135,7 +1146,7 @@ async def get_admin_stats() -> dict:
 
 async def save_batch_job(
     job_id: str,
-    user_id: int,
+    vk_user_id: int,
     mode: str,
     total_cost: int,
     results_count: int,
@@ -1145,8 +1156,7 @@ async def save_batch_job(
     async with aiosqlite.connect(DATABASE_PATH) as db:
         try:
             # Создаём таблицу если не существует
-            await db.execute(
-                """
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS batch_jobs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT UNIQUE NOT NULL,
@@ -1158,8 +1168,7 @@ async def save_batch_job(
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 )
-            """
-            )
+            """)
 
             await db.execute(
                 """INSERT INTO batch_jobs 
@@ -1175,12 +1184,12 @@ async def save_batch_job(
             return False
 
 
-async def get_batch_jobs_by_user(telegram_id: int, limit: int = 10) -> list:
+async def get_batch_jobs_by_user(vk_user_id: int, limit: int = 10) -> list:
     """Получает историю пакетных генераций пользователя"""
+    user = await get_or_create_user(vk_user_id)
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-
-        user = await get_or_create_user(telegram_id)
 
         cursor = await db.execute(
             """SELECT * FROM batch_jobs 
@@ -1204,8 +1213,9 @@ async def get_batch_jobs_by_user(telegram_id: int, limit: int = 10) -> list:
         ]
 
 
-async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dict]:
+async def get_user_last_generation(vk_user_id: int, limit: int = 1) -> Optional[dict]:
     """Получает последнюю(ие) генерацию(и) пользователя"""
+    user = await get_or_create_user(vk_user_id)
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
@@ -1214,7 +1224,7 @@ async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dic
                WHERE user_id = ? 
                ORDER BY created_at DESC 
                LIMIT ?""",
-            (user_id, limit),
+            (user.id, limit),
         )
         rows = await cursor.fetchall()
 
@@ -1249,8 +1259,7 @@ async def get_user_last_generation(user_id: int, limit: int = 1) -> Optional[dic
 
 async def _ensure_user_settings_table(db):
     """Создает таблицу user_settings если она не существует (миграция)"""
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER UNIQUE NOT NULL,
@@ -1262,8 +1271,7 @@ async def _ensure_user_settings_table(db):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         )
-    """
-    )
+    """)
     # Миграция: добавляем колонку image_service если её нет
     try:
         await db.execute(
@@ -1274,16 +1282,15 @@ async def _ensure_user_settings_table(db):
     await db.commit()
 
 
-async def get_user_settings(telegram_id: int) -> dict:
+async def get_user_settings(vk_user_id: int) -> dict:
     """Получает настройки пользователя из БД"""
+    user = await get_or_create_user(vk_user_id)
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         # Создаем таблицу если не существует
         await _ensure_user_settings_table(db)
-
-        # Получаем внутренний user_id
-        user = await get_or_create_user(telegram_id)
 
         cursor = await db.execute(
             """SELECT preferred_model, preferred_video_model, preferred_i2v_model, image_service 
@@ -1314,19 +1321,18 @@ async def get_user_settings(telegram_id: int) -> dict:
 
 
 async def save_user_settings(
-    telegram_id: int,
+    vk_user_id: int,
     preferred_model: str = None,
     preferred_video_model: str = None,
     preferred_i2v_model: str = None,
     image_service: str = None,
 ) -> bool:
     """Сохраняет настройки пользователя в БД"""
+    user = await get_or_create_user(vk_user_id)
+
     async with aiosqlite.connect(DATABASE_PATH) as db:
         # Создаем таблицу если не существует
         await _ensure_user_settings_table(db)
-
-        # Получаем внутренний user_id
-        user = await get_or_create_user(telegram_id)
 
         # Получаем текущие настройки
         cursor = await db.execute(
@@ -1361,7 +1367,7 @@ async def save_user_settings(
                     params,
                 )
                 await db.commit()
-                logger.info(f"Updated settings for user {telegram_id}")
+                logger.info(f"Updated settings for user {vk_user_id}")
         else:
             # Создаём новую запись с переданными значениями
             await db.execute(
@@ -1377,6 +1383,6 @@ async def save_user_settings(
                 ),
             )
             await db.commit()
-            logger.info(f"Created settings for user {telegram_id}")
+            logger.info(f"Created settings for user {vk_user_id}")
 
         return True

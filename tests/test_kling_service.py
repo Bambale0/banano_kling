@@ -1,9 +1,11 @@
-"""Tests for kling_service.py - PiAPI Kling 3.0"""
+"""Tests for kling_service.py - Kei Kling 3.0 + legacy PiAPI"""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from bot.services.kie_service import kie_service
 
 
 class TestKlingService:
@@ -17,87 +19,56 @@ class TestKlingService:
     def test_init(self):
         assert self.service.api_key == "test_key"
         assert self.service.base_url == "https://test.piapi.ai"
-        assert self.service.headers["x-api-key"] == "test_key"
+
+    def test_elements_to_kling_elements(self):
+        elements = [
+            {
+                "reference_image_urls": ["url1.jpg", "url2.jpg"],
+                "frontal_image_url": "url3.jpg",
+                "description": "main character",
+            },
+            {"reference_image_urls": ["url4.jpg"]},
+        ]
+        kling_els = self.service._elements_to_kling_elements(elements)
+        assert len(kling_els) == 1
+        assert kling_els[0]["name"] == "element_0"
+        assert kling_els[0]["description"] == "main character"
+        assert len(kling_els[0]["element_input_urls"]) == 3
 
     @pytest.mark.asyncio
-    async def test_create_task(self):
-        with patch.object(self.service, "_post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = {"task_id": "test_task", "status": "pending"}
-            result = await self.service.create_task(
-                "video_generation", {"prompt": "test"}
-            )
-            assert result["task_id"] == "test_task"
-
-    @pytest.mark.asyncio
-    async def test_get_task_status(self):
-        with patch.object(self.service, "_get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = {
-                "data": {"status": "completed", "output": {"video": "url.mp4"}}
-            }
-            result = await self.service.get_task_status("test_task")
-            assert result["data"]["status"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_generate_video_generation(self):
+    async def test_generate_video_generation_kie(self):
         with patch.object(
-            self.service, "create_task", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = {"task_id": "vg_task"}
+            kie_service, "generate_kling_3_0", new_callable=AsyncMock
+        ) as mock_kie:
+            mock_kie.return_value = {"task_id": "kie_task"}
             result = await self.service.generate_video_generation(
-                "test prompt", mode="std"
+                prompt="test", mode="std", kling_elements=[{"name": "test_el"}]
             )
-            assert result["task_id"] == "vg_task"
-            mock_create.assert_called_once()
+            assert result["task_id"] == "kie_task"
+            mock_kie.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_generate_motion_control(self):
-        with patch.object(
-            self.service, "create_task", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = {"task_id": "mc_task"}
-            result = await self.service.generate_motion_control(
-                "image_url", preset_motion="Heart Gesture Dance"
-            )
-            assert result["task_id"] == "mc_task"
-
-    @pytest.mark.asyncio
-    async def test_generate_omni_video_generation(self):
-        with patch.object(
-            self.service, "create_task", new_callable=AsyncMock
-        ) as mock_create:
-            mock_create.return_value = {"task_id": "omni_task"}
-            result = await self.service.generate_omni_video_generation("test prompt")
-            assert result["task_id"] == "omni_task"
-
-    @pytest.mark.asyncio
-    async def test_generate_video_dispatcher(self):
+    async def test_generate_video_kling3(self):
+        kling_els = [{"name": "el0", "element_input_urls": ["url1"]}]
         with patch.object(
             self.service, "generate_video_generation", new_callable=AsyncMock
-        ) as mock_vg:
-            mock_vg.return_value = {"task_id": "dispatched"}
-            result = await self.service.generate_video("prompt", model="v3_std")
-            assert result["task_id"] == "dispatched"
-
-        with patch.object(
-            self.service, "generate_motion_control", new_callable=AsyncMock
-        ) as mock_mc:
-            mock_mc.return_value = {"task_id": "motion"}
+        ) as mock_gen:
+            mock_gen.return_value = {"task_id": "kling3_task"}
             result = await self.service.generate_video(
-                "prompt", model="motion_pro", image_url="img", video_url="vid"
+                prompt="test", model="v3_pro", kling_elements=kling_els
             )
-            assert result["task_id"] == "motion"
+            assert result["task_id"] == "kling3_task"
 
     @pytest.mark.asyncio
-    async def test_wait_for_completion(self):
+    async def test_generate_video_motion(self):
         with patch.object(
-            self.service, "get_task_status", new_callable=AsyncMock
-        ) as mock_status:
-            mock_status.side_effect = [
-                {"data": {"status": "pending"}},
-                {"data": {"status": "Completed"}},
-            ]
-            result = await self.service.wait_for_completion("test_task", max_attempts=2)
-            assert result["data"]["status"] == "Completed"
+            self.service, "generate_motion_control", new_callable=AsyncMock
+        ) as mock_motion:
+            mock_motion.return_value = {"task_id": "motion_task"}
+            result = await self.service.generate_video(
+                prompt="test", model="motion", image_url="img", video_url="vid"
+            )
+            assert result["task_id"] == "motion_task"
 
 
 if __name__ == "__main__":

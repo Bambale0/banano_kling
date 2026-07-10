@@ -17,7 +17,7 @@ def get_welcome_message() -> str:
 
 Я использую передовые AI модели:
 • <b>Nano Banana / FLUX.2 Pro / Seedream</b> — 3🍌
-• <b>Banana Pro</b> — 5🍌 (максимальное качество)
+• <b>Nano Banana Pro</b> — 5🍌 (максимальное качество)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📋 <b>Что я умею:</b>
@@ -126,7 +126,7 @@ def get_model_selection_help() -> str:
 🖼 <b>Изображения</b>
 
 • FLUX.2 Pro / Nano Banana / Seedream — 3🍌
-• Banana Pro — 5🍌 (максимальное качество)
+• Nano Banana Pro — 5🍌 (максимальное качество)
 • Редактирование — 3🍌 (до 14 референсов)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
@@ -150,7 +150,7 @@ Nano Banana для:
 • 4K разрешения
 • Мультипликации
 
-Banana Pro для:
+Nano Banana Pro для:
 • Максимального качества
 • Профессиональных работ
 """

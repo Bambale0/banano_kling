@@ -1,89 +1,87 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Any as Message
+from typing import List, Optional
 
-from aiogram import Bot, F, Router, types
-from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from vkbottle import BotBlueprint as Blueprint
+
+try:
+    from vkbottle.filter import F
+except Exception:
+    pass  # F imported from vkbottle.filter
+
+
+try:
+    from vkbottle.types import Callback
+except Exception:
+    try:
+        from vkbottle_types.codegen.objects import Callback
+    except Exception:
+
+        class Callback:
+            pass
+
 
 from bot.config import config
 from bot.database import add_credits, check_can_afford, deduct_credits, get_user_credits
 from bot.keyboards import get_main_menu_keyboard
 from bot.services.batch_service import BatchStatus, batch_service
-from bot.services.preset_manager import preset_manager
 from bot.states import GenerationStates
+from bot.vk_rules import PayloadEq, PayloadStartsWith
 
 logger = logging.getLogger(__name__)
-router = Router()
+batch_bp = Blueprint("batch_generation")
 
 
 # Клавиатуры для пакетного редактирования
+from bot.keyboards import InlineKeyboardBuilder
 
 
 def get_batch_upload_keyboard():
-    """Клавиатура для загрузки фото"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Готово, ввести промпт", callback_data="batch_done_upload")
-    builder.button(text="❌ Отмена", callback_data="cancel_batch")
-    builder.adjust(1)
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Готово, ввести промпт", payload="batch_done_upload")
+    kb.button(text="❌ Отмена", payload="cancel_batch")
+    kb.adjust(1)
+    return kb.build()
 
 
 def get_batch_confirmation_keyboard(job_id: str, cost: int):
-    """Подтверждение пакетной генерации"""
-    builder = InlineKeyboardBuilder()
-
-    builder.button(text=f"▶️ Запустить за {cost}🍌", callback_data=f"batchrun_{job_id}")
-    builder.button(text="🔙 Отмена", callback_data="cancel_batch")
-
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"▶️ Запустить за {cost}🍌", payload=f"batchrun_{job_id}")
+    kb.button(text="🔙 Отмена", payload="cancel_batch")
+    kb.adjust(1)
+    return kb.build()
 
 
 def get_batch_aspect_ratio_keyboard():
-    """Клавиатура выбора соотношения сторон"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="1:1 Квадрат", callback_data="batch_aspect_1:1")
-    builder.button(text="16:9 Широкий", callback_data="batch_aspect_16:9")
-    builder.button(text="9:16 Вертикальный", callback_data="batch_aspect_9:16")
-    builder.button(text="4:3 Классический", callback_data="batch_aspect_4:3")
-    builder.button(text="3:4 Портрет", callback_data="batch_aspect_3:4")
-    builder.adjust(2, 2, 1)
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.button(text="1:1 Квадрат", payload="batch_aspect_1:1")
+    kb.button(text="16:9 Широкий", payload="batch_aspect_16:9")
+    kb.button(text="9:16 Вертикальный", payload="batch_aspect_9:16")
+    kb.button(text="4:3 Классический", payload="batch_aspect_4:3")
+    kb.button(text="3:4 Портрет", payload="batch_aspect_3:4")
+    kb.adjust(2, 2, 1)
+    return kb.build()
 
 
 def get_results_gallery_keyboard(job_id: str, count: int, has_failed: bool = False):
-    """Навигация по результатам - только скачать и продолжить редактирование"""
-    builder = InlineKeyboardBuilder()
-
-    # Только скачать все и продолжить редактирование
-    builder.button(text="📥 Скачать все", callback_data=f"batchdownload_{job_id}")
-    builder.button(text="✏️ Продолжить редактирование", callback_data="menu_batch_edit")
-
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📥 Скачать все", payload=f"batchdownload_{job_id}")
+    kb.button(text="✏️ Продолжить редактирование", payload="menu_batch_edit")
     if has_failed:
-        builder.button(
-            text="🔄 Повторить неудачные", callback_data=f"batchretry_{job_id}"
-        )
-
-    builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1)
-
-    return builder.as_markup()
+        kb.button(text="🔄 Повторить неудачные", payload=f"batchretry_{job_id}")
+    kb.button(text="🏠 Главное меню", payload="back_main")
+    kb.adjust(1, 1, 1)
+    return kb.build()
 
 
 def get_upscale_options_keyboard(job_id: str, item_index: int):
-    """Опции апскейла"""
-    builder = InlineKeyboardBuilder()
-
-    builder.button(
-        text="📐 2K (5🍌)", callback_data=f"upscale_{job_id}_{item_index}_2K_5"
-    )
-    builder.button(
-        text="🖼 4K (10🍌)", callback_data=f"upscale_{job_id}_{item_index}_4K_10"
-    )
-    builder.button(text="🔙 Назад к результатам", callback_data=f"batchback_{job_id}")
-
-    return builder.as_markup()
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📐 2K (5🍌)", payload=f"upscale_{job_id}_{item_index}_2K_5")
+    kb.button(text="🖼 4K (10🍌)", payload=f"upscale_{job_id}_{item_index}_4K_10")
+    kb.button(text="🔙 Назад к результатам", payload=f"batchback_{job_id}")
+    kb.adjust(1)
+    return kb.build()
 
 
 # Хранилище для загружаемых фото (в памяти)
@@ -91,152 +89,177 @@ _batch_uploads: dict[int, list[bytes]] = {}
 _batch_upload_urls: dict[int, list[str]] = {}
 
 
-def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
-    """Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL."""
-    try:
-        import os
-        import uuid
-        from datetime import datetime
-
-        from bot.config import config
-
-        date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
-        os.makedirs(upload_dir, exist_ok=True)
-
-        file_id = str(uuid.uuid4())[:8]
-        filename = f"{file_id}.{file_ext}"
-        filepath = os.path.join(upload_dir, filename)
-
-        with open(filepath, "wb") as f:
-            f.write(file_bytes)
-
-        base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
-
-        logger.info(f"Saved batch upload: {public_url}")
-        return public_url
-
-    except Exception as e:
-        logger.exception(f"Error saving batch upload file: {e}")
-        return None
+from bot.utils.file_utils import save_uploaded_file
 
 
-# Обработчики
+@batch_bp.on.message(PayloadEq("menu_batch_edit"))
+async def show_batch_edit_start(c: Callback, state):
+    """Начало редактирования по референсам - сначала референсы"""
 
-
-@router.callback_query(F.data == "menu_batch_edit")
-async def show_batch_edit_start(callback: types.CallbackQuery, state: FSMContext):
-    """Начало редактирования по референсам - загрузка главного фото"""
-
-    user_credits = await get_user_credits(callback.from_user.id)
+    user_credits = await get_user_credits(c.from_id)
 
     # Очищаем предыдущие загрузки пользователя
-    _batch_uploads[callback.from_user.id] = []
-    _batch_upload_urls[callback.from_user.id] = []
+    _batch_uploads[c.from_id] = []
+    _batch_upload_urls[c.from_id] = []
 
-    # Сохраняем состояние: ожидаем главное фото
+    # Сохраняем состояние: ожидаем референсы
     await state.update_data(
         batch_mode="reference_edit", main_image=None, reference_images=[]
     )
 
     text = (
-        f"🎨 <b>Редактирование по референсам</b>\n\n"
+        f"🎨 <b>Редактирование по референсам (image-to-image)</b>\n\n"
         f"🍌 Ваш баланс: <code>{user_credits}</code> бананов\n\n"
+        f"📎 <b>Отправьте одно или несколько фото-референсов для image-to-image.</b>\n\n"
+        f"После загрузки нажмите '✅ Продолжить' или '⏭️ Пропустить'.\n\n"
         f"<b>Как это работает:</b>\n"
-        f"1. Загрузите <b>главное фото</b> для редактирования\n"
-        f"2. Добавьте до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
+        f"1. Загрузите <b>референсные изображения</b> (стиль, персонажи, объекты)\n"
+        f"2. Загрузите <b>главное фото</b> для редактирования\n"
         f"3. Введите промпт\n"
-        f"4. Получите результат с учётом всех референсов!\n\n"
-        f"<b>💡 Для сохранения лиц (важно!):</b>\n"
-        f"• Первые <b>4 фото</b> — это референсы лиц/персонажей\n"
-        f"• Загружайте чёткие фото лица крупным планом\n"
-        f"• Остальные фото (5-14) — стиль, объекты, фон\n"
-        f"• В промпте укажите: «Сохрани лицо как на референсе»\n\n"
-        f"<b>Возможности:</b>\n"
-        f"• До 10 объектов с высокой точностью\n"
-        f"• До 4 персонажей для консистентности\n"
-        f"• Перенос стиля, композиции, цветов\n\n"
-        f"💰 Стоимость: <b>4🍌</b> (Pro модель, 4K, сохранение лиц)\n\n"
-        f"<i>📸 Отправьте главное фото для редактирования:</i>"
+        f"4. Получите результат!\n\n"
+        f"<b>💡 Для сохранения лиц:</b>\n"
+        f"• До <b>4 фото лица</b> крупным планом\n"
+        f"• Остальные — стиль/объекты\n"
+        f"• В промпте: «Сохрани лицо как на референсе»\n\n"
+        f"💰 Стоимость: <b>5🍌</b>"
     )
 
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Продолжить", payload="batch_done_refs")
+    kb.button(text="⏭️ Пропустить", payload="batch_skip_refs")
+    kb.button(text="❌ Отмена", payload="cancel_batch")
+    kb.adjust(1)
+
     try:
-        await callback.message.edit_text(
+        await c.message.edit_text(
             text,
-            reply_markup=get_batch_upload_keyboard(),
+            keyboard=kb.build(),
             parse_mode="HTML",
         )
     except Exception:
-        await callback.message.answer(
+        await c.message.answer(
             text,
-            reply_markup=get_batch_upload_keyboard(),
+            keyboard=kb.build(),
             parse_mode="HTML",
         )
-    await state.set_state(GenerationStates.waiting_for_batch_image)
+    await state.set_state(GenerationStates.waiting_for_refs)
 
 
-@router.message(GenerationStates.waiting_for_batch_image)
-async def process_batch_image(message: types.Message, state: FSMContext):
-    """Обрабатывает загрузку главного фото и референсов"""
+@batch_bp.on.message(state=GenerationStates.waiting_for_refs)
+async def process_refs(m: Message, state):
+    """Обрабатывает загрузку референсов (несколько фото)"""
 
-    photo = message.photo[-1] if message.photo else None
-    if not photo:
-        await message.answer("❌ Пожалуйста, отправьте изображение.")
-        return
-
-    try:
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-        image_data = image_bytes.read()
-    except Exception as e:
-        logger.exception(f"Failed to download image: {e}")
-        await message.answer("❌ Ошибка загрузки изображения. Попробуйте снова.")
-        return
-
-    user_id = message.from_user.id
     data = await state.get_data()
-    main_image = data.get("main_image")
-    ref_images = data.get("reference_images", [])
+    ref_images: List[str] = data.get("reference_images", [])
+    added = 0
+    max_refs = 14
 
-    # Если главное фото ещё не загружено — сохраняем как главное
-    if not main_image:
-        await state.update_data(main_image=image_data)
+    for att in m.attachments:
+        if att.type == "photo":
+            try:
+                image_bytes = await download_media_bytes(att)
+                from bot.utils.file_utils import save_uploaded_file
 
-        await message.answer(
-            f"✅ <b>Главное фото загружено!</b>\n\n"
-            f"Теперь вы можете:\n"
-            f"• Добавить до <b>14 референсных изображений</b> (стиль, персонажи, объекты)\n"
-            f"• Или нажать «Готово» чтобы продолжить без референсов\n\n"
-            f"📎 Референсов добавлено: <code>0/14</code>",
-            reply_markup=get_batch_upload_keyboard(),
+                url = save_uploaded_file(image_bytes, "jpg")
+                if url and len(ref_images) < max_refs:
+                    ref_images.append(url)
+                    added += 1
+            except Exception as e:
+                logger.exception(f"Failed to download ref: {e}")
+
+    await state.update_data(reference_images=ref_images)
+
+    ref_count = len(ref_images)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Продолжить", payload="batch_done_refs")
+    kb.button(text="⏭️ Пропустить", payload="batch_skip_refs")
+    kb.button(text="❌ Отмена", payload="cancel_batch")
+    kb.adjust(1)
+
+    if added > 0:
+        await m.answer(
+            f"✅ <b>{added} референс(ов) добавлено!</b>\n"
+            f"📎 Всего: <code>{ref_count}/{max_refs}</code>\n\n"
+            f"Можете отправить ещё или продолжить.",
+            keyboard=kb.build(),
             parse_mode="HTML",
         )
     else:
-        # Добавляем как референс
-        if len(ref_images) >= 14:
-            await message.answer(
-                f"⚠️ <b>Достигнут лимит референсов (14)</b>\n\n"
-                f"Нажмите «Готово» чтобы продолжить.",
-                reply_markup=get_batch_upload_keyboard(),
-                parse_mode="HTML",
-            )
-            return
-
-        ref_images.append(image_data)
-        await state.update_data(reference_images=ref_images)
-
-        await message.answer(
-            f"✅ <b>Референс добавлен!</b>\n"
-            f"📎 Референсов: <code>{len(ref_images)}/14</code>\n\n"
-            f"Можете загрузить ещё референсы или нажмите «Готово»",
-            reply_markup=get_batch_upload_keyboard(),
+        await m.answer(
+            f"⚠️ <b>Не удалось добавить референсы</b>\n\n"
+            f"📎 Всего: <code>{ref_count}/{max_refs}</code>",
+            keyboard=kb.build(),
             parse_mode="HTML",
         )
 
 
-@router.callback_query(F.data == "batch_done_upload")
-async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
+@batch_bp.on.message(state=GenerationStates.waiting_for_batch_image)
+async def process_main_image(m: Message, state):
+    """Обрабатывает главное фото"""
+
+    if m.attachments and m.attachments[0].type == "photo":
+        photo = m.attachments[0]
+        try:
+            image_bytes = await download_media_bytes(photo)
+            await state.update_data(main_image=image_bytes)
+
+            data = await state.get_data()
+            ref_count = len(data.get("reference_images", []))
+
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Готово, ввести промпт", payload="batch_done_upload")
+            kb.button(text="❌ Отмена", payload="cancel_batch")
+            kb.adjust(1)
+
+            await m.answer(
+                f"✅ <b>Главное фото загружено!</b>\n\n"
+                f"📎 Референсов: <code>{ref_count}</code>\n\n"
+                f"Нажмите «Готово» для ввода промпта.",
+                keyboard=kb.build(),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.exception(f"Failed to download main image: {e}")
+            await m.answer("❌ Ошибка загрузки изображения. Попробуйте снова.")
+    else:
+        await m.answer("❌ Пожалуйста, отправьте главное фото.")
+
+
+@batch_bp.on.message(PayloadEq("batch_skip_refs"))
+async def batch_skip_refs(c: Callback, state):
+    """Пропускает референсы, переходит к главному фото"""
+    await state.update_data(reference_images=[])
+    text = (
+        f"⏭️ <b>Референсы пропущены</b>\n\n"
+        f"<i>📸 Теперь отправьте главное фото для редактирования:</i>"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Готово", payload="batch_done_upload")
+    kb.button(text="❌ Отмена", payload="cancel_batch")
+    kb.adjust(1)
+    await c.message.edit_text(text, keyboard=kb.build(), parse_mode="HTML")
+    await state.set_state(GenerationStates.waiting_for_batch_image)
+
+
+@batch_bp.on.message(PayloadEq("batch_done_refs"))
+async def batch_done_refs(c: Callback, state):
+    """Завершил референсы, переходит к главному фото"""
+    data = await state.get_data()
+    ref_count = len(data.get("reference_images", []))
+    text = (
+        f"✅ <b>Референсы готовы ({ref_count}/14)</b>\n\n"
+        f"<i>📸 Отправьте главное фото для редактирования:</i>"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Готово", payload="batch_done_upload")
+    kb.button(text="❌ Отмена", payload="cancel_batch")
+    kb.adjust(1)
+    await c.message.edit_text(text, keyboard=kb.build(), parse_mode="HTML")
+    await state.set_state(GenerationStates.waiting_for_batch_image)
+
+
+@batch_bp.on.message(PayloadEq("batch_done_upload"))
+async def batch_done_upload(c: Callback, state):
     """Пользователь завершил загрузку фото и референсов"""
 
     data = await state.get_data()
@@ -244,9 +267,12 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     ref_images = data.get("reference_images", [])
 
     if not main_image:
-        await callback.answer(
-            "Сначала загрузите главное фото для редактирования!", show_alert=True
-        )
+        try:
+            await c.answer(
+                "Сначала загрузите главное фото для редактирования!", show_alert=True
+            )
+        except:
+            pass
         return
 
     cost = 5  # Фиксированная стоимость за сессию с референсами
@@ -256,7 +282,7 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
 
     ref_count = len(ref_images)
 
-    await callback.message.edit_text(
+    await c.message.edit_text(
         f"✏️ <b>Введите промпт</b>\n\n"
         f"🎨 <b>Режим:</b> Редактирование по референсам\n"
         f"💰 Стоимость: <code>{cost}</code>🍌 (Pro модель, до 14 референсов)\n\n"
@@ -272,13 +298,13 @@ async def batch_done_upload(callback: types.CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(GenerationStates.waiting_for_batch_prompt)
-async def process_batch_prompt(message: types.Message, state: FSMContext):
+@batch_bp.on.message(state=GenerationStates.waiting_for_batch_prompt)
+async def process_batch_prompt(m: Message, state):
     """Обрабатывает введённый пользователем промпт"""
 
-    user_prompt = message.text.strip()
+    user_prompt = m.text.strip()
     if not user_prompt:
-        await message.answer("❌ Пожалуйста, введите описание того, что хотите сделать.")
+        await m.answer("❌ Пожалуйста, введите описание того, что хотите сделать.")
         return
 
     # Получаем изображения из состояния (FSM state), а не из глобального словаря
@@ -287,7 +313,7 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
     ref_images = data.get("reference_images", [])
 
     if not main_image:
-        await message.answer("❌ Ошибка: фото не найдены. Начните заново.")
+        await m.answer("❌ Ошибка: фото не найдены. Начните заново.")
         await state.clear()
         return
 
@@ -295,30 +321,33 @@ async def process_batch_prompt(message: types.Message, state: FSMContext):
     await state.update_data(batch_prompt=user_prompt)
     await state.set_state(GenerationStates.waiting_for_batch_aspect_ratio)
 
-    await message.answer(
+    await m.answer(
         f"✏️ <b>Выберите формат изображения</b>\n\n"
         f"📝 Промпт: <code>{user_prompt[:60]}{'...' if len(user_prompt) > 60 else ''}</code>\n\n"
         f"Выберите соотношение сторон:",
-        reply_markup=get_batch_aspect_ratio_keyboard(),
+        keyboard=get_batch_aspect_ratio_keyboard(),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("batch_aspect_"))
-async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMContext):
+@batch_bp.on.message(PayloadStartsWith("batch_aspect_"))
+async def process_batch_aspect_ratio(c: Callback, state):
     """Обрабатывает выбор aspect ratio для редактирования с референсами"""
 
-    aspect_ratio = callback.data.replace("batch_aspect_", "")
+    aspect_ratio = c.payload.replace("batch_aspect_", "")
     data = await state.get_data()
     user_prompt = data.get("batch_prompt", "")
     main_image = data.get("main_image")
     ref_images = data.get("reference_images", [])
-    user_id = callback.from_user.id
+    user_id = c.from_id
 
     if not main_image or not user_prompt:
-        await callback.answer(
-            "Ошибка: данные не найдены. Начните заново.", show_alert=True
-        )
+        try:
+            await c.answer(
+                "Ошибка: данные не найдены. Начните заново.", show_alert=True
+            )
+        except:
+            pass
         await state.clear()
         return
 
@@ -329,12 +358,12 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
     user_credits = await get_user_credits(user_id)
 
     if not is_admin and user_credits < cost:
-        await callback.message.edit_text(
+        await c.message.edit_text(
             f"❌ <b>Недостаточно бананов!</b>\n\n"
             f"Требуется: <code>{cost}</code>🍌\n"
             f"Доступно: <code>{user_credits}</code>🍌\n\n"
             f"💳 Пополните баланс.",
-            reply_markup=get_main_menu_keyboard(),
+            keyboard=get_main_menu_keyboard().build(),
         )
         await state.clear()
         return
@@ -344,7 +373,7 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
 
     ref_count = len(ref_images)
 
-    await callback.message.edit_text(
+    await c.message.edit_text(
         f"✏️ <b>Подтверждение редактирования по референсам</b>\n\n"
         f"📝 <b>Промпт:</b>\n<code>{user_prompt[:80]}{'...' if len(user_prompt) > 80 else ''}</code>\n\n"
         f"🎨 Режим: Редактирование с референсами\n"
@@ -354,39 +383,48 @@ async def process_batch_aspect_ratio(callback: types.CallbackQuery, state: FSMCo
         f"🤖 Модель: <code>Gemini 3 Pro</code> (4K)\n"
         f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
         f"<i>Нажмите кнопку ниже для запуска:</i>",
-        reply_markup=get_batch_confirmation_keyboard("ref_edit", cost),
+        keyboard=get_batch_confirmation_keyboard("ref_edit", cost),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("batchrun_"))
-async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
+@batch_bp.on.message(PayloadStartsWith("batchrun_"))
+async def execute_batch(c: Callback, state):
     """Запускает редактирование с референсами через Gemini Pro"""
 
     data = await state.get_data()
     cost = data.get("batch_cost", 5)
-    user_id = callback.from_user.id
+    user_id = c.from_id
     main_image = data.get("main_image")
     ref_images = data.get("reference_images", [])
     user_prompt = data.get("batch_prompt", "")
     aspect_ratio = data.get("batch_aspect_ratio", "1:1")
 
     if not main_image:
-        await callback.answer("Ошибка: главное фото не найдено", show_alert=True)
+        try:
+            await c.answer("Ошибка: главное фото не найдено", show_alert=True)
+        except:
+            pass
         return
 
     # Списываем кредиты
     success = await deduct_credits(user_id, cost)
     if not success:
-        await callback.answer("Ошибка списания кредитов", show_alert=True)
+        try:
+            await c.answer("Ошибка списания кредитов", show_alert=True)
+        except:
+            pass
         return
 
-    await callback.answer("🚀 Запускаю редактирование с референсами...")
+    try:
+        await c.answer("🚀 Запускаю редактирование с референсами...")
+    except:
+        pass
 
     # Сообщение с прогрессом
-    progress_msg = await callback.message.answer(
+    progress_msg = await c.message.answer(
         f"⏳ <b>Редактирование с референсами</b>\n\n"
-        f"🤖 Модель: <code>Gemini 3 Pro</code>\n"
+        f"🤖 Модель: <code>Nano Banana Pro</code>\n"
         f"📎 Референсов: <code>{len(ref_images)}</code>\n"
         f"📐 Формат: <code>{aspect_ratio}</code>\n"
         f"⏱ Это займёт 15-30 секунд...\n\n"
@@ -400,12 +438,13 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         # Генерируем с учётом референсов
         result = await gemini_service.generate_image(
             prompt=user_prompt,
-            model="gemini-3-pro-image-preview",
+            model="google/nano-banana-pro",
             aspect_ratio=aspect_ratio,
             image_input=main_image,
             reference_images=ref_images,
             resolution="4K",
             preserve_faces=True,  # Важно: сохраняем лица с референсов
+            user_id=user_id,
         )
 
         # Удаляем сообщение прогресса
@@ -415,15 +454,9 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
             pass
 
         if result:
-            # Сохраняем результат
-            from bot.handlers.generation import save_uploaded_file
-
-            saved_url = save_uploaded_file(result, "png")
-
-            # Отправляем результат
-            await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result, "edited.png"),
-                caption=(
+            await c.message.answer_photo(
+                photo=result,
+                message=(
                     f"✅ <b>Редактирование завершено!</b>\n\n"
                     f"🎨 Режим: Редактирование с референсами\n"
                     f"📎 Референсов использовано: <code>{len(ref_images)}</code>\n"
@@ -431,17 +464,19 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
                     f"💰 Стоимость: <code>{cost}</code>🍌\n\n"
                     f"<i>Сохраните изображение, если нужно</i>"
                 ),
-                reply_markup=get_main_menu_keyboard(await get_user_credits(user_id)),
+                keyboard=get_main_menu_keyboard(
+                    await get_user_credits(user_id)
+                ).build(),
                 parse_mode="HTML",
             )
         else:
             # Возвращаем кредиты при неудаче
             await add_credits(user_id, cost)
-            await callback.message.answer(
+            await c.message.answer(
                 "❌ <b>Не удалось отредактировать изображение</b>\n"
                 "Попробуйте другой промпт или референсы.\n"
                 "Кредиты возвращены.",
-                reply_markup=get_main_menu_keyboard(),
+                keyboard=get_main_menu_keyboard().build(),
                 parse_mode="HTML",
             )
 
@@ -449,18 +484,16 @@ async def execute_batch(callback: types.CallbackQuery, state: FSMContext, bot: B
         logger.exception(f"Reference editing failed: {e}")
         # Возвращаем кредиты при ошибке
         await add_credits(user_id, cost)
-        await callback.message.answer(
+        await c.message.answer(
             "❌ <b>Ошибка редактирования</b>\n"
             f"<code>{str(e)[:100]}</code>\n"
             "Кредиты возвращены.",
-            reply_markup=get_main_menu_keyboard(),
+            keyboard=get_main_menu_keyboard().build(),
             parse_mode="HTML",
         )
 
 
-async def show_batch_results(
-    callback: types.CallbackQuery, job, state: FSMContext, bot: Bot
-):
+async def show_batch_results(c: Callback, job, state, api):
     """Показывает результаты пакетного редактирования"""
 
     successful = [i for i in job.items if i.result]
@@ -468,10 +501,10 @@ async def show_batch_results(
 
     if not successful:
         # Полный возврат
-        await add_credits(callback.from_user.id, job.total_cost)
-        await callback.message.answer(
+        await add_credits(c.from_id, job.total_cost)
+        await c.message.answer(
             "❌ <b>Все редактирования не удались</b>\n" "Кредиты полностью возвращены.",
-            reply_markup=get_main_menu_keyboard(),
+            keyboard=get_main_menu_keyboard().build(),
             parse_mode="HTML",
         )
         return
@@ -491,43 +524,43 @@ async def show_batch_results(
     )
 
     if gallery_bytes:
-        await callback.message.answer_photo(
-            photo=types.BufferedInputFile(gallery_bytes, "gallery.jpg"),
-            caption=caption,
-            reply_markup=get_results_gallery_keyboard(
+        await c.message.answer_photo(
+            photo=gallery_bytes,
+            message=caption,
+            keyboard=get_results_gallery_keyboard(
                 job.id, len(successful), has_failed=len(failed) > 0
-            ),
+            ).build(),
             parse_mode="HTML",
         )
     else:
         # Если превью не создалось, показываем списком
-        await callback.message.answer(
+        await c.message.answer(
             caption,
-            reply_markup=get_results_gallery_keyboard(
+            keyboard=get_results_gallery_keyboard(
                 job.id, len(successful), has_failed=len(failed) > 0
-            ),
+            ).build(),
             parse_mode="HTML",
         )
 
     await state.update_data(current_job_id=job.id)
 
 
-@router.callback_query(F.data.startswith("batchview_"))
-async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
+@batch_bp.on.message(PayloadStartsWith("batchview_"))
+async def view_single_result(c: Callback, state):
     """Показывает один результат в полном размере с публичным URL"""
 
-    parts = callback.data.split("_")
+    parts = c.payload.split("_")
     job_id = parts[1]
     item_index = int(parts[2])
 
     job = batch_service.get_job(job_id)
     if not job or item_index >= len(job.items):
-        await callback.answer("Результат не найден")
+        await c.answer("Результат не найден")
         return
 
     item = job.items[item_index]
     if not item.result_url:
-        await callback.answer("Этот вариант не был сгенерирован или URL недоступен")
+        await c.answer("Этот вариант не был сгенерирован или URL недоступен")
         return
 
     # Показываем изображение с информацией
@@ -538,141 +571,151 @@ async def view_single_result(callback: types.CallbackQuery, state: FSMContext):
     )
 
     # Клавиатура для этого изображения
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔍 Апскейл", callback_data=f"upscalemenu_{job_id}_{item_index}")
-    builder.button(text="📥 Скачать", callback_data=f"download_{job_id}_{item_index}")
-    builder.button(text="🔙 К галерее", callback_data=f"batchback_{job_id}")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔍 Апскейл", payload=f"upscalemenu_{job_id}_{item_index}")
+    kb.button(text="📥 Скачать", payload=f"download_{job_id}_{item_index}")
+    kb.button(text="🔙 К галерее", payload=f"batchback_{job_id}")
 
-    await callback.message.answer_photo(
+    await c.message.answer_photo(
         photo=item.result_url,
-        caption=info_text,
-        reply_markup=builder.as_markup(),
+        message=info_text,
+        keyboard=kb.build(),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("upscalemenu_"))
-async def show_upscale_options(callback: types.CallbackQuery):
+@batch_bp.on.message(PayloadStartsWith("upscalemenu_"))
+async def show_upscale_options(c: Callback):
     """Показывает опции апскейла"""
 
-    parts = callback.data.split("_")
+    parts = c.payload.split("_")
     job_id = parts[1]
     item_index = int(parts[2])
 
-    user_credits = await get_user_credits(callback.from_user.id)
+    user_credits = await get_user_credits(c.from_id)
 
-    await callback.message.edit_caption(
+    await c.message.edit_caption(
         caption=f"🔍 <b>Апскейл варианта {item_index + 1}</b>\n\n"
         f"🍌 Доступно: <code>{user_credits}</code>🍌\n\n"
         f"Выберите качество:",
-        reply_markup=get_upscale_options_keyboard(job_id, item_index),
+        keyboard=get_upscale_options_keyboard(job_id, item_index),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("upscale_"))
-async def execute_upscale(callback: types.CallbackQuery):
+@batch_bp.on.message(PayloadStartsWith("upscale_"))
+async def execute_upscale(c: Callback):
     """Выполняет апскейл выбранного изображения"""
 
-    parts = callback.data.split("_")
+    parts = c.payload.split("_")
     job_id = parts[1]
     item_index = int(parts[2])
     resolution = parts[3]
     cost = int(parts[4])
 
     # Проверяем возможность оплаты (админы могут бесплатно)
-    if not await check_can_afford(callback.from_user.id, cost):
-        await callback.answer(f"Нужно {cost} кредитов", show_alert=True)
+    if not await check_can_afford(c.from_id, cost):
+        await c.answer(f"Нужно {cost} кредитов", show_alert=True)
         return
 
     # Списываем (админам - бесплатно)
-    success = await deduct_credits(callback.from_user.id, cost)
+    success = await deduct_credits(c.from_id, cost)
     if not success:
-        await callback.answer("Ошибка списания")
+        await c.answer("Ошибка списания")
         return
 
-    await callback.answer(f"🔍 Апскейл до {resolution}...")
+    try:
+        await c.answer(f"🔍 Апскейл до {resolution}...")
+    except:
+        pass
 
     # Запускаем апскейл
     try:
         result = await batch_service.upscale_selected(job_id, item_index, resolution)
 
         if result:
-            await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result, f"upscaled_{resolution}.png"),
-                caption=f"✅ <b>Апскейл завершён!</b>\n\n"
+            await c.message.answer_photo(
+                photo=result,
+                message=f"✅ <b>Апскейл завершён!</b>\n\n"
                 f"🖼 Разрешение: <code>{resolution}</code>\n"
                 f"🍌 Стоимость: <code>{cost}</code>🍌",
                 parse_mode="HTML",
             )
         else:
-            await add_credits(callback.from_user.id, cost)
-            await callback.message.answer("❌ Ошибка апскейла. Бананы возвращены.")
+            await add_credits(c.from_id, cost)
+            await c.message.answer("❌ Ошибка апскейла. Бананы возвращены.")
 
     except Exception as e:
         logger.exception(f"Upscale failed: {e}")
-        await add_credits(callback.from_user.id, cost)
-        await callback.message.answer("❌ Ошибка. Кредиты возвращены.")
+        await add_credits(c.from_id, cost)
+        await c.message.answer("❌ Ошибка. Кредиты возвращены.")
 
 
-@router.callback_query(F.data.startswith("batchdownload_"))
-async def download_all_results(callback: types.CallbackQuery, bot: Bot):
+@batch_bp.on.message(PayloadStartsWith("batchdownload_"))
+async def download_all_results(c: Callback):
     """Отправляет все результаты как альбом с публичными ссылками"""
 
-    job_id = callback.data.replace("batchdownload_", "")
+    job_id = c.payload.replace("batchdownload_", "")
     job = batch_service.get_job(job_id)
 
     if not job:
-        await callback.answer("Задача не найдена")
+        await c.answer("Задача не найдена")
         return
 
     successful = [i for i in job.items if i.result_url]
     if not successful:
-        await callback.answer("Нет результатов для скачивания")
+        await c.answer("Нет результатов для скачивания")
         return
 
     # Формируем медиа-группу из публичных URL (максимум 10)
     media_group = []
     for i, item in enumerate(successful[:10]):
-        media = types.InputMediaPhoto(
-            media=item.result_url,
-            caption=f"Вариант {i+1}" if i == 0 else None,
-        )
+        media = {"photo": item.result_url}
+        if i == 0:
+            media["caption"] = f"Вариант {i+1}"
         media_group.append(media)
 
-    await callback.message.answer_media_group(media=media_group)
-    await callback.answer("✅ Отправлено!")
+    # VK doesn't have media_group like Telegram, send sequentially
+    for media in media_group:
+        await c.message.answer_photo(
+            photo=media["photo"], message=media.get("caption", "")
+        )
+
+    await c.answer("✅ Отправлено!")
 
 
-@router.callback_query(F.data == "cancel_batch")
-async def cancel_batch(callback: types.CallbackQuery, state: FSMContext):
+@batch_bp.on.message(PayloadEq("cancel_batch"))
+async def cancel_batch(c: Callback, state):
     """Отмена пакетной генерации"""
     await state.clear()
-    await callback.message.edit_text(
-        "❌ Пакетная генерация отменена.", reply_markup=get_main_menu_keyboard()
+    await c.message.edit_text(
+        "❌ Пакетная генерация отменена.", keyboard=get_main_menu_keyboard().build()
     )
 
 
-@router.callback_query(F.data.startswith("batchback_"))
-async def back_to_results(callback: types.CallbackQuery):
+@batch_bp.on.message(PayloadStartsWith("batchback_"))
+async def back_to_results(c: Callback):
     """Возврат к галерее результатов"""
-    job_id = callback.data.replace("batchback_", "")
+    job_id = c.payload.replace("batchback_", "")
     job = batch_service.get_job(job_id)
 
     if not job:
-        await callback.answer("Задача не найдена")
+        await c.answer("Задача не найдена")
         return
 
     successful = [i for i in job.items if i.result]
 
-    await callback.message.edit_text(
+    await c.message.edit_text(
         f"✅ <b>Результаты пакетной генерации</b>\n\n"
         f"📊 Вариантов: <code>{len(successful)}</code>\n"
         f"ID: <code>{job.id}</code>",
-        reply_markup=get_results_gallery_keyboard(
+        keyboard=get_results_gallery_keyboard(
             job.id,
             len(successful),
             has_failed=any(i.status == BatchStatus.FAILED for i in job.items),
-        ),
+        ).build(),
         parse_mode="HTML",
     )
+
+
+from bot.utils.media_utils import download_media_bytes

@@ -1,33 +1,15 @@
-# Telegram Bot Framework
-aiogram>=3.0.0
+vk-botting>=0.11.0
+vk-api>=11.9.9
+redis>=4.0.0
+sqlalchemy>=2.0.0
+httpx>=0.27.0
 
-# Async HTTP Client
-aiohttp>=3.8.0
-
-# Database
-aiosqlite>=0.19.0
-
-# Google Gemini API
-google-genai>=0.3.0
-Pillow>=10.0.0
-
-# Environment variables (optional, for .env support)
+fastapi>=0.110.0
+uvicorn>=0.27.0
 python-dotenv>=1.0.0
-
-# Type hints
-typing-extensions>=4.0.0
-# Replicate API (for Seedream and other models)
-replicate>=0.20.0
-
-# Novita AI Python SDK
-novita-client>=0.7.1
-
-# YooKassa payments
-yookassa>=3.4.0
-
-# Optional (face detection for improved frontal crops)
-# Installing face_recognition requires dlib and system build deps (cmake, boost).
-# On Debian/Ubuntu you may need: apt install build-essential cmake libboost-all-dev
-# Then install the package:
-# pip install face_recognition
-# If you cannot build dlib, skip this — the service will fall back to center-crop.
+pillow>=10.0.0
+aiosqlite>=0.18.0
+aioredis>=2.0.1
+vkbottle>=4.1.13
+pydantic>=1.10,<2.0
+typing-extensions>=4.6.0,<5.0

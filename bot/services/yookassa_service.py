@@ -3,7 +3,24 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import aiosqlite
-from yookassa import Configuration, Payment
+
+try:
+    from yookassa import Configuration, Payment
+except Exception:
+    # yookassa SDK is optional for tests; provide lightweight shim for import-time
+    class Configuration:
+        account_id = None
+        secret_key = None
+
+    class Payment:
+        @staticmethod
+        def create(payload, idempotence_key=None):
+            raise RuntimeError("yookassa SDK not installed")
+
+        @staticmethod
+        def find_one(payment_id):
+            raise RuntimeError("yookassa SDK not installed")
+
 
 from bot import database as db
 from bot.config import config

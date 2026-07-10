@@ -33,6 +33,7 @@ FALLBACK_IMAGE_COSTS = {
     "novita": 3,
     "nanobanana": 3,
     "banana_pro": 5,
+    "nano_banana_pro": 5,
     "seedream": 3,
     "z_image_turbo": 3,
 }
@@ -55,8 +56,7 @@ class AIAssistantService:
 
     # Модели для ассистента (приоритет - быстрые и дешевые)
     MODELS = {
-        "primary": "deepseek/deepseek-chat",  # Быстрый и умный
-        "fallback": "google/gemini-2.5-flash",  # Fallback
+        "primary": "gemini-2.5-flash",  # Быстрый Gemini
     }
 
     def __init__(self):
@@ -103,23 +103,12 @@ class AIAssistantService:
 
 Вопрос пользователя: {user_message}"""
 
-        # Пробуем через OpenRouter (DeepSeek)
-        if config.OPENROUTER_API_KEY:
-            result = await self._call_openrouter(
+        # NanoBanana API
+        if config.NANOBANANA_API_KEY:
+            result = await self._call_nanobanana(
                 system_prompt=system_prompt,
                 user_message=full_message,
                 model=self.MODELS["primary"],
-            )
-            if result:
-                return result
-            logger.info("DeepSeek failed, trying Gemini fallback...")
-
-        # Fallback на Gemini через OpenRouter
-        if config.OPENROUTER_API_KEY:
-            result = await self._call_openrouter(
-                system_prompt=system_prompt,
-                user_message=full_message,
-                model=self.MODELS["fallback"],
             )
             if result:
                 return result
@@ -127,20 +116,19 @@ class AIAssistantService:
         logger.error("All AI assistant methods failed")
         return None
 
-    async def _call_openrouter(
+    async def _call_nanobanana(
         self,
         system_prompt: str,
         user_message: str,
-        model: str = "deepseek/deepseek-chat",
+        model: str = "gemini-2.5-flash",
     ) -> Optional[str]:
-        """Вызов OpenRouter API"""
+        """Вызов NanoBanana API"""
         try:
             session = await self._get_session()
 
             headers = {
-                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                "x-api-key": config.NANOBANANA_API_KEY,
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/your_bot",
             }
 
             payload = {
@@ -154,7 +142,7 @@ class AIAssistantService:
             }
 
             async with session.post(
-                f"{config.OPENROUTER_BASE_URL}/chat/completions",
+                f"{config.NANOBANANA_BASE_URL}/chat/completions",
                 headers=headers,
                 json=payload,
             ) as response:
@@ -165,12 +153,12 @@ class AIAssistantService:
                         return data["choices"][0]["message"]["content"]
 
                 error_text = await response.text()
-                logger.error(f"OpenRouter API error: {response.status} - {error_text}")
+                logger.error(f"NanoBanana API error: {response.status} - {error_text}")
 
             return None
 
         except Exception as e:
-            logger.exception(f"OpenRouter call failed: {e}")
+            logger.exception(f"NanoBanana call failed: {e}")
             return None
 
     def _get_system_prompt(self) -> str:
@@ -215,7 +203,8 @@ class AIAssistantService:
             service_names = {
                 "nanobanana": "Nano Banana",
                 "novita": "FLUX.2 Pro (Novita)",
-                "banana_pro": "Banana Pro",
+                "banana_pro": "Nano Banana Pro",
+                "nano_banana_pro": "Nano Banana Pro",
                 "seedream": "Seedream (Novita)",
             }
             service = service_names.get(
@@ -250,7 +239,11 @@ class AIAssistantService:
                 "novita": legacy.get("flux_pro") or image_models.get("flux_pro"),
                 "nanobanana": image_models.get("banana_2")
                 or legacy.get("gemini_2_5_flash"),
-                "banana_pro": image_models.get("gemini_3_pro")
+                "banana_pro": image_models.get("nano_banana_pro")
+                or image_models.get("gemini_3_pro")
+                or legacy.get("gemini_3_pro"),
+                "nano_banana_pro": image_models.get("nano_banana_pro")
+                or image_models.get("gemini_3_pro")
                 or legacy.get("gemini_3_pro"),
                 "seedream": image_models.get("seedream") or legacy.get("seedream"),
             }
@@ -267,8 +260,9 @@ class AIAssistantService:
             _img_cost("banana_2", "nanobanana") or FALLBACK_IMAGE_COSTS["nanobanana"]
         )
         pro_cost = (
-            _img_cost("gemini_3_pro", "banana_pro")
-            or FALLBACK_IMAGE_COSTS["banana_pro"]
+            _img_cost("nano_banana_pro", "nano_banana_pro")
+            or _img_cost("gemini_3_pro", "banana_pro")
+            or FALLBACK_IMAGE_COSTS["nano_banana_pro"]
         )
         seedream_cost = (
             _img_cost("seedream", "seedream") or FALLBACK_IMAGE_COSTS["seedream"]
