@@ -24,14 +24,20 @@ class KieFileUploadService:
         self.base_url = base_url.rstrip("/")
         self._cache: dict[str, tuple[str, float]] = {}
 
-    def _cache_key(self, local_path: str) -> str:
+    def _cache_key(self, local_path: str, *, prefer_stable_public_url: bool) -> str:
         try:
             stat = os.stat(local_path)
-            return f"{local_path}:{stat.st_size}:{stat.st_mtime_ns}"
+            mode = "public" if prefer_stable_public_url else "upload"
+            return f"{local_path}:{stat.st_size}:{stat.st_mtime_ns}:{mode}"
         except OSError:
             return local_path
 
-    async def upload_local_image_source(self, source: str) -> str:
+    async def upload_local_image_source(
+        self,
+        source: str,
+        *,
+        prefer_stable_public_url: bool = True,
+    ) -> str:
         local_path = resolve_local_upload_path(source)
         if not local_path:
             if is_local_upload_source(source):
@@ -44,20 +50,24 @@ class KieFileUploadService:
         if not self.api_key:
             return source
 
-        cache_key = self._cache_key(local_path)
+        cache_key = self._cache_key(
+            local_path,
+            prefer_stable_public_url=prefer_stable_public_url,
+        )
         cached_entry = self._cache.get(cache_key)
         if cached_entry and time.time() - cached_entry[1] < 48 * 60 * 60:
             cached_url = cached_entry[0]
             return cached_url
 
-        stable_public_url = image_source_to_provider_safe_png_url(source)
-        if isinstance(stable_public_url, str) and stable_public_url.startswith(("http://", "https://")):
-            self._cache[cache_key] = (stable_public_url, time.time())
-            logger.info(
-                "Using stable public URL for KIE reference instead of temp upload: %s",
-                stable_public_url,
-            )
-            return stable_public_url
+        if prefer_stable_public_url:
+            stable_public_url = image_source_to_provider_safe_png_url(source)
+            if isinstance(stable_public_url, str) and stable_public_url.startswith(("http://", "https://")):
+                self._cache[cache_key] = (stable_public_url, time.time())
+                logger.info(
+                    "Using stable public URL for KIE reference instead of temp upload: %s",
+                    stable_public_url,
+                )
+                return stable_public_url
 
         try:
             rel_name = os.path.relpath(local_path, os.path.join("static", "uploads"))
@@ -108,14 +118,22 @@ class KieFileUploadService:
         return file_url
 
     async def upload_local_image_sources(
-        self, sources: Iterable[str] | None
+        self,
+        sources: Iterable[str] | None,
+        *,
+        prefer_stable_public_url: bool = True,
     ) -> list[str]:
         if not sources:
             return []
         uploaded_sources = []
         for source in sources:
             if isinstance(source, str) and source:
-                uploaded_sources.append(await self.upload_local_image_source(source))
+                uploaded_sources.append(
+                    await self.upload_local_image_source(
+                        source,
+                        prefer_stable_public_url=prefer_stable_public_url,
+                    )
+                )
         return uploaded_sources
 
 

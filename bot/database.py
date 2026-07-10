@@ -2095,7 +2095,8 @@ async def credit_referral_commission(
 ) -> dict:
     """Начисляет партнёру 1 уровня и 2 уровня с каждой оплаты.
 
-    Процент определяется по текущему tier до начисления (не по переданному bonus_percent).
+    По актуальным условиям 1 уровень всегда получает фиксированные 30%,
+    а 2 уровень — фиксированные 7% без tier-based надбавок.
     """
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -2127,10 +2128,8 @@ async def credit_referral_commission(
             (ref1_id,),
         )
         ref1_row = await ref1_cursor.fetchone()
-        ref1_revenue = float(ref1_row["partner_total_revenue_rub"] or 0) if ref1_row else 0.0
-        # Определяем tier ДО начисления, потом берём процент из tier
-        ref1_tier = get_partner_tier_by_total(ref1_revenue)
-        ref1_percent = get_partner_percent_by_tier(ref1_tier)
+        ref1_tier = get_partner_tier_by_total(0.0)
+        ref1_percent = bonus_percent
         level1_bonus = round(base_value * ref1_percent / 100.0, 2)
 
         await db.execute(
@@ -2149,10 +2148,8 @@ async def credit_referral_commission(
                 (ref2_id,),
             )
             ref2_row = await ref2_cursor.fetchone()
-            ref2_revenue = float(ref2_row["partner_total_revenue_rub"] or 0) if ref2_row else 0.0
-            # level2_percent фиксированный 7%, не зависит от tier
             level2_bonus = round(base_value * level2_percent / 100.0, 2)
-            ref2_tier = get_partner_tier_by_total(ref2_revenue)
+            ref2_tier = get_partner_tier_by_total(0.0)
             await db.execute(
                 "UPDATE users SET partner_total_revenue_rub = partner_total_revenue_rub + ?, "
                 "partner_balance_rub = partner_balance_rub + ?, "
@@ -2198,25 +2195,18 @@ async def credit_first_payment_referral_bonus(
     )
 
 
-_PARTNER_TIERS: list[tuple[float, str, int]] = [
-    # (min_revenue_rub, tier_name, level1_percent)
-    (50_000.0, "gold",   35),
-    (10_000.0, "silver", 32),
-    (0.0,      "basic",  PARTNER_LEVEL1_PERCENT),
-]
-
-
 def get_partner_tier_by_total(total_revenue_rub: float) -> str:
-    for threshold, name, _ in _PARTNER_TIERS:
-        if total_revenue_rub >= threshold:
-            return name
+    """Возвращает единый tier партнёрки.
+
+    Исторические tier-статусы в БД могут оставаться, но больше не влияют
+    ни на отображение, ни на расчёт комиссии.
+    """
+    _ = total_revenue_rub
     return "basic"
 
 
 def get_partner_percent_by_tier(tier: str) -> int:
-    for _, name, pct in _PARTNER_TIERS:
-        if name == tier:
-            return pct
+    _ = tier
     return PARTNER_LEVEL1_PERCENT
 
 
@@ -2232,7 +2222,7 @@ async def accept_partner_agreement(telegram_id: int) -> bool:
         before = await cursor.fetchone()
 
         await db.execute(
-            "UPDATE users SET partner_agreed_at = CURRENT_TIMESTAMP, partner_tier = COALESCE(partner_tier, 'basic'), updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+            "UPDATE users SET partner_agreed_at = CURRENT_TIMESTAMP, partner_tier = 'basic', updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
             (telegram_id,),
         )
         await db.commit()
@@ -2588,7 +2578,9 @@ async def get_admin_partner_details(
                 if user.partner_agreed_at
                 else None
             ),
-            "partner_tier": user.partner_tier,
+            "partner_tier": get_partner_tier_by_total(
+                user.partner_total_revenue_rub or 0
+            ),
             "referral_earned": user.referral_earned or 0,
             "overview": overview,
             "referrals": [

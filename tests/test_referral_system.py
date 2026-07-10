@@ -583,6 +583,40 @@ def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_partner_commission_does_not_increase_for_legacy_gold_or_silver(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(3601)
+        buyer = await db.get_or_create_user(3602)
+        await db.process_referral(buyer.telegram_id, referrer.referral_code)
+
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            await conn.execute(
+                "UPDATE users SET partner_total_revenue_rub = ?, partner_tier = ? WHERE id = ?",
+                (75_000.0, "gold", referrer.id),
+            )
+            await conn.commit()
+
+        result = await db.credit_referral_commission(
+            buyer.telegram_id,
+            100,
+            transaction_amount_rub=1000,
+        )
+        updated_referrer = await db.get_or_create_user(referrer.telegram_id)
+
+        assert result["mode"] == "partner"
+        assert result["percent"] == db.PARTNER_LEVEL1_PERCENT
+        assert result["value"] == 300
+        assert result["referrer_tier"] == "basic"
+        assert updated_referrer.partner_balance_rub == 300
+        assert updated_referrer.partner_tier == "basic"
+
+    asyncio.run(run())
+
+
 def test_partner_overview_counts_only_payments_after_referral(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")
