@@ -13,6 +13,12 @@ from bot.internal_admin_api import (
     health_handler,
     summary_handler,
 )
+from bot.internal_admin_cms import (
+    cms_document_detail_handler,
+    cms_documents_handler,
+    publish_cms_document_handler,
+    save_cms_document_handler,
+)
 from bot.internal_admin_command_schema import ensure_internal_admin_command_schema
 from bot.internal_admin_operation_actions import replay_operation_handler
 from bot.internal_admin_operation_schema import ensure_internal_admin_operation_schema
@@ -29,6 +35,14 @@ from bot.internal_admin_payment_actions import (
 )
 from bot.internal_admin_payment_schema import ensure_internal_admin_payment_schema
 from bot.internal_admin_payments import payment_detail_handler, payments_handler
+from bot.internal_admin_support import (
+    assign_ticket_handler,
+    reply_ticket_handler,
+    ticket_detail_handler,
+    tickets_handler,
+    update_ticket_handler,
+)
+from bot.internal_admin_support_schema import ensure_internal_admin_support_schema
 from bot.internal_admin_tariffs import (
     current_tariffs_handler,
     tariff_version_detail_handler,
@@ -93,6 +107,18 @@ _PAYMENT_HANDLERS: dict[str, Handler] = {
 _TARIFF_VERSION_PATH = re.compile(
     r"^/internal/admin/tariffs/versions/(?P<version_id>[1-9][0-9]*)$"
 )
+_TICKET_PATH = re.compile(
+    r"^/internal/admin/tickets/(?P<ticket_id>[1-9][0-9]*)(?:/(?P<action>assign|update|reply))?$"
+)
+_TICKET_HANDLERS: dict[str, Handler] = {
+    "detail": ticket_detail_handler,
+    "assign": assign_ticket_handler,
+    "update": update_ticket_handler,
+    "reply": reply_ticket_handler,
+}
+_CMS_DOCUMENT_PATH = re.compile(
+    r"^/internal/admin/cms/documents/(?P<document_id>[1-9][0-9]*)(?:/(?P<action>publish))?$"
+)
 
 
 async def _authenticate_and_prepare(
@@ -100,6 +126,7 @@ async def _authenticate_and_prepare(
     *,
     operation_schema: bool = False,
     payment_schema: bool = False,
+    support_schema: bool = False,
 ) -> web.Response | None:
     # Schema initialization is deliberately delayed until after both the private
     # network check and exact-body HMAC verification have succeeded.
@@ -114,6 +141,8 @@ async def _authenticate_and_prepare(
             await ensure_internal_admin_operation_schema()
         if payment_schema:
             await ensure_internal_admin_payment_schema()
+        if support_schema:
+            await ensure_internal_admin_support_schema()
     except Exception:
         logger.exception("Internal admin schema is unavailable")
         return web.json_response({"error": "service_unavailable"}, status=503)
@@ -126,11 +155,13 @@ async def _dispatch_authenticated(
     *,
     operation_schema: bool = False,
     payment_schema: bool = False,
+    support_schema: bool = False,
 ) -> web.StreamResponse:
     preparation_error = await _authenticate_and_prepare(
         request,
         operation_schema=operation_schema,
         payment_schema=payment_schema,
+        support_schema=support_schema,
     )
     if preparation_error is not None:
         return preparation_error
@@ -188,6 +219,19 @@ async def dispatch_internal_admin_request(request: web.Request) -> web.StreamRes
             publish_tariffs_handler,
             payment_schema=True,
         )
+    if request.path == "/internal/admin/tickets":
+        return await _dispatch_authenticated(
+            request,
+            tickets_handler,
+            support_schema=True,
+        )
+    if request.path == "/internal/admin/cms/documents":
+        handler = save_cms_document_handler if request.method == "POST" else cms_documents_handler
+        return await _dispatch_authenticated(
+            request,
+            handler,
+            support_schema=True,
+        )
 
     handler = _INTERNAL_HANDLERS.get(request.path)
     if handler is not None:
@@ -226,5 +270,28 @@ async def dispatch_internal_admin_request(request: web.Request) -> web.StreamRes
             request,
             tariff_version_detail_handler,
             payment_schema=True,
+        )
+
+    ticket_match = _TICKET_PATH.fullmatch(request.path)
+    if ticket_match is not None:
+        request.match_info["ticket_id"] = ticket_match.group("ticket_id")
+        return await _dispatch_authenticated(
+            request,
+            _TICKET_HANDLERS[ticket_match.group("action") or "detail"],
+            support_schema=True,
+        )
+
+    document_match = _CMS_DOCUMENT_PATH.fullmatch(request.path)
+    if document_match is not None:
+        request.match_info["document_id"] = document_match.group("document_id")
+        handler = (
+            publish_cms_document_handler
+            if document_match.group("action") == "publish"
+            else cms_document_detail_handler
+        )
+        return await _dispatch_authenticated(
+            request,
+            handler,
+            support_schema=True,
         )
     return web.json_response({"error": "not_found"}, status=404)
