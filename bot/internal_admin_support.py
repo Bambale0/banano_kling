@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from aiohttp import web
@@ -19,6 +19,10 @@ from bot.internal_admin_user_commands import (
 
 _ALLOWED_STATUSES = {"new", "in_progress", "waiting_user", "resolved", "closed"}
 _ALLOWED_PRIORITIES = {"low", "normal", "high", "urgent"}
+TicketMutation = Callable[
+    [db_backend.Connection, Mapping[str, Any], Mapping[str, Any], str],
+    Awaitable[None],
+]
 
 
 def _service_envelope() -> dict[str, Any]:
@@ -107,7 +111,12 @@ _TICKET_SELECT = """
 """
 
 
-async def _fetch_ticket(ticket_id: int, *, connection: db_backend.Connection | None = None, for_update: bool = False) -> Mapping[str, Any] | None:
+async def _fetch_ticket(
+    ticket_id: int,
+    *,
+    connection: db_backend.Connection | None = None,
+    for_update: bool = False,
+) -> Mapping[str, Any] | None:
     suffix = " FOR UPDATE OF st" if for_update else ""
     if connection is not None:
         connection.row_factory = db_backend.Row
@@ -135,11 +144,15 @@ def _parse_optional_int(value: Any, *, field: str) -> int | None:
     return result
 
 
-async def _ticket_detail(ticket_id: int) -> dict[str, Any]:
-    ticket = await _fetch_ticket(ticket_id)
+async def _ticket_detail_from_connection(
+    connection: db_backend.Connection,
+    ticket_id: int,
+) -> dict[str, Any]:
+    ticket = await _fetch_ticket(ticket_id, connection=connection)
     if ticket is None:
         raise web.HTTPNotFound(text="ticket_not_found")
-    messages = await base_api._fetch_all(
+    connection.row_factory = db_backend.Row
+    message_cursor = await connection.execute(
         """
         SELECT id, sender_type, sender_id, body, telegram_message_id,
                delivery_status, created_at
@@ -149,7 +162,8 @@ async def _ticket_detail(ticket_id: int) -> dict[str, Any]:
         """,
         (ticket_id,),
     )
-    attachments = await base_api._fetch_all(
+    messages = await message_cursor.fetchall()
+    attachment_cursor = await connection.execute(
         """
         SELECT sa.id, sa.message_id, sa.kind, sa.telegram_file_id,
                sa.file_name, sa.mime_type, sa.size_bytes, sa.created_at
@@ -160,6 +174,7 @@ async def _ticket_detail(ticket_id: int) -> dict[str, Any]:
         """,
         (ticket_id,),
     )
+    attachments = await attachment_cursor.fetchall()
     attachments_by_message: dict[int, list[dict[str, Any]]] = {}
     for attachment in attachments:
         attachments_by_message.setdefault(int(attachment["message_id"]), []).append(
@@ -189,6 +204,11 @@ async def _ticket_detail(ticket_id: int) -> dict[str, Any]:
             for message in messages
         ],
     }
+
+
+async def _ticket_detail(ticket_id: int) -> dict[str, Any]:
+    async with db_backend.connect() as connection:
+        return await _ticket_detail_from_connection(connection, ticket_id)
 
 
 @internal_user_endpoint
@@ -264,7 +284,7 @@ async def _run_ticket_command(
     request: web.Request,
     *,
     action: str,
-    mutate: Any,
+    mutate: TicketMutation,
 ) -> web.Response:
     ticket_id = _parse_ticket_id(request)
     payload = _signed_payload(request)
@@ -279,19 +299,25 @@ async def _run_ticket_command(
             user_id=ticket_id,
             admin_user_id=admin_user_id,
             request_id=request_id,
-            payload={"reason": reason, **{k: v for k, v in payload.items() if k != "confirmation"}},
+            payload={
+                "reason": reason,
+                **{key: value for key, value in payload.items() if key != "confirmation"},
+            },
         )
         if existing is not None:
             await connection.rollback()
-            status_code = int(existing.pop("_http_status", 200))
-            return web.json_response(existing, status=status_code)
+            response_status = int(existing.get("_http_status", 200))
+            response_body = {
+                key: value for key, value in existing.items() if key != "_http_status"
+            }
+            return web.json_response(response_body, status=response_status)
 
         ticket = await _fetch_ticket(ticket_id, connection=connection, for_update=True)
         if ticket is None:
             await connection.rollback()
             raise web.HTTPNotFound(text="ticket_not_found")
         await mutate(connection, ticket, payload, admin_user_id)
-        detail = await _ticket_detail(ticket_id)
+        detail = await _ticket_detail_from_connection(connection, ticket_id)
         response_payload = {**_service_envelope(), "data": detail}
         await _complete_command(
             connection,
@@ -308,8 +334,15 @@ async def assign_ticket_handler(request: web.Request) -> web.Response:
     payload = _signed_payload(request)
     _require_confirmation(payload, f"ASSIGN {ticket_id}")
 
-    async def mutate(connection: db_backend.Connection, _ticket: Mapping[str, Any], body: Mapping[str, Any], _admin: str) -> None:
+    async def mutate(
+        connection: db_backend.Connection,
+        _ticket: Mapping[str, Any],
+        body: Mapping[str, Any],
+        _admin: str,
+    ) -> None:
         assignee = str(body.get("assigned_admin_id") or "").strip() or None
+        if assignee and len(assignee) > 128:
+            raise CommandValidationError("assigned_admin_id is too long")
         await connection.execute(
             """
             UPDATE support_tickets
@@ -330,33 +363,56 @@ async def update_ticket_handler(request: web.Request) -> web.Response:
     payload = _signed_payload(request)
     _require_confirmation(payload, f"UPDATE {ticket_id}")
 
-    async def mutate(connection: db_backend.Connection, _ticket: Mapping[str, Any], body: Mapping[str, Any], _admin: str) -> None:
+    async def mutate(
+        connection: db_backend.Connection,
+        _ticket: Mapping[str, Any],
+        body: Mapping[str, Any],
+        _admin: str,
+    ) -> None:
         status_value = str(body.get("status") or "").strip().lower()
         priority = str(body.get("priority") or "").strip().lower()
         if status_value and status_value not in _ALLOWED_STATUSES:
             raise CommandValidationError("unsupported ticket status")
         if priority and priority not in _ALLOWED_PRIORITIES:
             raise CommandValidationError("unsupported ticket priority")
-        payment_id = _parse_optional_int(body.get("linked_payment_id"), field="linked_payment_id")
-        operation_id = _parse_optional_int(body.get("linked_operation_id"), field="linked_operation_id")
+
+        payment_present = "linked_payment_id" in body
+        operation_present = "linked_operation_id" in body
+        payment_id = (
+            _parse_optional_int(body.get("linked_payment_id"), field="linked_payment_id")
+            if payment_present
+            else None
+        )
+        operation_id = (
+            _parse_optional_int(body.get("linked_operation_id"), field="linked_operation_id")
+            if operation_present
+            else None
+        )
         if payment_id is not None:
-            cursor = await connection.execute("SELECT id FROM transactions WHERE id = ?", (payment_id,))
+            cursor = await connection.execute(
+                "SELECT id FROM transactions WHERE id = ?",
+                (payment_id,),
+            )
             if not await cursor.fetchone():
                 raise CommandValidationError("linked payment does not exist")
         if operation_id is not None:
-            cursor = await connection.execute("SELECT id FROM generation_tasks WHERE id = ?", (operation_id,))
+            cursor = await connection.execute(
+                "SELECT id FROM generation_tasks WHERE id = ?",
+                (operation_id,),
+            )
             if not await cursor.fetchone():
                 raise CommandValidationError("linked operation does not exist")
+
         await connection.execute(
             """
             UPDATE support_tickets
             SET status = COALESCE(NULLIF(?, ''), status),
                 priority = COALESCE(NULLIF(?, ''), priority),
-                linked_payment_id = ?,
-                linked_operation_id = ?,
+                linked_payment_id = CASE WHEN ? THEN ? ELSE linked_payment_id END,
+                linked_operation_id = CASE WHEN ? THEN ? ELSE linked_operation_id END,
                 closed_at = CASE
                     WHEN ? = 'closed' THEN CURRENT_TIMESTAMP
-                    WHEN ? <> 'closed' THEN NULL
+                    WHEN ? <> '' AND ? <> 'closed' THEN NULL
                     ELSE closed_at
                 END,
                 updated_at = CURRENT_TIMESTAMP
@@ -365,8 +421,11 @@ async def update_ticket_handler(request: web.Request) -> web.Response:
             (
                 status_value,
                 priority,
+                payment_present,
                 payment_id,
+                operation_present,
                 operation_id,
+                status_value,
                 status_value,
                 status_value,
                 ticket_id,
@@ -382,10 +441,17 @@ async def reply_ticket_handler(request: web.Request) -> web.Response:
     payload = _signed_payload(request)
     _require_confirmation(payload, f"REPLY {ticket_id}")
 
-    async def mutate(connection: db_backend.Connection, ticket: Mapping[str, Any], body: Mapping[str, Any], admin_user_id: str) -> None:
+    async def mutate(
+        connection: db_backend.Connection,
+        ticket: Mapping[str, Any],
+        body: Mapping[str, Any],
+        admin_user_id: str,
+    ) -> None:
         text = str(body.get("body") or "").strip()
         if not 1 <= len(text) <= 4000:
-            raise CommandValidationError("reply body must contain between 1 and 4000 characters")
+            raise CommandValidationError(
+                "reply body must contain between 1 and 4000 characters"
+            )
         if ticket["status"] == "closed":
             raise CommandConflictError("closed ticket cannot receive a reply")
         connection.row_factory = db_backend.Row
