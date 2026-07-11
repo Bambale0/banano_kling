@@ -5,6 +5,7 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 
 from bot import internal_admin_api as base_api
+from bot import internal_admin_operation_actions as actions
 from bot import internal_admin_operations as operations
 from bot.internal_admin_dispatch import _AuthenticatedBody
 
@@ -234,11 +235,11 @@ async def test_replay_returns_saved_idempotent_response(monkeypatch) -> None:
     async def reserve(*_args, **_kwargs):
         return saved
 
-    monkeypatch.setattr(operations.db_backend, "connect", lambda: connection)
-    monkeypatch.setattr(operations, "_fetch_operation", fetch_operation)
-    monkeypatch.setattr(operations, "_reserve_command", reserve)
+    monkeypatch.setattr(actions.db_backend, "connect", lambda: connection)
+    monkeypatch.setattr(actions.operations, "_fetch_operation", fetch_operation)
+    monkeypatch.setattr(actions, "_reserve_command", reserve)
 
-    response = await operations.replay_operation_handler.__wrapped__(request)
+    response = await actions.replay_operation_handler.__wrapped__(request)
 
     assert response.status == 200
     assert json.loads(response.text) == saved
