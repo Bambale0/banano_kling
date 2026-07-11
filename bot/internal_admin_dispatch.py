@@ -13,13 +13,13 @@ from bot.internal_admin_api import (
     summary_handler,
 )
 from bot.internal_admin_command_schema import ensure_internal_admin_command_schema
+from bot.internal_admin_operation_actions import replay_operation_handler
 from bot.internal_admin_operation_schema import ensure_internal_admin_operation_schema
 from bot.internal_admin_operations import (
     operation_detail_handler,
     operation_timeline_handler,
     operations_handler,
     refund_operation_handler,
-    replay_operation_handler,
 )
 from bot.internal_admin_user_commands import (
     _authorize_request,
