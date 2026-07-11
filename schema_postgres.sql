@@ -36,6 +36,27 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
 
 -- ============================================================
+-- INTERNAL ADMIN COMMAND LEDGER
+-- ============================================================
+CREATE TABLE IF NOT EXISTS internal_admin_commands (
+    id BIGSERIAL PRIMARY KEY,
+    idempotency_key TEXT UNIQUE NOT NULL,
+    action TEXT NOT NULL,
+    target_user_id BIGINT NOT NULL,
+    admin_user_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    request_payload JSONB NOT NULL,
+    response_payload JSONB,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_internal_admin_commands_request_id
+    ON internal_admin_commands(request_id);
+CREATE INDEX IF NOT EXISTS idx_internal_admin_commands_target
+    ON internal_admin_commands(target_user_id, created_at DESC);
+
+-- ============================================================
 -- TRANSACTIONS (payments)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS transactions (
@@ -216,159 +237,5 @@ CREATE TABLE IF NOT EXISTS promo_codes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code);
-
--- ============================================================
--- PROMO REDEMPTIONS
--- ============================================================
-CREATE TABLE IF NOT EXISTS promo_redemptions (
-    id BIGSERIAL PRIMARY KEY,
-    promo_code_id BIGINT NOT NULL REFERENCES promo_codes(id),
-    transaction_id BIGINT UNIQUE NOT NULL REFERENCES transactions(id),
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    amount_rub REAL NOT NULL,
-    bonus_credits INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_promo_redemptions_promo ON promo_redemptions(promo_code_id, created_at);
-
--- ============================================================
--- USER PROMPTS (feed)
--- ============================================================
-CREATE TABLE IF NOT EXISTS user_prompts (
-    id BIGSERIAL PRIMARY KEY,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    category TEXT DEFAULT 'other',
-    prompt_text TEXT NOT NULL,
-    preview_url TEXT,
-    model TEXT,
-    tags TEXT DEFAULT '[]',
-    likes INTEGER DEFAULT 0,
-    uses_count INTEGER DEFAULT 0,
-    is_public BOOLEAN DEFAULT TRUE,
-    status TEXT DEFAULT 'pending',
-    reject_reason TEXT,
-    ai_moderation_decision TEXT,
-    ai_moderation_risk TEXT,
-    ai_moderation_reason TEXT,
-    ai_moderation_recommendation TEXT,
-    ai_moderation_raw TEXT,
-    ai_moderated_at TIMESTAMP,
-    source_generation_id BIGINT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_user_prompts_status ON user_prompts(status, is_public, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_user_prompts_author_status ON user_prompts(author_id, status);
-CREATE INDEX IF NOT EXISTS idx_user_prompts_source_generation ON user_prompts(source_generation_id);
-
--- ============================================================
--- PROMPT LIKES
--- ============================================================
-CREATE TABLE IF NOT EXISTS prompt_likes (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    prompt_id BIGINT NOT NULL REFERENCES user_prompts(id) ON DELETE CASCADE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, prompt_id)
-);
-
--- ============================================================
--- FEED GENERATION LIKES
--- ============================================================
-CREATE TABLE IF NOT EXISTS feed_generation_likes (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    generation_task_id BIGINT NOT NULL REFERENCES generation_tasks(id) ON DELETE CASCADE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, generation_task_id)
-);
-
--- ============================================================
--- FEED REMIX EVENTS
--- ============================================================
-CREATE TABLE IF NOT EXISTS feed_remix_events (
-    id BIGSERIAL PRIMARY KEY,
-    source_generation_task_id BIGINT NOT NULL,
-    remix_generation_task_id BIGINT NOT NULL,
-    source_author_id BIGINT NOT NULL,
-    remix_author_id BIGINT NOT NULL,
-    credits_spent INTEGER DEFAULT 0,
-    royalty_credits INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(source_generation_task_id, remix_generation_task_id)
-);
-
--- ============================================================
--- PROMPT REPEAT EVENTS
--- ============================================================
-CREATE TABLE IF NOT EXISTS prompt_repeat_events (
-    id BIGSERIAL PRIMARY KEY,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    repeater_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    source_type TEXT NOT NULL,
-    source_id BIGINT NOT NULL,
-    repeat_task_id TEXT,
-    credits_spent INTEGER DEFAULT 0,
-    amount_rub REAL NOT NULL DEFAULT 10,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_prompt_repeat_events_author ON prompt_repeat_events(author_id, created_at DESC);
-
--- ============================================================
--- SAVED REFERENCES
--- ============================================================
-CREATE TABLE IF NOT EXISTS saved_references (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    file_url TEXT NOT NULL,
-    file_hash TEXT,
-    original_filename TEXT,
-    content_type TEXT,
-    source TEXT DEFAULT 'telegram',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP,
-    last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_saved_references_user_kind_last_used ON saved_references(user_id, kind, last_used_at DESC, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_references_user_kind_hash ON saved_references(user_id, kind, file_hash);
-
--- ============================================================
--- FEED COMMENTS
--- ============================================================
-CREATE TABLE IF NOT EXISTS feed_comments (
-    id BIGSERIAL PRIMARY KEY,
-    generation_id BIGINT NOT NULL REFERENCES generation_tasks(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    text TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_feed_comments_generation_created ON feed_comments(generation_id, created_at DESC);
-
--- ============================================================
--- BATCH JOBS
--- ============================================================
-CREATE TABLE IF NOT EXISTS batch_jobs (
-    id BIGSERIAL PRIMARY KEY,
-    job_id TEXT UNIQUE NOT NULL,
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    mode TEXT NOT NULL,
-    total_cost INTEGER NOT NULL,
-    results_count INTEGER DEFAULT 0,
-    duration REAL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- ============================================================
--- MINIAPP NOTIFICATIONS
--- ============================================================
-CREATE TABLE IF NOT EXISTS miniapp_notifications (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id),
-    message TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
 COMMIT;
