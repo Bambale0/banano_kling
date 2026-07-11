@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 OUTBOX_POLL_SECONDS = 2.0
 OUTBOX_MAX_ATTEMPTS = 5
+_WORKER_TASK: asyncio.Task[None] | None = None
 
 
 @dataclass(slots=True)
@@ -320,3 +321,13 @@ async def support_outbox_worker(bot: Bot) -> None:
                     exc,
                 )
             await asyncio.sleep(OUTBOX_POLL_SECONDS)
+
+
+def ensure_support_outbox_worker(bot: Bot) -> asyncio.Task[None]:
+    global _WORKER_TASK
+    if _WORKER_TASK is None or _WORKER_TASK.done():
+        _WORKER_TASK = asyncio.create_task(
+            support_outbox_worker(bot),
+            name="support-outbox-worker",
+        )
+    return _WORKER_TASK
