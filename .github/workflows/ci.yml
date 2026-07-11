@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -28,18 +30,31 @@ jobs:
           pip install --quiet ruff pytest
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
-      - name: Lint with ruff
+      - name: Lint changed Python files with ruff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
-          set -o pipefail
-          ruff check bot/ tests/ --ignore=E402,F403,F405,E501 --output-format=concise | tee ruff-output.txt
+          BASE_SHA="${PR_BASE_SHA:-$PUSH_BEFORE_SHA}"
+          if [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            BASE_SHA="${CURRENT_SHA}^"
+          fi
 
-      - name: Upload Ruff output
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruff-output
-          path: ruff-output.txt
-          if-no-files-found: ignore
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$CURRENT_SHA" -- \
+              'bot/*.py' 'bot/**/*.py' 'tests/*.py' 'tests/**/*.py'
+          )
+
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No changed Python files to lint"
+            exit 0
+          fi
+
+          printf 'Linting changed files:\n%s\n' "${changed_files[*]}"
+          ruff check "${changed_files[@]}" \
+            --ignore=E402,F403,F405,E501 \
+            --output-format=github
 
   test:
     runs-on: ubuntu-latest
