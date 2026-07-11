@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -240,7 +241,11 @@ async def _claim_outbox_item() -> dict[str, Any] | None:
     return dict(row)
 
 
-async def _mark_outbox_sent(outbox_id: int, message_id: int, telegram_message_id: int) -> None:
+async def _mark_outbox_sent(
+    outbox_id: int,
+    message_id: int,
+    telegram_message_id: int,
+) -> None:
     async with db_backend.connect() as connection:
         await connection.execute(
             """
@@ -262,7 +267,12 @@ async def _mark_outbox_sent(outbox_id: int, message_id: int, telegram_message_id
         await connection.commit()
 
 
-async def _mark_outbox_failed(outbox_id: int, message_id: int, attempts: int, error: Exception) -> None:
+async def _mark_outbox_failed(
+    outbox_id: int,
+    message_id: int,
+    attempts: int,
+    error: Exception,
+) -> None:
     terminal = attempts + 1 >= OUTBOX_MAX_ATTEMPTS
     delay_seconds = min(300, 2 ** max(attempts, 0) * 5)
     next_attempt = datetime.utcnow() + timedelta(seconds=delay_seconds)
@@ -301,7 +311,7 @@ async def support_outbox_worker(bot: Bot) -> None:
                 chat_id=int(item["telegram_id"]),
                 text=(
                     f"💬 <b>Ответ поддержки по обращению #{item['ticket_id']}</b>\n\n"
-                    f"{item['body']}"
+                    f"{html.escape(str(item['body']))}"
                 ),
             )
             await _mark_outbox_sent(
