@@ -29,7 +29,17 @@ jobs:
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
       - name: Lint with ruff
-        run: ruff check bot/ tests/ --ignore=E402,F403,F405,E501 --output-format=github
+        run: |
+          set -o pipefail
+          ruff check bot/ tests/ --ignore=E402,F403,F405,E501 --output-format=concise | tee ruff-output.txt
+
+      - name: Upload Ruff output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-output
+          path: ruff-output.txt
+          if-no-files-found: ignore
 
   test:
     runs-on: ubuntu-latest
