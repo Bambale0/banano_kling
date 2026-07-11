@@ -33,6 +33,7 @@ from aiogram.types import (
     Update,
 )
 from aiohttp import web
+from bot.internal_api import setup_internal_api
 import aiohttp
 
 from bot import db as db_backend
@@ -3831,6 +3832,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         return web.json_response({"status": "ok", "service": "tanya-bot"})
 
     app.router.add_get("/health", health_check)
+
+    # Internal API for admin panel
+    setup_internal_api(app, secret=config.INTERNAL_API_SECRET, version="1.0.0")
 
     return app
 

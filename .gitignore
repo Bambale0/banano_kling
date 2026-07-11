@@ -1,4 +1,9 @@
 # Python
+claw/
+memory/
+.agents/
+
+.vibeskills
 __pycache__/
 *.py[cod]
 *$py.class
