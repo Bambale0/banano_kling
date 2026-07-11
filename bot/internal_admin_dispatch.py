@@ -49,6 +49,7 @@ _OPERATION_PATH = re.compile(
     r"^/internal/admin/operations/(?P<operation_id>[1-9][0-9]*)(?:/(?P<action>timeline|replay|refund))?$"
 )
 _OPERATION_HANDLERS = {
+    "list": operations_handler,
     "detail": operation_detail_handler,
     "timeline": operation_timeline_handler,
     "replay": replay_operation_handler,
@@ -56,7 +57,11 @@ _OPERATION_HANDLERS = {
 }
 
 
-async def _authenticate_and_prepare(request: web.Request, *, operations: bool) -> web.Response | None:
+async def _authenticate_and_prepare(
+    request: web.Request,
+    *,
+    operations: bool,
+) -> web.Response | None:
     # Schema initialization is deliberately delayed until after both the private
     # network check and exact-body HMAC verification have succeeded.
     body, authorization_error = await _authorize_request(request)
@@ -103,7 +108,7 @@ async def _dispatch_operation(
 
 async def dispatch_internal_admin_request(request: web.Request) -> web.StreamResponse:
     if request.path == "/internal/admin/operations":
-        return await _dispatch_operation(request, operation_id=None, action="detail" if False else "list")
+        return await _dispatch_operation(request, operation_id=None, action="list")
 
     handler = _INTERNAL_HANDLERS.get(request.path)
     if handler is not None:
