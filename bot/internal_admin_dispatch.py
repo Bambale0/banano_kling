@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from aiohttp import web
 
 from bot.internal_admin_api import (
+    InvalidCursorError,
     finance_handler,
     generations_handler,
     health_handler,
@@ -21,20 +22,21 @@ from bot.internal_admin_operations import (
     operations_handler,
     refund_operation_handler,
 )
-from bot.internal_admin_payment_schema import ensure_internal_admin_payment_schema
-from bot.internal_admin_payments import (
-    payment_detail_handler,
-    payments_handler,
+from bot.internal_admin_payment_actions import (
+    publish_tariffs_handler,
     recheck_payment_handler,
     reprocess_payment_handler,
 )
+from bot.internal_admin_payment_schema import ensure_internal_admin_payment_schema
+from bot.internal_admin_payments import payment_detail_handler, payments_handler
 from bot.internal_admin_tariffs import (
     current_tariffs_handler,
-    publish_tariffs_handler,
     tariff_version_detail_handler,
     tariff_versions_handler,
 )
 from bot.internal_admin_user_commands import (
+    CommandConflictError,
+    CommandValidationError,
     _authorize_request,
     adjust_user_balance_handler,
     block_user_handler,
@@ -132,8 +134,27 @@ async def _dispatch_authenticated(
     )
     if preparation_error is not None:
         return preparation_error
+
     undecorated = getattr(handler, "__wrapped__", handler)
-    return await undecorated(request)
+    try:
+        return await undecorated(request)
+    except InvalidCursorError:
+        return web.json_response({"error": "invalid_cursor"}, status=400)
+    except CommandValidationError as exc:
+        return web.json_response(
+            {"error": "invalid_command", "detail": str(exc)},
+            status=400,
+        )
+    except CommandConflictError as exc:
+        return web.json_response(
+            {"error": "command_conflict", "detail": str(exc)},
+            status=409,
+        )
+    except web.HTTPException:
+        raise
+    except Exception:
+        logger.exception("Internal admin endpoint failed: %s", request.path)
+        return web.json_response({"error": "internal_error"}, status=500)
 
 
 async def dispatch_internal_admin_request(request: web.Request) -> web.StreamResponse:
