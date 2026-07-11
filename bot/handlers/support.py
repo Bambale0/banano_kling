@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from bot.internal_admin_cms import get_published_cms_content
 from bot.support_service import (
     SupportAttachment,
     append_user_message,
@@ -16,7 +17,8 @@ router = Router()
 
 
 class SupportStates(StatesGroup):
-    waiting_message = State()
+    waiting_new_message = State()
+    waiting_followup = State()
 
 
 def _extract_attachment(message: types.Message) -> SupportAttachment | None:
@@ -64,24 +66,41 @@ def _subject_from_text(text: str) -> str:
     return normalized[:120]
 
 
-@router.message(Command("support"))
-@router.message(F.text.in_({"Поддержка", "🆘 Поддержка", "💬 Поддержка"}))
-async def open_support(message: types.Message, state: FSMContext) -> None:
-    await state.set_state(SupportStates.waiting_message)
-    await message.answer(
+async def _support_intro() -> str:
+    try:
+        content = await get_published_cms_content("support.intro")
+    except Exception:
+        content = None
+    if content and isinstance(content.get("text"), str):
+        return str(content["text"])
+    return (
         "💬 <b>Новое обращение в поддержку</b>\n\n"
         "Опишите проблему одним сообщением. Можно приложить фото, видео или документ.\n"
         "Для отмены отправьте /cancel."
     )
 
 
-@router.message(Command("cancel"), SupportStates.waiting_message)
+@router.message(Command("support"))
+@router.message(F.text.in_({"Поддержка", "🆘 Поддержка", "💬 Поддержка"}))
+async def open_support(message: types.Message, state: FSMContext) -> None:
+    await state.set_state(SupportStates.waiting_new_message)
+    await message.answer(await _support_intro())
+
+
+@router.message(
+    Command("cancel"),
+    SupportStates.waiting_new_message,
+)
+@router.message(
+    Command("cancel"),
+    SupportStates.waiting_followup,
+)
 async def cancel_support(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Создание обращения отменено.")
 
 
-@router.message(SupportStates.waiting_message)
+@router.message(SupportStates.waiting_new_message)
 async def create_support_from_message(message: types.Message, state: FSMContext) -> None:
     if not message.from_user:
         return
@@ -122,20 +141,18 @@ async def start_support_followup(message: types.Message, state: FSMContext) -> N
     if ticket_id <= 0:
         await message.answer("Открытое обращение не найдено. Создайте новое через /support.")
         return
-    await state.set_state(SupportStates.waiting_message)
+    await state.set_state(SupportStates.waiting_followup)
     await state.update_data(support_ticket_id=ticket_id)
     await message.answer(
         f"Пришлите дополнение к обращению <b>#{ticket_id}</b>. Можно добавить вложение."
     )
 
 
-@router.message(SupportStates.waiting_message)
+@router.message(SupportStates.waiting_followup)
 async def append_support_followup(message: types.Message, state: FSMContext) -> None:
     data = await state.get_data()
     ticket_id = data.get("support_ticket_id")
-    if not ticket_id:
-        return
-    if not message.from_user:
+    if not ticket_id or not message.from_user:
         return
     body = (message.text or message.caption or "").strip()
     attachment = _extract_attachment(message)
