@@ -32,7 +32,7 @@ _whitelist = set(
 
 
 class _SlidingWindowCounter:
-    """Sliding rate counter per key."""
+    """Sliding-window rate counter per key."""
 
     __slots__ = ("timestamps",)
 
@@ -148,7 +148,7 @@ async def _cleanup_loop() -> None:
             logger.debug("Rate limiter cleanup: evicted %d stale IPs", len(stale_keys))
 
 
-async def start_cleanup_task() -> None:
+def start_cleanup_task() -> None:
     """Start background cleanup asyncio task."""
     loop = asyncio.get_event_loop()
     loop.create_task(_cleanup_loop())
