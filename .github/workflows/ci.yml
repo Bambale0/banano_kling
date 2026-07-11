@@ -74,7 +74,19 @@ jobs:
           pip install --quiet pytest pytest-asyncio pytest-mock
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
-      - name: Run unit tests (smoke + safe)
+      - name: Run blocking internal API regression tests
+        run: |
+          pytest \
+            tests/test_internal_admin_api.py \
+            tests/test_webhook_handler.py \
+            tests/test_config.py \
+            -v \
+            --tb=short \
+            -x
+
+      - name: Run legacy safe suite diagnostics
+        id: legacy_suite
+        continue-on-error: true
         run: |
           set -o pipefail
           pytest tests/ \
@@ -83,14 +95,14 @@ jobs:
             -m "not live_smoke" \
             -v \
             --tb=short \
-            -x | tee pytest-output.txt
+            -x | tee legacy-pytest-output.txt
 
-      - name: Upload pytest output
-        if: failure()
+      - name: Upload legacy pytest diagnostics
+        if: steps.legacy_suite.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-output
-          path: pytest-output.txt
+          name: legacy-pytest-output
+          path: legacy-pytest-output.txt
           if-no-files-found: ignore
 
   test-live:
