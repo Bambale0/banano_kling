@@ -6,6 +6,7 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot import internal_admin_operations as operations
+from bot.internal_admin_operation_replay import run_replay
 from bot.internal_admin_user_commands import (
     CommandConflictError,
     CommandValidationError,
@@ -30,13 +31,7 @@ def _provider_accepted(child: object) -> bool:
 
 @internal_user_endpoint
 async def replay_operation_handler(request: web.Request) -> web.Response:
-    """Replay an operation and persist a stable idempotent outcome.
-
-    Provider wrappers sometimes return structured error dictionaries rather
-    than raising. The core replay path persists those attempts as failed child
-    operations. This handler treats such a child as a failed command instead of
-    incorrectly reporting a successful replay.
-    """
+    """Replay an operation and persist a stable idempotent outcome."""
 
     operation_id = operations._parse_operation_id(request)
     payload = _parse_command_payload(request, require_amount=False)
@@ -67,7 +62,7 @@ async def replay_operation_handler(request: web.Request) -> web.Response:
         await connection.commit()
 
     try:
-        child = await operations._run_replay(
+        child = await run_replay(
             source,
             admin_user_id=admin_user_id,
             request_id=request_id,
