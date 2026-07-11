@@ -36,6 +36,27 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code);
 
 -- ============================================================
+-- INTERNAL ADMIN COMMAND LEDGER
+-- ============================================================
+CREATE TABLE IF NOT EXISTS internal_admin_commands (
+    id BIGSERIAL PRIMARY KEY,
+    idempotency_key TEXT UNIQUE NOT NULL,
+    action TEXT NOT NULL,
+    target_user_id BIGINT NOT NULL,
+    admin_user_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    request_payload JSONB NOT NULL,
+    response_payload JSONB,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_internal_admin_commands_request_id
+    ON internal_admin_commands(request_id);
+CREATE INDEX IF NOT EXISTS idx_internal_admin_commands_target
+    ON internal_admin_commands(target_user_id, created_at DESC);
+
+-- ============================================================
 -- TRANSACTIONS (payments)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS transactions (
