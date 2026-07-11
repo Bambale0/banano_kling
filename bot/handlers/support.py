@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram import F, Router, types
+from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -10,6 +10,7 @@ from bot.support_service import (
     SupportAttachment,
     append_user_message,
     create_support_ticket,
+    ensure_support_outbox_worker,
     latest_open_ticket_id,
 )
 
@@ -19,6 +20,13 @@ router = Router()
 class SupportStates(StatesGroup):
     waiting_new_message = State()
     waiting_followup = State()
+
+
+async def _start_support_outbox(bot: Bot) -> None:
+    ensure_support_outbox_worker(bot)
+
+
+router.startup.register(_start_support_outbox)
 
 
 def _extract_attachment(message: types.Message) -> SupportAttachment | None:
