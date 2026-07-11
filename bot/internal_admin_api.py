@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import ipaddress
 import logging
+import os
 import time
 from collections.abc import Mapping
 from datetime import date, datetime
@@ -15,7 +16,6 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from bot import db as db_backend
-from bot.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,15 @@ API_VERSION = "1"
 CHANNEL = "telegram"
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 100
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "").strip()
+INTERNAL_API_SERVICE_VERSION = os.getenv("INTERNAL_API_SERVICE_VERSION", "1.0.0").strip()
+INTERNAL_API_MAX_CLOCK_SKEW_SECONDS = int(
+    os.getenv("INTERNAL_API_MAX_CLOCK_SKEW_SECONDS", "60")
+)
+INTERNAL_API_ALLOWED_NETWORKS = os.getenv(
+    "INTERNAL_API_ALLOWED_NETWORKS",
+    "127.0.0.1/32,::1/128",
+)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -35,7 +44,7 @@ def _service_envelope() -> dict[str, Any]:
     return {
         "channel": CHANNEL,
         "api_version": API_VERSION,
-        "service_version": config.INTERNAL_API_SERVICE_VERSION,
+        "service_version": INTERNAL_API_SERVICE_VERSION,
     }
 
 
@@ -87,7 +96,7 @@ def verify_internal_signature(
 
     current_time = int(time.time()) if now is None else now
     max_skew = (
-        config.INTERNAL_API_MAX_CLOCK_SKEW_SECONDS
+        INTERNAL_API_MAX_CLOCK_SKEW_SECONDS
         if max_clock_skew_seconds is None
         else max_clock_skew_seconds
     )
@@ -106,7 +115,7 @@ def verify_internal_signature(
 
 def _allowed_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-    for raw_value in config.INTERNAL_API_ALLOWED_NETWORKS.split(","):
+    for raw_value in INTERNAL_API_ALLOWED_NETWORKS.split(","):
         value = raw_value.strip()
         if not value:
             continue
@@ -212,8 +221,7 @@ async def _authorize_internal_request(request: web.Request) -> web.Response | No
     if request.method != "GET":
         return web.json_response({"error": "method_not_allowed"}, status=405)
 
-    secret = config.INTERNAL_API_SECRET.strip()
-    if not secret:
+    if not INTERNAL_API_SECRET:
         logger.error("Internal admin API rejected request: INTERNAL_API_SECRET is not configured")
         return web.json_response({"error": "service_unavailable"}, status=503)
 
@@ -226,7 +234,7 @@ async def _authorize_internal_request(request: web.Request) -> web.Response | No
     signature = request.headers.get("X-Internal-Signature", "")
     body = await request.read()
     if not verify_internal_signature(
-        secret=secret,
+        secret=INTERNAL_API_SECRET,
         timestamp=timestamp,
         method=request.method,
         request_path=request.raw_path,
