@@ -76,13 +76,22 @@ jobs:
 
       - name: Run unit tests (smoke + safe)
         run: |
+          set -o pipefail
           pytest tests/ \
             --ignore=tests/live \
             --ignore=tests/standalone \
             -m "not live_smoke" \
             -v \
             --tb=short \
-            -x
+            -x | tee pytest-output.txt
+
+      - name: Upload pytest output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: pytest-output.txt
+          if-no-files-found: ignore
 
   test-live:
     runs-on: ubuntu-latest
