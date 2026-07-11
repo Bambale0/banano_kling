@@ -21,6 +21,19 @@ from bot.internal_admin_operations import (
     operations_handler,
     refund_operation_handler,
 )
+from bot.internal_admin_payment_schema import ensure_internal_admin_payment_schema
+from bot.internal_admin_payments import (
+    payment_detail_handler,
+    payments_handler,
+    recheck_payment_handler,
+    reprocess_payment_handler,
+)
+from bot.internal_admin_tariffs import (
+    current_tariffs_handler,
+    publish_tariffs_handler,
+    tariff_version_detail_handler,
+    tariff_versions_handler,
+)
 from bot.internal_admin_user_commands import (
     _authorize_request,
     adjust_user_balance_handler,
@@ -66,12 +79,25 @@ _OPERATION_HANDLERS: dict[str, Handler] = {
     "replay": replay_operation_handler,
     "refund": refund_operation_handler,
 }
+_PAYMENT_PATH = re.compile(
+    r"^/internal/admin/payments/(?P<payment_id>[1-9][0-9]*)(?:/(?P<action>recheck|reprocess))?$"
+)
+_PAYMENT_HANDLERS: dict[str, Handler] = {
+    "list": payments_handler,
+    "detail": payment_detail_handler,
+    "recheck": recheck_payment_handler,
+    "reprocess": reprocess_payment_handler,
+}
+_TARIFF_VERSION_PATH = re.compile(
+    r"^/internal/admin/tariffs/versions/(?P<version_id>[1-9][0-9]*)$"
+)
 
 
 async def _authenticate_and_prepare(
     request: web.Request,
     *,
-    operations: bool,
+    operation_schema: bool = False,
+    payment_schema: bool = False,
 ) -> web.Response | None:
     # Schema initialization is deliberately delayed until after both the private
     # network check and exact-body HMAC verification have succeeded.
@@ -82,47 +108,65 @@ async def _authenticate_and_prepare(
 
     try:
         await ensure_internal_admin_command_schema()
-        if operations:
+        if operation_schema:
             await ensure_internal_admin_operation_schema()
+        if payment_schema:
+            await ensure_internal_admin_payment_schema()
     except Exception:
         logger.exception("Internal admin schema is unavailable")
         return web.json_response({"error": "service_unavailable"}, status=503)
     return None
 
 
-async def _dispatch_user_command(
+async def _dispatch_authenticated(
     request: web.Request,
+    handler: Handler,
     *,
-    user_id: str,
-    action: str,
+    operation_schema: bool = False,
+    payment_schema: bool = False,
 ) -> web.StreamResponse:
-    preparation_error = await _authenticate_and_prepare(request, operations=False)
+    preparation_error = await _authenticate_and_prepare(
+        request,
+        operation_schema=operation_schema,
+        payment_schema=payment_schema,
+    )
     if preparation_error is not None:
         return preparation_error
-    request.match_info["user_id"] = user_id
-    return await _USER_COMMAND_HANDLERS[action](request)
-
-
-async def _dispatch_operation(
-    request: web.Request,
-    *,
-    operation_id: str | None,
-    action: str,
-) -> web.StreamResponse:
-    preparation_error = await _authenticate_and_prepare(request, operations=True)
-    if preparation_error is not None:
-        return preparation_error
-    if operation_id is not None:
-        request.match_info["operation_id"] = operation_id
-
-    handler = _OPERATION_HANDLERS[action]
     undecorated = getattr(handler, "__wrapped__", handler)
     return await undecorated(request)
 
 
 async def dispatch_internal_admin_request(request: web.Request) -> web.StreamResponse:
     if request.path == "/internal/admin/operations":
-        return await _dispatch_operation(request, operation_id=None, action="list")
+        return await _dispatch_authenticated(
+            request,
+            _OPERATION_HANDLERS["list"],
+            operation_schema=True,
+        )
+    if request.path == "/internal/admin/payments":
+        return await _dispatch_authenticated(
+            request,
+            _PAYMENT_HANDLERS["list"],
+            payment_schema=True,
+        )
+    if request.path == "/internal/admin/tariffs":
+        return await _dispatch_authenticated(
+            request,
+            current_tariffs_handler,
+            payment_schema=True,
+        )
+    if request.path == "/internal/admin/tariffs/versions":
+        return await _dispatch_authenticated(
+            request,
+            tariff_versions_handler,
+            payment_schema=True,
+        )
+    if request.path == "/internal/admin/tariffs/publish":
+        return await _dispatch_authenticated(
+            request,
+            publish_tariffs_handler,
+            payment_schema=True,
+        )
 
     handler = _INTERNAL_HANDLERS.get(request.path)
     if handler is not None:
@@ -130,17 +174,36 @@ async def dispatch_internal_admin_request(request: web.Request) -> web.StreamRes
 
     user_match = _USER_COMMAND_PATH.fullmatch(request.path)
     if user_match is not None:
-        return await _dispatch_user_command(
+        request.match_info["user_id"] = user_match.group("user_id")
+        return await _dispatch_authenticated(
             request,
-            user_id=user_match.group("user_id"),
-            action=user_match.group("action"),
+            _USER_COMMAND_HANDLERS[user_match.group("action")],
         )
 
     operation_match = _OPERATION_PATH.fullmatch(request.path)
     if operation_match is not None:
-        return await _dispatch_operation(
+        request.match_info["operation_id"] = operation_match.group("operation_id")
+        return await _dispatch_authenticated(
             request,
-            operation_id=operation_match.group("operation_id"),
-            action=operation_match.group("action") or "detail",
+            _OPERATION_HANDLERS[operation_match.group("action") or "detail"],
+            operation_schema=True,
+        )
+
+    payment_match = _PAYMENT_PATH.fullmatch(request.path)
+    if payment_match is not None:
+        request.match_info["payment_id"] = payment_match.group("payment_id")
+        return await _dispatch_authenticated(
+            request,
+            _PAYMENT_HANDLERS[payment_match.group("action") or "detail"],
+            payment_schema=True,
+        )
+
+    version_match = _TARIFF_VERSION_PATH.fullmatch(request.path)
+    if version_match is not None:
+        request.match_info["version_id"] = version_match.group("version_id")
+        return await _dispatch_authenticated(
+            request,
+            tariff_version_detail_handler,
+            payment_schema=True,
         )
     return web.json_response({"error": "not_found"}, status=404)
