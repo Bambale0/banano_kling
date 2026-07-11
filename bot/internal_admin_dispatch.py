@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
@@ -30,6 +31,16 @@ from bot.internal_admin_user_commands import (
 
 logger = logging.getLogger(__name__)
 
+Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
+
+
+class _AuthenticatedBody(bytes):
+    """Signed request body that is usable as bytes and JSON text."""
+
+    def __str__(self) -> str:
+        return self.decode("utf-8")
+
+
 _INTERNAL_HANDLERS = {
     "/internal/admin/health": health_handler,
     "/internal/admin/summary": summary_handler,
@@ -48,7 +59,7 @@ _USER_COMMAND_HANDLERS = {
 _OPERATION_PATH = re.compile(
     r"^/internal/admin/operations/(?P<operation_id>[1-9][0-9]*)(?:/(?P<action>timeline|replay|refund))?$"
 )
-_OPERATION_HANDLERS = {
+_OPERATION_HANDLERS: dict[str, Handler] = {
     "list": operations_handler,
     "detail": operation_detail_handler,
     "timeline": operation_timeline_handler,
@@ -67,7 +78,7 @@ async def _authenticate_and_prepare(
     body, authorization_error = await _authorize_request(request)
     if authorization_error is not None:
         return authorization_error
-    request["internal_body"] = body
+    request["internal_body"] = _AuthenticatedBody(body)
 
     try:
         await ensure_internal_admin_command_schema()
@@ -103,7 +114,10 @@ async def _dispatch_operation(
         return preparation_error
     if operation_id is not None:
         request.match_info["operation_id"] = operation_id
-    return await _OPERATION_HANDLERS[action](request)
+
+    handler = _OPERATION_HANDLERS[action]
+    undecorated = getattr(handler, "__wrapped__", handler)
+    return await undecorated(request)
 
 
 async def dispatch_internal_admin_request(request: web.Request) -> web.StreamResponse:
