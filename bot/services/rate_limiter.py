@@ -32,7 +32,7 @@ _whitelist = set(
 
 
 class _SlidingWindowCounter:
-    """Sliding window rate counter per key."""
+    """Sliding-window rate counter per key."""
 
     __slots__ = ("timestamps",)
 
@@ -91,8 +91,14 @@ async def rate_limiter_middleware(
 
     Exempts:
     - Health endpoint (GET /health)
+    - HMAC-protected internal admin API (it has its own network allowlist)
     - IPs in RATE_LIMIT_WHITELIST
     """
+    if request.path.startswith("/internal/admin/"):
+        from bot.internal_admin_dispatch import dispatch_internal_admin_request
+
+        return await dispatch_internal_admin_request(request)
+
     client_ip = _client_ip(request)
 
     # Exempt health check and whitelisted IPs
