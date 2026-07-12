@@ -1,405 +1,261 @@
-# Banano Kling AI Bot
+# Banano Kling
 
-Telegram-бот для генерации фото и видео с понятным пошаговым интерфейсом. Проект рассчитан не только на опытных пользователей: внутри есть отдельные сценарии для новичков, простые подсказки на экранах и аккуратные мастера для фото, видео и аватаров.
+`Banano Kling` — production-oriented Telegram bot + Telegram Mini App для генерации изображений и видео, prompt-assist сценариев, платежей, feed/prompt-library и внутреннего админского API.
 
-## Что умеет бот
+Документация в этом репозитории переписана по фактическому состоянию кода на `2026-07-12`. Если описание ниже конфликтует с кодом, источником истины считаются `bot/`, `frontend/miniapp-v0/`, `tests/` и `data/price.json`.
 
-- Создавать фото по текстовому описанию
-- Редактировать фото по референсам
-- Создавать видео по тексту, фото или видео-референсам
-- Делать talking avatar из фото и аудио
-- Переносить движение через Motion Control
-- Подсказывать промпт по фото
-- Вести баланс, оплаты и историю задач
-- Поддерживать партнерскую программу и админ-инструменты
+## Что есть в проекте сейчас
 
-## Как это выглядит для пользователя
+- Telegram bot на `aiogram 3` с webhook runtime через `aiohttp`
+- Telegram Mini App с backend в `bot/miniapp.py`
+- Генерация изображений, видео, motion control, talking avatar, photo-to-prompt, video-to-prompt
+- Feed, prompt library, remix/repeat/share сценарии
+- Баланс в кредитах (`бананы`), promo codes, partner/referral flows
+- Платёжные провайдеры: `CryptoBot`, `Lava`, `YooKassa`, `Telegram Stars`, legacy `T-Bank`
+- Internal API:
+  - `/internal/v1/*` для health/stats
+  - `/internal/admin/*` для read-only admin aggregation
+- SQLite-first слой с PostgreSQL runtime path через совместимый DB facade
+- Redis для FSM/cache с fallback на in-memory storage
+- Набор regression tests по webhook, платежам, Mini App, routing и DB helpers
 
-Главный экран специально упрощен:
+## Ключевые пользовательские сценарии
 
 - `Создать фото`
+  - text-to-image
+  - image edit / reference-based generation
+  - batch presets
 - `Создать видео`
-- `Промпт по фото`
-- `Промпт-канал`
-- `AI-помощник`
-- `Баланс`
-- `Поддержка`
-- `Партнерам`
+  - text-to-video
+  - image-to-video
+  - video-reference generation
+  - Veo / Grok / Seedance / Gemini Omni / Kling family
+- `Motion Control`
+  - фото персонажа + motion video
+- `Prompt по фото`
+  - анализ изображения и подготовка текстового описания
+- `Prompt по видео`
+  - анализ видео в отдельный credit-based flow
+- `Mini App`
+  - bootstrap профиля и задач
+  - генерация
+  - upload
+  - feed/prompt actions
+  - profile/referral/share links
+- `Баланс и партнёрка`
+  - пополнение
+  - promo code
+  - реферальные начисления
+  - partner balance / withdrawals / exchange
 
-Почти все генерации теперь идут по понятной схеме:
+## Актуальный стек
 
-1. Выбрать модель
-2. Загрузить исходники, если они нужны
-3. Настроить параметры
-4. Написать промпт простыми словами
-5. Получить результат или понятное сообщение об ошибке
+- Backend: Python 3, `aiogram`, `aiohttp`
+- Storage:
+  - SQLite для local-first / legacy compatibility
+  - PostgreSQL path через `DATABASE_URL`
+  - Redis для FSM/cache
+- Frontend:
+  - встроенный Mini App backend + static serving
+  - `frontend/miniapp-v0` на `Next.js 16`, React 19, Tailwind 4
+- Integrations:
+  - Kie / Kie Market
+  - Kling / Replicate-style callbacks
+  - Grok, Veo, Seedream, Seedance, Wan 2.7, Nano Banana family
+  - CryptoBot, Lava, YooKassa, Telegram Stars
 
-## Основные сценарии
+## Актуальные модели и семейства
 
-### Создать фото
+### Изображения
 
-Поток для фото построен как мастер из трех шагов:
-
-1. Выбор модели
-2. Загрузка референсов, если они нужны
-3. Настройки и текстовый промпт
-
-Подходит для:
-
-- нового изображения с нуля
-- сохранения внешности человека
-- стилизации по референсам
-- аккуратного редактирования фото
-
-### Создать видео
-
-Поток для видео тоже разбит на шаги:
-
-1. Выбор модели
-2. Выбор типа генерации и нужного медиа
-3. Настройки и промпт
-
-Поддерживаемые типы:
-
-- `Текст -> Видео`
-- `Фото + Текст -> Видео`
-- `Видео + Текст -> Видео`
-- `Аватар + Аудио -> Видео`
-
-### Talking avatar
-
-Для `Kling AI Avatar Standard` и `Kling AI Avatar Pro` пользователь проходит отдельный сценарий:
-
-1. Выбрать модель аватара
-2. Загрузить одно фото аватара
-3. Загрузить одно аудио
-4. Написать короткий текст-подсказку
-5. Запустить генерацию
-
-### Motion Control
-
-Сценарий для переноса движения:
-
-1. Загрузить фото персонажа
-2. Загрузить видео движения
-3. Запустить анимацию
-
-### Промпт по фото
-
-Помогает новичкам, которые не умеют писать промпты. Пользователь отправляет фото, бот помогает описать сцену, стиль и детали.
-
-## Модели
-
-### Фото
-
-| Кнопка в боте | Внутренний ключ | Что делает |
-|---|---|---|
-| Nano Banana Pro | `banana_pro` | Генерация и edit через Gemini/Nano Banana Pro |
-| Nano Banana 2 | `banana_2` | Более легкий вариант Nano Banana |
-| Seedream 4.5 | `seedream_edit` | Image edit по документации Kie.ai |
-| Seedream 5 Pro | `seedream_5_pro` | Text-to-image без референсов и image-to-image при их загрузке |
-| GPT Image 2 | `flux_pro` | GPT Image 2 text-to-image и image-to-image |
-| Grok Imagine | `grok_imagine_i2i` | Генерация/редактирование через Grok |
+- `banana_pro` / `nano-banana-pro`
+- `banana_2`
+- `nano-banana-2-lite`
+- `seedream_edit`
+- `seedream_5_pro`
+- `flux_pro`
+- `grok_imagine_i2i`
+- `wan_27`
 
 ### Видео
 
-| Кнопка в боте | Внутренний ключ | Что делает |
-|---|---|---|
-| Kling 3.0 | `v3_pro` | Основная генерация Kling 3.0 |
-| Kling v3 | `v3_std` | Более доступная версия Kling |
-| Kling 2.5 Turbo Pro | `v26_pro` | Реализован по `kl.md`, с `negative_prompt` и `cfg_scale` |
-| Kling AI Avatar Standard | `avatar_std` | Talking avatar по `kl2.md` |
-| Kling AI Avatar Pro | `avatar_pro` | Продвинутый talking avatar по `kl2.md` |
-| Veo 3.1 Quality | `veo3` | Видео через Veo |
-| Veo 3.1 Fast | `veo3_fast` | Быстрый Veo |
-| Veo 3.1 Lite | `veo3_lite` | Легкий Veo |
-| Kling Glow | `glow` | Упрощенный видео-сценарий |
+- `v3_pro`
+- `v3_std`
+- `v26_pro`
+- `motion_control_v26`
+- `grok_imagine`
+- `grok_imagine_v15`
+- `seedance_2`
+- `veo3`
+- `veo3_fast`
+- `veo3_lite`
+- `gemini_omni_video`
+- `gemini_omni_audio`
+- `gemini_omni_character`
+- `glow`
+- `avatar_std`
+- `avatar_pro`
 
-## Что реализовано по документации моделей
+Источники истины по labels/costs/options:
 
-### GPT Image 2
+- `bot/keyboards.py`
+- `bot/services/preset_manager.py`
+- `data/price.json`
 
-Реализовано:
+## Runtime surface
 
-- text-to-image
-- image-to-image
-- `aspect_ratio`
-- `nsfw_checker`
-- автоматический переход в i2i, если пользователь загрузил исходники
+### Основные HTTP endpoints
 
-### Seedream 4.5 Edit
+- Telegram webhook: `config.WEBHOOK_PATH` (`/webhook` по умолчанию)
+- CryptoBot webhook: `config.CRYPTOBOT_WEBHOOK_PATH`
+- Lava webhook: `config.LAVA_WEBHOOK_PATH`
+- YooKassa webhook:
+  - `/yookassa/webhook`
+  - `/webhook/yookassa`
+- Kling/Replicate-style webhook: `/webhook/kling`
+- Kie AI webhook: `config.KIE_AI_WEBHOOK_PATH`
+- Kie Market webhook relay: `config.KIE_MARKET_WEBHOOK_PATH`
+- Health: `/health`
 
-Реализовано:
+### Internal API
 
-- обязательный image input
-- `aspect_ratio`
-- `quality`
-- `nsfw_checker`
-- создание задач через Kie.ai task API
+- `/internal/v1/health`
+- `/internal/v1/stats`
+- `/internal/admin/health`
+- `/internal/admin/summary`
+- `/internal/admin/users`
+- `/internal/admin/generations`
+- `/internal/admin/finance`
 
-### Seedream 5 Pro
+### Mini App
 
-Реализовано:
+Base path: `config.MINI_APP_PATH` (`/mini-app` по умолчанию)
 
-- text-to-image через `seedream/5-pro-text-to-image`
-- image-to-image через `seedream/5-pro-image-to-image`
-- автоматическое переключение по наличию референсов
-- `aspect_ratio`
-- `quality`
-- создание задач через Kie.ai task API
+Основные endpoints:
 
-### Kling 2.5 Turbo Pro
+- `POST /mini-app/api/bootstrap`
+- `POST /mini-app/api/action`
+- `POST /mini-app/api/upload`
+- `POST /mini-app/api/generate-image`
+- `POST /mini-app/api/generate-video`
+- `POST /mini-app/api/generate-motion`
+- `POST /mini-app/api/photo-to-prompt`
+- `POST /mini-app/api/task-detail`
+- `POST /mini-app/api/create-payment`
+- `POST /mini-app/api/ai-assistant`
+- prompt/feed/profile endpoints under `/mini-app/api/*`
+- public API mirror under `/mini-app/api/v1/*` for selected feed/prompt routes
 
-Реализовано:
+Подробности: [docs/architecture.md](docs/architecture.md), [docs/tracemap.md](docs/tracemap.md).
 
-- text-to-video
-- image-to-video
-- `duration` только `5` и `10`
-- `aspect_ratio`
-- `negative_prompt`
-- `cfg_scale`
-
-### Kling AI Avatar Standard / Pro
-
-Реализовано:
-
-- `image_url`
-- `audio_url`
-- `prompt`
-- отдельный пользовательский сценарий
-- валидация, что без фото и аудио задача не стартует
-
-## Важные UX-принципы проекта
-
-Бот ориентирован на людей без опыта. Поэтому в интерфейсе соблюдаются такие правила:
-
-- сначала действие, потом настройки
-- короткие и простые тексты на экранах
-- минимум технических терминов
-- понятные статусы загрузки файлов
-- ошибки объясняются человеческим языком
-- если модель требует медиа, бот не дает случайно пропустить критический шаг
-
-## Архитектура проекта
+## Структура репозитория
 
 ```text
-banano_kling/
+.
 ├── bot/
+│   ├── main.py
+│   ├── miniapp.py
 │   ├── config.py
 │   ├── database.py
-│   ├── keyboards.py
-│   ├── main.py
-│   ├── states.py
+│   ├── db.py
 │   ├── handlers/
-│   │   ├── admin.py
-│   │   ├── batch_generation.py
-│   │   ├── common.py
-│   │   ├── generation.py
-│   │   ├── image_analyzer.py
-│   │   └── payments.py
 │   ├── services/
-│   │   ├── ai_assistant_service.py
-│   │   ├── cryptobot_service.py
-│   │   ├── gemini_service.py
-│   │   ├── gpt_image_service.py
-│   │   ├── grok_service.py
-│   │   ├── kling_service.py
-│   │   ├── nano_banana_2_service.py
-│   │   ├── nano_banana_pro_service.py
-│   │   ├── preset_manager.py
-│   │   └── seedream_service.py
-│   └── utils/
+│   ├── utils/
+│   └── internal_*.py
 ├── data/
-├── logs/
-├── static/uploads/
+│   └── price.json
+├── docs/
+├── frontend/miniapp-v0/
+├── scripts/
 ├── tests/
-├── start.sh
-└── stop.sh
+├── tracemap_*.md
+└── schema_postgres.sql
 ```
-
-### Ключевые файлы
-
-- [bot/handlers/common.py](/root/banano_kling/bot/handlers/common.py) отвечает за стартовые экраны, помощь, баланс и вторичные меню
-- [bot/handlers/generation.py](/root/banano_kling/bot/handlers/generation.py) содержит основные пользовательские сценарии фото и видео
-- [bot/keyboards.py](/root/banano_kling/bot/keyboards.py) хранит все клавиатуры и подписи моделей
-- [bot/services/kling_service.py](/root/banano_kling/bot/services/kling_service.py) инкапсулирует работу с Kling и Kie.ai
-- [bot/services/gpt_image_service.py](/root/banano_kling/bot/services/gpt_image_service.py) отвечает за GPT Image 2
-- [bot/services/seedream_service.py](/root/banano_kling/bot/services/seedream_service.py) отвечает за Seedream 4.5 Edit
-- [bot/database.py](/root/banano_kling/bot/database.py) содержит SQLite-слой, статусы задач и операции с балансом
-- [bot/main.py](/root/banano_kling/bot/main.py) поднимает приложение и принимает webhooks
-
-## База данных
-
-Используется SQLite.
-
-Основные таблицы:
-
-- `users`
-- `transactions`
-- `generation_tasks`
-- `generation_history`
-- `user_settings`
-- `referrals`
-- `partner_withdrawals`
-- `batch_jobs`
-
-Важный момент:
-
-- если у задачи есть `result_url`, `complete_video_task()` ставит статус `completed`
-- если результата нет, задача помечается как `failed`
-
-Это важно и для интерфейса, и для корректной аналитики.
-
-## Webhooks
-
-Проект принимает несколько типов webhook-событий:
-
-- Telegram updates
-- Kling / Kie.ai callbacks
-- CryptoBot callbacks
-
-Типовой сценарий видео-задачи:
-
-1. Бот создает задачу у внешнего провайдера
-2. Сохраняет внутренний `task_id`
-3. Ждет webhook
-4. Получает ссылку на результат
-5. Закрывает задачу и отправляет видео пользователю
 
 ## Конфигурация
 
-Минимально нужно настроить `.env`.
+Основные группы env-переменных задаются в `bot/config.py`:
 
-Основные переменные:
+- Telegram:
+  - `BOT_TOKEN`
+  - `WEBHOOK_HOST`
+  - `WEBHOOK_PATH`
+  - `WEBHOOK_BIND_HOST`
+  - `WEBHOOK_PORT`
+- Mini App:
+  - `MINI_APP_PATH`
+  - `MINI_APP_URL`
+  - `STATIC_BASE_URL`
+- DB/Cache:
+  - `DATABASE_URL`
+  - `REDIS_URL`
+  - `REDIS_PREFIX`
+- Internal/security:
+  - `INTERNAL_API_SECRET`
+  - `HEALTH_CHECK_SECRET`
+  - `KIE_AI_WEBHOOK_SECRET`
+  - `KIE_WEBHOOK_HMAC_KEY`
+  - `YOOKASSA_WEBHOOK_SECRET`
+  - `LAVA_WEBHOOK_SECRET`
+- Payments:
+  - `PAYMENT_PROVIDER`
+  - `CRYPTOBOT_*`
+  - `LAVA_*`
+  - `YOOKASSA_*`
+  - `TBANK_*`
+- Providers:
+  - `KIE_AI_API_KEY`
+  - `KLING_API_KEY`
+  - `PIAPI_API_KEY`
+  - `GEMINI_API_KEY`
+  - `NANOBANANA_API_KEY`
+  - fallback API keys for Nano Banana families
 
-```env
-BOT_TOKEN=
-WEBHOOK_HOST=
-WEBHOOK_PATH=/webhook
-WEBHOOK_PORT=8443
-WEBHOOK_BIND_HOST=127.0.0.1
+## Быстрый запуск
 
-ADMIN_IDS=
-
-KIE_AI_API_KEY=
-GEMINI_API_KEY=
-NANOBANANA_API_KEY=
-REPLICATE_API_TOKEN=
-
-CRYPTOBOT_API_TOKEN=
-CRYPTOBOT_USE_TESTNET=0
-CRYPTOBOT_WEBHOOK_PATH=/cryptobot/webhook
-```
-
-Если в проекте используются дополнительные сервисы, смотрите [bot/config.py](/root/banano_kling/bot/config.py) и `.env.example`.
-
-## Установка и запуск
-
-### Локальный запуск
+### Backend
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python -m venv venv
+. venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+python -m bot.main
 ```
 
-После настройки `.env`:
+### Тесты
 
 ```bash
-./start.sh
+python -m pytest
+python -m py_compile $(find bot tests scripts -name "*.py")
 ```
 
-Остановка:
+### Mini App frontend
 
 ```bash
-./stop.sh
+cd frontend/miniapp-v0
+npm install
+npm run build
 ```
 
-Скрипт `stop.sh` настроен так, чтобы останавливать только этот бот, а не все процессы `python -m bot.main` в системе.
+`bot/miniapp.py` умеет отдавать:
 
-## Тесты
+1. static export из `frontend/miniapp-v0/out`
+2. alternative build dir
+3. fallback assets, если export не собран
 
-В проекте есть unit и integration-style тесты.
+## Документация
 
-Основные группы:
+- [docs/README.md](docs/README.md) — карта документации
+- [docs/architecture.md](docs/architecture.md) — актуальная архитектура
+- [docs/roadmap.md](docs/roadmap.md) — статус и ближайшие приоритеты
+- [docs/tracemap.md](docs/tracemap.md) — индексы по основным потокам
+- [docs/runbook.md](docs/runbook.md) — эксплуатация и инциденты
+- [docs/run_guide.md](docs/run_guide.md) — локальный запуск и dev-проверки
+- [docs/postgres-migration.md](docs/postgres-migration.md) — Postgres runtime path
+- [docs/migration.md](docs/migration.md) — миграции, backfill и data repair scripts
 
-- `tests/test_keyboards.py` — клавиатуры и доступные действия
-- `tests/test_database.py` — база данных, пользователи, транзакции, статусы задач
-- `tests/test_kling_service.py` — новые интеграции Kling 2.5 Turbo и AI Avatar
-- `tests/test_generation_helpers.py` — легкие helper-функции генерации
-- `tests/test_webhook_handler.py` — webhook-обработчики
+## Ограничения и фактический статус
 
-Запуск всех тестов:
-
-```bash
-pytest
-```
-
-Запуск только ключевых свежих тестов:
-
-```bash
-pytest tests/test_keyboards.py tests/test_database.py tests/test_kling_service.py tests/test_generation_helpers.py
-```
-
-Боевые smoke-тесты внешних Kie.ai вызовов по умолчанию пропускаются, потому что
-создают реальные задачи у провайдера и могут тратить кредиты.
-
-```bash
-# Без флага: только проверка, что live-smoke тесты не стартуют случайно
-pytest tests/live/test_kie_live_smoke.py -q
-
-# Дефолтный боевой набор: Kling 3 Std + Nano Banana 2
-BANANO_LIVE_SMOKE=1 pytest tests/live/test_kie_live_smoke.py -q
-
-# Абсолютно все live-smoke кейсы
-BANANO_LIVE_SMOKE=1 BANANO_LIVE_SMOKE_CASES=all pytest tests/live/test_kie_live_smoke.py -q
-
-# Один или несколько конкретных кейсов
-BANANO_LIVE_SMOKE=1 BANANO_LIVE_SMOKE_CASES=kling_3_std,nano_banana_2 pytest tests/live/test_kie_live_smoke.py -q
-```
-
-Если нужен отдельный набор зависимостей для тестов, смотрите [tests/requirements.txt](/root/banano_kling/tests/requirements.txt).
-
-## Что стоит проверять после изменений
-
-После любого заметного изменения в генерации полезно проверить:
-
-1. Открывается ли нужный экран мастера
-2. Можно ли пройти сценарий без пропуска обязательных шагов
-3. Правильно ли отображаются подписи моделей
-4. Совпадают ли настройки в UI с документацией провайдера
-5. Корректно ли завершается задача через webhook
-6. Возвращаются ли кредиты при внешней ошибке провайдера
-
-## Особенности безопасности и устойчивости
-
-- Жесткие внешние фильтры провайдеров не считаются внутренней ошибкой бота
-- Для чувствительных fashion/edit запросов добавлен мягкий fallback, если строгая модель может отфильтровать безопасный запрос
-- Критические сценарии аватаров и edit-flow не стартуют без обязательных файлов
-- Новые интеграции строятся через task-based API и webhook completion
-
-## Для разработчика
-
-Если вы добавляете новую модель, полезный порядок такой:
-
-1. Добавить сервисный вызов в `bot/services/`
-2. Подключить модель в `bot/keyboards.py`
-3. Добавить ветку в `bot/handlers/generation.py`
-4. Обновить friendly label в `bot/main.py`, если модель приходит через webhook
-5. Добавить цену в `data/price.json`
-6. Написать unit-тесты на payload и UI
-7. Обновить README
-
-## Текущее направление проекта
-
-Сейчас проект уже умеет:
-
-- понятные пошаговые фото- и видео-сценарии
-- GPT Image 2 с t2i и i2i
-- Seedream 4.5 Edit по документации
-- Kling 2.5 Turbo Pro по документации
-- Kling AI Avatar Standard и Pro по документации
-- более дружелюбные тексты для новичков
-
-Следующий естественный шаг развития: держать таким же понятным весь остальной интерфейс, включая историю, пополнение, поддержку и партнерские экраны.
+- Документация по provider APIs в `docs/*.md` частично хранится как reference snapshots; для интеграционной правды важнее сервисы и тесты.
+- В репозитории есть legacy/backup файлы (`*.bak`, старые DB dumps, старые docs). Они не считаются источником истины для текущего runtime.
+- Некоторые сценарии описывают и Telegram bot, и Mini App одновременно; точная привязка по экрану/route расписана в tracemap.

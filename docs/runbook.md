@@ -1,107 +1,139 @@
-# Banano Kling Bot — Runbook
+# Runbook
 
-## Быстрый запуск (правильный способ)
+## 1. Что именно запускается
 
-```bash
-# 1. Полная остановка
-systemctl stop banano-kling.service
+Основной runtime — `python -m bot.main`.
 
-# 2. Убить всё, что могло остаться на порту
-fuser -k 1888/tcp 2>/dev/null
-sleep 1
+Он поднимает:
 
-# 3. Запуск
-systemctl start banano-kling.service
-```
+- Telegram webhook server
+- Mini App routes
+- payment/provider webhooks
+- internal APIs
+- background reconcile/cleanup loops
 
-## Проверка статуса
+## 2. Перед запуском проверить
 
-```bash
-systemctl status banano-kling.service --no-pager
-```
+- `.env` загружен и содержит `BOT_TOKEN`
+- `DATABASE_URL` указывает на корректный runtime backend
+- Redis доступен, если ожидается FSM persistence
+- `WEBHOOK_HOST` и `WEBHOOK_PATH` согласованы с внешним reverse proxy
+- директория `logs/` доступна на запись
 
-## Логи
+## 3. Базовые команды
 
-```bash
-# Логи приложения (файл)
-tail -f /root/tanya/banano_kling/logs/bot.log
-
-# Логи systemd
-journalctl -u banano-kling.service --no-pager -n 50 -f
-```
-
-## Почему `systemctl restart` — ПЛОХАЯ ИДЕЯ
-
-`systemctl restart` посылает SIGTERM старому процессу и сразу запускает новый, **не дожидаясь** освобождения порта 1888. Из-за этого:
-
-1. Новый процесс падает с `[Errno 98] address already in use`
-2. Systemd перезапускает его снова и снова
-3. Telegram видит шквал API-запросов (set_my_commands, set_webhook, etc.)
-4. Telegram включает **flood control** и блокирует бота на ~30 минут
-
-**Всегда делай `stop` → жди → `start`.**
-
-## Если Telegram flood control активен
-
-Симптом: в логах `TelegramRetryAfter: Flood control exceeded... Retry in N seconds`.
-
-Решение:
-1. Остановить бота: `systemctl stop banano-kling.service`
-2. Подождать ~30 минут (или сколько указано в логе `Retry in N seconds`)
-3. Запустить снова: `systemctl start banano-kling.service`
-
-Telegram API-вызовы `set_my_commands`, `set_my_short_description`, `setChatMenuButton` обёрнуты в `try/except` и при flood control **не роняют бота** — он стартует с ограниченным функционалом.
-
-## Полная перезагрузка (сначала остановка, потом запуск)
+### Локальный запуск
 
 ```bash
-cd /root/tanya/banano_kling
-systemctl stop banano-kling.service
-sleep 2
-pkill -9 -f "bot.main" 2>/dev/null
-fuser -k 1888/tcp 2>/dev/null
-sleep 1
-ss -tlnp | grep 1888 || echo "Port free"
-systemctl start banano-kling.service
-sleep 5
-systemctl status banano-kling.service --no-pager
-tail -20 logs/bot.log
+. venv/bin/activate
+python -m bot.main
 ```
 
-## Зависимости
-
-- **Python venv**: `/root/tanya/banano_kling/venv/`
-- **Redis**: должен быть запущен (`redis-server`)
-- **PostgreSQL**: должен быть доступен
-- **Nginx**: проксирует webhook-запросы с `tanyapi.chillcreative.ru` на `127.0.0.1:1888`
-
-## Конфигурация systemd
-
-Файл: `/root/tanya/banano_kling/bot.service` → установлен в `/etc/systemd/system/banano-kling.service`
-
-```ini
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/tanya/banano_kling
-EnvironmentFile=-/root/tanya/banano_kling/.env
-EnvironmentFile=-/root/tanya/banano_kling/.env.postgres
-ExecStart=/root/tanya/banano_kling/venv/bin/python -m bot.main
-Restart=always
-RestartSec=5
-```
-
-## Полезные команды
+### Тесты
 
 ```bash
-# Какой процесс держит порт
-ss -tlnp | grep 1888
+python -m pytest
+python -m py_compile $(find bot tests scripts -name "*.py")
+```
 
-# Процессы бота
-pgrep -af "bot.main"
+### Проверка health
 
-# Перезагрузить конфиг systemd после изменений bot.service
-systemctl daemon-reload
+```bash
+curl http://127.0.0.1:8443/health
+```
 
-# Включить автозапуск при старте сервера
-systemctl enable banano-kling.service
+Если установлен `HEALTH_CHECK_SECRET`, нужен header:
+
+```bash
+Authorization: Bearer <secret>
+```
+
+## 4. Логи
+
+По умолчанию runtime пишет в:
+
+- `logs/bot.log`
+
+Поведение логирования:
+
+- file logging можно отключить через `BANANO_DISABLE_FILE_LOGGING=1`
+- stdout logging можно включить через `BANANO_LOG_TO_STDOUT=1`
+
+## 5. Частые проблемы
+
+### Бот стартует, но FSM ведёт себя как будто без Redis
+
+Причина:
+
+- Redis storage недоступен, runtime переключился на in-memory fallback
+
+Что проверить:
+
+- `REDIS_URL`
+- доступность Redis
+- логи на тему `switching to in-memory FSM storage`
+
+### Webhook приходит, но задача не закрывается
+
+Что проверить:
+
+- правильный route path из `bot/config.py`
+- секреты/HMAC/signature headers
+- наличие task в `generation_tasks`
+- нет ли orphan webhook warnings
+
+### Платёж застрял в pending
+
+Что проверить:
+
+- webhook logs
+- reconcile loop logs
+- provider-specific secret
+- row в `transactions`
+
+### Mini App открывается, но API отвечает 401
+
+Причина:
+
+- invalid/missing Telegram `initData`
+
+Проверить:
+
+- Mini App открыт из Telegram, а не прямой ссылкой в браузере
+- время жизни Telegram session
+- корректность Bot token
+
+## 6. Incident checklist
+
+### Если сломались генерации
+
+1. Проверить `/health`
+2. Проверить provider webhook paths
+3. Проверить последние ошибки в `logs/bot.log`
+4. Проверить, создаются ли новые rows в `generation_tasks`
+5. Проверить, что provider keys доступны в env
+
+### Если сломались платежи
+
+1. Проверить текущий `PAYMENT_PROVIDER`
+2. Проверить webhook signature logs
+3. Проверить pending transactions
+4. Проверить, идут ли reconcile ticks
+
+### Если сломался Mini App
+
+1. Проверить `MINI_APP_URL` и `MINI_APP_PATH`
+2. Проверить, какой static frontend реально отдаётся
+3. Проверить `bootstrap` и `task-detail` ответы
+
+## 7. Scripts, которые полезны оператору
+
+- `scripts/backup_db.sh`
+- `scripts/check_postgres_runtime.py`
+- `scripts/migrate_sqlite_to_postgres.py`
+- `scripts/verify_postgres_migration.py`
+- `scripts/poll_yookassa_pending.py`
+- `scripts/redeliver_tasks.py`
+- `scripts/watcher.py`
+
+Перед запуском любого repair/migration script сначала читать [migration.md](migration.md).

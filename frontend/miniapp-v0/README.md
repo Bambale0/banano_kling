@@ -1,73 +1,40 @@
-# Banano Mini App v0
+# Mini App Frontend
 
-Экспорт фронтенда из `v0.dev`, интегрированный в основной репозиторий как отдельный Next.js модуль.
+`frontend/miniapp-v0` — текущий Next.js frontend для Telegram Mini App. Это не отдельный backend: production contracts определяются Python-сервером в `bot/miniapp.py`.
 
-## Что это
+## Что здесь реально есть
 
-Это не ломает текущий Python Mini App из `static/miniapp`, а добавляет отдельный современный frontend-модуль, который можно:
+- `Next.js 16`
+- `React 19`
+- `Tailwind 4`
+- tabs/sheets/forms для:
+  - studio
+  - photo
+  - video
+  - motion
+  - feed
+  - prompts
+  - services
+  - profile
+- API client в `lib/api.ts`
+- app state/context в `lib/app-context.tsx`
 
-- дорабатывать отдельно
-- подключать к текущему backend API `/mini-app/api/*`
-- использовать как основу для нового Mini App frontend
+## Источник истины по API
 
-## Где лежит
+Frontend должен ориентироваться на backend routes из `bot/miniapp.py`, прежде всего:
 
-- исходники: `frontend/miniapp-v0`
-- текущий рабочий Python Mini App: `static/miniapp`
-- backend маршруты Mini App: `bot/miniapp.py`
+- `POST /mini-app/api/bootstrap`
+- `POST /mini-app/api/upload`
+- `POST /mini-app/api/generate-image`
+- `POST /mini-app/api/generate-video`
+- `POST /mini-app/api/generate-motion`
+- `POST /mini-app/api/task-detail`
+- `POST /mini-app/api/create-payment`
+- prompt/feed/profile endpoints
 
-## Что уже сделано
+## Режимы использования
 
-Чтобы модуль был ближе к реальному backend, внутри фронта уже обновлены:
-
-- id image-моделей:
-  - `banana_pro`
-  - `seedream_edit`
-  - `flux_pro`
-  - `grok_imagine_i2i`
-- id video-моделей:
-  - `v3_pro`
-  - `v3_std`
-  - `v26_pro`
-  - `grok_imagine`
-  - `veo3_fast`
-- id video-сценариев:
-  - `text`
-  - `imgtxt`
-  - `video`
-
-Также фронт уже переведён с mock-only логики на живой API layer:
-
-- bootstrap через `POST /mini-app/api/bootstrap`
-- upload через `POST /mini-app/api/upload`
-- image generation через `POST /mini-app/api/generate-image`
-- video generation через `POST /mini-app/api/generate-video`
-- task detail через `POST /mini-app/api/task-detail`
-- блокирующий экран без демо-данных, если нет Telegram `initData`
-
-## Что уже можно использовать в проде прямо сейчас
-
-Прямо сейчас в проде остаётся рабочим текущий frontend из:
-
-- `static/miniapp`
-
-Он уже подключён в backend и обслуживается ботом.
-
-Новый `miniapp-v0` уже интегрирован в репозиторий и подключён к живым API на уровне исходников, но для реального использования как основной UI его нужно один раз собрать в node-среде.
-
-## Как запускать
-
-В этом окружении сейчас нет `npm`/`pnpm`, поэтому локально здесь сборку не прогонял.
-
-Когда у вас будет node-среда:
-
-```bash
-cd frontend/miniapp-v0
-pnpm install
-pnpm dev
-```
-
-или
+### 1. Локальная разработка фронтенда
 
 ```bash
 cd frontend/miniapp-v0
@@ -75,57 +42,22 @@ npm install
 npm run dev
 ```
 
-## К чему подключать
-
-Текущий backend уже отдаёт нужные endpoints:
-
-- `POST /mini-app/api/bootstrap`
-- `POST /mini-app/api/upload`
-- `POST /mini-app/api/generate-image`
-- `POST /mini-app/api/generate-video`
-- `POST /mini-app/api/task-detail`
-
-Во фронте `miniapp-v0` это уже учтено.
-
-## Важная заметка
-
-Сейчас этот Next.js модуль интегрирован в репозиторий как исходники.
-После сборки его можно подключить почти без дополнительной переделки backend.
-
-## Как довести до нового основного прод-фронта
-
-1. Соберите frontend:
+### 2. Static export для Python runtime
 
 ```bash
 cd frontend/miniapp-v0
-pnpm install
-NEXT_EXPORT=1 pnpm build
+npm run build
 ```
 
-2. Если будете делать static export, сложите собранный результат в один из путей:
+Backend затем может раздавать build как Mini App UI.
 
-- `frontend/miniapp-v0/out`
-- или `frontend/miniapp-v0/dist`
+## Ограничение
 
-3. Backend уже подготовлен так, что `bot/miniapp.py` сначала ищет:
+Если frontend и backend расходятся по:
 
-- `frontend/miniapp-v0/out/index.html`
-- `frontend/miniapp-v0/dist/index.html`
-- и только потом делает fallback на `static/miniapp/index.html`
+- model ids
+- payload shape
+- task detail response
+- feed/prompt contracts
 
-То есть после появления built static export backend сможет автоматически начать отдавать новый frontend вместо старого fallback.
-
-Для `npm`-среды команда такая:
-
-```bash
-cd frontend/miniapp-v0
-npm install
-NEXT_EXPORT=1 npm run build
-```
-
-## Следующий логичный шаг
-
-Если захотите, дальше можно сделать один из двух путей:
-
-1. Подключить этот Next frontend как отдельный deployable app.
-2. Собрать static export и переключить текущий `/mini-app` на него как основной production UI.
+то источником истины считается backend и его тесты, а frontend нужно адаптировать под них.
