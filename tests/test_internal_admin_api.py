@@ -3,6 +3,7 @@ import json
 import time
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from bot import internal_admin_api as api
@@ -197,3 +198,17 @@ async def test_dispatcher_returns_json_404_for_unknown_internal_path():
 
     assert response.status == 404
     assert json.loads(response.text) == {"error": "not_found"}
+
+
+def test_setup_internal_admin_routes_registers_expected_paths():
+    app = web.Application()
+
+    api.setup_internal_admin_routes(app)
+
+    registered_paths = {route.resource.canonical for route in app.router.routes()}
+
+    assert "/internal/admin/health" in registered_paths
+    assert "/internal/admin/summary" in registered_paths
+    assert "/internal/admin/users" in registered_paths
+    assert "/internal/admin/generations" in registered_paths
+    assert "/internal/admin/finance" in registered_paths

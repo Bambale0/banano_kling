@@ -1389,9 +1389,13 @@ def get_image_result_keyboard(
 def get_failed_image_retry_keyboard(task_id: str):
     """Клавиатура для неудачной фото-генерации."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Другой промпт", callback_data=f"retry_prompt_image_{task_id}")
+    builder.button(text="🔁 Повторить", callback_data=f"repeat_result_{task_id}")
+    builder.button(
+        text="✏️ Изменить промпт / модель",
+        callback_data=f"retry_prompt_image_{task_id}",
+    )
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1)
+    builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 

@@ -34,6 +34,7 @@ from aiogram.types import (
 )
 from aiohttp import web
 from bot.internal_api import setup_internal_api
+from bot.internal_admin_api import setup_internal_admin_routes
 import aiohttp
 
 from bot import db as db_backend
@@ -1350,9 +1351,9 @@ async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str
         return None
 
     prompt = (
-        request_data.get("effective_prompt")
-        or request_data.get("prompt")
+        request_data.get("prompt")
         or getattr(task, "prompt", None)
+        or request_data.get("effective_prompt")
     )
     if not prompt:
         return None
@@ -1423,12 +1424,12 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     if retry_attempt >= 1:
         return None
 
-    effective_prompt = (
-        request_data.get("effective_prompt")
-        or request_data.get("prompt")
+    prompt = (
+        request_data.get("prompt")
         or getattr(task, "prompt", None)
+        or request_data.get("effective_prompt")
     )
-    if not effective_prompt:
+    if not prompt:
         return None
 
     reference_images = request_data.get("reference_images") or []
@@ -1440,7 +1441,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
 
         if runtime_img_service == "seedream_edit" or reference_images:
             result = await seedream_service.generate_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model=(
                     "seedream/4.5-edit"
                     if runtime_img_service == "seedream_edit"
@@ -1454,7 +1455,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
             )
         else:
             result = await seedream_service.generate_text_to_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model="seedream/5-pro-text-to-image",
                 aspect_ratio=img_ratio,
                 quality=str(request_data.get("img_quality") or "basic"),
@@ -1469,7 +1470,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
             else callback_url
         )
         result = await nano_banana_2_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
@@ -1484,7 +1485,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         from bot.services.nano_banana_pro_service import nano_banana_pro_service
 
         result = await nano_banana_pro_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
@@ -3835,6 +3836,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     # Internal API for admin panel
     setup_internal_api(app, secret=config.INTERNAL_API_SECRET, version="1.0.0")
+    setup_internal_admin_routes(app)
 
     return app
 

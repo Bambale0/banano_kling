@@ -2595,6 +2595,23 @@ async def _render_feed_carousel(
                 logger.debug("Cannot edit feed video via remote URL: %s", e)
         else:
             try:
+                downloaded_photo = await _download_preview_photo(photo_url)
+                await message.edit_media(
+                    media=types.InputMediaPhoto(
+                        media=downloaded_photo,
+                        caption=caption,
+                        parse_mode="HTML",
+                    ),
+                    reply_markup=markup,
+                )
+                return
+            except Exception as e:
+                logger.debug(
+                    "Cannot edit feed media with downloaded preview, trying remote URL: %s",
+                    e,
+                )
+
+            try:
                 await message.edit_media(
                     media=types.InputMediaPhoto(
                         media=photo_url,
@@ -2607,29 +2624,9 @@ async def _render_feed_carousel(
             except TelegramBadRequest as e:
                 if "message is not modified" in str(e).lower():
                     return
-                logger.debug(
-                    "Cannot edit feed media via remote URL, trying downloaded preview: %s",
-                    e,
-                )
+                logger.debug("Cannot edit feed media via remote URL: %s", e)
             except Exception as e:
-                logger.debug(
-                    "Cannot edit feed media via remote URL, trying downloaded preview: %s",
-                    e,
-                )
-
-            try:
-                downloaded_photo = await _download_preview_photo(photo_url)
-                await message.edit_media(
-                    media=types.InputMediaPhoto(
-                        media=downloaded_photo,
-                        caption=caption,
-                        parse_mode="HTML",
-                    ),
-                    reply_markup=markup,
-                )
-                return
-            except Exception as e:
-                logger.info("Cannot edit feed media with downloaded preview: %s", e)
+                logger.info("Cannot edit feed media via remote URL: %s", e)
 
             try:
                 await message.edit_media(
@@ -2668,6 +2665,22 @@ async def _render_feed_carousel(
             logger.warning("Cannot send feed video, falling back to preview photo: %s", e)
 
     try:
+        photo = await _download_preview_photo(photo_url)
+        await message.answer_photo(
+            photo=photo,
+            caption=caption,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+        return
+    except Exception as e:
+        logger.warning(
+            "Cannot build/send feed preview for %s, trying remote URL: %s",
+            photo_url,
+            e,
+        )
+
+    try:
         await message.answer_photo(
             photo=photo_url,
             caption=caption,
@@ -2676,27 +2689,7 @@ async def _render_feed_carousel(
         )
         return
     except Exception as e:
-        logger.info("Cannot send feed photo via remote URL, trying downloaded preview: %s", e)
-
-    try:
-        photo = await _download_preview_photo(photo_url)
-    except Exception as e:
-        logger.warning(
-            "Cannot build feed preview for %s, using placeholder: %s",
-            photo_url,
-            e,
-        )
-        photo = _feed_placeholder_photo()
-
-    try:
-        await message.answer_photo(
-            photo=photo,
-            caption=caption,
-            reply_markup=markup,
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.warning("Cannot send feed preview photo, trying placeholder: %s", e)
+        logger.warning("Cannot send feed photo via remote URL, trying placeholder: %s", e)
         try:
             await message.answer_photo(
                 photo=_feed_placeholder_photo(),

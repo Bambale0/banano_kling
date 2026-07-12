@@ -33,6 +33,7 @@ class SeedreamService(KlingService):
         "21:9",
     }
     SUPPORTED_QUALITIES = {"basic", "high"}
+    MAX_PROMPT_CHARS = 6000
     QUALITY_ALIASES = {
         "2K": "basic",
         "4K": "high",
@@ -49,6 +50,17 @@ class SeedreamService(KlingService):
             )
             return "basic"
         return quality
+
+    def _normalize_prompt(self, prompt: str) -> str:
+        normalized = str(prompt or "")
+        if len(normalized) > self.MAX_PROMPT_CHARS:
+            logger.info(
+                "Seedream prompt truncated: len=%d -> %d chars",
+                len(normalized),
+                self.MAX_PROMPT_CHARS,
+            )
+            normalized = normalized[: self.MAX_PROMPT_CHARS]
+        return normalized
 
     async def _prepare_effective_image_urls(
         self,
@@ -107,8 +119,7 @@ class SeedreamService(KlingService):
         if not prompt or not prompt.strip():
             logger.error("Seedream prompt is required")
             return None
-        if len(prompt) > 3000:
-            prompt = prompt[:3000]
+        prompt = self._normalize_prompt(prompt)
         if aspect_ratio not in self.SUPPORTED_ASPECT_RATIOS:
             logger.warning(
                 "Unsupported Seedream aspect ratio %s, fallback to 1:1", aspect_ratio
@@ -153,8 +164,7 @@ class SeedreamService(KlingService):
         if not prompt or not prompt.strip():
             logger.error("Seedream prompt is required")
             return None
-        if len(prompt) > 3000:
-            prompt = prompt[:3000]
+        prompt = self._normalize_prompt(prompt)
         if not image_urls:
             logger.error("Seedream requires at least one image_url")
             return None

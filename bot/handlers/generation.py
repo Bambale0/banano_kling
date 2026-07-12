@@ -1007,17 +1007,9 @@ async def _start_image_generation_task(
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
-    effective_prompt = _apply_safe_prompt_framing(
-        runtime_img_service,
-        _apply_reference_detail_preservation(
-            runtime_img_service, prompt, reference_images
-        ),
-        has_reference_images=bool(reference_images),
-    )
     request_snapshot = {
         "img_service": img_service,
         "prompt": prompt,
-        "effective_prompt": effective_prompt,
         "img_ratio": img_ratio,
         "reference_images": reference_images,
         "source_reference_images": source_reference_images,
@@ -1064,7 +1056,7 @@ async def _start_image_generation_task(
             else callback_url
         )
         result = await nano_banana_2_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
@@ -1073,7 +1065,7 @@ async def _start_image_generation_task(
         )
     elif runtime_img_service in {"banana_pro", "nanobanana"}:
         result = await nano_banana_pro_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
@@ -1082,7 +1074,7 @@ async def _start_image_generation_task(
     elif runtime_img_service in {"seedream_edit", "seedream_5_pro"}:
         if runtime_img_service == "seedream_edit" or reference_images:
             result = await seedream_service.generate_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model=(
                     "seedream/4.5-edit"
                     if runtime_img_service == "seedream_edit"
@@ -1096,7 +1088,7 @@ async def _start_image_generation_task(
             )
         else:
             result = await seedream_service.generate_text_to_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model="seedream/5-pro-text-to-image",
                 aspect_ratio=img_ratio,
                 quality=img_quality,
@@ -1105,7 +1097,7 @@ async def _start_image_generation_task(
     elif runtime_img_service == "flux_pro":
         if reference_images:
             result = await gpt_image_service.generate_image_to_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 input_urls=reference_images,
                 model="gpt-image-2-image-to-image",
                 aspect_ratio=img_ratio,
@@ -1122,7 +1114,7 @@ async def _start_image_generation_task(
             )
     elif runtime_img_service in {"seedream", "seedream_45"}:
         result = await gemini_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             model="pro",
             aspect_ratio=img_ratio,
             reference_image_urls=reference_images,
@@ -1130,13 +1122,13 @@ async def _start_image_generation_task(
     elif runtime_img_service == "grok_imagine_i2i":
         result = await grok_service.generate_image_to_image(
             image_urls=reference_images,
-            prompt=effective_prompt,
+            prompt=prompt,
             nsfw_checker=False,
             callBackUrl=callback_url,
         )
     elif runtime_img_service == "wan_27":
         result = await wan27_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             input_urls=reference_images,
             n=1,
@@ -1151,7 +1143,7 @@ async def _start_image_generation_task(
         )
     else:
         result = await nano_banana_pro_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,

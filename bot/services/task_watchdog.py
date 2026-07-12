@@ -72,22 +72,24 @@ async def check_task_with_provider(
     if not external_task_id or not service_name:
         return None
 
+    normalized_service = str(service_name or "").strip().lower()
+
     try:
-        if "kling" in (service_name or "").lower():
+        if "kling" in normalized_service:
             from bot.services.kling_service import kling_service
-            result = await kling_service.get_task(external_task_id)
+            result = await kling_service.get_task_status(external_task_id)
             if result:
-                status = (result.get("data") or {}).get("state") or result.get("state")
+                status = (result.get("data") or {}).get("status") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected"):
                     return "failed"
-        elif "veo" in (service_name or "").lower():
+        elif "veo" in normalized_service:
             from bot.services.veo_service import veo_service
             result = await veo_service.get_task(external_task_id)
             # Veo возвращает результат асинхронно — polling вряд ли поможет
             return None
-        elif "seedance" in (service_name or "").lower():
+        elif "seedance" in normalized_service:
             from bot.services.seedance_service import seedance_service
             result = await seedance_service.get_task(external_task_id)
             if result:
@@ -96,32 +98,52 @@ async def check_task_with_provider(
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected"):
                     return "failed"
-        elif "seedream" in (service_name or "").lower():
+        elif "seedream" in normalized_service:
             from bot.services.seedream_service import seedream_service
-            result = await seedream_service.get_task(external_task_id)
+            result = await seedream_service.get_task_status(external_task_id)
             if result:
-                status = result.get("state") or result.get("status")
+                status = (result.get("data") or {}).get("status") or result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected"):
                     return "failed"
-        elif "wan27" in (service_name or "").lower():
+        elif normalized_service in {"wan27", "wan_27"} or (
+            "wan" in normalized_service and "2-7" in normalized_service
+        ):
             from bot.services.wan27_service import wan27_service
-            result = await wan27_service.get_task(external_task_id)
+            result = await wan27_service.get_task_status(external_task_id)
+            if result:
+                status = (result.get("data") or {}).get("status") or result.get("state") or result.get("status")
+                if status and str(status).lower() in ("success", "completed", "done"):
+                    return "completed"
+                if status and str(status).lower() in ("failed", "error", "rejected"):
+                    return "failed"
+        elif normalized_service in {"nano-banana-2-lite", "nano_banana_2_lite", "banana_2_lite"}:
+            from bot.services.kie_market_service import kie_market_service
+            result = await kie_market_service.get_task_status(external_task_id)
             if result:
                 status = result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected"):
                     return "failed"
-        elif "nano_banana" in (service_name or "").lower() or "nano-banana" in (service_name or "").lower():
-            from bot.services.kie_market_service import kie_market_service
-            result = await kie_market_service.get_task(external_task_id)
+        elif normalized_service in {"banana_2", "nano-banana-2", "nano_banana_2"}:
+            from bot.services.nano_banana_2_service import nano_banana_2_service
+            result = await nano_banana_2_service.get_task_status(external_task_id)
             if result:
                 status = result.get("state") or result.get("status")
                 if status and str(status).lower() in ("success", "completed", "done"):
                     return "completed"
-                if status and str(status).lower() in ("failed", "error", "rejected"):
+                if status and str(status).lower() in ("failed", "error", "rejected", "fail"):
+                    return "failed"
+        elif normalized_service in {"banana_pro", "nanobanana", "nano-banana-pro", "nano_banana_pro"}:
+            from bot.services.nano_banana_pro_service import nano_banana_pro_service
+            result = await nano_banana_pro_service.get_task_status(external_task_id)
+            if result:
+                status = result.get("state") or result.get("status")
+                if status and str(status).lower() in ("success", "completed", "done"):
+                    return "completed"
+                if status and str(status).lower() in ("failed", "error", "rejected", "fail"):
                     return "failed"
     except Exception:
         logger.debug(
@@ -190,20 +212,29 @@ async def run_watchdog_cycle() -> int:
         external_task_id = task.get("task_id") or ""
         service_name = model or request_data.get("img_service") or request_data.get("service_name") or ""
 
+        provider_status = None
+        if external_task_id and service_name:
+            provider_status = await check_task_with_provider(external_task_id, service_name)
+
+        if provider_status == "failed":
+            if await force_fail_task(tid, uid, cost):
+                logger.warning(
+                    "Watchdog: recovered failed upstream task %s (user=%s, model=%s, cost=%s)",
+                    tid, uid, model, cost,
+                )
+                recovered += 1
+            continue
+
         # Задачи старше MAX_STUCK_MINUTES — принудительно в failed
         if created_at and created_at <= max_stuck_cutoff:
             if await force_fail_task(tid, uid, cost):
                 logger.warning(
                     "Watchdog: force-failed task %s (user=%s, model=%s, cost=%s) "
-                    "— stuck for >%s min",
-                    tid, uid, model, cost, MAX_STUCK_MINUTES,
+                    "— stuck for >%s min (provider_status=%s)",
+                    tid, uid, model, cost, MAX_STUCK_MINUTES, provider_status or "unknown",
                 )
                 recovered += 1
             continue
-
-        # Пробуем проверить статус у провайдера (если есть доступ)
-        # На данный момент проверка статуса отключена до добавления external_task_id
-        # в схему generation_tasks. Пока только force-fail для старых задач.
 
     if recovered:
         logger.info(
