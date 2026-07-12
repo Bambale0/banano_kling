@@ -7,6 +7,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from bot.handlers import repeat_result_compat
 from bot.internal_admin_dispatch import _AuthenticatedBody
+from bot.internal_admin_notification_actions import _test_result
 from bot.internal_admin_notifications import (
     _segment_query,
     _validate_message,
@@ -101,6 +102,19 @@ def test_notification_message_rejects_unsafe_button_url() -> None:
             "button_url": "https://example.com/path",
         }
     )["button_url"] == "https://example.com/path"
+
+
+def test_notification_test_result_preserves_failure_status() -> None:
+    payload, response_status = _test_result(
+        campaign_id=7,
+        telegram_id=123,
+        status="failed",
+        message_id=None,
+        error="chat not found",
+    )
+
+    assert response_status == 502
+    assert payload["data"]["status"] == "failed"
 
 
 @pytest.mark.asyncio
