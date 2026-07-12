@@ -20,6 +20,7 @@ from bot.internal_admin_cms import (
     save_cms_document_handler,
 )
 from bot.internal_admin_command_schema import ensure_internal_admin_command_schema
+from bot.internal_admin_notification_actions import test_campaign_handler
 from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
 from bot.internal_admin_notifications import (
     campaign_detail_handler,
@@ -27,7 +28,6 @@ from bot.internal_admin_notifications import (
     campaigns_handler,
     cancel_campaign_handler,
     start_campaign_handler,
-    test_campaign_handler,
 )
 from bot.internal_admin_operation_actions import replay_operation_handler
 from bot.internal_admin_operation_schema import ensure_internal_admin_operation_schema
