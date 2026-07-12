@@ -82,6 +82,7 @@ jobs:
           pytest \
             tests/test_internal_admin_api.py \
             tests/test_internal_admin_support_cms.py \
+            tests/test_internal_admin_notifications.py \
             tests/test_webhook_handler.py \
             tests/test_config.py \
             -v \
