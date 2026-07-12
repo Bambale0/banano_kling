@@ -3138,15 +3138,24 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
         # Verify webhook secret if configured (passed as ?secret= in callback URL)
         try:
-            secret = config.KIE_AI_WEBHOOK_SECRET
-            if secret:
-                query_secret = request.query.get("secret", "")
-                if not hmac.compare_digest(query_secret, secret):
-                    logger.warning(
-                        "Kie.ai webhook rejected: invalid or missing secret param (len=%s)",
-                        len(query_secret),
-                    )
-                    return web.Response(status=403)
+            skip_secret_check = False
+            try:
+                skip_secret_check = bool(request.get("skip_kie_ai_secret_check"))
+            except Exception:
+                skip_secret_check = False
+
+            if skip_secret_check:
+                logger.info("Kie.ai webhook secret check skipped for verified KIE Market relay")
+            else:
+                secret = config.KIE_AI_WEBHOOK_SECRET
+                if secret:
+                    query_secret = request.query.get("secret", "")
+                    if not hmac.compare_digest(query_secret, secret):
+                        logger.warning(
+                            "Kie.ai webhook rejected: invalid or missing secret param (len=%s)",
+                            len(query_secret),
+                        )
+                        return web.Response(status=403)
         except Exception:
             logger.exception("Error while checking Kie.ai webhook secret")
             return web.Response(status=403)
@@ -3751,6 +3760,7 @@ async def handle_kie_market_webhook(request: web.Request) -> web.Response:
                 status=401,
             )
 
+        request["skip_kie_ai_secret_check"] = True
         request._read_bytes = raw_body
         return await handle_kie_ai_webhook(request)
     except Exception as exc:
