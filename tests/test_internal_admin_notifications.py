@@ -16,7 +16,8 @@ from bot.internal_admin_notifications import (
 from bot.internal_admin_user_commands import CommandValidationError
 
 
-def test_repeat_result_compat_restores_safe_repeat_flow(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_repeat_result_compat_restores_safe_repeat_flow(monkeypatch) -> None:
     callback = SimpleNamespace(
         data="repeat_result_42",
         from_user=SimpleNamespace(id=9001),
@@ -40,14 +41,7 @@ def test_repeat_result_compat_restores_safe_repeat_flow(monkeypatch) -> None:
     monkeypatch.setattr(repeat_result_compat, "_restore_image_task_to_state", restore)
     monkeypatch.setattr(repeat_result_compat, "_show_repeat_image_screen", show)
 
-    pytest.run = None
-
-    async def execute() -> None:
-        await repeat_result_compat.repeat_result_compat(callback, state)
-
-    import asyncio
-
-    asyncio.run(execute())
+    await repeat_result_compat.repeat_result_compat(callback, state)
 
     restore.assert_awaited_once_with(
         task,
