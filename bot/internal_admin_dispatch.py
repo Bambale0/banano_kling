@@ -20,6 +20,15 @@ from bot.internal_admin_cms import (
     save_cms_document_handler,
 )
 from bot.internal_admin_command_schema import ensure_internal_admin_command_schema
+from bot.internal_admin_notification_actions import test_campaign_handler
+from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
+from bot.internal_admin_notifications import (
+    campaign_detail_handler,
+    campaign_preview_handler,
+    campaigns_handler,
+    cancel_campaign_handler,
+    start_campaign_handler,
+)
 from bot.internal_admin_operation_actions import replay_operation_handler
 from bot.internal_admin_operation_schema import ensure_internal_admin_operation_schema
 from bot.internal_admin_operations import (
@@ -119,6 +128,15 @@ _TICKET_HANDLERS: dict[str, Handler] = {
 _CMS_DOCUMENT_PATH = re.compile(
     r"^/internal/admin/cms/documents/(?P<document_id>[1-9][0-9]*)(?:/(?P<action>publish))?$"
 )
+_NOTIFICATION_CAMPAIGN_PATH = re.compile(
+    r"^/internal/admin/notifications/campaigns/(?P<campaign_id>[1-9][0-9]*)(?:/(?P<action>test|start|cancel))?$"
+)
+_NOTIFICATION_HANDLERS: dict[str, Handler] = {
+    "detail": campaign_detail_handler,
+    "test": test_campaign_handler,
+    "start": start_campaign_handler,
+    "cancel": cancel_campaign_handler,
+}
 
 
 async def _authenticate_and_prepare(
@@ -127,9 +145,8 @@ async def _authenticate_and_prepare(
     operation_schema: bool = False,
     payment_schema: bool = False,
     support_schema: bool = False,
+    notification_schema: bool = False,
 ) -> web.Response | None:
-    # Schema initialization is deliberately delayed until after both the private
-    # network check and exact-body HMAC verification have succeeded.
     body, authorization_error = await _authorize_request(request)
     if authorization_error is not None:
         return authorization_error
@@ -143,6 +160,8 @@ async def _authenticate_and_prepare(
             await ensure_internal_admin_payment_schema()
         if support_schema:
             await ensure_internal_admin_support_schema()
+        if notification_schema:
+            await ensure_internal_admin_notification_schema()
     except Exception:
         logger.exception("Internal admin schema is unavailable")
         return web.json_response({"error": "service_unavailable"}, status=503)
@@ -156,12 +175,14 @@ async def _dispatch_authenticated(
     operation_schema: bool = False,
     payment_schema: bool = False,
     support_schema: bool = False,
+    notification_schema: bool = False,
 ) -> web.StreamResponse:
     preparation_error = await _authenticate_and_prepare(
         request,
         operation_schema=operation_schema,
         payment_schema=payment_schema,
         support_schema=support_schema,
+        notification_schema=notification_schema,
     )
     if preparation_error is not None:
         return preparation_error
@@ -232,6 +253,18 @@ async def dispatch_internal_admin_request(request: web.Request) -> web.StreamRes
             handler,
             support_schema=True,
         )
+    if request.path == "/internal/admin/notifications/preview":
+        return await _dispatch_authenticated(
+            request,
+            campaign_preview_handler,
+            notification_schema=True,
+        )
+    if request.path == "/internal/admin/notifications/campaigns":
+        return await _dispatch_authenticated(
+            request,
+            campaigns_handler,
+            notification_schema=True,
+        )
 
     handler = _INTERNAL_HANDLERS.get(request.path)
     if handler is not None:
@@ -294,4 +327,14 @@ async def dispatch_internal_admin_request(request: web.Request) -> web.StreamRes
             handler,
             support_schema=True,
         )
+
+    notification_match = _NOTIFICATION_CAMPAIGN_PATH.fullmatch(request.path)
+    if notification_match is not None:
+        request.match_info["campaign_id"] = notification_match.group("campaign_id")
+        return await _dispatch_authenticated(
+            request,
+            _NOTIFICATION_HANDLERS[notification_match.group("action") or "detail"],
+            notification_schema=True,
+        )
+
     return web.json_response({"error": "not_found"}, status=404)
