@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 
 from bot import db as db_backend
 from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
-from bot.internal_admin_notifications import send_campaign_message
+from bot.internal_admin_notifications import _decode_json_object, send_campaign_message
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ async def notification_campaign_worker(bot: Bot) -> None:
                 sent = await send_campaign_message(
                     bot,
                     int(item["telegram_id"]),
-                    item["message"] if isinstance(item["message"], dict) else {},
+                    _decode_json_object(item["message"]),
                 )
                 await _mark_sent(delivery_id, int(sent.message_id))
             except (TelegramForbiddenError, TelegramBadRequest) as exc:
