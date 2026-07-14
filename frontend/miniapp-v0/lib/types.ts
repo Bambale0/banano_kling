@@ -262,6 +262,10 @@ export interface ProfileSummary {
   profile_link?: string
   referral_link?: string
   channel_url?: string
+  posts_count?: number
+  likes_count?: number
+  shares_count?: number
+  remixes_count?: number
   is_me: boolean
 }
 

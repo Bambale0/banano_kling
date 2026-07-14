@@ -172,6 +172,14 @@ export function ProfileTab() {
   )
   const previewReferences = useMemo(() => getPublicReferences(previewItem), [previewItem])
   const totals = useMemo(() => {
+    if (isLive && profile) {
+      return {
+        posts: Number(profile.posts_count || 0),
+        likes: Number(profile.likes_count || 0),
+        shares: Number(profile.shares_count || 0),
+        remixes: Number(profile.remixes_count || 0),
+      }
+    }
     return profileItems.reduce(
       (acc, item) => ({
         posts: acc.posts + 1,
@@ -181,7 +189,7 @@ export function ProfileTab() {
       }),
       { posts: 0, likes: 0, shares: 0, remixes: 0 }
     )
-  }, [profileItems])
+  }, [isLive, profile, profileItems])
 
   useEffect(() => {
     let ignore = false

@@ -5825,6 +5825,16 @@ async def get_user_feed_generations(
     return cards
 
 
+async def get_user_feed_summary(user_id: int) -> dict[str, int]:
+    cards = await get_user_feed_generations(user_id, limit=0)
+    return {
+        "posts_count": len(cards),
+        "likes_count": sum(int(card.get("likes_count") or 0) for card in cards),
+        "shares_count": sum(int(card.get("shares_count") or 0) for card in cards),
+        "remixes_count": sum(int(card.get("remixes") or 0) for card in cards),
+    }
+
+
 async def get_top_day_generations(limit: int = 40) -> list[dict[str, Any]]:
     return await get_feed_generations(limit=limit, source="top_day")
 

@@ -47,6 +47,7 @@ from bot.database import (
     get_top_prompts,
     get_user_by_referral_code,
     get_user_feed_generations,
+    get_user_feed_summary,
     get_user_stats,
     increment_feed_share,
     is_channel_subscription_required,
@@ -2725,7 +2726,13 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App my feed failed")
 
 
-def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int | None = None) -> dict[str, Any]:
+def _miniapp_profile_payload(
+    author,
+    bot_username: str,
+    *,
+    viewer_user_id: int | None = None,
+    feed_summary: dict[str, int] | None = None,
+) -> dict[str, Any]:
     referral_code = str(getattr(author, "referral_code", "") or "").strip().upper()
     username = str(getattr(author, "username", "") or "").strip().lstrip("@")
     first_name = str(getattr(author, "first_name", "") or "").strip()
@@ -2744,6 +2751,7 @@ def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int |
         if bot_username and referral_code
         else config.mini_app_url
     )
+    summary = feed_summary or {}
     return {
         "referral_code": referral_code,
         "first_name": first_name,
@@ -2754,6 +2762,10 @@ def _miniapp_profile_payload(author, bot_username: str, *, viewer_user_id: int |
         "profile_link": profile_link,
         "referral_link": referral_link,
         "channel_url": getattr(author, "channel_url", None) or "",
+        "posts_count": int(summary.get("posts_count") or 0),
+        "likes_count": int(summary.get("likes_count") or 0),
+        "shares_count": int(summary.get("shares_count") or 0),
+        "remixes_count": int(summary.get("remixes_count") or 0),
         "is_me": bool(viewer_user_id and getattr(author, "id", None) == viewer_user_id),
     }
 
@@ -2773,6 +2785,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
 
         feed = await get_user_feed_generations(author.id, limit=limit)
+        feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
         for item in feed:
             item["is_mine"] = is_mine
@@ -2782,6 +2795,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
             author,
             me.username or "",
             viewer_user_id=ctx["user"].id,
+            feed_summary=feed_summary,
         )
         return web.json_response({"ok": True, "profile": profile, "feed": feed})
     except Exception as e:
