@@ -70,7 +70,7 @@ class SeedreamService(KlingService):
         supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
         uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
             supported_urls,
-            prefer_stable_public_url=False,
+            prefer_stable_public_url=True,
         )
         effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
         if effective_image_urls:
@@ -211,7 +211,7 @@ class SeedreamService(KlingService):
             )
             normalized_image_urls = await kie_file_upload_service.upload_local_image_sources(
                 normalized_image_urls,
-                prefer_stable_public_url=False,
+                prefer_stable_public_url=True,
             )
             if normalized_image_urls != effective_image_urls:
                 logger.warning(
