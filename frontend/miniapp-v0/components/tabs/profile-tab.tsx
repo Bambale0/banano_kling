@@ -167,8 +167,8 @@ export function ProfileTab() {
   }, [displayName, ownReferralCode, state.recentTasks, user.photoUrl])
 
   const profileItems = useMemo(
-    () => (isLive ? items : demoItems).filter((item) => !brokenMediaIds.has(item.id)),
-    [brokenMediaIds, demoItems, isLive, items]
+    () => (isLive ? items : demoItems),
+    [demoItems, isLive, items]
   )
   const previewReferences = useMemo(() => getPublicReferences(previewItem), [previewItem])
   const totals = useMemo(() => {
@@ -562,7 +562,11 @@ export function ProfileTab() {
                 onClick={() => setPreviewItem(item)}
                 aria-label="Открыть публикацию"
               >
-                {isHttpUrl(item.result_url) ? (
+                {brokenMediaIds.has(item.id) ? (
+                  <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                    <ImageOff className="h-5 w-5" />
+                  </span>
+                ) : isHttpUrl(item.result_url) ? (
                   item.gen_type === 'video' ? (
                     <video
                       src={item.result_url}

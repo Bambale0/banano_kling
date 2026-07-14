@@ -59,9 +59,11 @@ export function ImageGeneratorForm({
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
   const isBanana = model?.id === 'banana_pro' || model?.id === 'banana_2'
-  const unitCost = isBanana
-    ? (selectedQuality === '4K' ? 3.5 : 2.5)
-    : (selectedQuality && model?.quality_costs?.[selectedQuality]) ?? (model?.cost || 0)
+  const unitCost = Number(
+    isBanana
+      ? (selectedQuality === '4K' ? 3.5 : 2.5)
+      : ((selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined) ?? (model?.cost || 0))
+  )
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null

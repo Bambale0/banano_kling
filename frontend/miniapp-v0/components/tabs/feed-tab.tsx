@@ -146,8 +146,8 @@ export function FeedTab() {
 
   const isLive = state.mode === 'live'
   const visibleItems = useMemo(
-    () => items.filter((item) => !brokenMediaIds.has(item.id)),
-    [brokenMediaIds, items]
+    () => items,
+    [items]
   )
   const feedColumns = useMemo(() => {
     const columns: [FeedItem[], FeedItem[]] = [[], []]
@@ -390,7 +390,14 @@ export function FeedTab() {
                       className="group block w-full text-left"
                       aria-label={item.gen_type === 'video' ? 'Открыть видео' : 'Открыть фото'}
                     >
-                      {isHttpUrl(item.result_url) ? (
+                      {brokenMediaIds.has(item.id) ? (
+                        <div
+                          style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
+                          className="flex w-full items-center justify-center text-muted-foreground"
+                        >
+                          <ImageOff className="h-8 w-8" />
+                        </div>
+                      ) : isHttpUrl(item.result_url) ? (
                         item.gen_type === 'video' ? (
                           <video
                             src={item.result_url}
