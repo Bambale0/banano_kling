@@ -735,6 +735,7 @@ def _build_compact_reference_guidance(prompt: str, reference_images: list[str]) 
     guidance_lines = [
         "Use the uploaded image as a visual reference, not as a locked pose.",
         "Keep the main subject recognizable from the first reference.",
+        "Treat the first reference as the primary person identity: preserve the face shape, eyes, nose, lips, hairline, age impression, and distinctive facial features.",
         "Preserve the outfit, garment cut, accessories, styling, and coverage level from the main reference unless the user explicitly asks to change them.",
         "Follow the user's requested scene, pose, outfit, lighting, framing, and style.",
         "Keep visible text out of the image unless the user explicitly asks for typography.",
@@ -756,6 +757,7 @@ def _build_wan27_reference_guidance(prompt: str, reference_images: list[str]) ->
     guidance_lines = [
         "Use the uploaded image as a visual reference for identity and composition, not as a locked pose.",
         "Keep the main subject recognizable from the first reference.",
+        "Treat the first reference as the primary person identity: preserve the face shape, eyes, nose, lips, hairline, age impression, and distinctive facial features.",
         "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
         "Do not force clothing or visual coverage from the reference unless the user's prompt explicitly requests it.",
         "Keep visible text out of the image unless the user explicitly asks for typography.",
@@ -777,6 +779,7 @@ def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -
     guidance_lines = [
         "Use the uploaded image as a visual reference for identity and composition, not as a locked pose.",
         "Keep the main subject recognizable from the first reference.",
+        "Treat the first reference as the primary person identity: preserve the face shape, eyes, nose, lips, hairline, age impression, and distinctive facial features.",
         "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
         "Do not force clothing or visual coverage from the reference unless the user's prompt explicitly requests it.",
         "Keep visible text out of the image unless the user explicitly asks for typography.",
