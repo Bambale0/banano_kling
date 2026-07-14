@@ -5658,9 +5658,11 @@ def _generation_row_to_card(
     row: db_backend.Row,
     *,
     viewer_user_id: Optional[int] = None,
+    include_unavailable: bool = False,
 ) -> Optional[dict[str, Any]]:
     feed_urls = _feed_result_urls(row)
-    if not feed_urls:
+    media_unavailable = not feed_urls
+    if media_unavailable and not include_unavailable:
         return None
     remix_count = int(row["remix_count"] or 0) if "remix_count" in row.keys() else 0
     comments_count = int(row["comments_count"] or 0) if "comments_count" in row.keys() else 0
@@ -5678,8 +5680,9 @@ def _generation_row_to_card(
         "task_id": row["task_id"],
         "model": row["model"] or row["preset_id"],
         "gen_type": row["type"],
-        "result_url": feed_urls[0],
+        "result_url": feed_urls[0] if feed_urls else "",
         "result_urls": feed_urls,
+        "media_unavailable": media_unavailable,
         "prompt": "" if prompt_hidden else str(row["prompt"] or ""),
         "likes_count": int(row["likes_count"] or 0),
         "shares_count": int(row["shares_count"] or 0),
@@ -5718,6 +5721,7 @@ async def get_feed_generations(
     limit: int = 0,
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
+    include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     """Return ALL public feed items — no limits."""
     source = source if source in {"recent", "top_day", "top"} else "recent"
@@ -5761,7 +5765,7 @@ async def get_feed_generations(
     cards = [
         card
         for row in rows
-        if (card := _generation_row_to_card(row, viewer_user_id=viewer_user_id))
+        if (card := _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable))
     ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
@@ -5773,6 +5777,7 @@ async def get_user_feed_generations(
     limit: int = 120,
     *,
     include_unpublished_owned: bool = False,
+    include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     """Return ALL user feed items — no limits."""
     where_clause = """
@@ -5820,13 +5825,13 @@ async def get_user_feed_generations(
     cards = [
         card
         for row in rows
-        if (card := _generation_row_to_card(row, viewer_user_id=user_id))
+        if (card := _generation_row_to_card(row, viewer_user_id=user_id, include_unavailable=include_unavailable))
     ]
     return cards
 
 
 async def get_user_feed_summary(user_id: int) -> dict[str, int]:
-    cards = await get_user_feed_generations(user_id, limit=0)
+    cards = await get_user_feed_generations(user_id, limit=0, include_unavailable=True)
     return {
         "posts_count": len(cards),
         "likes_count": sum(int(card.get("likes_count") or 0) for card in cards),
@@ -5843,6 +5848,7 @@ async def get_feed_generation_card(
     gen_id: int | str,
     *,
     viewer_user_id: Optional[int] = None,
+    include_unavailable: bool = False,
 ) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -5884,7 +5890,7 @@ async def get_feed_generation_card(
         row = await cursor.fetchone()
     if not row:
         return None
-    return _generation_row_to_card(row, viewer_user_id=viewer_user_id)
+    return _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable)
 
 
 async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, Any]]:

@@ -2684,6 +2684,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
             limit=limit,
             source=source,
             viewer_user_id=ctx["user"].id,
+            include_unavailable=True,
         )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
@@ -2703,7 +2704,11 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             init_data,
             body.get("start_param_fallback"),
         )
-        card = await get_feed_generation_card(gen_id, viewer_user_id=ctx["user"].id)
+        card = await get_feed_generation_card(
+            gen_id,
+            viewer_user_id=ctx["user"].id,
+            include_unavailable=True,
+        )
         if not card:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
         return web.json_response({"ok": True, "feed_item": card})
@@ -2720,6 +2725,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         feed = await get_user_feed_generations(
             ctx["user"].id,
             limit=limit,
+            include_unavailable=True,
         )
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
@@ -2784,7 +2790,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
 
-        feed = await get_user_feed_generations(author.id, limit=limit)
+        feed = await get_user_feed_generations(author.id, limit=limit, include_unavailable=True)
         feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
         for item in feed:
@@ -2960,7 +2966,11 @@ async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Комментарий не удалось добавить"},
                 status=400,
             )
-        card = await get_feed_generation_card(gen_id, viewer_user_id=ctx["user"].id)
+        card = await get_feed_generation_card(
+            gen_id,
+            viewer_user_id=ctx["user"].id,
+            include_unavailable=True,
+        )
         return web.json_response(
             {
                 "ok": True,

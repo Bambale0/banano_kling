@@ -185,6 +185,7 @@ export interface FeedItem {
   gen_type: 'image' | 'video'
   result_url: string
   result_urls: string[]
+  media_unavailable?: boolean
   prompt?: string | null
   likes_count: number
   shares_count: number
