@@ -5556,10 +5556,7 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
         )
 
         if is_local_upload_source(candidate):
-            # Keep published feed rows visible even when the backing upload is
-            # temporarily unavailable on this host. Provider input paths are
-            # still validated by media_input_utils before reuse.
-            return True
+            return bool(resolve_local_upload_path(candidate))
     except Exception:
         logger.exception("Failed to validate local feed result url: %s", candidate)
         return False
