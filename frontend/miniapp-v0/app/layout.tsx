@@ -105,12 +105,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className="bg-background">
-      <body className="font-sans antialiased">
-        <script src="/telegram-web-app.js" async />
+      <head>
+        <script src="/mini-app/telegram-web-app.js" async />
         <script
           id="telegram-early-ready"
           dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}
         />
+      </head>
+      <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

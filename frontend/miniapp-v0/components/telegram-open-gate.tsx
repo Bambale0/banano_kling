@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { ExternalLink, RefreshCw, Send } from 'lucide-react'
 import { buildTelegramMiniAppUrl, getStartParamFallback } from '@/lib/api'
 import { useApp } from '@/lib/app-context'
@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button'
 
 export function TelegramOpenGate() {
   const { state, refreshTasks } = useApp()
-  const telegramUrl = useMemo(() => {
-    return buildTelegramMiniAppUrl(getStartParamFallback())
+  const [telegramUrl, setTelegramUrl] = useState('')
+
+  useEffect(() => {
+    setTelegramUrl(buildTelegramMiniAppUrl(getStartParamFallback()))
   }, [])
 
   return (
