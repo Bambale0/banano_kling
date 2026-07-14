@@ -174,7 +174,7 @@ def _message_has_media(message: types.Message) -> bool:
 
 
 def _feed_replace_mode(message: types.Message, replace_message: bool) -> bool:
-    return replace_message or bool(getattr(getattr(message, "from_user", None), "is_bot", False))
+    return bool(replace_message)
 
 
 def _can_edit_feed_message(message: types.Message, replace_message: bool) -> bool:
@@ -2641,10 +2641,7 @@ async def _render_feed_carousel(
             except Exception as e:
                 logger.warning("Cannot edit feed media with placeholder preview: %s", e)
 
-    should_replace_bot_message = replace_message or bool(
-        getattr(getattr(message, "from_user", None), "is_bot", False)
-    )
-    if should_replace_bot_message:
+    if replace_message:
         try:
             await message.delete()
         except Exception as e:
