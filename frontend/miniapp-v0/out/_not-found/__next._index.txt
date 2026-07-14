@@ -2,7 +2,7 @@
 3:I[7121,[],""]
 4:I[4581,[],""]
 5:I[4317,["177","static/chunks/app/layout-0381b3aef1ad142d.js"],"Analytics"]
-:HL["/mini-app/_next/static/css/9f47df254971ac0a.css","style"]
+:HL["/mini-app/_next/static/css/a2d719c226bb1e40.css","style"]
 2:T6f9,
 (function () {
   var attempts = 0;
@@ -66,4 +66,4 @@
   window.addEventListener('DOMContentLoaded', markReady, false);
   window.addEventListener('load', markReady, false);
 })();
-0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/9f47df254971ac0a.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","script",null,{"src":"/telegram-web-app.js","async":true}],["$","script",null,{"id":"telegram-early-ready","dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"zn7gJ4WerITQJbrg28YTi"}
+0:{"rsc":["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/mini-app/_next/static/css/a2d719c226bb1e40.css","precedence":"next"}]],["$","html",null,{"lang":"ru","className":"bg-background","children":["$","body",null,{"className":"font-sans antialiased","children":[["$","script",null,{"src":"/telegram-web-app.js","async":true}],["$","script",null,{"id":"telegram-early-ready","dangerouslySetInnerHTML":{"__html":"$2"}}],["$","$L3",null,{"parallelRouterKey":"children","template":["$","$L4",null,{}]}],["$","$L5",null,{}]]}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"yLMj7D1E641ByLdWCHqrc"}

@@ -33,7 +33,6 @@ import {
   Share2,
   Sparkles,
   UserRound,
-  Video,
   Wallet,
   X,
 } from 'lucide-react'
@@ -606,21 +605,15 @@ export function ProfileTab() {
                   </span>
                 ) : null}
                 <span className="pointer-events-none absolute inset-0 bg-background/0 transition-colors group-hover:bg-background/35" />
-                <span className="pointer-events-none absolute left-1 top-1 hidden rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 min-[420px]:block">
-                  {item.gen_type === 'video' ? (
-                    <span className="inline-flex items-center gap-0.5">
-                      <Video className="h-3 w-3" />
-                      {item.duration ? `${item.duration}с` : item.aspect_ratio || 'video'}
-                    </span>
-                  ) : (
-                    item.aspect_ratio || '1:1'
-                  )}
-                </span>
-                <span className="pointer-events-none absolute bottom-1 left-1 hidden items-center gap-0.5 rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 min-[420px]:flex">
+                <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-0.5 rounded bg-background/80 px-1 py-0.5 text-[9px] font-semibold text-foreground backdrop-blur">
                   <Heart className="h-3 w-3" />
                   {formatCompactNumber(item.likes_count)}
                 </span>
-                <span className="pointer-events-none absolute bottom-1 right-1 hidden items-center gap-0.5 rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 min-[420px]:flex">
+                <span className="pointer-events-none absolute right-1 top-1 flex items-center gap-0.5 rounded bg-background/80 px-1 py-0.5 text-[9px] font-semibold text-foreground backdrop-blur">
+                  <Share2 className="h-3 w-3" />
+                  {formatCompactNumber(item.shares_count)}
+                </span>
+                <span className="pointer-events-none absolute right-1 bottom-8 hidden items-center gap-0.5 rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground backdrop-blur min-[420px]:flex">
                   <Sparkles className="h-3 w-3" />
                   {formatCompactNumber(item.remixes)}
                 </span>
