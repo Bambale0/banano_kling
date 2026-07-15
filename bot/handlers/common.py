@@ -2240,6 +2240,9 @@ def _feed_card_photos(card: dict) -> list[str]:
     result_url = str(card.get("result_url") or "").strip()
     if result_url and result_url not in urls:
         urls.insert(0, result_url)
+    preview_url = str(card.get("preview_url") or "").strip()
+    if preview_url and not _is_probably_video_url(preview_url):
+        urls = [preview_url] + [url for url in urls if url != preview_url]
     return urls
 
 
@@ -2462,7 +2465,7 @@ async def _build_feed_keyboard(
         )
 
     gen_type = str(card.get("gen_type") or card.get("type") or "").strip().lower()
-    task_id = str(card.get("id") or card.get("task_id") or "").strip()
+    task_id = str(card.get("task_id") or "").strip()
     if task_id and gen_type == "image":
         if username and gen_id:
             rows.append(
@@ -3251,6 +3254,7 @@ async def navigate_feed(callback: types.CallbackQuery):
     source_code = parts[1] if len(parts) > 1 and parts[1] in FEED_SOURCE_CODES else "r"
     index = _parse_int(parts[2], 0) if len(parts) > 2 else 0
     photo_index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    await _safe_callback_answer(callback)
     await _render_feed_by_source(
         callback.message,
         telegram_id=callback.from_user.id,
@@ -3258,7 +3262,6 @@ async def navigate_feed(callback: types.CallbackQuery):
         index=index,
         photo_index=photo_index,
     )
-    await _safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("bfp:"))
@@ -3267,6 +3270,7 @@ async def navigate_profile_feed(callback: types.CallbackQuery):
     referral_code = parts[1] if len(parts) > 1 else ""
     index = _parse_int(parts[2], 0) if len(parts) > 2 else 0
     photo_index = _parse_int(parts[3], 0) if len(parts) > 3 else 0
+    await _safe_callback_answer(callback)
     viewer = await get_or_create_user(callback.from_user.id)
     await _render_profile_feed_deeplink(
         callback.message,
@@ -3275,7 +3279,6 @@ async def navigate_profile_feed(callback: types.CallbackQuery):
         index=index,
         photo_index=photo_index,
     )
-    await _safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("bfl:"))
