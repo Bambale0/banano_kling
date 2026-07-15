@@ -5798,7 +5798,7 @@ async def get_feed_generations(
     ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
-    if offset:
+    if offset and source in {"top", "top_day"}:
         cards = cards[offset:]
     return cards[:limit] if limit else cards
 
