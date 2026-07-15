@@ -75,6 +75,8 @@ from bot.services.subscription_service import (
     should_block_for_subscription,
 )
 from bot.services.memory_dump_service import build_memory_dump, ensure_memory_tracing
+from bot.notification_service import ensure_notification_campaign_worker
+from bot.support_service import ensure_support_outbox_worker
 from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
@@ -1693,8 +1695,10 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_lava_reconcile_loop(bot))
         asyncio.create_task(_memory_dump_loop(bot))
         asyncio.create_task(_db_backup_loop())
+        ensure_notification_campaign_worker(bot)
+        ensure_support_outbox_worker(bot)
         logger.info(
-            "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, and DB backups"
+            "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, DB backups, support outbox, and notification campaigns"
         )
     except Exception:
         logger.exception("Failed to schedule background tasks")
