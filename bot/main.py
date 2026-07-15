@@ -3908,8 +3908,13 @@ async def main():
             config.WEBHOOK_BIND_HOST,
             config.WEBHOOK_PORT,
         )
-        # Держим бота запущенным
-        await asyncio.Event().wait()
+        await on_startup(bot, dispatcher=dp)
+        try:
+            # Держим бота запущенным
+            await asyncio.Event().wait()
+        finally:
+            await on_shutdown(bot)
+            await runner.cleanup()
     else:
         # Polling mode (для разработки)
         logger.info("Starting in polling mode...")
