@@ -2242,7 +2242,16 @@ def _feed_card_photos(card: dict) -> list[str]:
         urls.insert(0, result_url)
     preview_url = str(card.get("preview_url") or "").strip()
     if preview_url and not _is_probably_video_url(preview_url):
-        urls = [preview_url] + [url for url in urls if url != preview_url]
+        replaced = False
+        next_urls: list[str] = []
+        for url in urls:
+            if url == result_url and not replaced:
+                next_urls.append(preview_url)
+                replaced = True
+                continue
+            if url != preview_url:
+                next_urls.append(url)
+        urls = next_urls if replaced else [preview_url, *next_urls]
     return urls
 
 
