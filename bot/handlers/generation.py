@@ -496,6 +496,66 @@ def _enforce_video_prompt_policy(prompt: str) -> Optional[str]:
     return _enforce_generation_prompt_policy(prompt, medium="video")
 
 
+NO_REFERENCE_CONFIRM_PREFIXES = (
+    "без рефа:",
+    "без референса:",
+    "без фото:",
+    "no ref:",
+    "no reference:",
+)
+
+
+def _extract_no_reference_confirmation(prompt: str) -> tuple[str, bool]:
+    value = (prompt or "").strip()
+    lower = value.lower()
+    for prefix in NO_REFERENCE_CONFIRM_PREFIXES:
+        if lower.startswith(prefix):
+            return value[len(prefix):].strip(), True
+    return value, False
+
+
+def _prompt_expects_reference_image(prompt: str) -> bool:
+    text = f" {(prompt or '').lower()} "
+    phrases = (
+        "референс",
+        "реф ",
+        "рефа",
+        "рефом",
+        "рефу",
+        "фото референс",
+        "фото-референс",
+        "как на фото",
+        "как в фото",
+        "по фото",
+        " с фото ",
+        " с фотографии ",
+        "по моему фото",
+        "по моей фотографии",
+        "моё фото",
+        "мое фото",
+        "загруженное фото",
+        "загруженному фото",
+        "исходное фото",
+        "исходник",
+        "не меняя черты лица",
+        "не меняй черты лица",
+        "сохрани лицо",
+        "сохранить лицо",
+        "сохрани черты",
+        "сохранить черты",
+        "сохранить сходство",
+        "сохрани сходство",
+        "same face",
+        "keep face",
+        "preserve face",
+        "reference photo",
+        "reference image",
+        "uploaded photo",
+        "uploaded image",
+    )
+    return any(phrase in text for phrase in phrases)
+
+
 def _apply_safe_prompt_framing(
     img_service: str, prompt: str, *, has_reference_images: bool = False
 ) -> str:
@@ -7919,7 +7979,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     if data.get("generation_type") != "image":
         return  # Not for images, let other handlers catch
 
-    prompt = message.text.strip()
+    prompt, confirmed_no_reference = _extract_no_reference_confirmation(message.text)
     if not prompt:
         await message.answer(
             "Нужен текстовый промпт — опишите, какое изображение хотите получить.",
@@ -7946,6 +8006,27 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             "Часть старых фото уже очищена, поэтому я не запускаю задачу с битыми ссылками.\n"
             "Загрузите фото заново и отправьте prompt ещё раз.",
             reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
+
+    if (
+        not reference_images
+        and not confirmed_no_reference
+        and _prompt_expects_reference_image(prompt)
+    ):
+        await message.answer(
+            "⚠️ <b>Референс не прикреплён.</b>\n\n"
+            "В prompt есть указание на референс/сохранение лица, но сейчас загружено "
+            "<code>0</code> фото.\n\n"
+            "Загрузите фото-референс и отправьте prompt ещё раз.\n"
+            "Если хотите запустить именно без референса, отправьте prompt повторно с началом "
+            "<code>Без рефа:</code>",
+            reply_markup=get_reference_images_upload_keyboard(
+                len(reference_images),
+                _get_max_image_references(img_service),
+                data.get("preset_id", "new"),
+            ),
+            parse_mode="HTML",
         )
         return
 
