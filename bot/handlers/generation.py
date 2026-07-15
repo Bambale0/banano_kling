@@ -834,20 +834,18 @@ def _build_wan27_reference_guidance(prompt: str, reference_images: list[str]) ->
 
 
 def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -> str:
-    """Banana-specific reference guidance: preserve identity, but do not force clothing/coverage from reference."""
+    """Banana-specific reference guidance: preserve only identity from the first reference."""
     prompt = (prompt or "").strip()
     guidance_lines = [
-        "Use the uploaded image as a visual reference for identity and composition, not as a locked pose.",
-        "Keep the main subject recognizable from the first reference.",
-        "Treat the first reference as the primary person identity: preserve the face shape, eyes, nose, lips, hairline, age impression, and distinctive facial features.",
-        "Follow the user's requested scene, pose, outfit, lighting, framing, style, and coverage level exactly as described in the prompt.",
-        "Do not force clothing or visual coverage from the reference unless the user's prompt explicitly requests it.",
-        "Keep visible text out of the image unless the user explicitly asks for typography.",
+        "Use the first uploaded image only as the primary person identity reference.",
+        "Preserve only the person's identity: face shape, eyes, nose, lips, hairline, age impression, skin tone, and distinctive facial features.",
+        "Do not preserve or copy clothing, outfit, accessories, pose, body shape, background, lighting, camera angle, or visual coverage from the reference unless the user explicitly asks for those details.",
+        "Follow the user's prompt for clothing, outfit, body styling, scene, pose, lighting, framing, and style.",
     ]
     if len(reference_images) > 1:
         guidance_lines.insert(
             3,
-            "Use additional references for requested clothing, accessories, products, pose, style, colors, or scene cues; if another person appears there, use visual cues only unless the user asks for multiple people.",
+            "Use additional references only for identity if the user explicitly asks for multiple people; otherwise ignore non-identity details from additional references.",
         )
     guidance = " ".join(guidance_lines)
     if prompt:
@@ -860,22 +858,9 @@ def _apply_reference_detail_preservation(
 ) -> str:
     """For reference-based generation, preserve identity without suppressing edits."""
     prompt = (prompt or "").strip()
-    if not reference_images or img_service not in {
-        *BANANA_IMAGE_SERVICES,
-        "grok_imagine_i2i",
-        "seedream_edit",
-        "flux_pro",
-        "wan_27",
-    }:
+    if not reference_images or img_service not in BANANA_IMAGE_SERVICES:
         return prompt
-
-    if img_service == "wan_27":
-        return _build_wan27_reference_guidance(prompt, reference_images)
-
-    if img_service in BANANA_IMAGE_SERVICES:
-        return _build_banana_reference_guidance(prompt, reference_images)
-
-    return _build_compact_reference_guidance(prompt, reference_images)
+    return _build_banana_reference_guidance(prompt, reference_images)
 
 
 def _build_image_variant_prompt(
@@ -1068,19 +1053,19 @@ async def _start_image_generation_task(
         runtime_img_service, reference_images, prompt
     )
     provider_model = _get_image_provider_model(runtime_img_service, reference_images)
-    effective_prompt = _apply_safe_prompt_framing(
-        runtime_img_service,
+    effective_prompt = (
         _apply_reference_detail_preservation(
             runtime_img_service, prompt, reference_images
-        ),
-        has_reference_images=bool(reference_images),
+        )
+        if runtime_img_service in BANANA_IMAGE_SERVICES and reference_images
+        else ""
     )
+    banana_provider_prompt = effective_prompt or prompt
 
     local_task_id = f"img_{uuid.uuid4().hex[:12]}"
     request_snapshot = {
         "img_service": img_service,
         "prompt": prompt,
-        "effective_prompt": effective_prompt,
         "img_ratio": img_ratio,
         "reference_images": reference_images,
         "source_reference_images": source_reference_images,
@@ -1093,6 +1078,8 @@ async def _start_image_generation_task(
         "action_type": action_type,
         "prompt_source_id": prompt_source_id,
     }
+    if effective_prompt:
+        request_snapshot["effective_prompt"] = effective_prompt
     await add_generation_task(
         user.id,
         telegram_id,
@@ -1127,7 +1114,7 @@ async def _start_image_generation_task(
             else callback_url
         )
         result = await nano_banana_2_service.generate_image(
-            prompt=effective_prompt,
+            prompt=banana_provider_prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
@@ -1136,7 +1123,7 @@ async def _start_image_generation_task(
         )
     elif runtime_img_service in {"banana_pro", "nanobanana"}:
         result = await nano_banana_pro_service.generate_image(
-            prompt=effective_prompt,
+            prompt=banana_provider_prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
@@ -1145,7 +1132,7 @@ async def _start_image_generation_task(
     elif runtime_img_service in {"seedream_edit", "seedream_5_pro"}:
         if runtime_img_service == "seedream_edit" or reference_images:
             result = await seedream_service.generate_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model=(
                     "seedream/4.5-edit"
                     if runtime_img_service == "seedream_edit"
@@ -1159,7 +1146,7 @@ async def _start_image_generation_task(
             )
         else:
             result = await seedream_service.generate_text_to_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model="seedream/5-pro-text-to-image",
                 aspect_ratio=img_ratio,
                 quality=img_quality,
@@ -1168,7 +1155,7 @@ async def _start_image_generation_task(
     elif runtime_img_service == "flux_pro":
         if reference_images:
             result = await gpt_image_service.generate_image_to_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 input_urls=reference_images,
                 model="gpt-image-2-image-to-image",
                 aspect_ratio=img_ratio,
@@ -1177,7 +1164,7 @@ async def _start_image_generation_task(
             )
         else:
             result = await gpt_image_service.generate_image(
-                prompt=effective_prompt,
+                prompt=prompt,
                 model="gpt-image-2-text-to-image",
                 aspect_ratio=img_ratio,
                 nsfw_checker=False,
@@ -1185,7 +1172,7 @@ async def _start_image_generation_task(
             )
     elif runtime_img_service in {"seedream", "seedream_45"}:
         result = await gemini_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             model="pro",
             aspect_ratio=img_ratio,
             reference_image_urls=reference_images,
@@ -1193,13 +1180,13 @@ async def _start_image_generation_task(
     elif runtime_img_service == "grok_imagine_i2i":
         result = await grok_service.generate_image_to_image(
             image_urls=reference_images,
-            prompt=effective_prompt,
+            prompt=prompt,
             nsfw_checker=False,
             callBackUrl=callback_url,
         )
     elif runtime_img_service == "wan_27":
         result = await wan27_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             input_urls=reference_images,
             n=1,
@@ -1214,7 +1201,7 @@ async def _start_image_generation_task(
         )
     else:
         result = await nano_banana_pro_service.generate_image(
-            prompt=effective_prompt,
+            prompt=prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
