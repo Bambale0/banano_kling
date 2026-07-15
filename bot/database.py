@@ -5732,8 +5732,9 @@ async def get_feed_generations(
     viewer_user_id: Optional[int] = None,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return ALL public feed items — no limits."""
+    """Return public feed items for the requested source."""
     source = source if source in {"recent", "top_day", "top"} else "recent"
+    limit = max(0, int(limit or 0))
     where = [
         "gt.type IN ('image', 'video')",
         "gt.status = 'completed'",
@@ -5767,8 +5768,10 @@ async def get_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
             ORDER BY gt.created_at DESC
+            {"LIMIT ?" if limit and source == "recent" else ""}
         """
-        cursor = await db.execute(query)
+        params: list[Any] = [limit] if limit and source == "recent" else []
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
     cards = [
@@ -5778,7 +5781,7 @@ async def get_feed_generations(
     ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
-    return cards
+    return cards[:limit] if limit else cards
 
 
 async def get_user_feed_generations(
@@ -5788,7 +5791,8 @@ async def get_user_feed_generations(
     include_unpublished_owned: bool = False,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return ALL user feed items — no limits."""
+    """Return user feed items."""
+    limit = max(0, int(limit or 0))
     where_clause = """
             WHERE gt.user_id = ?
               AND gt.type IN ('image', 'video')
@@ -5828,8 +5832,10 @@ async def get_user_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             {where_clause}
             ORDER BY gt.created_at DESC
+            {"LIMIT ?" if limit else ""}
         """
-        cursor = await db.execute(query, (user_id,))
+        params: tuple[Any, ...] = (user_id, limit) if limit else (user_id,)
+        cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
     cards = [
         card
