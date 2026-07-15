@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime
+from functools import lru_cache
 import io
 import mimetypes
 import os
@@ -105,6 +106,21 @@ def filter_available_image_sources(
     return available
 
 
+@lru_cache(maxsize=512)
+def _upload_dir_variants(parent: str) -> dict[str, str]:
+    variants: dict[str, str] = {}
+    try:
+        for entry in sorted(os.listdir(parent)):
+            full_path = os.path.join(parent, entry)
+            if not os.path.isfile(full_path):
+                continue
+            stem, _ext = os.path.splitext(full_path)
+            variants.setdefault(stem, full_path)
+    except OSError:
+        return {}
+    return variants
+
+
 def _resolve_existing_upload_variant(candidate: str | None) -> str | None:
     if not candidate:
         return None
@@ -116,16 +132,7 @@ def _resolve_existing_upload_variant(candidate: str | None) -> str | None:
     if not parent or not os.path.isdir(parent):
         return None
 
-    try:
-        for entry in sorted(os.listdir(parent)):
-            full_path = os.path.join(parent, entry)
-            if not os.path.isfile(full_path):
-                continue
-            if os.path.splitext(full_path)[0] == stem:
-                return full_path
-    except OSError:
-        return None
-    return None
+    return _upload_dir_variants(parent).get(stem)
 
 
 def _resolve_local_upload_path(source: str) -> str | None:
