@@ -226,6 +226,20 @@ def _feed_cards_for_viewer(cards: list[dict], viewer_user_id: int | None) -> lis
     ]
 
 
+def _load_feed_cards_sync(source: str) -> list[dict]:
+    return asyncio.run(
+        get_feed_generations(
+            limit=FEED_PAGE_LIMIT,
+            source=source,
+            viewer_user_id=None,
+        )
+    )
+
+
+async def _load_feed_cards(source: str) -> list[dict]:
+    return await asyncio.to_thread(_load_feed_cards_sync, source)
+
+
 def _profile_feed_cache_key(referral_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
     return str(referral_code or "").strip().upper(), _viewer_cache_key_id(viewer_user_id)
 
@@ -2537,11 +2551,7 @@ async def _fetch_feed_cards(
         _feed_cache_log_miss("feed", cache_key)
         started_at = time.monotonic()
         source = FEED_SOURCE_CODES.get(source_code, "recent")
-        cards = await get_feed_generations(
-            limit=FEED_PAGE_LIMIT,
-            source=source,
-            viewer_user_id=None,
-        )
+        cards = await _load_feed_cards(source)
         _feed_cache_put(_feed_cards_cache, cache_key, cards)
         _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
         return _feed_cards_for_viewer(cards, viewer_user_id)
