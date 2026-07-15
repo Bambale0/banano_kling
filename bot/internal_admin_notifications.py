@@ -261,12 +261,35 @@ def _reply_markup(message: Mapping[str, Any]) -> InlineKeyboardMarkup | None:
 
 
 async def send_campaign_message(bot: Bot, telegram_id: int, message: Mapping[str, Any]):
+    text = str(message.get("text") or "")
+    media_type = str(message.get("media_type") or "").strip().lower()
+    media_file_id = str(message.get("media_file_id") or "").strip()
+    parse_mode = message.get("parse_mode")
+    parse_mode = str(parse_mode) if parse_mode else None
+    reply_markup = _reply_markup(message)
+
+    if media_type == "photo" and media_file_id:
+        return await bot.send_photo(
+            chat_id=telegram_id,
+            photo=media_file_id,
+            caption=text or None,
+            parse_mode=parse_mode if text else None,
+            reply_markup=reply_markup,
+        )
+    if media_type == "video" and media_file_id:
+        return await bot.send_video(
+            chat_id=telegram_id,
+            video=media_file_id,
+            caption=text or None,
+            parse_mode=parse_mode if text else None,
+            reply_markup=reply_markup,
+        )
     return await bot.send_message(
         chat_id=telegram_id,
-        text=str(message["text"]),
-        parse_mode=None,
+        text=text,
+        parse_mode=parse_mode,
         disable_web_page_preview=bool(message.get("disable_web_page_preview", True)),
-        reply_markup=_reply_markup(message),
+        reply_markup=reply_markup,
     )
 
 

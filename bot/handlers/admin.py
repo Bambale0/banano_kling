@@ -3992,22 +3992,155 @@ async def admin_execute_broadcast(
         return
 
     await status_message.edit_text(
-        "📢 <b>Рассылка запущена в фоне...</b>\n\n"
-        "Бот продолжит отвечать на остальные команды. Статус буду обновлять здесь.",
+        "📢 <b>Создаю устойчивую рассылку...</b>",
+        parse_mode="HTML",
+    )
+    try:
+        campaign_id, total = await _create_admin_broadcast_campaign(
+            bot=bot,
+            created_by=callback.from_user.id,
+            broadcast_text=broadcast_text,
+            broadcast_media_type=broadcast_media_type,
+            broadcast_media_file_id=broadcast_media_file_id,
+        )
+    except Exception:
+        logger.exception("Failed to create durable broadcast campaign")
+        await status_message.edit_text(
+            "❌ Не удалось создать устойчивую рассылку. Попробуйте ещё раз.",
+            reply_markup=get_admin_keyboard(),
+        )
+        await state.clear()
+        return
+
+    await status_message.edit_text(
+        f"📢 <b>Рассылка запущена устойчиво</b>\n\n"
+        f"ID кампании: <code>{campaign_id}</code>\n"
+        f"Получателей в очереди: <code>{total}</code>\n\n"
+        "Если бот перезапустится, рассылка продолжится с очереди, а не начнётся заново.",
         parse_mode="HTML",
     )
     await state.clear()
     await callback.answer("Рассылка запущена")
 
-    asyncio.create_task(
-        _run_admin_broadcast(
-            bot=bot,
-            status_message=status_message,
-            broadcast_text=broadcast_text,
-            broadcast_media_type=broadcast_media_type,
-            broadcast_media_file_id=broadcast_media_file_id,
+    asyncio.create_task(_watch_admin_broadcast_campaign(status_message, campaign_id))
+
+
+async def _create_admin_broadcast_campaign(
+    *,
+    bot: Bot,
+    created_by: int,
+    broadcast_text: str | None,
+    broadcast_media_type: str | None,
+    broadcast_media_file_id: str | None,
+) -> tuple[int, int]:
+    from bot.internal_admin_notification_schema import ensure_internal_admin_notification_schema
+    from bot.notification_service import ensure_notification_campaign_worker
+
+    await ensure_internal_admin_notification_schema()
+    ensure_notification_campaign_worker(bot)
+
+    segment = {"type": "all"}
+    message_payload = {
+        "text": broadcast_text or "",
+        "media_type": broadcast_media_type,
+        "media_file_id": broadcast_media_file_id,
+        "parse_mode": "HTML" if broadcast_text else None,
+        "disable_web_page_preview": True,
+    }
+    reason = "Telegram admin broadcast"
+    request_id = f"telegram-admin-{created_by}-{datetime.utcnow().timestamp()}"
+
+    async with db_backend.connect() as connection:
+        connection.row_factory = db_backend.Row
+        count_cursor = await connection.execute(
+            """
+            SELECT COUNT(*) AS audience_count
+            FROM users
+            WHERE COALESCE(is_banned, 0) = 0
+              AND telegram_id IS NOT NULL
+            """
         )
-    )
+        count_row = await count_cursor.fetchone()
+        audience_count = int(count_row["audience_count"] or 0) if count_row else 0
+
+        campaign_cursor = await connection.execute(
+            """
+            INSERT INTO notification_campaigns (
+                name, channel, status, segment, message, audience_count,
+                queued_count, created_by, reason, request_id,
+                idempotency_key, started_at
+            ) VALUES (?, 'telegram', ?, CAST(? AS JSONB), CAST(? AS JSONB), ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (
+                "Telegram admin broadcast",
+                "running" if audience_count else "completed",
+                json.dumps(segment, ensure_ascii=False),
+                json.dumps(message_payload, ensure_ascii=False),
+                audience_count,
+                audience_count,
+                str(created_by),
+                reason,
+                request_id,
+                request_id,
+            ),
+        )
+        campaign = await campaign_cursor.fetchone()
+        campaign_id = int(campaign["id"])
+
+        if audience_count:
+            await connection.execute(
+                """
+                INSERT INTO notification_deliveries (campaign_id, user_id, telegram_id)
+                SELECT ?, u.id, u.telegram_id
+                FROM users u
+                WHERE COALESCE(u.is_banned, 0) = 0
+                  AND u.telegram_id IS NOT NULL
+                ON CONFLICT (campaign_id, telegram_id) DO NOTHING
+                """,
+                (campaign_id,),
+            )
+        await connection.commit()
+
+    return campaign_id, audience_count
+
+
+async def _watch_admin_broadcast_campaign(
+    status_message: types.Message,
+    campaign_id: int,
+) -> None:
+    for _ in range(240):
+        await asyncio.sleep(30)
+        try:
+            async with db_backend.connect() as connection:
+                connection.row_factory = db_backend.Row
+                cursor = await connection.execute(
+                    """
+                    SELECT status, audience_count, queued_count, sent_count,
+                           failed_count, blocked_count, cancelled_count
+                    FROM notification_campaigns
+                    WHERE id = ?
+                    """,
+                    (campaign_id,),
+                )
+                row = await cursor.fetchone()
+            if not row:
+                return
+            await status_message.edit_text(
+                f"📢 <b>Рассылка #{campaign_id}</b>\n\n"
+                f"Статус: <code>{row['status']}</code>\n"
+                f"📬 Всего: <code>{int(row['audience_count'] or 0)}</code>\n"
+                f"⏳ Очередь: <code>{int(row['queued_count'] or 0)}</code>\n"
+                f"✅ Отправлено: <code>{int(row['sent_count'] or 0)}</code>\n"
+                f"⛔ Заблокировали/чат недоступен: <code>{int(row['blocked_count'] or 0)}</code>\n"
+                f"❌ Ошибок: <code>{int(row['failed_count'] or 0)}</code>",
+                parse_mode="HTML",
+            )
+            if str(row["status"]) in {"completed", "cancelled", "failed"}:
+                return
+        except Exception:
+            logger.exception("Failed to update broadcast campaign status")
+            return
 
 
 async def _run_admin_broadcast(
