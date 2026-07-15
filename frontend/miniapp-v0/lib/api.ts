@@ -498,6 +498,7 @@ export async function deactivatePrompt(promptId: number): Promise<PromptItem | n
 export async function fetchFeed(payload: {
   source?: 'recent' | 'top_day' | 'top'
   limit?: number
+  offset?: number
 } = {}): Promise<FeedItem[]> {
   const initData = getInitData()
   if (!initData) {
@@ -506,7 +507,8 @@ export async function fetchFeed(payload: {
   const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed', {
     init_data: initData,
     source: payload.source || 'recent',
-    limit: payload.limit ?? 999999,
+    limit: payload.limit ?? 80,
+    offset: payload.offset ?? 0,
   })
   return response.feed
 }
@@ -523,7 +525,7 @@ export async function fetchFeedItem(genId: number): Promise<FeedItem> {
   return response.feed_item
 }
 
-export async function fetchMyFeed(limit = 999999): Promise<FeedItem[]> {
+export async function fetchMyFeed(limit = 80, offset = 0): Promise<FeedItem[]> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -531,13 +533,15 @@ export async function fetchMyFeed(limit = 999999): Promise<FeedItem[]> {
   const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed/my', {
     init_data: initData,
     limit,
+    offset,
   })
   return response.feed
 }
 
 export async function fetchProfileFeed(
   referralCode: string,
-  limit = 120
+  limit = 80,
+  offset = 0
 ): Promise<{ profile: ProfileSummary; feed: FeedItem[] }> {
   const initData = getInitData()
   if (!initData) {
@@ -547,6 +551,7 @@ export async function fetchProfileFeed(
     init_data: initData,
     referral_code: referralCode,
     limit,
+    offset,
   })
   return { profile: response.profile, feed: response.feed }
 }

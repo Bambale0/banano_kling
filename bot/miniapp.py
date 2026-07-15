@@ -2678,10 +2678,12 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
+            offset=offset,
             source=source,
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
@@ -2720,11 +2722,13 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
             limit=limit,
+            offset=offset,
             include_unavailable=True,
         )
         return web.json_response({"ok": True, "feed": feed})
@@ -2781,7 +2785,8 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
@@ -2790,7 +2795,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
 
-        feed = await get_user_feed_generations(author.id, limit=limit, include_unavailable=True)
+        feed = await get_user_feed_generations(author.id, limit=limit, offset=offset, include_unavailable=True)
         feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
         for item in feed:

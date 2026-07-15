@@ -5743,6 +5743,7 @@ def _generation_row_to_card(
 async def get_feed_generations(
     *,
     limit: int = 0,
+    offset: int = 0,
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
     include_unavailable: bool = False,
@@ -5750,6 +5751,7 @@ async def get_feed_generations(
     """Return public feed items for the requested source."""
     source = source if source in {"recent", "top_day", "top"} else "recent"
     limit = max(0, int(limit or 0))
+    offset = max(0, int(offset or 0))
     where = [
         "gt.type IN ('image', 'video')",
         "gt.status = 'completed'",
@@ -5783,9 +5785,9 @@ async def get_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
             ORDER BY gt.created_at DESC
-            {"LIMIT ?" if limit and source == "recent" else ""}
+            {"LIMIT ? OFFSET ?" if limit and source == "recent" else ""}
         """
-        params: list[Any] = [limit] if limit and source == "recent" else []
+        params: list[Any] = [limit, offset] if limit and source == "recent" else []
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
@@ -5796,18 +5798,22 @@ async def get_feed_generations(
     ]
     if source in {"top", "top_day"}:
         cards.sort(key=lambda item: item["score"], reverse=True)
+    if offset:
+        cards = cards[offset:]
     return cards[:limit] if limit else cards
 
 
 async def get_user_feed_generations(
     user_id: int,
     limit: int = 120,
+    offset: int = 0,
     *,
     include_unpublished_owned: bool = False,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     """Return user feed items."""
     limit = max(0, int(limit or 0))
+    offset = max(0, int(offset or 0))
     where_clause = """
             WHERE gt.user_id = ?
               AND gt.type IN ('image', 'video')
@@ -5847,9 +5853,9 @@ async def get_user_feed_generations(
             LEFT JOIN users u ON u.id = gt.user_id
             {where_clause}
             ORDER BY gt.created_at DESC
-            {"LIMIT ?" if limit else ""}
+            {"LIMIT ? OFFSET ?" if limit else ""}
         """
-        params: tuple[Any, ...] = (user_id, limit) if limit else (user_id,)
+        params: tuple[Any, ...] = (user_id, limit, offset) if limit else (user_id,)
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
     cards = [

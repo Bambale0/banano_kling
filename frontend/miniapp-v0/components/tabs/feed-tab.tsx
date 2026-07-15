@@ -33,6 +33,7 @@ const sources = [
   { id: 'top_day', label: 'Топ дня' },
   { id: 'top', label: 'Лучшие' },
 ] as const
+const FEED_PAGE_SIZE = 80
 
 const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
 
@@ -143,6 +144,8 @@ export function FeedTab() {
   const [comments, setComments] = useState<FeedComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [commentText, setCommentText] = useState('')
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const isLive = state.mode === 'live'
   const visibleItems = useMemo(
@@ -173,9 +176,10 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source })
+        const feed = await fetchFeed({ source, limit: FEED_PAGE_SIZE, offset: 0 })
         if (!ignore) {
           setItems(feed)
+          setHasMore(feed.length === FEED_PAGE_SIZE)
           setBrokenMediaIds(new Set())
         }
       } catch (e) {
@@ -189,6 +193,25 @@ export function FeedTab() {
       ignore = true
     }
   }, [isLive, source])
+
+  const handleLoadMore = async () => {
+    if (!isLive || loadingMore || !hasMore) return
+    setLoadingMore(true)
+    setError(null)
+    try {
+      const feed = await fetchFeed({ source, limit: FEED_PAGE_SIZE, offset: items.length })
+      setItems((prev) => {
+        const seen = new Set(prev.map((item) => item.id))
+        const nextItems = feed.filter((item) => !seen.has(item.id))
+        return [...prev, ...nextItems]
+      })
+      setHasMore(feed.length === FEED_PAGE_SIZE)
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось загрузить ещё работы'))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     if (!isLive || !feedDeepLink) return
@@ -371,13 +394,14 @@ export function FeedTab() {
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : visibleItems.length ? (
-        <div className="grid grid-cols-2 items-start gap-3 pb-28">
-          {feedColumns.map((column, columnIndex) => (
-            <div
-              key={columnIndex}
-              className={cn('flex min-w-0 flex-col gap-3', columnIndex === 1 && 'pt-8')}
-            >
-              {column.map((item) => (
+        <div className="space-y-4 pb-28">
+          <div className="grid grid-cols-2 items-start gap-3">
+            {feedColumns.map((column, columnIndex) => (
+              <div
+                key={columnIndex}
+                className={cn('flex min-w-0 flex-col gap-3', columnIndex === 1 && 'pt-8')}
+              >
+                {column.map((item) => (
                 <article
                   key={item.id}
                   className="min-w-0 overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
@@ -519,9 +543,25 @@ export function FeedTab() {
                     </div>
                   </div>
                 </article>
-              ))}
-            </div>
-          ))}
+                ))}
+              </div>
+            ))}
+          </div>
+          {hasMore ? (
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-11 w-full rounded-full"
+              disabled={loadingMore}
+              onClick={handleLoadMore}
+            >
+              {loadingMore ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                'Загрузить ещё'
+              )}
+            </Button>
+          ) : null}
         </div>
       ) : (
         <div className="glass rounded-2xl border border-border/50 p-6 text-center text-sm text-muted-foreground">
