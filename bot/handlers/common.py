@@ -91,7 +91,8 @@ from bot.states import AdminStates, GenerationStates, PaymentStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-FEED_CACHE_TTL_SECONDS = 600.0
+FEED_CACHE_TTL_SECONDS = 1800.0
+FEED_CACHE_WARMUP_DELAY_SECONDS = 3.0
 _feed_cards_cache: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
 _profile_feed_cards_cache: dict[tuple[str, int | None], tuple[float, object | None, list[dict]]] = {}
 _bot_username_cache: dict[int, str] = {}
@@ -2544,6 +2545,23 @@ async def _fetch_feed_cards(
         _feed_cache_put(_feed_cards_cache, cache_key, cards)
         _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
         return _feed_cards_for_viewer(cards, viewer_user_id)
+
+
+async def _warm_feed_cache() -> None:
+    await asyncio.sleep(FEED_CACHE_WARMUP_DELAY_SECONDS)
+    try:
+        started_at = time.monotonic()
+        cards = await _fetch_feed_cards("r", viewer_user_id=None)
+        _log_feed_timing("warm_feed_cache", started_at, source="r", count=len(cards))
+    except Exception:
+        logger.exception("Failed to warm feed cache")
+
+
+async def _schedule_feed_cache_warmup(*_args, **_kwargs) -> None:
+    asyncio.create_task(_warm_feed_cache())
+
+
+router.startup.register(_schedule_feed_cache_warmup)
 
 
 async def _render_feed_carousel(
