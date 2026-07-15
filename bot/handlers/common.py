@@ -90,7 +90,7 @@ from bot.states import AdminStates, GenerationStates, PaymentStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-FEED_CACHE_TTL_SECONDS = 15.0
+FEED_CACHE_TTL_SECONDS = 120.0
 _feed_cards_cache: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
 _profile_feed_cards_cache: dict[tuple[str, int | None], tuple[float, object | None, list[dict]]] = {}
 _bot_username_cache: dict[int, str] = {}
@@ -201,7 +201,17 @@ def _viewer_cache_key_id(viewer_user_id: int | None) -> int | None:
 
 def _feed_source_cache_key(source_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
     normalized_source = source_code if source_code in FEED_SOURCE_CODES else "r"
-    return normalized_source, _viewer_cache_key_id(viewer_user_id)
+    return normalized_source, None
+
+
+def _feed_cards_for_viewer(cards: list[dict], viewer_user_id: int | None) -> list[dict]:
+    if viewer_user_id is None:
+        return [dict(item, is_mine=False) for item in cards]
+    viewer_id = int(viewer_user_id)
+    return [
+        dict(item, is_mine=(int(item.get("user_id") or 0) == viewer_id))
+        for item in cards
+    ]
 
 
 def _profile_feed_cache_key(referral_code: str, viewer_user_id: int | None) -> tuple[str, int | None]:
@@ -2504,7 +2514,7 @@ async def _fetch_feed_cards(
     cached = _feed_cache_get(_feed_cards_cache, cache_key)
     if cached:
         _feed_cache_log_hit("feed", cache_key)
-        return cached[0]
+        return _feed_cards_for_viewer(cached[0], viewer_user_id)
 
     _feed_cache_log_miss("feed", cache_key)
     started_at = time.monotonic()
@@ -2512,11 +2522,11 @@ async def _fetch_feed_cards(
     cards = await get_feed_generations(
         limit=FEED_PAGE_LIMIT,
         source=source,
-        viewer_user_id=viewer_user_id,
+        viewer_user_id=None,
     )
     _feed_cache_put(_feed_cards_cache, cache_key, cards)
     _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
-    return cards
+    return _feed_cards_for_viewer(cards, viewer_user_id)
 
 
 async def _render_feed_carousel(

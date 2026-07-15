@@ -4858,9 +4858,9 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
     lookup_value = str(task_id or "").strip()
     async with db_backend.connect(DATABASE_PATH) as db:
         final_status = "completed" if result_url else "failed"
-        await db.execute(
+        cursor = await db.execute(
             """UPDATE generation_tasks 
-               SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP 
+               SET status = ?, result_url = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                WHERE task_id = ?
                   OR EXISTS (
                       SELECT 1
@@ -4877,6 +4877,20 @@ async def complete_video_task(task_id: str, result_url: str) -> bool:
             (final_status, result_url, lookup_value, lookup_value),
         )
         await db.commit()
+        updated = int(getattr(cursor, "rowcount", 0) or 0)
+        if updated <= 0:
+            logger.warning(
+                "complete_video_task: no rows updated for task_id=%s final_status=%s",
+                lookup_value,
+                final_status,
+            )
+            return False
+        logger.info(
+            "complete_video_task: updated rows=%s task_id=%s final_status=%s",
+            updated,
+            lookup_value,
+            final_status,
+        )
         return True
 
 
@@ -5685,6 +5699,7 @@ def _generation_row_to_card(
             logger.exception("Failed to resolve feed thumbnail url")
     return {
         "id": row["id"],
+        "user_id": row["user_id"],
         "task_id": row["task_id"],
         "model": row["model"] or row["preset_id"],
         "gen_type": row["type"],
