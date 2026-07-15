@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 FEED_STORAGE_DIR = Path("static/uploads/feed")
 FEED_THUMB_STORAGE_DIR = FEED_STORAGE_DIR / "thumbs"
 FEED_THUMB_MAX_SIDE = 768
-FEED_THUMB_QUALITY = 82
+FEED_THUMB_QUALITY = 84
 
 
 async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) -> str | None:
@@ -116,7 +116,7 @@ def feed_thumbnail_url_for(url: str) -> str | None:
     source = _local_feed_upload_path(url)
     if not source or source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
-    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp"
+    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg"
     if not thumb.exists():
         return None
     return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
@@ -134,16 +134,16 @@ def ensure_feed_thumbnail(url: str) -> str | None:
     if source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
 
-    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp"
-    tmp = thumb.with_suffix(".tmp.webp")
+    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg"
+    tmp = thumb.with_suffix(".tmp.jpg")
     try:
         FEED_THUMB_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         with Image.open(source) as image:
             image = ImageOps.exif_transpose(image)
             image.thumbnail((FEED_THUMB_MAX_SIDE, FEED_THUMB_MAX_SIDE), Image.Resampling.LANCZOS)
-            if image.mode not in {"RGB", "RGBA"}:
+            if image.mode != "RGB":
                 image = image.convert("RGB")
-            image.save(tmp, "WEBP", quality=FEED_THUMB_QUALITY, method=4)
+            image.save(tmp, "JPEG", quality=FEED_THUMB_QUALITY, optimize=True)
         os.replace(tmp, thumb)
         return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
     except Exception:
