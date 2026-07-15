@@ -506,7 +506,7 @@ export async function fetchFeed(payload: {
   const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed', {
     init_data: initData,
     source: payload.source || 'recent',
-    limit: payload.limit ?? 80,
+    limit: payload.limit ?? 999999,
   })
   return response.feed
 }

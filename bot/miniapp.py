@@ -2678,7 +2678,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
@@ -2720,7 +2720,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = _bounded_int(body.get("limit"), default=120, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
@@ -2781,7 +2781,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = _bounded_int(body.get("limit"), default=120, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=999999, maximum=999999)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
