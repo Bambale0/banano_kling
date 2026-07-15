@@ -3571,13 +3571,18 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
 
                     original_sent = await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
 
-                    if preview_sent or original_sent:
+                    if preview_sent:
+                        await complete_video_task(task_id, result_url)
+                        sent_media = True
+                    elif original_sent:
+                        await complete_video_task(task_id, result_url)
                         sent_media = True
                     else:
                         logger.warning(f"No image preview or original sent for {service_name}")
 
                 if sent_media:
-                    await complete_video_task(task_id, result_url)
+                    if is_video:
+                        await complete_video_task(task_id, result_url)
                 else:
                     await _send_plain_result_link(
                         bot_instance,
@@ -3678,6 +3683,8 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if task and task.cost and task.cost > 0:
                 await add_credits(telegram_id, task.cost)
 
+            await complete_video_task(task_id, None)
+
             if telegram_id:
                 bot_instance = request.app["bot"]
                 try:
@@ -3717,8 +3724,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 logger.warning(
                     f"No telegram_id for failed task {task_id} (user_id: {task.user_id if task else 'unknown'})"
                 )
-
-            await complete_video_task(task_id, None)
 
         return web.Response(status=200)
 
