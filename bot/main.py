@@ -57,6 +57,7 @@ from bot.handlers import (
     image_analyzer_router,
     payments_router,
 )
+from bot.handlers.common import ensure_feed_cache_warmup
 from bot.handlers.payments import (
     cleanup_stale_cryptobot_pending,
     handle_cryptobot_webhook,
@@ -1682,6 +1683,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_db_backup_loop())
         ensure_notification_campaign_worker(bot)
         ensure_support_outbox_worker(bot)
+        ensure_feed_cache_warmup()
         logger.info(
             "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, DB backups, support outbox, and notification campaigns"
         )

@@ -2567,8 +2567,12 @@ async def _warm_feed_cache() -> None:
         logger.exception("Failed to warm feed cache")
 
 
-async def _schedule_feed_cache_warmup(*_args, **_kwargs) -> None:
+def ensure_feed_cache_warmup() -> None:
     asyncio.create_task(_warm_feed_cache())
+
+
+async def _schedule_feed_cache_warmup(*_args, **_kwargs) -> None:
+    ensure_feed_cache_warmup()
 
 
 router.startup.register(_schedule_feed_cache_warmup)
