@@ -3968,7 +3968,7 @@ async def admin_process_broadcast_text(message: types.Message, state: FSMContext
 async def admin_execute_broadcast(
     callback: types.CallbackQuery, state: FSMContext, bot: Bot
 ):
-    """Выполняет рассылку с throttling и корректной обработкой ошибок"""
+    """Запускает рассылку в фоне, чтобы не блокировать обработку апдейтов."""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа")
         return
@@ -3986,9 +3986,39 @@ async def admin_execute_broadcast(
         await state.clear()
         return
 
-    await callback.message.edit_text(
-        "📢 <b>Рассылка запущена...</b>", parse_mode="HTML"
+    status_message = callback.message
+    if status_message is None:
+        await callback.answer("❌ Не найдено сообщение для статуса рассылки")
+        return
+
+    await status_message.edit_text(
+        "📢 <b>Рассылка запущена в фоне...</b>\n\n"
+        "Бот продолжит отвечать на остальные команды. Статус буду обновлять здесь.",
+        parse_mode="HTML",
     )
+    await state.clear()
+    await callback.answer("Рассылка запущена")
+
+    asyncio.create_task(
+        _run_admin_broadcast(
+            bot=bot,
+            status_message=status_message,
+            broadcast_text=broadcast_text,
+            broadcast_media_type=broadcast_media_type,
+            broadcast_media_file_id=broadcast_media_file_id,
+        )
+    )
+
+
+async def _run_admin_broadcast(
+    *,
+    bot: Bot,
+    status_message: types.Message,
+    broadcast_text: str | None,
+    broadcast_media_type: str | None,
+    broadcast_media_file_id: str | None,
+) -> None:
+    """Выполняет рассылку с throttling и корректной обработкой ошибок."""
 
     from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 
@@ -3997,15 +4027,16 @@ async def admin_execute_broadcast(
         cursor = await db.execute("SELECT telegram_id FROM users WHERE telegram_id IS NOT NULL")
         users = await cursor.fetchall()
 
-    BATCH_SIZE = 20
-    BATCH_SLEEP = 1.0
-    MESSAGE_SLEEP = 0.05
-    PROGRESS_INTERVAL = 100
+    BATCH_SIZE = 25
+    BATCH_SLEEP = 0.75
+    MESSAGE_SLEEP = 0.02
+    PROGRESS_INTERVAL = 250
 
     success_count = 0
     error_count = 0
     blocked_count = 0
     total = len(users)
+    logger.info("Broadcast background started: total=%s media_type=%s", total, broadcast_media_type)
 
     for idx, user in enumerate(users):
         tid = user["telegram_id"]
@@ -4074,7 +4105,7 @@ async def admin_execute_broadcast(
 
         if (idx + 1) % PROGRESS_INTERVAL == 0 or idx == total - 1:
             try:
-                await callback.message.edit_text(
+                await status_message.edit_text(
                     f"📢 <b>Рассылка...</b>\n"
                     f"📨 Обработано: <code>{idx + 1}/{total}</code>\n"
                     f"✅ Успешно: <code>{success_count}</code>\n"
@@ -4085,17 +4116,25 @@ async def admin_execute_broadcast(
             except Exception:
                 pass
 
-    await callback.message.edit_text(
-        f"📢 <b>Рассылка завершена!</b>\n\n"
-        f"✅ Успешно: <code>{success_count}</code>\n"
-        f"⛔ Заблокировали бота: <code>{blocked_count}</code>\n"
-        f"❌ Ошибок: <code>{error_count}</code>\n"
-        f"📬 Всего: <code>{total}</code>",
-        reply_markup=get_admin_keyboard(),
-        parse_mode="HTML",
+    try:
+        await status_message.edit_text(
+            f"📢 <b>Рассылка завершена!</b>\n\n"
+            f"✅ Успешно: <code>{success_count}</code>\n"
+            f"⛔ Заблокировали бота: <code>{blocked_count}</code>\n"
+            f"❌ Ошибок: <code>{error_count}</code>\n"
+            f"📬 Всего: <code>{total}</code>",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("Broadcast final status update failed")
+    logger.info(
+        "Broadcast background finished: total=%s success=%s blocked=%s errors=%s",
+        total,
+        success_count,
+        blocked_count,
+        error_count,
     )
-
-    await state.clear()
 
 
 @router.callback_query(F.data == "admin_back")
