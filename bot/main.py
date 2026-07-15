@@ -1561,6 +1561,7 @@ async def _remove_old_files(
 
 async def _cleanup_loop():
     """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
+    await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
     while True:
         try:
             await _remove_old_files(
