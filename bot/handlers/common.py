@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import html
 import time
 import mimetypes
@@ -90,10 +91,11 @@ from bot.states import AdminStates, GenerationStates, PaymentStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-FEED_CACHE_TTL_SECONDS = 120.0
+FEED_CACHE_TTL_SECONDS = 600.0
 _feed_cards_cache: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
 _profile_feed_cards_cache: dict[tuple[str, int | None], tuple[float, object | None, list[dict]]] = {}
 _bot_username_cache: dict[int, str] = {}
+_feed_cards_cache_locks: dict[tuple[str, int | None], asyncio.Lock] = {}
 
 
 def _feed_cache_get(cache: dict, key):
@@ -109,6 +111,14 @@ def _feed_cache_get(cache: dict, key):
 
 def _feed_cache_put(cache: dict, key, *payload):
     cache[key] = (time.monotonic() + FEED_CACHE_TTL_SECONDS, *payload)
+
+
+def _feed_cache_lock(key) -> asyncio.Lock:
+    lock = _feed_cards_cache_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _feed_cards_cache_locks[key] = lock
+    return lock
 
 
 def _feed_cache_patch_card(cache: dict, key, updated_card: dict) -> None:
@@ -127,6 +137,7 @@ def _feed_cache_patch_card(cache: dict, key, updated_card: dict) -> None:
 def _clear_feed_caches() -> None:
     _feed_cards_cache.clear()
     _profile_feed_cards_cache.clear()
+    _feed_cards_cache_locks.clear()
 
 
 def _profile_cache_patch_card(referral_code: str, viewer_user_id: int | None, updated_card: dict) -> None:
@@ -2516,17 +2527,23 @@ async def _fetch_feed_cards(
         _feed_cache_log_hit("feed", cache_key)
         return _feed_cards_for_viewer(cached[0], viewer_user_id)
 
-    _feed_cache_log_miss("feed", cache_key)
-    started_at = time.monotonic()
-    source = FEED_SOURCE_CODES.get(source_code, "recent")
-    cards = await get_feed_generations(
-        limit=FEED_PAGE_LIMIT,
-        source=source,
-        viewer_user_id=None,
-    )
-    _feed_cache_put(_feed_cards_cache, cache_key, cards)
-    _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
-    return _feed_cards_for_viewer(cards, viewer_user_id)
+    async with _feed_cache_lock(cache_key):
+        cached = _feed_cache_get(_feed_cards_cache, cache_key)
+        if cached:
+            _feed_cache_log_hit("feed", cache_key)
+            return _feed_cards_for_viewer(cached[0], viewer_user_id)
+
+        _feed_cache_log_miss("feed", cache_key)
+        started_at = time.monotonic()
+        source = FEED_SOURCE_CODES.get(source_code, "recent")
+        cards = await get_feed_generations(
+            limit=FEED_PAGE_LIMIT,
+            source=source,
+            viewer_user_id=None,
+        )
+        _feed_cache_put(_feed_cards_cache, cache_key, cards)
+        _log_feed_timing("fetch_feed_cards", started_at, source=source_code, viewer_user_id=viewer_user_id, count=len(cards))
+        return _feed_cards_for_viewer(cards, viewer_user_id)
 
 
 async def _render_feed_carousel(
