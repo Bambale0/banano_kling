@@ -33,6 +33,7 @@ from bot.database import (
     credit_feed_prompt_repeat,
     deduct_credits,
     delete_saved_reference,
+    get_feed_generation_card,
     get_or_create_user,
     get_task_by_id,
     get_user_credits,
@@ -2005,11 +2006,11 @@ async def _ensure_repeat_image_state(
     state: FSMContext,
     task_id: str,
 ) -> tuple[bool, str | None]:
+    task_id, task = await _resolve_repeat_image_task(task_id)
     data = await state.get_data()
     if data.get("repeat_source_task_id") == task_id:
         return True, None
 
-    task = await get_task_by_id(task_id)
     user = await get_or_create_user(callback.from_user.id)
     return await _restore_image_task_to_state(
         task,
@@ -2020,11 +2021,24 @@ async def _ensure_repeat_image_state(
     )
 
 
+async def _resolve_repeat_image_task(raw_task_id: str):
+    task_id = str(raw_task_id or "").strip()
+    task = await get_task_by_id(task_id)
+    if task or not task_id.isdigit():
+        return task_id, task
+
+    card = await get_feed_generation_card(task_id)
+    resolved_task_id = str((card or {}).get("task_id") or "").strip()
+    if not resolved_task_id or resolved_task_id == task_id:
+        return task_id, None
+    return resolved_task_id, await get_task_by_id(resolved_task_id)
+
+
 @router.callback_query(F.data.startswith("repeat_image_"))
 async def repeat_image_generation(callback: types.CallbackQuery, state: FSMContext):
     """Opens a safe repeat flow instead of launching generation immediately."""
     task_id = callback.data.replace("repeat_image_", "", 1)
-    task = await get_task_by_id(task_id)
+    task_id, task = await _resolve_repeat_image_task(task_id)
     user = await get_or_create_user(callback.from_user.id)
 
     hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
