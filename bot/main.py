@@ -126,6 +126,7 @@ async def _complete_reconciled_order(order_id: str, bot: Bot) -> dict:
     return await _complete_transaction(order_id, bot=bot)
 
 async def _yookassa_reconcile_loop(bot: Bot) -> None:
+    await asyncio.sleep(YOOKASSA_RECONCILE_INTERVAL_SECONDS)
     while True:
         try:
             results = await yookassa_service.poll_pending_transactions(
@@ -152,6 +153,7 @@ async def _yookassa_reconcile_loop(bot: Bot) -> None:
         await asyncio.sleep(YOOKASSA_RECONCILE_INTERVAL_SECONDS)
 
 async def _lava_reconcile_loop(bot: Bot) -> None:
+    await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
     while True:
         try:
             results = await reconcile_lava_pending_transactions(
@@ -1662,24 +1664,6 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         logger.info("Startup payment cleanup stats: %s", cleanup_stats)
     except Exception:
         logger.exception("Failed startup cleanup for stale CryptoBot pending transactions")
-
-    try:
-        reconcile_stats = await yookassa_service.poll_pending_transactions(
-            limit=YOOKASSA_RECONCILE_BATCH_SIZE,
-            complete_order=lambda order_id: _complete_reconciled_order(order_id, bot),
-        )
-        logger.info("Startup YooKassa reconcile stats: %s", reconcile_stats[:10])
-    except Exception:
-        logger.exception("Failed startup YooKassa reconciliation")
-
-    try:
-        lava_reconcile_stats = await reconcile_lava_pending_transactions(
-            limit=LAVA_RECONCILE_BATCH_SIZE,
-            bot=bot,
-        )
-        logger.info("Startup Lava reconcile stats: %s", lava_reconcile_stats[:10])
-    except Exception:
-        logger.exception("Failed startup Lava reconciliation")
 
     try:
         stale_task_stats = await cleanup_stale_local_generation_tasks()
