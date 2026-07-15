@@ -138,6 +138,7 @@ from bot.video_reference_policy import (
 )
 
 logger = logging.getLogger(__name__)
+mimetypes.add_type("image/webp", ".webp")
 
 _MINIAPP_INIT_DATA_ERRORS = {
     "Missing init_data": "Откройте Mini App из Telegram и попробуйте снова.",

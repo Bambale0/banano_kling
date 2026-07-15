@@ -5675,12 +5675,21 @@ def _generation_row_to_card(
     public_reference_images = all_reference_images if references_visible else []
     public_reference_videos = all_reference_videos if references_visible else []
     references_count = len(all_reference_images) + len(all_reference_videos)
+    preview_url = feed_urls[0] if feed_urls else ""
+    if preview_url and str(row["type"]) == "image":
+        try:
+            from bot.services.feed_persist import feed_thumbnail_url_for
+
+            preview_url = feed_thumbnail_url_for(preview_url) or preview_url
+        except Exception:
+            logger.exception("Failed to resolve feed thumbnail url")
     return {
         "id": row["id"],
         "task_id": row["task_id"],
         "model": row["model"] or row["preset_id"],
         "gen_type": row["type"],
         "result_url": feed_urls[0] if feed_urls else "",
+        "preview_url": preview_url,
         "result_urls": feed_urls,
         "media_unavailable": media_unavailable,
         "prompt": "" if prompt_hidden else str(row["prompt"] or ""),

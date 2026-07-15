@@ -410,7 +410,7 @@ export function FeedTab() {
                           />
                         ) : (
                           <FeedImage
-                            src={item.result_url}
+                            src={item.preview_url || item.result_url}
                             alt=""
                             priority={column.indexOf(item) < 6}
                             onError={() => handleMediaError(item)}

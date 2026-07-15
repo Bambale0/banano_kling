@@ -13,12 +13,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
+from PIL import Image, ImageOps
 
 from bot.config import config
 
 logger = logging.getLogger(__name__)
 
 FEED_STORAGE_DIR = Path("static/uploads/feed")
+FEED_THUMB_STORAGE_DIR = FEED_STORAGE_DIR / "thumbs"
+FEED_THUMB_MAX_SIDE = 768
+FEED_THUMB_QUALITY = 82
 
 
 async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) -> str | None:
@@ -92,6 +96,65 @@ def _content_type_to_ext(content_type: str, fallback_url: str) -> str:
     return ".jpg"  # fallback
 
 
+def _local_feed_upload_path(url: str) -> Path | None:
+    parsed = urlparse(str(url or ""))
+    path = parsed.path if parsed.scheme else str(url or "")
+    prefix = "/uploads/feed/"
+    if not path.startswith(prefix) or "/thumbs/" in path:
+        return None
+    rel = path[len("/uploads/") :].lstrip("/")
+    candidate = Path("static/uploads") / rel
+    try:
+        candidate.resolve().relative_to(Path("static/uploads").resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def feed_thumbnail_url_for(url: str) -> str | None:
+    """Return an existing lightweight thumbnail URL for a local feed image."""
+    source = _local_feed_upload_path(url)
+    if not source or source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+        return None
+    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp"
+    if not thumb.exists():
+        return None
+    return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+
+
+def ensure_feed_thumbnail(url: str) -> str | None:
+    """Create a WebP thumbnail for a local feed image and return its public URL."""
+    existing = feed_thumbnail_url_for(url)
+    if existing:
+        return existing
+
+    source = _local_feed_upload_path(url)
+    if not source or not source.exists() or not source.is_file():
+        return None
+    if source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+        return None
+
+    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp"
+    tmp = thumb.with_suffix(".tmp.webp")
+    try:
+        FEED_THUMB_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        with Image.open(source) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((FEED_THUMB_MAX_SIDE, FEED_THUMB_MAX_SIDE), Image.Resampling.LANCZOS)
+            if image.mode not in {"RGB", "RGBA"}:
+                image = image.convert("RGB")
+            image.save(tmp, "WEBP", quality=FEED_THUMB_QUALITY, method=4)
+        os.replace(tmp, thumb)
+        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        logger.exception("Feed thumbnail: failed for %s", url)
+        return None
+
+
 async def persist_feed_result_urls(result_urls: list[str]) -> list[str]:
     """
     Принимает список URL результатов генерации.
@@ -113,6 +176,7 @@ async def persist_feed_result_urls(result_urls: list[str]) -> list[str]:
         if is_ephemeral:
             local = await download_to_local(url)
             if local:
+                ensure_feed_thumbnail(local)
                 persisted.append(local)
             else:
                 # Если скачать не удалось — оставляем оригинал

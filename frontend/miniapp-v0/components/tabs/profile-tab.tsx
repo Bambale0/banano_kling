@@ -585,7 +585,7 @@ export function ProfileTab() {
                     />
                   ) : (
                     <img
-                      src={item.result_url}
+                      src={item.preview_url || item.result_url}
                       alt=""
                       loading="lazy"
                       onError={() => handleMediaError(item)}

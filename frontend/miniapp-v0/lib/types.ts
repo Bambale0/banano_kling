@@ -184,6 +184,7 @@ export interface FeedItem {
   model: string
   gen_type: 'image' | 'video'
   result_url: string
+  preview_url?: string | null
   result_urls: string[]
   media_unavailable?: boolean
   prompt?: string | null
