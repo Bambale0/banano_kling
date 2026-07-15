@@ -1267,7 +1267,7 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
     )
 
 
-FEED_PAGE_LIMIT = 999999
+FEED_PAGE_LIMIT = 200
 PROMPT_PAGE_LIMIT = 24
 FEED_PREVIEW_MAX_BYTES = 9 * 1024 * 1024
 FEED_PREVIEW_MAX_SIDE = 1800
