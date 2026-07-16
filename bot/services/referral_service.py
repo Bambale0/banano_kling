@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bot import db as db_backend
+from bot.config import config
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ VALID_REASONS = frozenset(
         "already_has_referrer_other",
         "already_paid",
         "completed_payment_exists",
+        "admin_user",
         "blocked_code",
         "blocked_referrer",
         "hourly_limit",
@@ -460,6 +462,18 @@ async def process_referral_click(
         existing_referrer_id = (
             int(visitor_row["referred_by"]) if visitor_row["referred_by"] else None
         )
+
+        if config.is_admin(int(visitor_row["telegram_id"])):
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                reason="admin_user",
+                source=source,
+                start_param=start_param,
+            )
+            return await _record_and_commit(result, visitor_user_id)
 
         # 3. Self-ref
         if visitor_row["telegram_id"] == referrer_telegram_id:

@@ -1592,6 +1592,18 @@ async def _referral_chain_contains(
 
 async def set_user_referrer(telegram_id: int, referrer_telegram_id: int) -> bool:
     """Привязывает пользователя к рефереру один раз."""
+    try:
+        from bot.config import config
+
+        if config.is_admin(int(telegram_id)):
+            logger.info(
+                "Referral skipped: admin user cannot be manually referred telegram_id=%s referrer_telegram_id=%s",
+                telegram_id,
+                referrer_telegram_id,
+            )
+            return False
+    except Exception:
+        logger.exception("Failed to check admin manual referral guard telegram_id=%s", telegram_id)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         user_cursor = await db.execute(
@@ -1654,6 +1666,21 @@ async def process_referral(
             referred_telegram_id,
         )
         return False
+    try:
+        from bot.config import config
+
+        if config.is_admin(int(referred_telegram_id)):
+            logger.info(
+                "Referral skipped: admin user cannot be referred referred_telegram_id=%s code=%s",
+                referred_telegram_id,
+                referral_code,
+            )
+            return False
+    except Exception:
+        logger.exception(
+            "Failed to check admin referral guard referred_telegram_id=%s",
+            referred_telegram_id,
+        )
 
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
@@ -1990,7 +2017,18 @@ async def complete_payment_atomic(
                 ref2_bonus = 0.0
                 ref2_row = None
                 ref2_telegram_id = None
-                if ref1_row and ref1_row["referred_by"]:
+                ref1_is_admin = False
+                if ref1_row and ref1_row["telegram_id"]:
+                    try:
+                        from bot.config import config
+
+                        ref1_is_admin = config.is_admin(int(ref1_row["telegram_id"]))
+                    except Exception:
+                        logger.exception(
+                            "Failed to check admin L2 guard for ref1_id=%s",
+                            ref1_id,
+                        )
+                if ref1_row and ref1_row["referred_by"] and not ref1_is_admin:
                     ref2_id = int(ref1_row["referred_by"])
                     level2_bonus = round(base_value * PARTNER_LEVEL2_PERCENT / 100.0, 2)
                     ref2_cursor = await db.execute(
@@ -2145,7 +2183,18 @@ async def credit_referral_commission(
 
         level2_bonus = 0.0
         ref2_row = None
-        if ref1_row and ref1_row["referred_by"]:
+        ref1_is_admin = False
+        if ref1_row and ref1_row["telegram_id"]:
+            try:
+                from bot.config import config
+
+                ref1_is_admin = config.is_admin(int(ref1_row["telegram_id"]))
+            except Exception:
+                logger.exception(
+                    "Failed to check admin L2 guard for ref1_id=%s",
+                    ref1_id,
+                )
+        if ref1_row and ref1_row["referred_by"] and not ref1_is_admin:
             ref2_id = ref1_row["referred_by"]
             ref2_cursor = await db.execute(
                 "SELECT telegram_id, partner_total_revenue_rub, partner_tier FROM users WHERE id = ?",
