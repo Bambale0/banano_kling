@@ -583,6 +583,60 @@ def test_commission_awarded_to_level1_and_level2(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_level2_commission_skipped_when_level1_is_admin(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "referrals.db")
+
+        await db.init_db()
+
+        level2_partner = await db.get_or_create_user(3511)
+        admin_partner = await db.get_or_create_user(3512)
+        buyer = await db.get_or_create_user(3513)
+
+        # Simulate a legacy tree where an admin already sits under another partner.
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            await conn.execute(
+                "UPDATE users SET referred_by = ? WHERE id = ?",
+                (level2_partner.id, admin_partner.id),
+            )
+            await conn.execute(
+                "INSERT INTO referrals (referrer_id, referred_id, bonus_credits) VALUES (?, ?, 0)",
+                (level2_partner.id, admin_partner.id),
+            )
+            await conn.commit()
+
+        from bot.config import config
+
+        monkeypatch.setattr(
+            config,
+            "is_admin",
+            lambda user_id: int(user_id) == admin_partner.telegram_id,
+        )
+
+        assert await db.process_referral(
+            buyer.telegram_id,
+            admin_partner.referral_code,
+        )
+
+        result = await db.credit_referral_commission(
+            buyer.telegram_id,
+            100,
+            transaction_amount_rub=1000,
+        )
+
+        updated_admin = await db.get_or_create_user(admin_partner.telegram_id)
+        updated_level2 = await db.get_or_create_user(level2_partner.telegram_id)
+
+        assert result["mode"] == "partner"
+        assert result["value"] == 300
+        assert result["level2_value"] == 0.0
+        assert result["level2_referrer_user_id"] is None
+        assert updated_admin.partner_balance_rub == 300
+        assert updated_level2.partner_balance_rub == 0
+
+    asyncio.run(run())
+
+
 def test_partner_commission_does_not_increase_for_legacy_gold_or_silver(tmp_path, monkeypatch):
     async def run():
         db = _reload_database(monkeypatch, tmp_path / "referrals.db")
