@@ -2099,14 +2099,14 @@ async def miniapp_index(request: web.Request) -> web.Response:
             attr = match.group(1)
             url = match.group(2)
             separator = "&" if "?" in url else "?"
-            return f'{attr}"{url}{separator}v={asset_version}"'
+            return f'{attr}{url}{separator}v={asset_version}"'
 
         html_text = re.sub(
             r'((?:src|href)=")(/mini-app/(?:_next/static/[^"]+|telegram-web-app\.js))"',
             version_miniapp_asset,
             html_text,
         )
-        all_scripts = f"{snapshot_script}{debug_script}{watchdog_script}{script}"
+        all_scripts = f"{snapshot_script}{watchdog_script}{script}"
         if "</head>" in html_text:
             html_text = html_text.replace("</head>", f"{all_scripts}</head>", 1)
         else:
