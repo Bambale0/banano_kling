@@ -43,6 +43,11 @@ export function TaskDetailPanel() {
     )
   }
 
+  const notifyFeedChanged = () => {
+    if (typeof window === 'undefined') return
+    window.dispatchEvent(new CustomEvent('banano:feed-changed'))
+  }
+
   const handleCopyTaskId = async () => {
     if (!taskDetail || typeof navigator === 'undefined') return
     try {
@@ -69,6 +74,7 @@ export function TaskDetailPanel() {
       if (taskDetail.is_public_feed) {
         await unpublishGeneration(taskDetail.task_id)
         updateTask(taskDetail.task_id, { is_public_feed: false })
+        notifyFeedChanged()
         toast.success('Убрано из ленты')
       } else {
         await publishGeneration(taskDetail.task_id, {
@@ -80,6 +86,7 @@ export function TaskDetailPanel() {
           feed_prompt_visible: feedPromptVisible,
           feed_references_visible: feedReferencesVisible,
         })
+        notifyFeedChanged()
         toast.success('Опубликовано в ленте')
       }
     } catch (e) {
@@ -102,6 +109,7 @@ export function TaskDetailPanel() {
         feed_prompt_visible: feedPromptVisible,
         feed_references_visible: feedReferencesVisible,
       })
+      notifyFeedChanged()
       toast.success('Настройки ленты обновлены')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось обновить ленту')

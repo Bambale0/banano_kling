@@ -90,6 +90,7 @@ export function ProfileTab() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [copied, setCopied] = useState<'profile' | number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [feedRefreshToken, setFeedRefreshToken] = useState(0)
 
   const isLive = state.mode === 'live'
   const ownReferralCode = String(user.referralCode || '').trim().toUpperCase()
@@ -191,6 +192,12 @@ export function ProfileTab() {
   }, [isLive, profile, profileItems])
 
   useEffect(() => {
+    const refreshProfileFeed = () => setFeedRefreshToken((value) => value + 1)
+    window.addEventListener('banano:feed-changed', refreshProfileFeed)
+    return () => window.removeEventListener('banano:feed-changed', refreshProfileFeed)
+  }, [])
+
+  useEffect(() => {
     let ignore = false
 
     async function loadProfileFeed() {
@@ -205,6 +212,15 @@ export function ProfileTab() {
       setError(null)
       try {
         if (isOwnProfile) {
+          if (ownReferralCode) {
+            const result = await fetchProfileFeed(ownReferralCode, 120)
+            if (!ignore) {
+              setItems(result.feed)
+              setBrokenMediaIds(new Set())
+              setProfile(result.profile)
+            }
+            return
+          }
           const feed = await fetchMyFeed(120)
           if (!ignore) {
             setItems(feed)
@@ -231,7 +247,7 @@ export function ProfileTab() {
     return () => {
       ignore = true
     }
-  }, [isLive, isOwnProfile, targetReferralCode])
+  }, [feedRefreshToken, isLive, isOwnProfile, ownReferralCode, targetReferralCode])
 
   useEffect(() => {
     if (!isOwnProfile) return
