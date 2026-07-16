@@ -2859,6 +2859,12 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
                 status=403,
             )
+        try:
+            from bot.handlers.common import _invalidate_feed_and_profile_caches
+
+            _invalidate_feed_and_profile_caches()
+        except Exception:
+            logger.exception("Failed to invalidate feed caches after Mini App publish")
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App share generation failed")
@@ -2871,6 +2877,13 @@ async def miniapp_feed_remove(request: web.Request) -> web.Response:
         gen_id = body.get("gen_id") or body.get("task_id")
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         removed = await remove_from_feed(gen_id, ctx["user"].id)
+        if removed:
+            try:
+                from bot.handlers.common import _invalidate_feed_and_profile_caches
+
+                _invalidate_feed_and_profile_caches()
+            except Exception:
+                logger.exception("Failed to invalidate feed caches after Mini App remove")
         return web.json_response({"ok": True, "removed": removed})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App remove feed failed")

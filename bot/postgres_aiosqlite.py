@@ -489,6 +489,9 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_references_visible" BOOLEAN DEFAULT FALSE'
             )
+            await cur.execute(
+                'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_published_at" TIMESTAMP'
+            )
             # Новые таблицы: referral_events, partner_commissions
             await cur.execute("""
                 CREATE TABLE IF NOT EXISTS referral_events (

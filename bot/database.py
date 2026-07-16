@@ -533,6 +533,7 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         ("shares_count", "ALTER TABLE generation_tasks ADD COLUMN shares_count INTEGER DEFAULT 0"),
         ("feed_prompt_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_prompt_visible BOOLEAN DEFAULT 0"),
         ("feed_references_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_references_visible BOOLEAN DEFAULT 0"),
+        ("feed_published_at", "ALTER TABLE generation_tasks ADD COLUMN feed_published_at TIMESTAMP"),
     ]:
         try:
             await db.execute(statement)
@@ -544,6 +545,9 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed_published ON generation_tasks(is_public_feed, status, feed_published_at DESC, created_at DESC)"
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_source_feed ON generation_tasks(source_feed_gen_id)"
@@ -5784,7 +5788,7 @@ async def get_feed_generations(
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
-            ORDER BY gt.created_at DESC
+            ORDER BY COALESCE(gt.feed_published_at, gt.created_at) DESC, gt.created_at DESC
             {"LIMIT ? OFFSET ?" if limit and source == "recent" else ""}
         """
         params: list[Any] = [limit, offset] if limit and source == "recent" else []
@@ -5852,7 +5856,7 @@ async def get_user_feed_generations(
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             {where_clause}
-            ORDER BY gt.created_at DESC
+            ORDER BY COALESCE(gt.feed_published_at, gt.created_at) DESC, gt.created_at DESC
             {"LIMIT ? OFFSET ?" if limit else ""}
         """
         params: tuple[Any, ...] = (user_id, limit, offset) if limit else (user_id,)
@@ -6095,12 +6099,14 @@ async def share_to_feed(
             result_url = row["result_url"]
             result_urls_json = None
 
+        published_at = datetime.utcnow().isoformat(sep=" ", timespec="microseconds")
         await db.execute(
             """
             UPDATE generation_tasks
             SET is_public_feed = 1,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
+                feed_published_at = ?,
                 result_url = ?,
                 result_urls = ?,
                 updated_at = CURRENT_TIMESTAMP
@@ -6109,6 +6115,7 @@ async def share_to_feed(
             (
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
+                published_at,
                 result_url,
                 result_urls_json,
                 row["id"],
@@ -6126,7 +6133,7 @@ async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
         if not row:
             return False
         await db.execute(
-            "UPDATE generation_tasks SET is_public_feed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE generation_tasks SET is_public_feed = 0, feed_published_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (row["id"],),
         )
         await db.commit()

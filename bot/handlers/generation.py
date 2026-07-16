@@ -1785,6 +1785,13 @@ async def confirm_publish_image_result_to_feed(
         await callback.answer("Эту генерацию нельзя опубликовать в ленту.", show_alert=True)
         return
 
+    try:
+        from bot.handlers.common import _invalidate_feed_and_profile_caches
+
+        _invalidate_feed_and_profile_caches()
+    except Exception:
+        logger.exception("Failed to invalidate feed caches after publish")
+
     await _refresh_feed_result_reply_markup(callback, task.task_id)
     await callback.answer("Готово — появится в Mini App > Лента.")
 
@@ -1804,6 +1811,13 @@ async def remove_image_result_from_feed(
     if not removed:
         await callback.answer("Не удалось убрать из ленты.", show_alert=True)
         return
+
+    try:
+        from bot.handlers.common import _invalidate_feed_and_profile_caches
+
+        _invalidate_feed_and_profile_caches()
+    except Exception:
+        logger.exception("Failed to invalidate feed caches after remove")
 
     await _refresh_feed_result_reply_markup(callback, task.task_id)
     await callback.answer("Убрано из ленты.")
