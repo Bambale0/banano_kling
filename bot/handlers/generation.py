@@ -838,10 +838,12 @@ def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -
     """Banana-specific reference guidance: preserve only identity from the first reference."""
     prompt = (prompt or "").strip()
     guidance_lines = [
+        "Same-person preservation is the highest priority: the output must depict the same person from the first uploaded image, not a lookalike and not a newly invented face.",
         "Use the first uploaded image only as the primary person identity reference.",
-        "Preserve only the person's identity: face shape, eyes, nose, lips, hairline, hair color, hair length, hairstyle, age impression, skin tone, and distinctive facial features unless the user explicitly asks to change them.",
+        "Preserve only the person's identity, but preserve facial identity exactly: face shape, facial geometry, eyes, eyebrows, nose, lips, cheekbones, jawline, hairline, age impression, skin tone, asymmetry, and distinctive facial features.",
+        "Preserve hair color, hair length, and hairstyle from the first reference unless the user explicitly asks to change them.",
+        "Follow the user's prompt for clothing, outfit, body styling, scene, pose, lighting, framing, and style, and apply those edits to that same person.",
         "Do not preserve or copy clothing, outfit, accessories, pose, body shape, background, lighting, camera angle, or visual coverage from the reference unless the user explicitly asks for those details.",
-        "Follow the user's prompt for clothing, outfit, body styling, scene, pose, lighting, framing, and style.",
     ]
     if len(reference_images) > 1:
         guidance_lines.insert(
