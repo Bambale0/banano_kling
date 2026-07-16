@@ -2027,6 +2027,40 @@ async def miniapp_index(request: web.Request) -> web.Response:
             'try{sessionStorage.setItem("miniapp_debug_url",window.location.href)}catch(e){}'
             '</script>'
         )
+        watchdog_script = (
+            '<script id="miniapp-bootstrap-watchdog">'
+            '(function(){'
+            '  var started=false;'
+            '  var rawFetch=window.fetch;'
+            '  if(typeof rawFetch==="function"){'
+            '    window.fetch=function(input,init){'
+            '      try{'
+            '        var url=typeof input==="string"?input:(input&&input.url)||"";'
+            '        if(String(url).indexOf("/mini-app/api/bootstrap")!==-1){started=true;}'
+            '      }catch(e){}'
+            '      return rawFetch.apply(this,arguments);'
+            '    };'
+            '  }'
+            '  window.__BANANO_MARK_BOOTSTRAP_STARTED__=function(){started=true;};'
+            '  window.setTimeout(function(){'
+            '    if(started){return;}'
+            '    try{'
+            '      if(window.performance&&performance.getEntriesByType){'
+            '        var entries=performance.getEntriesByType("resource")||[];'
+            '        for(var i=0;i<entries.length;i++){'
+            '          if(String(entries[i].name||"").indexOf("/mini-app/api/bootstrap")!==-1){return;}'
+            '        }'
+            '      }'
+            '      if(sessionStorage.getItem("__banano_bootstrap_reload_once")==="1"){return;}'
+            '      sessionStorage.setItem("__banano_bootstrap_reload_once","1");'
+            '      var url=new URL(window.location.href);'
+            '      url.searchParams.set("_miniapp_reload",String(Date.now()));'
+            '      window.location.replace(url.toString());'
+            '    }catch(e){}'
+            '  },9000);'
+            '})();'
+            '</script>'
+        )
         script = (
             '<script id="miniapp-runtime-config">'
             "window.__BANANO_MINIAPP_CONFIG__="
@@ -2046,7 +2080,7 @@ async def miniapp_index(request: web.Request) -> web.Response:
             version_miniapp_asset,
             html_text,
         )
-        all_scripts = f"{snapshot_script}{debug_script}{script}"
+        all_scripts = f"{snapshot_script}{debug_script}{watchdog_script}{script}"
         if "</head>" in html_text:
             html_text = html_text.replace("</head>", f"{all_scripts}</head>", 1)
         else:
