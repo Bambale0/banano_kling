@@ -2030,6 +2030,30 @@ async def miniapp_index(request: web.Request) -> web.Response:
         watchdog_script = (
             '<script id="miniapp-bootstrap-watchdog">'
             '(function(){'
+            '  function clientLog(event, extra){'
+            '    try{'
+            '      var tg=window.Telegram;'
+            '      var wa=tg&&tg.WebApp;'
+            '      var payload=Object.assign({'
+            '        event:event,'
+            '        href:String((window.location.pathname||"")+(window.location.search||"")),'
+            '        search:String(window.location.search||""),'
+            '        hash_len:String(window.location.hash||"").length,'
+            '        has_tg:!!tg,'
+            '        has_webapp:!!wa,'
+            '        init_data_len:wa&&wa.initData?String(wa.initData).length:0'
+            '      },extra||{});'
+            '      var body=JSON.stringify(payload);'
+            '      if(navigator.sendBeacon){'
+            '        var blob=new Blob([body],{type:"application/json"});'
+            '        if(navigator.sendBeacon("/mini-app/api/client-log",blob)){return;}'
+            '      }'
+            '      if(window.fetch){fetch("/mini-app/api/client-log",{method:"POST",headers:{"Content-Type":"application/json"},body:body,keepalive:true}).catch(function(){});}'
+            '    }catch(e){}'
+            '  }'
+            '  clientLog("index-loaded");'
+            '  window.addEventListener("error",function(e){clientLog("window-error",{message:String(e.message||""),source:String(e.filename||""),lineno:e.lineno||0,colno:e.colno||0});});'
+            '  window.addEventListener("unhandledrejection",function(e){clientLog("unhandledrejection",{message:String((e.reason&&e.reason.message)||e.reason||"")});});'
             '  var started=false;'
             '  var rawFetch=window.fetch;'
             '  if(typeof rawFetch==="function"){'
@@ -2051,6 +2075,7 @@ async def miniapp_index(request: web.Request) -> web.Response:
             '          if(String(entries[i].name||"").indexOf("/mini-app/api/bootstrap")!==-1){return;}'
             '        }'
             '      }'
+            '      clientLog("bootstrap-timeout");'
             '      if(sessionStorage.getItem("__banano_bootstrap_reload_once")==="1"){return;}'
             '      sessionStorage.setItem("__banano_bootstrap_reload_once","1");'
             '      var url=new URL(window.location.href);'
@@ -2071,12 +2096,13 @@ async def miniapp_index(request: web.Request) -> web.Response:
         asset_version = str(int(index_path.stat().st_mtime))
 
         def version_miniapp_asset(match: re.Match[str]) -> str:
-            url = match.group(1)
+            attr = match.group(1)
+            url = match.group(2)
             separator = "&" if "?" in url else "?"
-            return f'"{url}{separator}v={asset_version}"'
+            return f'{attr}"{url}{separator}v={asset_version}"'
 
         html_text = re.sub(
-            r'"(/mini-app/(?:_next/static/[^"]+|telegram-web-app\.js))"',
+            r'((?:src|href)=")(/mini-app/(?:_next/static/[^"]+|telegram-web-app\.js))"',
             version_miniapp_asset,
             html_text,
         )
@@ -2123,6 +2149,36 @@ async def miniapp_asset(request: web.Request) -> web.Response:
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+async def miniapp_client_log(request: web.Request) -> web.Response:
+    try:
+        try:
+            payload = await request.json()
+        except Exception:
+            text = await request.text()
+            payload = {"raw": text[:2000]}
+        if not isinstance(payload, dict):
+            payload = {"payload": str(payload)[:2000]}
+        compact = {
+            "event": str(payload.get("event") or "")[:80],
+            "href": str(payload.get("href") or "")[:500],
+            "search": str(payload.get("search") or "")[:500],
+            "hash_len": int(payload.get("hash_len") or len(str(payload.get("hash") or ""))),
+            "has_tg": bool(payload.get("has_tg")),
+            "has_webapp": bool(payload.get("has_webapp")),
+            "init_data_len": int(payload.get("init_data_len") or 0),
+            "message": str(payload.get("message") or "")[:500],
+            "source": str(payload.get("source") or "")[:200],
+            "lineno": payload.get("lineno"),
+            "colno": payload.get("colno"),
+            "user_agent": request.headers.get("User-Agent", "")[:300],
+            "ip": request.headers.get("X-Forwarded-For", request.remote or "")[:80],
+        }
+        logger.warning("Mini App client log: %s", compact)
+    except Exception:
+        logger.exception("Mini App client log failed")
+    return web.json_response({"ok": True})
+
 
 async def miniapp_bootstrap(request: web.Request) -> web.Response:
     try:
@@ -4246,6 +4302,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(miniapp_root, miniapp_index)
     app.router.add_get(f"{miniapp_root}/", miniapp_index)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
+    app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
     app.router.add_post(miniapp_root + "/api/upload", miniapp_upload)
     app.router.add_post(miniapp_root + "/api/photo-to-prompt", miniapp_photo_to_prompt)
