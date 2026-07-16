@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import mimetypes
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -2033,6 +2034,18 @@ async def miniapp_index(request: web.Request) -> web.Response:
             "</script>"
         )
         html_text = index_path.read_text(encoding="utf-8")
+        asset_version = str(int(index_path.stat().st_mtime))
+
+        def version_miniapp_asset(match: re.Match[str]) -> str:
+            url = match.group(1)
+            separator = "&" if "?" in url else "?"
+            return f'"{url}{separator}v={asset_version}"'
+
+        html_text = re.sub(
+            r'"(/mini-app/(?:_next/static/[^"]+|telegram-web-app\.js))"',
+            version_miniapp_asset,
+            html_text,
+        )
         all_scripts = f"{snapshot_script}{debug_script}{script}"
         if "</head>" in html_text:
             html_text = html_text.replace("</head>", f"{all_scripts}</head>", 1)
@@ -4117,6 +4130,10 @@ def setup_miniapp_routes(app: web.Application):
         if origin:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
+        if request.path.startswith(f"{miniapp_root}/_next/static/") or request.path == f"{miniapp_root}/telegram-web-app.js":
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         return response
 
     @web.middleware
