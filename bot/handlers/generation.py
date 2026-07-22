@@ -1496,25 +1496,34 @@ def _feed_publication_keyboard(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    blurred: bool = False,
 ) -> types.InlineKeyboardMarkup:
     task_value = str(task_id)
     prompt_flag = int(bool(prompt_visible))
     refs_flag = int(bool(references_visible))
+    blur_flag = int(bool(blurred))
+    prompt_icon = "✅" if prompt_visible else "🔒"
+    refs_icon = "✅" if references_visible else "🔒"
+    blur_icon = "✅" if blurred else "👁"
     builder = InlineKeyboardBuilder()
     builder.button(
-        text=f"{'✅' if prompt_visible else '🔒'} Prompt",
-        callback_data=f"feedpubopt_{task_value}_{1 - prompt_flag}_{refs_flag}",
+        text=f"{prompt_icon} Prompt",
+        callback_data=f"feedpubopt_{task_value}_{1 - prompt_flag}_{refs_flag}_{blur_flag}",
     )
     builder.button(
-        text=f"{'✅' if references_visible else '🔒'} Референсы",
-        callback_data=f"feedpubopt_{task_value}_{prompt_flag}_{1 - refs_flag}",
+        text=f"{refs_icon} Референсы",
+        callback_data=f"feedpubopt_{task_value}_{prompt_flag}_{1 - refs_flag}_{blur_flag}",
+    )
+    builder.button(
+        text=f"{blur_icon} Blur",
+        callback_data=f"feedpubopt_{task_value}_{prompt_flag}_{refs_flag}_{1 - blur_flag}",
     )
     builder.button(
         text="✅ Опубликовать",
-        callback_data=f"feedpubok_{task_value}_{prompt_flag}_{refs_flag}",
+        callback_data=f"feedpubok_{task_value}_{prompt_flag}_{refs_flag}_{blur_flag}",
     )
     builder.button(text="❌ Отмена", callback_data="ignore")
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -1522,24 +1531,37 @@ def _feed_publication_text(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    blurred: bool = False,
 ) -> str:
     prompt_state = "открыт" if prompt_visible else "скрыт"
     refs_state = "открыты" if references_visible else "скрыты"
+    blur_state = "включён" if blurred else "выключен"
+    nl = chr(10)
     return (
         _publication_disclaimer_text("feed")
-        + "\n\n<b>Что увидят в ленте</b>\n"
-        f"• Prompt: <code>{prompt_state}</code>\n"
-        f"• Референсы: <code>{refs_state}</code>\n\n"
-        "По умолчанию оба пункта закрыты. Откройте только то, что автор разрешает показывать."
+        + nl
+        + nl
+        + "<b>Что увидят в ленте</b>"
+        + nl
+        + f"• Prompt: <code>{prompt_state}</code>"
+        + nl
+        + f"• Референсы: <code>{refs_state}</code>"
+        + nl
+        + f"• Blur: <code>{blur_state}</code>"
+        + nl
+        + nl
+        + "По умолчанию prompt и референсы закрыты, blur выключен. "
+        + "Откройте только то, что автор разрешает показывать."
     )
 
 
-def _parse_feed_publish_payload(value: str) -> tuple[str, bool, bool]:
+def _parse_feed_publish_payload(value: str) -> tuple[str, bool, bool, bool]:
     parts = str(value or "").split("_")
     task_id = parts[0] if parts else ""
     prompt_visible = bool(int(parts[1])) if len(parts) > 1 and parts[1] in {"0", "1"} else False
     references_visible = bool(int(parts[2])) if len(parts) > 2 and parts[2] in {"0", "1"} else False
-    return task_id, prompt_visible, references_visible
+    blurred = bool(int(parts[3])) if len(parts) > 3 and parts[3] in {"0", "1"} else False
+    return task_id, prompt_visible, references_visible, blurred
 
 
 def _publication_disclaimer_text(kind: str) -> str:
@@ -1721,7 +1743,7 @@ async def update_feed_publication_options(
     callback: types.CallbackQuery, state: FSMContext
 ):
     payload = callback.data.replace("feedpubopt_", "", 1)
-    task_id, prompt_visible, references_visible = _parse_feed_publish_payload(payload)
+    task_id, prompt_visible, references_visible, blurred = _parse_feed_publish_payload(payload)
     task, error_message = await _owned_completed_feed_task(callback, task_id)
     if not task:
         await callback.answer(error_message or "Нельзя добавить в ленту.", show_alert=True)
@@ -1732,12 +1754,14 @@ async def update_feed_publication_options(
             _feed_publication_text(
                 prompt_visible=prompt_visible,
                 references_visible=references_visible,
+                blurred=blurred,
             ),
             parse_mode="HTML",
             reply_markup=_feed_publication_keyboard(
                 task.id,
                 prompt_visible=prompt_visible,
                 references_visible=references_visible,
+                blurred=blurred,
             ),
         )
     except TelegramBadRequest as e:
@@ -1751,7 +1775,7 @@ async def confirm_publish_image_result_to_feed(
     callback: types.CallbackQuery, state: FSMContext
 ):
     """Публикует готовую генерацию в miniapp-ленту после подтверждения."""
-    task_id, prompt_visible, references_visible = _parse_feed_publish_payload(
+    task_id, prompt_visible, references_visible, blurred = _parse_feed_publish_payload(
         callback.data.replace("feedpubok_", "", 1)
     )
     task, error_message = await _owned_completed_feed_task(callback, task_id)
@@ -1770,6 +1794,7 @@ async def confirm_publish_image_result_to_feed(
         task.user_id,
         prompt_visible=prompt_visible,
         references_visible=references_visible,
+        blurred=blurred,
     )
     if not card:
         logger.warning(

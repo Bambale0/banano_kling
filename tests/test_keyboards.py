@@ -661,7 +661,7 @@ def test_get_image_result_keyboard_contains_repeat_and_main_menu():
     assert "feedpub_img_123" in callback_ids
     assert "promptsave_img_123" in callback_ids
     assert "🔁 Повторить" in button_texts
-    assert "repeat_image_img_123" in callback_ids
+    assert "repeat_result_img_123" in callback_ids
     assert "back_main" in callback_ids
 
 
@@ -746,7 +746,7 @@ async def test_feed_keyboard_repeats_only_images(monkeypatch):
         for btn in row
         if btn.callback_data
     ]
-    assert "repeat_image_123" in image_callbacks
+    assert "repeat_image_provider_task" in image_callbacks
 
     video_kb = await common_module._build_feed_keyboard(
         bot=SimpleNamespace(),

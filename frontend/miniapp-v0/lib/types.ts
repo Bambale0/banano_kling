@@ -123,6 +123,7 @@ export interface Task {
   is_prompt_library?: boolean
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
+  feed_blurred?: boolean
 }
 
 export interface TaskDetail extends Task {
@@ -202,6 +203,8 @@ export interface FeedItem {
   author_referral_code?: string | null
   author_photo_url?: string | null
   is_mine: boolean
+  can_remove?: boolean
+  can_blur?: boolean
   remixes: number
   score: number
   created_at: string
@@ -209,6 +212,7 @@ export interface FeedItem {
   prompt_actions_allowed?: boolean
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
+  feed_blurred?: boolean
 }
 
 export interface FeedDeepLink {

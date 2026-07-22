@@ -85,11 +85,7 @@ async def test_dispatch_does_not_touch_schema_before_authorization(monkeypatch):
     monkeypatch.setattr(dispatch, "_authorize_request", reject_request)
     monkeypatch.setattr(dispatch, "ensure_internal_admin_command_schema", unexpected_schema_call)
 
-    response = await dispatch._dispatch_user_command(  # type: ignore[arg-type]
-        request,
-        user_id="12",
-        action="block",
-    )
+    response = await dispatch._authenticate_and_prepare(request)  # type: ignore[arg-type]
 
     assert response.status == 401
     assert schema_called is False

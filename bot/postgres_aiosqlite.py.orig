@@ -46,7 +46,6 @@ _BOOL_COLUMNS = (
     "is_self_click",
     "feed_prompt_visible",
     "feed_references_visible",
-    "feed_blurred",
     "referral_purchase_notifications_enabled",
 )
 
@@ -489,9 +488,6 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
             )
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_references_visible" BOOLEAN DEFAULT FALSE'
-            )
-            await cur.execute(
-                'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_blurred" BOOLEAN DEFAULT FALSE'
             )
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_published_at" TIMESTAMP'

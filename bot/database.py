@@ -533,6 +533,7 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
         ("shares_count", "ALTER TABLE generation_tasks ADD COLUMN shares_count INTEGER DEFAULT 0"),
         ("feed_prompt_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_prompt_visible BOOLEAN DEFAULT 0"),
         ("feed_references_visible", "ALTER TABLE generation_tasks ADD COLUMN feed_references_visible BOOLEAN DEFAULT 0"),
+        ("feed_blurred", "ALTER TABLE generation_tasks ADD COLUMN feed_blurred BOOLEAN DEFAULT 0"),
         ("feed_published_at", "ALTER TABLE generation_tasks ADD COLUMN feed_published_at TIMESTAMP"),
     ]:
         try:
@@ -651,6 +652,7 @@ class GenerationTask:
     shares_count: int = 0
     feed_prompt_visible: bool = False
     feed_references_visible: bool = False
+    feed_blurred: bool = False
     created_at: Optional[datetime] = None
 
 
@@ -4902,6 +4904,11 @@ async def get_task_by_id(task_id: str) -> Optional[GenerationTask]:
                 if "feed_references_visible" in row.keys()
                 else False
             ),
+            feed_blurred=(
+                bool(row["feed_blurred"])
+                if "feed_blurred" in row.keys()
+                else False
+            ),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
 
@@ -5524,6 +5531,12 @@ def generation_references_visible(
     return bool(_generation_attr(generation, "feed_references_visible", False))
 
 
+def generation_feed_blurred(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(_generation_attr(generation, "feed_blurred", False))
+
+
 def generation_prompt_hidden(
     generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
 ) -> bool:
@@ -5790,6 +5803,7 @@ def _generation_row_to_card(
         "prompt_actions_allowed": not prompt_hidden,
         "feed_prompt_visible": generation_feed_prompt_visible(row),
         "feed_references_visible": references_visible,
+        "feed_blurred": generation_feed_blurred(row),
     }
 
 
@@ -6123,6 +6137,7 @@ async def share_to_feed(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
+    blurred: Optional[bool] = None,
 ) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
@@ -6149,12 +6164,14 @@ async def share_to_feed(
             result_urls_json = None
 
         published_at = datetime.utcnow().isoformat(sep=" ", timespec="microseconds")
+        next_blurred = generation_feed_blurred(row) if blurred is None else bool(blurred)
         await db.execute(
             """
             UPDATE generation_tasks
             SET is_public_feed = 1,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
+                feed_blurred = ?,
                 feed_published_at = ?,
                 result_url = ?,
                 result_urls = ?,
@@ -6164,6 +6181,7 @@ async def share_to_feed(
             (
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
+                int(next_blurred),
                 published_at,
                 result_url,
                 result_urls_json,
@@ -6175,10 +6193,46 @@ async def share_to_feed(
     return await get_feed_generation_card(gen_id, viewer_user_id=user_id)
 
 
-async def remove_from_feed(gen_id: int | str, user_id: int) -> bool:
+async def set_feed_blurred(
+    gen_id: int | str,
+    user_id: int,
+    blurred: bool,
+    *,
+    allow_any_user: bool = False,
+) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
-        row = await _fetch_generation_row(db, gen_id, user_id=user_id)
+        row = await _fetch_generation_row(
+            db,
+            gen_id,
+            user_id=None if allow_any_user else user_id,
+            public_only=True,
+        )
+        if not row:
+            return None
+        await db.execute(
+            "UPDATE generation_tasks SET feed_blurred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (int(bool(blurred)), row["id"]),
+        )
+        await db.commit()
+        internal_id = row["id"]
+    return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+
+
+async def remove_from_feed(
+    gen_id: int | str,
+    user_id: int,
+    *,
+    allow_any_user: bool = False,
+) -> bool:
+    async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
+        db.row_factory = db_backend.Row
+        row = await _fetch_generation_row(
+            db,
+            gen_id,
+            user_id=None if allow_any_user else user_id,
+            public_only=allow_any_user,
+        )
         if not row:
             return False
         await db.execute(

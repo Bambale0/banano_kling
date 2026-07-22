@@ -627,10 +627,13 @@ export async function removeFeedItem(genId: number): Promise<void> {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  await postJson<{ ok: true; removed: boolean }>('feed/remove', {
+  const response = await postJson<{ ok: true; removed: boolean }>('feed/remove', {
     init_data: initData,
     gen_id: genId,
   })
+  if (!response.removed) {
+    throw new Error('Не удалось убрать пост')
+  }
 }
 
 export async function publishGeneration(
@@ -638,6 +641,7 @@ export async function publishGeneration(
   options: {
     promptVisible?: boolean
     referencesVisible?: boolean
+    blurred?: boolean
   } = {}
 ): Promise<FeedItem> {
   const initData = getInitData()
@@ -649,6 +653,20 @@ export async function publishGeneration(
     task_id: taskId,
     prompt_visible: Boolean(options.promptVisible),
     references_visible: Boolean(options.referencesVisible),
+    feed_blurred: Boolean(options.blurred),
+  })
+  return response.feed_item
+}
+
+export async function setFeedItemBlurred(genId: number, blurred: boolean): Promise<FeedItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; feed_item: FeedItem }>('feed/blur', {
+    init_data: initData,
+    gen_id: genId,
+    blurred,
   })
   return response.feed_item
 }
@@ -658,10 +676,13 @@ export async function unpublishGeneration(taskId: string): Promise<void> {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  await postJson<{ ok: true; removed: boolean }>('feed/remove', {
+  const response = await postJson<{ ok: true; removed: boolean }>('feed/remove', {
     init_data: initData,
     task_id: taskId,
   })
+  if (!response.removed) {
+    throw new Error('Не удалось убрать пост')
+  }
 }
 
 export async function saveGenerationPrompt(taskId: string): Promise<void> {

@@ -59,6 +59,7 @@ from bot.database import (
     remove_from_feed,
     remove_from_library,
     save_user_channel_url,
+    set_feed_blurred,
     share_to_feed,
     share_to_library,
     touch_saved_references,
@@ -1079,7 +1080,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                   feed_blurred, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -1118,6 +1120,7 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "is_prompt_library": bool(row["is_prompt_library"]),
                 "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
                 "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
+                "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
                 "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
@@ -1133,7 +1136,8 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
+                   source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                   feed_blurred, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -1146,7 +1150,8 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                       feed_blurred, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -1159,7 +1164,8 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 """
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
-                       source_feed_gen_id, feed_prompt_visible, feed_references_visible, created_at, request_data
+                       source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+                       feed_blurred, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -1212,6 +1218,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "is_prompt_library": bool(row["is_prompt_library"]),
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
+        "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
         "created_at": row["created_at"],
         "request_data": request_data,
     }
@@ -2783,7 +2790,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         source = str(body.get("source", "recent") or "recent")
         limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
         offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
             limit=limit,
             offset=offset,
@@ -2791,6 +2798,13 @@ async def miniapp_feed(request: web.Request) -> web.Response:
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
         )
+        is_admin = config.is_admin(telegram_id)
+        for item in feed:
+            is_mine = bool(item.get("is_mine"))
+            if is_admin:
+                item["can_remove"] = True
+            if is_admin or is_mine:
+                item["can_blur"] = True
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed list failed")
@@ -2804,7 +2818,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
         if not gen_id:
             return web.json_response({"ok": False, "error": "gen_id is required"}, status=400)
 
-        _telegram_id, ctx = await _get_user_context(
+        telegram_id, ctx = await _get_user_context(
             request.app,
             init_data,
             body.get("start_param_fallback"),
@@ -2816,6 +2830,12 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
         )
         if not card:
             return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+        is_admin = config.is_admin(telegram_id)
+        is_mine = bool(card.get("is_mine"))
+        if is_admin:
+            card["can_remove"] = True
+        if is_admin or is_mine:
+            card["can_blur"] = True
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed item failed")
@@ -2827,13 +2847,18 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
         offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
-        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
             ctx["user"].id,
             limit=limit,
             offset=offset,
             include_unavailable=True,
         )
+        is_admin = config.is_admin(telegram_id)
+        for item in feed:
+            item["can_blur"] = True
+            if is_admin:
+                item["can_remove"] = True
         return web.json_response({"ok": True, "feed": feed})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App my feed failed")
@@ -2893,7 +2918,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
 
-        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         author = await get_user_by_referral_code(referral_code)
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
@@ -2901,8 +2926,13 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         feed = await get_user_feed_generations(author.id, limit=limit, offset=offset, include_unavailable=True)
         feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
+        is_admin = config.is_admin(telegram_id)
         for item in feed:
             item["is_mine"] = is_mine
+            if is_admin:
+                item["can_remove"] = True
+            if is_admin or is_mine:
+                item["can_blur"] = True
 
         me = await request.app["bot"].get_me()
         profile = _miniapp_profile_payload(
@@ -2943,12 +2973,19 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             body.get("references_visible", body.get("feed_references_visible")),
             False,
         )
+        blurred = None
+        if "blurred" in body or "feed_blurred" in body:
+            blurred = _payload_bool(
+                body.get("blurred", body.get("feed_blurred")),
+                False,
+            )
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await share_to_feed(
             gen_id,
             ctx["user"].id,
             prompt_visible=prompt_visible,
             references_visible=references_visible,
+            blurred=blurred,
         )
         if not card:
             logger.warning(
@@ -2973,14 +3010,57 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App share generation failed")
 
 
+async def miniapp_feed_blur(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        gen_id = body.get("gen_id") or body.get("task_id") or body.get("feed_id")
+        blurred = _payload_bool(body.get("blurred", body.get("feed_blurred")), False)
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        is_admin = config.is_admin(telegram_id)
+        card = await set_feed_blurred(
+            gen_id,
+            ctx["user"].id,
+            blurred,
+            allow_any_user=is_admin,
+        )
+        if not card:
+            return web.json_response({"ok": False, "error": "Пост ленты не найден или нет доступа"}, status=404)
+        if is_admin:
+            card["can_remove"] = True
+        card["can_blur"] = True
+        try:
+            from bot.handlers.common import _invalidate_feed_and_profile_caches
+
+            _invalidate_feed_and_profile_caches()
+        except Exception:
+            logger.exception("Failed to invalidate feed caches after Mini App blur toggle")
+        logger.info(
+            "Admin toggled Mini App feed blur: admin_telegram_id=%s gen_id=%r blurred=%s",
+            telegram_id,
+            gen_id,
+            blurred,
+        )
+        return web.json_response({"ok": True, "feed_item": card})
+    except Exception as e:
+        return _miniapp_error_response(e, log_message="Mini App feed blur failed")
+
+
 async def miniapp_feed_remove(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        gen_id = body.get("gen_id") or body.get("task_id")
-        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        removed = await remove_from_feed(gen_id, ctx["user"].id)
+        gen_id = body.get("gen_id") or body.get("task_id") or body.get("feed_id")
+        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        is_admin = config.is_admin(telegram_id)
+        removed = await remove_from_feed(gen_id, ctx["user"].id, allow_any_user=is_admin)
         if removed:
+            if is_admin:
+                logger.info(
+                    "Admin removed Mini App feed item: admin_telegram_id=%s gen_id=%r",
+                    telegram_id,
+                    gen_id,
+                )
             try:
                 from bot.handlers.common import _invalidate_feed_and_profile_caches
 
@@ -4325,6 +4405,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get(miniapp_root + "/api/feed/comments", miniapp_feed_comments)
     app.router.add_post(miniapp_root + "/api/feed/comments", miniapp_feed_comments)
     app.router.add_post(miniapp_root + "/api/feed/comment", miniapp_feed_comment_add)
+    app.router.add_post(miniapp_root + "/api/feed/blur", miniapp_feed_blur)
     app.router.add_post(miniapp_root + "/api/feed/remove", miniapp_feed_remove)
     app.router.add_post(miniapp_root + "/api/feed/remix", miniapp_feed_remix)
     app.router.add_post(miniapp_root + "/api/generations/share", miniapp_generation_share)
@@ -4370,6 +4451,7 @@ def setup_miniapp_routes(app: web.Application):
         miniapp_generation_remove_library,
     )
     app.router.add_post(api_v1_root + "/feed/{gen_id}/remove", miniapp_feed_remove)
+    app.router.add_post(api_v1_root + "/feed/{gen_id}/blur", miniapp_feed_blur)
     app.router.add_post(api_v1_root + "/feed/{gen_id}/like", miniapp_feed_like)
     app.router.add_post(api_v1_root + "/feed/{gen_id}/remix", miniapp_feed_remix)
     app.router.add_get(api_v1_root + "/feed/{gen_id}/link", miniapp_feed_share)

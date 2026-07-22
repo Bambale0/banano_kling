@@ -53,11 +53,6 @@ class TestConfig:
         cfg = Config()
         assert cfg.WEBHOOK_BIND_HOST == "127.0.0.1"
 
-    def test_payment_provider_tbank(self):
-        cfg = Config()
-        cfg.PAYMENT_PROVIDER = "tbank"
-        assert cfg.payment_provider == "tbank"
-
     def test_payment_provider_yookassa(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "yookassa"

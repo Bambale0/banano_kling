@@ -23,6 +23,7 @@ export function TaskDetailPanel() {
   const [libraryBusy, setLibraryBusy] = useState(false)
   const [feedPromptVisible, setFeedPromptVisible] = useState(false)
   const [feedReferencesVisible, setFeedReferencesVisible] = useState(false)
+  const [feedBlurred, setFeedBlurred] = useState(false)
 
   const referenceCount =
     (taskDetail?.request_data?.reference_images?.length || 0) +
@@ -31,7 +32,13 @@ export function TaskDetailPanel() {
   useEffect(() => {
     setFeedPromptVisible(Boolean(taskDetail?.feed_prompt_visible))
     setFeedReferencesVisible(Boolean(taskDetail?.feed_references_visible))
-  }, [taskDetail?.task_id, taskDetail?.feed_prompt_visible, taskDetail?.feed_references_visible])
+    setFeedBlurred(Boolean(taskDetail?.feed_blurred))
+  }, [
+    taskDetail?.task_id,
+    taskDetail?.feed_prompt_visible,
+    taskDetail?.feed_references_visible,
+    taskDetail?.feed_blurred,
+  ])
 
   const confirmPublication = (target: string) => {
     if (typeof window === 'undefined') return true
@@ -80,11 +87,13 @@ export function TaskDetailPanel() {
         await publishGeneration(taskDetail.task_id, {
           promptVisible: feedPromptVisible,
           referencesVisible: feedReferencesVisible,
+          blurred: feedBlurred,
         })
         updateTask(taskDetail.task_id, {
           is_public_feed: true,
           feed_prompt_visible: feedPromptVisible,
           feed_references_visible: feedReferencesVisible,
+          feed_blurred: feedBlurred,
         })
         notifyFeedChanged()
         toast.success('Опубликовано в ленте')
@@ -103,11 +112,13 @@ export function TaskDetailPanel() {
       await publishGeneration(taskDetail.task_id, {
         promptVisible: feedPromptVisible,
         referencesVisible: feedReferencesVisible,
+        blurred: feedBlurred,
       })
       updateTask(taskDetail.task_id, {
         is_public_feed: true,
         feed_prompt_visible: feedPromptVisible,
         feed_references_visible: feedReferencesVisible,
+        feed_blurred: feedBlurred,
       })
       notifyFeedChanged()
       toast.success('Настройки ленты обновлены')
@@ -373,7 +384,7 @@ export function TaskDetailPanel() {
                 <div className="space-y-2">
                   {canPublishToFeed ? (
                     <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
                           onClick={() => setFeedPromptVisible((prev) => !prev)}
@@ -400,6 +411,19 @@ export function TaskDetailPanel() {
                         >
                           {feedReferencesVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                           Рефы {referenceCount ? `(${referenceCount})` : ''}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFeedBlurred((prev) => !prev)}
+                          className={cn(
+                            'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors',
+                            feedBlurred
+                              ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                              : 'border-border/50 bg-background/40 text-muted-foreground'
+                          )}
+                        >
+                          {feedBlurred ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          Blur
                         </button>
                       </div>
                       {taskDetail.is_public_feed ? (

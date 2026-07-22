@@ -137,22 +137,6 @@ def _feed_cache_patch_card(cache: dict, key, updated_card: dict) -> None:
     _feed_cache_put(cache, key, *cached[:-1], patched_cards)
 
 
-def _feed_cache_remove_card(cache: dict, key, gen_id: int) -> None:
-    cached = _feed_cache_get(cache, key)
-    if not cached:
-        return
-    cards = cached[-1]
-    filtered_cards = [item for item in cards if int(item.get("id") or 0) != gen_id]
-    _feed_cache_put(cache, key, *cached[:-1], filtered_cards)
-
-
-def _feed_cache_remove_all_sources(viewer_user_id: int | None, gen_id: int) -> None:
-    viewer_ids = {None, viewer_user_id}
-    for source_code in FEED_SOURCE_CODES:
-        for cached_viewer_id in viewer_ids:
-            _feed_cache_remove_card(_feed_cards_cache, (source_code, cached_viewer_id), gen_id)
-
-
 def _clear_feed_caches() -> None:
     _feed_cards_cache.clear()
     _profile_feed_cards_cache.clear()
@@ -167,10 +151,8 @@ def _profile_cache_patch_card(referral_code: str, viewer_user_id: int | None, up
 
 
 def _feed_cache_patch_all_sources(viewer_user_id: int | None, updated_card: dict) -> None:
-    viewer_ids = {None, viewer_user_id}
     for source_code in FEED_SOURCE_CODES:
-        for cached_viewer_id in viewer_ids:
-            _feed_cache_patch_card(_feed_cards_cache, (source_code, cached_viewer_id), updated_card)
+        _feed_cache_patch_card(_feed_cards_cache, (source_code, viewer_user_id), updated_card)
 
 
 def _feed_cache_invalidate_source(source_code: str, viewer_user_id: int | None) -> None:
@@ -300,16 +282,6 @@ def _patch_like_caches(updated_card: dict, viewer_user_id: int | None, profile_c
     _feed_cache_patch_all_sources(viewer_user_id, updated_card)
     if profile_code:
         _profile_cache_patch_card(profile_code, viewer_user_id, updated_card)
-
-
-def _remove_feed_card_caches(gen_id: int, viewer_user_id: int | None, profile_code: str | None = None) -> None:
-    _feed_cache_remove_all_sources(viewer_user_id, gen_id)
-    if profile_code:
-        _feed_cache_remove_card(
-            _profile_feed_cards_cache,
-            _profile_feed_cache_key(profile_code, viewer_user_id),
-            gen_id,
-        )
 
 
 def _feed_open_log_data(callback: types.CallbackQuery) -> dict[str, object | None]:
@@ -2539,37 +2511,21 @@ async def _build_feed_keyboard(
     ]
     rows.append(action_row)
 
-    if gen_id and viewer_telegram_id:
-        is_admin_viewer = config.is_admin(viewer_telegram_id)
-        can_blur = is_admin_viewer or bool(card.get("is_mine"))
-        admin_buttons: list[types.InlineKeyboardButton] = []
-        if can_blur:
-            next_blur = 0 if bool(card.get("feed_blurred")) else 1
-            blur_callback = (
-                f"bfblur:{gen_id}:{next_blur}:p:{profile_code}:{index}:{photo_index}"
-                if profile_code
-                else f"bfblur:{gen_id}:{next_blur}:s:{source_code}:{index}:{photo_index}"
-            )
-            admin_buttons.append(
+    if gen_id and viewer_telegram_id and config.is_admin(viewer_telegram_id):
+        next_blur = 0 if bool(card.get("feed_blurred")) else 1
+        blur_callback = (
+            f"bfblur:{gen_id}:{next_blur}:p:{profile_code}:{index}:{photo_index}"
+            if profile_code
+            else f"bfblur:{gen_id}:{next_blur}:s:{source_code}:{index}:{photo_index}"
+        )
+        rows.append(
+            [
                 types.InlineKeyboardButton(
                     text="👁 Снять blur" if bool(card.get("feed_blurred")) else "🙈 Blur",
                     callback_data=blur_callback,
                 )
-            )
-        if is_admin_viewer:
-            delete_callback = (
-                f"bfdel:{gen_id}:p:{profile_code}:{index}:{photo_index}"
-                if profile_code
-                else f"bfdel:{gen_id}:s:{source_code}:{index}:{photo_index}"
-            )
-            admin_buttons.append(
-                types.InlineKeyboardButton(
-                    text="🗑 Удалить",
-                    callback_data=delete_callback,
-                )
-            )
-        if admin_buttons:
-            rows.append(admin_buttons)
+            ]
+        )
 
     if username and gen_id:
         rows.append(
@@ -2613,7 +2569,7 @@ async def _fetch_feed_cards(
     *,
     viewer_user_id: int | None = None,
 ) -> list[dict]:
-    cache_key = _feed_source_cache_key(source_code, None)
+    cache_key = _feed_source_cache_key(source_code, viewer_user_id)
     cached = _feed_cache_get(_feed_cards_cache, cache_key)
     if cached:
         _feed_cache_log_hit("feed", cache_key)
@@ -2733,13 +2689,15 @@ async def _render_feed_carousel(
                 logger.debug("Cannot edit feed video via remote URL: %s", e)
         else:
             try:
-                downloaded_photo = await _download_preview_photo(photo_url)
+                downloaded_photo = await _download_preview_photo(
+                    photo_url,
+                    blurred=is_blurred_photo,
+                )
                 await message.edit_media(
                     media=types.InputMediaPhoto(
                         media=downloaded_photo,
                         caption=caption,
                         parse_mode="HTML",
-                        has_spoiler=is_blurred_photo,
                     ),
                     reply_markup=markup,
                 )
@@ -2756,7 +2714,6 @@ async def _render_feed_carousel(
                                 media=_feed_placeholder_photo(),
                                 caption=caption,
                                 parse_mode="HTML",
-                                has_spoiler=is_blurred_photo,
                             ),
                             reply_markup=markup,
                         )
@@ -2773,7 +2730,6 @@ async def _render_feed_carousel(
                         media=photo_url,
                         caption=caption,
                         parse_mode="HTML",
-                        has_spoiler=is_blurred_photo,
                     ),
                     reply_markup=markup,
                 )
@@ -2791,7 +2747,6 @@ async def _render_feed_carousel(
                         media=_feed_placeholder_photo(),
                         caption=caption,
                         parse_mode="HTML",
-                        has_spoiler=is_blurred_photo,
                     ),
                     reply_markup=markup,
                 )
@@ -2820,13 +2775,12 @@ async def _render_feed_carousel(
             logger.warning("Cannot send feed video, falling back to preview photo: %s", e)
 
     try:
-        photo = await _download_preview_photo(photo_url)
+        photo = await _download_preview_photo(photo_url, blurred=is_blurred_photo)
         await message.answer_photo(
             photo=photo,
             caption=caption,
             reply_markup=markup,
             parse_mode="HTML",
-            has_spoiler=is_blurred_photo,
         )
         return
     except Exception as e:
@@ -2842,7 +2796,6 @@ async def _render_feed_carousel(
                     caption=caption,
                     reply_markup=markup,
                     parse_mode="HTML",
-                    has_spoiler=is_blurred_photo,
                 )
                 return
             except Exception as placeholder_error:
@@ -2855,7 +2808,6 @@ async def _render_feed_carousel(
             caption=caption,
             reply_markup=markup,
             parse_mode="HTML",
-            has_spoiler=is_blurred_photo,
         )
         return
     except Exception as e:
@@ -2866,7 +2818,6 @@ async def _render_feed_carousel(
                 caption=caption,
                 reply_markup=markup,
                 parse_mode="HTML",
-                has_spoiler=is_blurred_photo,
             )
         except Exception as placeholder_error:
             logger.error("Cannot send feed placeholder photo: %s", placeholder_error)
@@ -3393,75 +3344,26 @@ async def navigate_profile_feed(callback: types.CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("bfdel:"))
-async def delete_feed_card(callback: types.CallbackQuery):
+@router.callback_query(F.data.startswith("bfblur:"))
+async def toggle_feed_blur(callback: types.CallbackQuery):
     if not config.is_admin(callback.from_user.id):
         await _safe_callback_answer(callback, "Нет доступа", show_alert=True)
         return
 
     parts = (callback.data or "").split(":")
     gen_id = _parse_int(parts[1], 0) if len(parts) > 1 else 0
-    mode = parts[2] if len(parts) > 2 else "s"
-    viewer = await get_or_create_user(callback.from_user.id)
-
-    removed = await remove_from_feed(gen_id, viewer.id, allow_any_user=True)
-    if not removed:
-        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
-        return
-
-    await _safe_callback_answer(callback, "Удалено из ленты")
-    if mode == "p":
-        referral_code = parts[3] if len(parts) > 3 else ""
-        _remove_feed_card_caches(gen_id, viewer.id, profile_code=referral_code)
-        index = _parse_int(parts[4], 0) if len(parts) > 4 else 0
-        photo_index = _parse_int(parts[5], 0) if len(parts) > 5 else 0
-        await _render_profile_feed_deeplink(
-            callback.message,
-            viewer,
-            referral_code,
-            index=index,
-            photo_index=photo_index,
-        )
-    else:
-        source_code = parts[3] if len(parts) > 3 and parts[3] in FEED_SOURCE_CODES else "r"
-        _remove_feed_card_caches(gen_id, viewer.id)
-        index = _parse_int(parts[4], 0) if len(parts) > 4 else 0
-        photo_index = _parse_int(parts[5], 0) if len(parts) > 5 else 0
-        await _render_feed_by_source(
-            callback.message,
-            telegram_id=callback.from_user.id,
-            source_code=source_code,
-            index=index,
-            photo_index=photo_index,
-        )
-
-
-@router.callback_query(F.data.startswith("bfblur:"))
-async def toggle_feed_blur(callback: types.CallbackQuery):
-    parts = (callback.data or "").split(":")
-    gen_id = _parse_int(parts[1], 0) if len(parts) > 1 else 0
     blurred = bool(_parse_int(parts[2], 0)) if len(parts) > 2 else False
     mode = parts[3] if len(parts) > 3 else "s"
     viewer = await get_or_create_user(callback.from_user.id)
-    is_admin_viewer = config.is_admin(callback.from_user.id)
 
-    updated = await set_feed_blurred(
-        gen_id,
-        viewer.id,
-        blurred,
-        allow_any_user=is_admin_viewer,
-    )
+    updated = await set_feed_blurred(gen_id, viewer.id, blurred, allow_any_user=True)
     if not updated:
-        await _safe_callback_answer(callback, "Пост не найден или нет доступа", show_alert=True)
+        await _safe_callback_answer(callback, "Пост не найден", show_alert=True)
         return
 
-    await _safe_callback_answer(
-        callback,
-        "Blur включён" if blurred else "Blur снят",
-    )
+    _clear_feed_caches()
     if mode == "p":
         referral_code = parts[4] if len(parts) > 4 else ""
-        _patch_like_caches(updated, viewer.id, profile_code=referral_code)
         index = _parse_int(parts[5], 0) if len(parts) > 5 else 0
         photo_index = _parse_int(parts[6], 0) if len(parts) > 6 else 0
         await _render_profile_feed_deeplink(
@@ -3473,7 +3375,6 @@ async def toggle_feed_blur(callback: types.CallbackQuery):
         )
     else:
         source_code = parts[4] if len(parts) > 4 and parts[4] in FEED_SOURCE_CODES else "r"
-        _patch_like_caches(updated, viewer.id)
         index = _parse_int(parts[5], 0) if len(parts) > 5 else 0
         photo_index = _parse_int(parts[6], 0) if len(parts) > 6 else 0
         await _render_feed_by_source(
@@ -3483,6 +3384,10 @@ async def toggle_feed_blur(callback: types.CallbackQuery):
             index=index,
             photo_index=photo_index,
         )
+    await _safe_callback_answer(
+        callback,
+        "Blur включён" if blurred else "Blur снят",
+    )
 
 
 @router.callback_query(F.data.startswith("bfl:"))

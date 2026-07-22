@@ -11,9 +11,12 @@ import {
   fetchFeedComments,
   likeFeedItem,
   removeFeedItem,
+  setFeedItemBlurred,
   shareFeedItem,
 } from '@/lib/api'
 import {
+  Eye,
+  EyeOff,
   Heart,
   ImageOff,
   Loader2,
@@ -140,6 +143,7 @@ export function FeedTab() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const [revealedPreviewIds, setRevealedPreviewIds] = useState<Set<number>>(() => new Set())
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
   const [comments, setComments] = useState<FeedComment[]>([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -165,6 +169,8 @@ export function FeedTab() {
     return columns
   }, [visibleItems])
   const previewReferences = useMemo(() => getPublicReferences(previewItem), [previewItem])
+  const previewBlurRevealed = Boolean(previewItem && revealedPreviewIds.has(previewItem.id))
+  const previewBlurActive = Boolean(previewItem?.feed_blurred && !previewBlurRevealed)
 
   useEffect(() => {
     let ignore = false
@@ -307,12 +313,29 @@ export function FeedTab() {
     setActiveTab(1)
   }
 
+  const handleToggleBlur = async (item: FeedItem) => {
+    if (!isLive || !(item.can_blur || state.user.isAdmin)) return
+    setBusyId(item.id)
+    try {
+      const updated = await setFeedItemBlurred(item.id, !item.feed_blurred)
+      setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
+      setPreviewItem((prev) => (prev?.id === updated.id ? updated : prev))
+      setCommentsItem((prev) => (prev?.id === updated.id ? updated : prev))
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось обновить blur'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const handleRemove = async (item: FeedItem) => {
-    if (!isLive || !item.is_mine) return
+    if (!isLive || !(item.is_mine || item.can_remove || state.user.isAdmin)) return
     setBusyId(item.id)
     try {
       await removeFeedItem(item.id)
       setItems((prev) => prev.filter((feedItem) => feedItem.id !== item.id))
+      setPreviewItem((prev) => (prev?.id === item.id ? null : prev))
+      setCommentsItem((prev) => (prev?.id === item.id ? null : prev))
     } catch (e) {
       setError(getErrorMessage(e, 'Не удалось убрать пост'))
     } finally {
@@ -430,7 +453,10 @@ export function FeedTab() {
                             preload="none"
                             onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
-                            className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                            className={cn(
+                              'w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]',
+                              item.feed_blurred && 'scale-[1.04] blur-xl'
+                            )}
                           />
                         ) : (
                           <FeedImage
@@ -439,7 +465,7 @@ export function FeedTab() {
                             priority={column.indexOf(item) < 6}
                             onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
-                            className="w-full"
+                            className={cn('w-full', item.feed_blurred && '[&_img]:scale-[1.04] [&_img]:blur-xl')}
                           />
                         )
                       ) : (
@@ -457,6 +483,9 @@ export function FeedTab() {
                             <Play className="h-5 w-5 fill-current" />
                           </span>
                         </span>
+                      ) : null}
+                      {item.feed_blurred ? (
+                        <span className="pointer-events-none absolute inset-0 bg-background/10 backdrop-blur-[1px]" />
                       ) : null}
                     </button>
                     <div className="absolute left-2 top-2 rounded-full bg-background/80 px-2 py-1 text-[10px] font-medium text-foreground backdrop-blur">
@@ -527,7 +556,20 @@ export function FeedTab() {
                         <MessageCircle className="h-4 w-4" />
                         {item.comments_count || 0}
                       </Button>
-                      {item.is_mine ? (
+                      {item.can_blur || state.user.isAdmin ? (
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="secondary"
+                          className="h-8 w-8 rounded-full"
+                          disabled={busyId === item.id}
+                          onClick={() => handleToggleBlur(item)}
+                          aria-label={item.feed_blurred ? 'Снять blur' : 'Blur'}
+                        >
+                          {item.feed_blurred ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </Button>
+                      ) : null}
+                      {item.is_mine || item.can_remove || state.user.isAdmin ? (
                         <Button
                           type="button"
                           size="icon-sm"
@@ -583,7 +625,10 @@ export function FeedTab() {
             previewItem.gen_type === 'video' ? (
               <video
                 src={previewItem.result_url}
-                className="max-h-full w-auto max-w-full object-contain"
+                className={cn(
+                  'max-h-full w-auto max-w-full object-contain',
+                  previewBlurActive && 'blur-xl'
+                )}
                 controls
                 autoPlay
                 playsInline
@@ -600,7 +645,10 @@ export function FeedTab() {
                   handleMediaError(previewItem)
                   setPreviewItem(null)
                 }}
-                className="max-h-full w-auto max-w-full object-contain"
+                className={cn(
+                  'max-h-full w-auto max-w-full object-contain',
+                  previewBlurActive && 'blur-xl'
+                )}
               />
             )
           ) : (
@@ -608,6 +656,25 @@ export function FeedTab() {
               <ImageOff className="h-8 w-8" />
             </div>
           )}
+          {previewBlurActive && previewItem ? (
+            <button
+              type="button"
+              onClick={() => {
+                setRevealedPreviewIds((current) => {
+                  const next = new Set(current)
+                  next.add(previewItem.id)
+                  return next
+                })
+              }}
+              className="absolute inset-0 flex items-center justify-center bg-background/10 text-foreground backdrop-blur-[2px]"
+              aria-label="Показать"
+            >
+              <span className="inline-flex h-11 items-center gap-2 rounded-full bg-background/85 px-4 text-sm font-medium shadow-lg backdrop-blur">
+                <Eye className="h-4 w-4" />
+                <span>Показать</span>
+              </span>
+            </button>
+          ) : null}
           {previewReferences.length ? (
             <div className="absolute bottom-[4.5rem] left-3 right-3 flex justify-center">
               <div className="flex max-w-full gap-2 overflow-x-auto rounded-xl border border-border/60 bg-background/80 p-2 backdrop-blur">

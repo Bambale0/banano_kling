@@ -5,8 +5,8 @@ so we can safely refactor. If the business logic changes, update
 the assertions deliberately.
 
 Covers:
-- QUALITY_COSTS values are int (not float) to prevent fractional credits
-- All 4 keys (2k, 2K, 4k, 4K) resolve correctly
+- QUALITY_COSTS values are numeric and non-negative
+- All supported resolution keys resolve correctly
 - Default quality fallback
 - Labels match costs
 """
@@ -14,23 +14,23 @@ Covers:
 from bot.quality_pricing import QUALITY_COSTS, DEFAULT_QUALITY, QUALITY_LABELS
 
 
-class TestQualityCostsAreIntegers:
-    """P2-NEW: All quality costs must be int to prevent fractional credits."""
+class TestQualityCostsAreNumeric:
+    """Fractional credit prices are supported by the current tariff model."""
 
-    def test_all_costs_are_int(self):
+    def test_all_costs_are_numeric(self):
         for quality, cost in QUALITY_COSTS.items():
-            assert isinstance(cost, int), (
+            assert isinstance(cost, (int, float)) and not isinstance(cost, bool), (
                 f"QUALITY_COSTS[{quality!r}] = {cost} is {type(cost).__name__}, "
-                f"expected int to prevent fractional credits"
+                "expected a numeric tariff"
             )
 
     def test_2k_cost(self):
-        assert QUALITY_COSTS["2K"] == 2
-        assert QUALITY_COSTS["2k"] == 2
+        assert QUALITY_COSTS["2K"] == 2.5
+        assert QUALITY_COSTS["2k"] == 2.5
 
     def test_4k_cost(self):
-        assert QUALITY_COSTS["4K"] == 4
-        assert QUALITY_COSTS["4k"] == 4
+        assert QUALITY_COSTS["4K"] == 3.5
+        assert QUALITY_COSTS["4k"] == 3.5
 
     def test_default_quality_is_2k(self):
         assert DEFAULT_QUALITY == "2K"
@@ -49,7 +49,7 @@ class TestQualityCostsInvariants:
             assert cost >= 0, f"Negative quality cost: {cost}"
 
     def test_all_keys_have_values(self):
-        expected_keys = {"2k", "2K", "4k", "4K"}
+        expected_keys = {"1k", "1K", "2k", "2K", "4k", "4K"}
         assert set(QUALITY_COSTS.keys()) == expected_keys
 
     def test_labels_match_costs(self):

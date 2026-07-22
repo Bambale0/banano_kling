@@ -503,6 +503,8 @@ def test_lava_webhook_payload_helpers_accept_success_and_failed_variants():
 
 @pytest.mark.asyncio
 async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
+    import hmac
+
     from bot import database
     from bot.handlers import payments as payments_module
     from bot.handlers.payments import handle_lava_webhook
@@ -511,6 +513,8 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
         return "completed"
 
     monkeypatch.setattr(payments_module, "_resolve_lava_provider_status", _fake_status)
+    monkeypatch.setattr(payments_module.config, "LAVA_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(hmac, "compare_digest", lambda _actual, _expected: True)
 
     user = await database.get_or_create_user(4303)
     initial_credits = user.credits
@@ -528,7 +532,8 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
         read=AsyncMock(
             return_value=(
                 b'{"eventType":"payment.success","status":"success",'
-                b'"clientUtm":{"order_id":"lava-webhook-order"}}'
+                b'"clientUtm":{"order_id":"lava-webhook-order"},'
+                b'"signature":"test-signature"}'
             )
         ),
         app={"bot": bot},
