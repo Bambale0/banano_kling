@@ -7,10 +7,11 @@ from aiogram import Router
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .common import router as legacy_common_router
+from .freekassa_payments import router as freekassa_payments_router
 from .generation import router as generation_router
 from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
-from .payments import router as payments_router
+from .payments import router as legacy_payments_router
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .support import router as support_router
@@ -21,6 +22,12 @@ from .support import router as support_router
 image_analyzer_router = Router()
 image_analyzer_router.include_router(prompt_analyzer_v2_router)
 image_analyzer_router.include_router(legacy_image_analyzer_router)
+
+# FreeKassa owns package-provider selection and card/SBP checkout. The legacy
+# router remains after it for Stars, CryptoBot, Lava and old callback compatibility.
+payments_router = Router()
+payments_router.include_router(freekassa_payments_router)
+payments_router.include_router(legacy_payments_router)
 
 # main.py already places common_router last. Keep that contract while ensuring
 # specific support/repeat handlers run before broad legacy common handlers.
@@ -34,6 +41,7 @@ __all__ = [
     "admin_router",
     "batch_generation_router",
     "common_router",
+    "freekassa_payments_router",
     "generation_router",
     "image_analyzer_router",
     "notification_campaigns_router",
