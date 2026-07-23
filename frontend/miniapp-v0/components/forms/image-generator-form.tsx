@@ -60,9 +60,7 @@ export function ImageGeneratorForm({
 
   const isBanana = model?.id === 'banana_pro' || model?.id === 'banana_2'
   const unitCost = Number(
-    isBanana
-      ? (selectedQuality === '4K' ? 3.5 : 2.5)
-      : ((selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined) ?? (model?.cost || 0))
+    (selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined) ?? (model?.cost || 0)
   )
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
@@ -131,7 +129,7 @@ export function ImageGeneratorForm({
     if (!model.ratios.includes(selectedRatio)) {
       setSelectedRatio(model.ratios[0] || '1:1')
     }
-    const bananaQualities = ['2K', '4K']
+    const bananaQualities = ['1K', '2K', '4K']
     if (
       (model.qualities?.length && !model.qualities.includes(selectedQuality)) ||
       ((model.id === 'banana_pro' || model.id === 'banana_2') &&
@@ -212,7 +210,7 @@ export function ImageGeneratorForm({
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Качество</label>
               <QualitySelect
-                qualities={['2K', '4K']}
+                qualities={['1K', '2K', '4K']}
                 value={selectedQuality}
                 onChange={setSelectedQuality}
               />

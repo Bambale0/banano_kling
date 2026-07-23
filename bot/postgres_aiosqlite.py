@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import Mapping
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any
 
 import aiosqlite
@@ -13,6 +14,8 @@ import psycopg
 
 _HELPERS_READY = False
 _HELPERS_LOCK: asyncio.Lock | None = None
+_CONNECTION_SEMAPHORE: asyncio.Semaphore | None = None
+POSTGRES_CONNECTION_LIMIT = int(os.getenv("POSTGRES_CONNECTION_LIMIT", "12"))
 _LASTROWID_TABLES = {
     "batch_jobs",
     "feed_comments",
@@ -49,6 +52,14 @@ _BOOL_COLUMNS = (
     "feed_blurred",
     "referral_purchase_notifications_enabled",
 )
+
+
+
+def _get_connection_semaphore() -> asyncio.Semaphore:
+    global _CONNECTION_SEMAPHORE
+    if _CONNECTION_SEMAPHORE is None:
+        _CONNECTION_SEMAPHORE = asyncio.Semaphore(max(1, POSTGRES_CONNECTION_LIMIT))
+    return _CONNECTION_SEMAPHORE
 
 
 def _get_helpers_lock() -> asyncio.Lock:
@@ -138,6 +149,7 @@ def _translate_insert_ignore(sql: str) -> str:
     return translated.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
 
 
+@lru_cache(maxsize=512)
 def _update_set_bounds(sql: str) -> tuple[int, int] | None:
     set_match = re.search(r"\bSET\b", sql, flags=re.IGNORECASE)
     if not set_match:
@@ -338,10 +350,11 @@ def _coerce_bool_param(value: Any) -> Any:
     return value
 
 
-def _bool_assignment_param_indexes(sql: str) -> set[int]:
+@lru_cache(maxsize=512)
+def _bool_assignment_param_indexes(sql: str) -> frozenset[int]:
     bounds = _update_set_bounds(sql)
     if not bounds:
-        return set()
+        return frozenset()
     start, end = bounds
     set_clause = sql[start:end]
     names = _bool_column_names()
@@ -352,22 +365,23 @@ def _bool_assignment_param_indexes(sql: str) -> set[int]:
         flags=re.IGNORECASE,
     ):
         indexes.add(_placeholder_count(sql[:start] + set_clause[: match.start()]))
-    return indexes
+    return frozenset(indexes)
 
 
-def _bool_insert_param_indexes(sql: str) -> set[int]:
+@lru_cache(maxsize=512)
+def _bool_insert_param_indexes(sql: str) -> frozenset[int]:
     parsed = _insert_columns_values(sql)
     if not parsed:
-        return set()
+        return frozenset()
     columns, values, values_start, _values_end = parsed
     value_items = _split_csv(values)
     if len(columns) != len(value_items):
-        return set()
+        return frozenset()
     indexes: set[int] = set()
     for column, (value, start, _end) in zip(columns, value_items):
         if column in _BOOL_COLUMNS and re.fullmatch(r"(?<!%)%s", value.strip()):
             indexes.add(_placeholder_count(sql[:values_start] + values[:start]))
-    return indexes
+    return frozenset(indexes)
 
 
 def _normalize_bool_assignment_params(sql: str, params: Any) -> Any:
@@ -777,13 +791,23 @@ class PostgresConnection:
 class PostgresConnect:
     def __init__(self, *args, **kwargs):
         self._conn: PostgresConnection | None = None
+        self._semaphore_acquired = False
 
     async def _ensure(self) -> PostgresConnection:
         if self._conn is None:
-            dsn = os.getenv("DATABASE_URL", "")
-            raw_conn = await psycopg.AsyncConnection.connect(dsn)
-            await _ensure_postgres_helpers(raw_conn)
-            self._conn = PostgresConnection(raw_conn)
+            semaphore = _get_connection_semaphore()
+            await semaphore.acquire()
+            self._semaphore_acquired = True
+            try:
+                dsn = os.getenv("DATABASE_URL", "")
+                raw_conn = await psycopg.AsyncConnection.connect(dsn)
+                await _ensure_postgres_helpers(raw_conn)
+                self._conn = PostgresConnection(raw_conn)
+            except Exception:
+                if self._semaphore_acquired:
+                    self._semaphore_acquired = False
+                    semaphore.release()
+                raise
         return self._conn
 
     def __await__(self):
@@ -794,7 +818,12 @@ class PostgresConnect:
 
     async def __aexit__(self, exc_type, exc, tb):
         conn = await self._ensure()
-        return await conn.__aexit__(exc_type, exc, tb)
+        try:
+            return await conn.__aexit__(exc_type, exc, tb)
+        finally:
+            if self._semaphore_acquired:
+                self._semaphore_acquired = False
+                _get_connection_semaphore().release()
 
 
 def connect(*args, **kwargs) -> PostgresConnect:

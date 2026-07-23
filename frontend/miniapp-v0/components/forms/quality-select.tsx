@@ -14,6 +14,7 @@ const qualityLabels: Record<string, string> = {
   standard: 'Стандарт',
   hd: 'HD',
   ultra: 'Ultra',
+  "1K": "1K",
   "2K": "2K",
   "4K": "4K",
 }

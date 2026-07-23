@@ -1,4 +1,5 @@
 import hashlib
+import html
 import hmac
 import json
 import logging
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
-from aiogram.types import LabeledPrice
+from aiogram.types import BufferedInputFile, LabeledPrice
 from bot import db as db_backend
 from aiohttp import web
 
@@ -90,6 +91,7 @@ from bot.keyboards import (
     get_create_hub_keyboard,
     get_edit_hub_keyboard,
     get_image_model_label,
+    get_image_result_keyboard,
     get_main_menu_button_keyboard,
     get_main_menu_keyboard,
     get_more_menu_keyboard,
@@ -276,6 +278,12 @@ IMAGE_MODELS = (
         ],
         "requires_reference": False,
         "max_references": 8,
+        "qualities": ["1K", "2K", "4K"],
+        "quality_costs": {
+            "1K": QUALITY_COSTS["1K"],
+            "2K": QUALITY_COSTS["2K"],
+            "4K": QUALITY_COSTS["4K"],
+        },
     },
     {
         "id": "banana_2",
@@ -296,6 +304,12 @@ IMAGE_MODELS = (
         ],
         "requires_reference": False,
         "max_references": 8,
+        "qualities": ["1K", "2K", "4K"],
+        "quality_costs": {
+            "1K": QUALITY_COSTS["1K"],
+            "2K": QUALITY_COSTS["2K"],
+            "4K": QUALITY_COSTS["4K"],
+        },
     },
     {
         "id": "seedream_edit",
@@ -1071,6 +1085,120 @@ def _normalize_video_ratio(ratio: str) -> str:
     if ratio == "Auto":
         return "auto"
     return ratio or "16:9"
+
+
+async def _deliver_miniapp_direct_image_result(
+    app: web.Application,
+    telegram_id: int,
+    launch_result: dict[str, Any],
+    *,
+    img_service: str,
+    img_ratio: str,
+    unit_cost: float,
+    prompt_hidden: bool,
+) -> None:
+    """Send Mini App direct image results to Telegram chat.
+
+    Async webhook results are delivered by the webhook handlers. Direct provider
+    results otherwise only appear in Mini App history, which makes them hard to
+    save from Telegram clients.
+    """
+    if launch_result.get("status") != "done" or not launch_result.get("saved_url"):
+        return
+
+    saved_url = str(launch_result.get("saved_url") or "")
+    task_id = str(launch_result.get("task_id") or "")
+    result_bytes = launch_result.get("result_bytes")
+    model_label = get_image_model_label(img_service)
+    caption = (
+        "✅ <b>Изображение готово</b>\n"
+        f"• Модель: <code>{html.escape(str(model_label))}</code>\n"
+        f"• ID: <code>{html.escape(task_id)}</code>"
+    )
+    if unit_cost:
+        caption += f"\n• Стоимость: <code>{html.escape(str(unit_cost))}🍌</code>"
+    if img_ratio:
+        caption += f"\n• Формат: <code>{html.escape(str(img_ratio).replace(':', '∶'))}</code>"
+    caption += "\n\n🎯 Промпт скрыт" if prompt_hidden else "\n\nСоздано через Mini App"
+    if saved_url:
+        caption += f"\n\n🔗 <a href='{html.escape(saved_url, quote=True)}'>Открыть оригинал</a>"
+
+    try:
+        if isinstance(result_bytes, (bytes, bytearray)):
+            document = BufferedInputFile(bytes(result_bytes), filename=f"{task_id or 'generated'}.png")
+        else:
+            document = saved_url
+        await app["bot"].send_document(
+            chat_id=telegram_id,
+            document=document,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=get_image_result_keyboard(saved_url, task_id=task_id),
+        )
+        logger.info(
+            "Mini App direct image result delivered to Telegram: telegram_id=%s task_id=%s saved_url=%s",
+            telegram_id,
+            task_id,
+            saved_url,
+        )
+    except Exception:
+        logger.exception(
+            "Mini App direct image Telegram delivery failed: telegram_id=%s task_id=%s saved_url=%s",
+            telegram_id,
+            task_id,
+            saved_url,
+        )
+
+
+async def _notify_miniapp_image_task_queued(
+    app: web.Application,
+    telegram_id: int,
+    launch_result: dict[str, Any],
+    *,
+    img_service: str,
+    img_ratio: str,
+    unit_cost: float,
+) -> None:
+    """Notify Telegram chat when a Mini App image task enters provider queue."""
+    if launch_result.get("status") != "queued" or not launch_result.get("task_id"):
+        return
+
+    task_id = str(launch_result.get("task_id") or "")
+    local_task_id = str(launch_result.get("local_task_id") or "")
+    public_task_id = local_task_id or task_id
+    model_label = get_image_model_label(img_service)
+    text = (
+        "⏳ <b>Задача принята в очередь</b>\n"
+        f"• Модель: <code>{html.escape(str(model_label))}</code>\n"
+        f"• ID: <code>{html.escape(public_task_id)}</code>"
+    )
+    if task_id and task_id != public_task_id:
+        text += f"\n• ID провайдера: <code>{html.escape(task_id)}</code>"
+    if unit_cost:
+        text += f"\n• Стоимость: <code>{html.escape(str(unit_cost))}🍌</code>"
+    if img_ratio:
+        text += f"\n• Формат: <code>{html.escape(str(img_ratio).replace(':', '∶'))}</code>"
+    text += "\n\nКогда файл будет готов, я пришлю его сюда."
+
+    try:
+        await app["bot"].send_message(
+            chat_id=telegram_id,
+            text=text,
+            parse_mode="HTML",
+        )
+        logger.info(
+            "Mini App queued image task notified: telegram_id=%s task_id=%s local_task_id=%s",
+            telegram_id,
+            task_id,
+            local_task_id,
+        )
+    except Exception:
+        logger.exception(
+            "Mini App queued image task notification failed: telegram_id=%s task_id=%s local_task_id=%s",
+            telegram_id,
+            task_id,
+            local_task_id,
+        )
 
 
 async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str, Any]]:
@@ -3297,6 +3425,25 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 status=500,
             )
 
+        await _notify_miniapp_image_task_queued(
+            request.app,
+            telegram_id,
+            launch_result,
+            img_service=img_service,
+            img_ratio=img_ratio,
+            unit_cost=unit_cost,
+        )
+
+        await _deliver_miniapp_direct_image_result(
+            request.app,
+            telegram_id,
+            launch_result,
+            img_service=img_service,
+            img_ratio=img_ratio,
+            unit_cost=unit_cost,
+            prompt_hidden=True,
+        )
+
         await credit_feed_prompt_repeat(
             int(source["id"]),
             user.id,
@@ -3487,6 +3634,25 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=500,
             )
 
+        prompt_hidden = bool(source_feed_gen_id)
+        await _notify_miniapp_image_task_queued(
+            request.app,
+            telegram_id,
+            launch_result,
+            img_service=img_service,
+            img_ratio=img_ratio,
+            unit_cost=unit_cost,
+        )
+        await _deliver_miniapp_direct_image_result(
+            request.app,
+            telegram_id,
+            launch_result,
+            img_service=img_service,
+            img_ratio=img_ratio,
+            unit_cost=unit_cost,
+            prompt_hidden=prompt_hidden,
+        )
+
         if source_feed_gen_id:
             await credit_feed_prompt_repeat(
                 immediate_parent_id,
@@ -3498,7 +3664,6 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             await use_prompt(prompt_id, user.id, credits_spent=unit_cost)
 
         fresh_user = await get_or_create_user(telegram_id)
-        prompt_hidden = bool(source_feed_gen_id)
         return web.json_response(
             {
                 "ok": True,

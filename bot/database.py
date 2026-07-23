@@ -1544,6 +1544,7 @@ async def update_user_referral_code(telegram_id: int, referral_code: str) -> boo
             (referral_code, telegram_id),
         )
         await db.commit()
+        _BOT_SETTING_CACHE.pop(setting_key, None)
         return True
 
 
@@ -6547,11 +6548,20 @@ async def _ensure_bot_settings_table(db: db_backend.Connection) -> None:
     """)
 
 
+_BOT_SETTING_CACHE: dict[str, tuple[float, str | None]] = {}
+_BOT_SETTING_CACHE_TTL_SECONDS = 5.0
+
+
 async def get_bot_setting(key: str, default: str | None = None) -> str | None:
     """Возвращает значение глобальной настройки бота."""
     setting_key = str(key or "").strip()[:80]
     if not setting_key:
         return default
+
+    now = time.monotonic()
+    cached = _BOT_SETTING_CACHE.get(setting_key)
+    if cached and cached[0] > now:
+        return cached[1] if cached[1] is not None else default
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
@@ -6561,7 +6571,9 @@ async def get_bot_setting(key: str, default: str | None = None) -> str | None:
             (setting_key,),
         )
         row = await cursor.fetchone()
-        return row["value"] if row else default
+        value = row["value"] if row else None
+        _BOT_SETTING_CACHE[setting_key] = (now + _BOT_SETTING_CACHE_TTL_SECONDS, value)
+        return value if value is not None else default
 
 
 async def set_bot_setting(
@@ -6595,6 +6607,7 @@ async def set_bot_setting(
             ),
         )
         await db.commit()
+        _BOT_SETTING_CACHE.pop(setting_key, None)
         return True
 
 

@@ -93,6 +93,8 @@ MEMORY_DUMP_INTERVAL_SECONDS = 3 * 3600
 DB_BACKUP_INTERVAL_SECONDS = 3 * 3600
 DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
 _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
+TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT = 8
+_TELEGRAM_WEBHOOK_SEMAPHORE = asyncio.Semaphore(TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT)
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -1019,7 +1021,6 @@ async def _send_video_file_from_url(
 def _should_send_prompt_followup(task, caption_prompt_threshold: int = 650) -> bool:
     if not task:
         return False
-    # Не отправляем промпт, если он скрыт (повтор из публичной ленты)
     if getattr(task, "source_feed_gen_id", None):
         return False
     return bool(_extract_used_prompt(task))
@@ -1064,7 +1065,7 @@ async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, r
     header_lines = [
         "✅ <b>Готово!</b>",
         "",
-        f"ID: <code>{html.escape(str(getattr(task, 'task_id', '')))}</code>",
+        f"ID: <code>{html.escape(str(_public_task_id(task, getattr(task, 'task_id', ''))))}</code>",
         "",
         f"Модель: <b>{html.escape(model_label)}</b>",
         f"Режим: {html.escape(mode_label)}",
@@ -1245,6 +1246,44 @@ def _task_callback_id(task, fallback_task_id: str | None = None) -> str:
     if task and getattr(task, "id", None):
         return str(task.id)
     return str(fallback_task_id or "")
+
+def _extract_task_id_aliases(task) -> list[str]:
+    request_data = _extract_task_request_data(task)
+    raw_aliases = request_data.get("task_id_aliases") or []
+    if isinstance(raw_aliases, str):
+        raw_aliases = [raw_aliases]
+    aliases: list[str] = []
+    for value in raw_aliases:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in aliases:
+            aliases.append(normalized)
+    return aliases
+
+def _public_task_id(task, fallback_task_id: str | None = None) -> str:
+    for alias in _extract_task_id_aliases(task):
+        if alias.startswith("img_"):
+            return alias
+    stored_task_id = str(getattr(task, "task_id", "") or "").strip() if task else ""
+    if stored_task_id.startswith("img_"):
+        return stored_task_id
+    return stored_task_id or str(fallback_task_id or "")
+
+def _provider_task_id_line(task, fallback_task_id: str | None = None) -> str:
+    public_id = _public_task_id(task, fallback_task_id)
+    candidates = []
+    stored_task_id = str(getattr(task, "task_id", "") or "").strip() if task else ""
+    if stored_task_id:
+        candidates.append(stored_task_id)
+    for alias in _extract_task_id_aliases(task):
+        candidates.append(alias)
+    fallback = str(fallback_task_id or "").strip()
+    if fallback:
+        candidates.append(fallback)
+    for candidate in candidates:
+        if candidate and candidate != public_id and not candidate.startswith("img_"):
+            return f"\n• ID провайдера: <code>{_html_fragment(candidate)}</code>"
+    return ""
+
 
 def _build_plain_result_link_text(
     *,
@@ -1794,7 +1833,8 @@ async def handle_telegram_webhook(
 
         async def _process_update():
             try:
-                await dp.feed_update(bot, update)
+                async with _TELEGRAM_WEBHOOK_SEMAPHORE:
+                    await dp.feed_update(bot, update)
             except TelegramBadRequest as e:
                 error_msg = str(e).lower()
                 if (
@@ -3404,10 +3444,12 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             model_label = _get_task_model_label(
                 task.model if task else None, task.type if task else None
             )
+            display_task_id = _public_task_id(task, task_id)
             full_caption = (
                 f"✅ <b>{'Видео' if is_video else 'Изображение'} готово</b>\n"
                 f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
-                f"• ID: <code>{_html_fragment(task_id)}</code>"
+                f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+                f"{_provider_task_id_line(task, task_id)}"
             )
             if task.cost:
                 full_caption += f"\n• Стоимость: <code>{_html_fragment(task.cost)}🍌</code>"
@@ -3519,14 +3561,6 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 else:
                     # Image
                     image_bytes = await _download_remote_bytes(result_url, timeout_seconds=30)
-                    if not is_video:
-                        if _should_send_prompt_followup(task):
-                            try:
-                                await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
-                            except Exception as prompt_e:
-                                logger.error(
-                                    f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
-                                )
                     preview_sent = False
                     preview_caption = _build_single_result_caption(_with_original_link(full_caption, result_url), task, reference_preview_urls)
                     if image_bytes:
@@ -3583,6 +3617,13 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 if sent_media:
                     if is_video:
                         await complete_video_task(task_id, result_url)
+                    elif _should_send_prompt_followup(task):
+                        try:
+                            await _send_used_prompt_message(bot_instance, telegram_id, task, result_url)
+                        except Exception as prompt_e:
+                            logger.error(
+                                f"Failed to send prompt follow-up to {telegram_id}: {prompt_e}"
+                            )
                 else:
                     await _send_plain_result_link(
                         bot_instance,

@@ -888,6 +888,67 @@ def _build_image_variant_prompt(
     )
 
 
+def _format_prompt_caption_line(prompt: str | None, *, hidden: bool = False, limit: int = 700) -> str:
+    if hidden:
+        return "\n\n📝 <b>Промпт:</b> скрыт, это повтор из ленты"
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        return ""
+    if len(prompt_text) > limit:
+        prompt_text = prompt_text[: limit - 1].rstrip() + "…"
+    return f"\n\n📝 <b>Промпт:</b>\n<pre>{html.escape(prompt_text)}</pre>"
+
+
+def _format_public_task_id_lines(provider_task_id: str | None, local_task_id: str | None = None) -> tuple[str, str]:
+    provider_id = str(provider_task_id or "").strip()
+    local_id = str(local_task_id or "").strip()
+    public_id = local_id or provider_id
+    provider_line = ""
+    if provider_id and provider_id != public_id:
+        provider_line = f"• ID провайдера: <code>{html.escape(provider_id)}</code>\n"
+    return html.escape(public_id), provider_line
+
+
+
+async def _send_used_prompt_message_to_chat(
+    send_message,
+    prompt: str | None,
+    *,
+    task_id: str | None,
+    model_label: str | None = None,
+    hidden: bool = False,
+) -> None:
+    if hidden:
+        return
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        return
+    header = "📝 <b>Использованный промпт</b>\n"
+    if task_id:
+        header += f"ID: <code>{html.escape(str(task_id))}</code>\n"
+    if model_label:
+        header += f"Модель: <code>{html.escape(str(model_label))}</code>\n"
+    header += "\n"
+
+    def block(chunk: str) -> str:
+        return f"<blockquote expandable><code>{html.escape(chunk)}</code></blockquote>"
+
+    first_budget = max(500, 3900 - len(header) - 80)
+    if len(prompt_text) <= first_budget:
+        await send_message(header + block(prompt_text), parse_mode="HTML")
+        return
+
+    await send_message(header + block(prompt_text[:first_budget]), parse_mode="HTML")
+    rest = prompt_text[first_budget:]
+    chunk_size = 3200
+    for idx, start in enumerate(range(0, len(rest), chunk_size), start=2):
+        chunk = rest[start:start + chunk_size]
+        await send_message(
+            f"📝 <b>Промпт, продолжение {idx}</b>\n\n{block(chunk)}",
+            parse_mode="HTML",
+        )
+
+
 def _snapshot_reference_images(reference_images: list[str] | None) -> list[str]:
     """Freeze the exact reference set for every launched image task."""
     if not reference_images:
@@ -1013,6 +1074,7 @@ async def _start_image_generation_task(
     parent_generation_id: Optional[int] = None,
     action_type: Optional[str] = None,
     prompt_source_id: Optional[int] = None,
+    on_task_created=None,
 ):
     """Launch one image generation task and persist enough data for repeats."""
     runtime_img_service = img_service
@@ -1109,6 +1171,12 @@ async def _start_image_generation_task(
         reference_images[:3],
         len(prompt or ""),
     )
+
+    if on_task_created:
+        try:
+            await on_task_created(local_task_id)
+        except Exception:
+            logger.exception("Image local task notification failed: local_task_id=%s", local_task_id)
 
     if runtime_img_service in {"banana_2", "nano-banana-2-lite"}:
         image_callback_url = (
@@ -2306,6 +2374,20 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
         parse_mode="HTML",
     )
 
+    async def notify_local_task_created(local_task_id: str):
+        try:
+            await progress_message.edit_text(
+                "🔁 <b>Повтор поставлен в запуск</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• ID: <code>{local_task_id}</code>\n"
+                f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+                f"• Референсы: <code>{len(reference_images)}</code>\n\n"
+                "Жду ответ провайдера.",
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest:
+            pass
+
     try:
         launch_result = await _start_image_generation_task(
             user=user,
@@ -2322,6 +2404,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=source_feed_gen_id,
             action_type="repeat" if source_feed_gen_id else None,
+            on_task_created=notify_local_task_created,
         )
         await progress_message.delete()
 
@@ -2333,10 +2416,17 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
                     repeat_task_id=str(launch_result.get("task_id") or ""),
                     credits_spent=unit_cost,
                 )
+
+            queued_task_id = str(launch_result["task_id"])
+            local_task_id = str(launch_result.get("local_task_id") or "")
+            public_task_id, provider_id_line = _format_public_task_id_lines(
+                queued_task_id, local_task_id
+            )
             await callback.message.answer(
                 "🚀 <b>Повторная генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{launch_result['task_id']}</code>\n"
+                f"• ID: <code>{public_task_id}</code>\n"
+                f"{provider_id_line}"
                 f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
                 "Результат придёт в этот чат.",
                 parse_mode="HTML",
@@ -2352,10 +2442,11 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             result_bytes = launch_result["result_bytes"]
             saved_url = launch_result["saved_url"]
             await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result_bytes, filename="repeated.png"),
+                photo=types.BufferedInputFile(result_bytes, filename=f"{launch_result['task_id']}.png"),
                 caption=(
                     "✅ <b>Повтор готов</b>\n"
                     f"• Модель: <code>{model_label}</code>\n"
+                    f"• ID: <code>{launch_result['task_id']}</code>\n"
                     f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
                 ),
                 parse_mode="HTML",
@@ -2367,7 +2458,14 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
                 callback.message.answer_document,
                 result_bytes,
                 saved_url,
-                filename="repeated_original.png",
+                filename=f"{launch_result['task_id']}_original.png",
+            )
+            await _send_used_prompt_message_to_chat(
+                callback.message.answer,
+                prompt,
+                task_id=launch_result["task_id"],
+                model_label=model_label,
+                hidden=bool(data.get("repeat_prompt_hidden")),
             )
         else:
             if unit_cost > 0 and not is_admin:
@@ -2456,6 +2554,20 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
         parse_mode="HTML",
     )
 
+    async def notify_local_task_created(local_task_id: str):
+        try:
+            await progress_message.edit_text(
+                "🔁 <b>Повтор поставлен в запуск</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• ID: <code>{local_task_id}</code>\n"
+                f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+                f"• Референсы: <code>{len(reference_images)}</code>\n\n"
+                "Жду ответ провайдера.",
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest:
+            pass
+
     try:
         launch_result = await _start_image_generation_task(
             user=user,
@@ -2472,6 +2584,7 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
             source_feed_gen_id=source_feed_gen_id,
             parent_generation_id=source_feed_gen_id,
             action_type="repeat" if source_feed_gen_id else None,
+            on_task_created=notify_local_task_created,
         )
         await progress_message.delete()
 
@@ -2483,10 +2596,17 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
                     repeat_task_id=str(launch_result.get("task_id") or ""),
                     credits_spent=unit_cost,
                 )
+
+            queued_task_id = str(launch_result["task_id"])
+            local_task_id = str(launch_result.get("local_task_id") or "")
+            public_task_id, provider_id_line = _format_public_task_id_lines(
+                queued_task_id, local_task_id
+            )
             await callback.message.answer(
                 "🚀 <b>Повторная генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
-                f"• ID: <code>{launch_result['task_id']}</code>\n"
+                f"• ID: <code>{public_task_id}</code>\n"
+                f"{provider_id_line}"
                 f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}\n\n"
                 "Результат придёт в этот чат.",
                 parse_mode="HTML",
@@ -2502,10 +2622,11 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
             result_bytes = launch_result["result_bytes"]
             saved_url = launch_result["saved_url"]
             await callback.message.answer_photo(
-                photo=types.BufferedInputFile(result_bytes, filename="repeated.png"),
+                photo=types.BufferedInputFile(result_bytes, filename=f"{launch_result['task_id']}.png"),
                 caption=(
                     "✅ <b>Повтор готов</b>\n"
                     f"• Модель: <code>{model_label}</code>\n"
+                    f"• ID: <code>{launch_result['task_id']}</code>\n"
                     f"• Списано: <code>{unit_cost}</code>🍌 {'(админ бесплатно)' if is_admin else ''}"
                 ),
                 parse_mode="HTML",
@@ -2517,7 +2638,14 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
                 callback.message.answer_document,
                 result_bytes,
                 saved_url,
-                filename="repeated_original.png",
+                filename=f"{launch_result['task_id']}_original.png",
+            )
+            await _send_used_prompt_message_to_chat(
+                callback.message.answer,
+                prompt,
+                task_id=launch_result["task_id"],
+                model_label=model_label,
+                hidden=bool(source_feed_gen_id),
             )
         else:
             if unit_cost > 0 and not is_admin:
@@ -8119,9 +8247,31 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     )
 
     started_task_ids = []
+    started_task_infos = []
+    created_task_ids = []
     immediate_success_count = 0
     refunded_count = 0
     current_local_task_id = None
+
+    async def notify_local_task_created(local_task_id: str):
+        created_task_ids.append(local_task_id)
+        ids_preview = "\n".join(f"• <code>{task_id}</code>" for task_id in created_task_ids[:6])
+        extra_count = len(created_task_ids) - 6
+        if extra_count > 0:
+            ids_preview += f"\n• ещё <code>{extra_count}</code>"
+        try:
+            await processing_msg.edit_text(
+                "🖼 <b>Задача создана и отправляется провайдеру</b>\n"
+                f"• Модель: <code>{model_label}</code>\n"
+                f"• Формат: <code>{ratio_label}</code>\n"
+                f"• Количество: <code>{img_count}</code>\n"
+                f"• Референсы: <code>{len(reference_images)}</code>\n\n"
+                f"{ids_preview}\n\n"
+                "Жду ответ провайдера.",
+                parse_mode="HTML",
+            )
+        except TelegramBadRequest:
+            pass
 
     try:
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
@@ -8152,6 +8302,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 img_nsfw_checker=img_nsfw_checker,
                 nsfw_enabled=nsfw_enabled,
                 callback_url=callback_url,
+                on_task_created=notify_local_task_created,
             )
             current_local_task_id = launch_result.get(
                 "local_task_id"
@@ -8159,6 +8310,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
 
             if launch_result["status"] == "queued":
                 started_task_ids.append(launch_result["task_id"])
+                started_task_infos.append((launch_result["task_id"], launch_result.get("local_task_id")))
                 current_local_task_id = None
             elif launch_result["status"] == "done":
                 immediate_success_count += 1
@@ -8166,12 +8318,13 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 saved_url = launch_result["saved_url"]
                 await message.answer_document(
                     document=types.BufferedInputFile(
-                        result_bytes, filename=f"generated_{index + 1}.png"
+                        result_bytes, filename=f"{launch_result['task_id']}.png"
                     ),
                     caption=(
                         "✅ <b>Изображение готово</b>\n"
                         f"• Вариант: <code>{index + 1}/{img_count}</code>\n"
                         f"• Модель: <code>{model_label}</code>\n"
+                        f"• ID: <code>{launch_result['task_id']}</code>\n"
                         f"• Списано: <code>{unit_cost}</code>🍌\n"
                         "• Отправлено без сжатия"
                     ),
@@ -8179,6 +8332,12 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                     reply_markup=get_image_result_keyboard(
                         saved_url, task_id=launch_result["task_id"]
                     ),
+                )
+                await _send_used_prompt_message_to_chat(
+                    message.answer,
+                    variant_prompt,
+                    task_id=launch_result["task_id"],
+                    model_label=model_label,
                 )
                 current_local_task_id = None
             else:
@@ -8189,9 +8348,14 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         await processing_msg.delete()
 
         if started_task_ids:
-            ids_preview = "\n".join(
-                f"• <code>{task_id}</code>" for task_id in started_task_ids[:6]
-            )
+            id_lines = []
+            for task_id, local_task_id in started_task_infos[:6]:
+                public_task_id, provider_id_line = _format_public_task_id_lines(task_id, local_task_id)
+                line = f"• <code>{public_task_id}</code>"
+                if provider_id_line:
+                    line += f"\n  {provider_id_line.strip()}"
+                id_lines.append(line)
+            ids_preview = "\n".join(id_lines)
             await message.answer(
                 "🚀 <b>Генерация запущена</b>\n"
                 f"• Модель: <code>{model_label}</code>\n"
@@ -8202,6 +8366,7 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 "Обычно результат приходит в течение 1-3 минут.",
                 parse_mode="HTML",
             )
+
 
         if refunded_count:
             await message.answer(

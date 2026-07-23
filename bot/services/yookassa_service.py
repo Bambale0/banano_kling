@@ -58,7 +58,7 @@ class YooKassaService:
         last_exc: Optional[Exception] = None
         for attempt in range(3):
             try:
-                payment = Payment.create(payload, str(uuid.uuid4()))
+                payment = await asyncio.to_thread(Payment.create, payload, str(uuid.uuid4()))
                 logger.info("YooKassa payment created: %s", payment.id)
                 return {
                     "Success": True,
@@ -85,7 +85,7 @@ class YooKassaService:
             return None
 
         try:
-            payment = Payment.find_one(payment_id)
+            payment = await asyncio.to_thread(Payment.find_one, payment_id)
             return {
                 "id": payment.id,
                 "status": payment.status,

@@ -117,7 +117,9 @@ class NanoBananaProService:
         self.fallback_provider = fallback_provider
 
     async def _post(self, endpoint: str, payload: Dict) -> Optional[Dict]:
-        resp = await self.primary_provider._post(endpoint, payload)
+        resp = None
+        if hasattr(self.primary_provider, "_post"):
+            resp = await self.primary_provider._post(endpoint, payload)
         if resp is not None:
             return resp
         if self.fallback_provider is not None and hasattr(self.fallback_provider, "_post"):
@@ -126,7 +128,9 @@ class NanoBananaProService:
         return None
 
     async def _get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
-        resp = await self.primary_provider._get(endpoint, params)
+        resp = None
+        if hasattr(self.primary_provider, "_get"):
+            resp = await self.primary_provider._get(endpoint, params)
         if resp is not None:
             return resp
         if self.fallback_provider is not None and hasattr(self.fallback_provider, "_get"):
@@ -221,7 +225,16 @@ class NanoBananaProService:
         callback_url: str = None,
     ) -> Optional[Dict]:
         if hasattr(self.primary_provider, "generate_image"):
-            return await self.primary_provider.generate_image(prompt, aspect_ratio, resolution, image_input, output_format)
+            result = await self.primary_provider.generate_image(
+                prompt, aspect_ratio, resolution, image_input, output_format
+            )
+            if result is not None:
+                if isinstance(result, (bytes, bytearray)):
+                    return {"image_bytes": bytes(result)}
+                return result
+            logger.info(
+                "Nano Banana Pro: primary sync provider failed, trying queued provider path"
+            )
 
         task_id = await self.create_task(
             prompt, image_input, aspect_ratio, resolution, output_format, callback_url
@@ -420,31 +433,31 @@ ULTRA DETAIL & QUALITY BOOST:
             await self._session.close()
 
 
-# --- Инициализация: primary kie.ai, fallback api.apiyi.com (Gemini) ---
+# --- Инициализация: prefer Gemini-compatible APIYI, fallback to kie.ai ---
 
-_primary_kie = ProviderClient(
+_kie_provider = ProviderClient(
     api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
     base_url="https://api.kie.ai",
 )
 
-_fallback_gemini = None
+_gemini_provider = None
 if config.NANO_BANANA_PRO_FALLBACK_API_KEY and config.NANO_BANANA_PRO_FALLBACK_BASE_URL:
-    _fallback_gemini = NanoBananaProGeminiProvider(
+    _gemini_provider = NanoBananaProGeminiProvider(
         api_key=config.NANO_BANANA_PRO_FALLBACK_API_KEY,
         base_url=config.NANO_BANANA_PRO_FALLBACK_BASE_URL,
     )
 
-if _fallback_gemini:
+if _gemini_provider:
     logger.info(
-        "Nano Banana Pro: using kie.ai as primary, api.apiyi.com (Gemini) as fallback"
+        "Nano Banana Pro: using APIYI Gemini-compatible provider as primary, kie.ai as fallback"
     )
     nano_banana_pro_service = NanoBananaProService(
-        primary_provider=_primary_kie,
-        fallback_provider=_fallback_gemini,
+        primary_provider=_gemini_provider,
+        fallback_provider=_kie_provider,
     )
 else:
     logger.info("Nano Banana Pro: using kie.ai as primary")
     nano_banana_pro_service = NanoBananaProService(
-        primary_provider=_primary_kie,
+        primary_provider=_kie_provider,
         fallback_provider=None,
     )

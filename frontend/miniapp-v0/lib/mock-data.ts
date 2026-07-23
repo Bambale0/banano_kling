@@ -97,6 +97,8 @@ export const mockImageModels: ImageModel[] = [
     ],
     requires_reference: false,
     max_references: 14,
+    qualities: ['1K', '2K', '4K'],
+    quality_costs: { '1K': 2.5, '2K': 2.5, '4K': 3.5 },
   },
   {
     id: 'banana_2',
@@ -117,6 +119,8 @@ export const mockImageModels: ImageModel[] = [
     ],
     requires_reference: false,
     max_references: 14,
+    qualities: ['1K', '2K', '4K'],
+    quality_costs: { '1K': 2.5, '2K': 2.5, '4K': 3.5 },
   },
   {
     id: 'seedream_edit',
