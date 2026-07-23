@@ -1,22 +1,29 @@
-"""Compatibility adapter for deployments that still use the old YooKassa alias.
+"""Compatibility adapter for code paths that still use the old provider name.
 
-The product now uses FreeKassa. Keeping ``yookassa_service`` as an import alias
-lets older Telegram/Mini App call sites migrate without a flag-day rewrite and
-without loading the YooKassa SDK.
+The product now uses FreeKassa. This module contains no YooKassa SDK calls and
+cannot activate YooKassa; every operation delegates to ``freekassa_service``.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from bot.config import config
 from bot.services.freekassa_service import freekassa_service
 
-logger = logging.getLogger(__name__)
+# Some legacy webhook/Mini App code reads these instance attributes. Map them to
+# FreeKassa values so stale code fails safely without restoring YooKassa secrets.
+for _name, _value in {
+    "YOOKASSA_SHOP_ID": config.FREEKASSA_MERCHANT_ID,
+    "YOOKASSA_SECRET_KEY": config.FREEKASSA_SECRET_WORD,
+    "YOOKASSA_WEBHOOK_SECRET": config.FREEKASSA_SECRET_WORD_2,
+}.items():
+    if not hasattr(config, _name):
+        setattr(config, _name, _value)
 
 
 class FreeKassaLegacyAliasService:
-    """Expose the old method names while executing FreeKassa operations."""
+    """Expose old method names while executing only FreeKassa operations."""
 
     @property
     def enabled(self) -> bool:
@@ -76,8 +83,6 @@ class FreeKassaLegacyAliasService:
             Callable[[str], Awaitable[Dict[str, Any]]]
         ] = None,
     ) -> List[Dict[str, Any]]:
-        # Old Mini App clients may still save provider='yookassa'. Reconcile
-        # those rows through the FreeKassa merchant API during the transition.
         return await freekassa_service.poll_pending_transactions(
             limit=limit,
             providers=("yookassa",),
@@ -99,5 +104,5 @@ class FreeKassaLegacyAliasService:
         return str(order_id) if order_id else None
 
 
-# Deliberately retained symbol for compatibility with existing imports.
+# Deliberately retained import symbol; implementation is FreeKassa-only.
 yookassa_service = FreeKassaLegacyAliasService()
