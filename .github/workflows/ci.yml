@@ -77,7 +77,7 @@ jobs:
           pip install --quiet pytest pytest-asyncio pytest-mock
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
-      - name: Run blocking internal API regression tests
+      - name: Run blocking internal and payment regression tests
         run: |
           pytest \
             tests/test_internal_admin_api.py \
@@ -86,6 +86,7 @@ jobs:
             tests/test_notification_worker.py \
             tests/test_webhook_handler.py \
             tests/test_config.py \
+            tests/standalone/test_freekassa_service.py \
             -v \
             --tb=short \
             -x
@@ -135,8 +136,10 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           LAVA_SECRET_KEY: ${{ secrets.LAVA_SECRET_KEY }}
           LAVA_WEBHOOK_SECRET: ${{ secrets.LAVA_WEBHOOK_SECRET }}
-          YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}
-          YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}
+          FREEKASSA_MERCHANT_ID: ${{ secrets.FREEKASSA_MERCHANT_ID }}
+          FREEKASSA_SECRET_WORD: ${{ secrets.FREEKASSA_SECRET_WORD }}
+          FREEKASSA_SECRET_WORD_2: ${{ secrets.FREEKASSA_SECRET_WORD_2 }}
+          FREEKASSA_API_KEY: ${{ secrets.FREEKASSA_API_KEY }}
           WEBHOOK_HOST: ${{ secrets.WEBHOST_HOST }}
         run: |
           pytest tests/live/ -v --tb=short -x
