@@ -105,7 +105,7 @@ async def handle_internal_stats(request: web.Request) -> web.Response:
 
 
 def setup_internal_api(app: web.Application, secret: str, version: str = "") -> None:
-    """Регистрирует internal API роуты и middleware."""
+    """Регистрирует internal API, а также автономные payment routes."""
     app["internal_api_secret"] = secret
     app["bot_version"] = version
 
@@ -113,9 +113,15 @@ def setup_internal_api(app: web.Application, secret: str, version: str = "") -> 
     app.middlewares.append(internal_auth_middleware)
 
     router = app.router
-
     router.add_get(f"{_INTERNAL_PREFIX}/health", handle_internal_health)
     router.add_get(f"{_INTERNAL_PREFIX}/stats", handle_internal_stats)
+
+    # Payment webhooks are registered here to keep provider-specific setup out of
+    # the already large main.py. setup_internal_api runs while the aiohttp app is
+    # still being assembled, before AppRunner freezes the router.
+    from bot.handlers.freekassa_payments import setup_freekassa_routes
+
+    setup_freekassa_routes(app)
 
     logger.info(
         "Internal API registered: prefix=%s, routes=health, stats",
