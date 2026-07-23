@@ -89,15 +89,9 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 
-    location /yookassa/webhook {
-        # Endpoint for YooKassa webhook callbacks
-        # Important: YooKassa will POST JSON payloads to this endpoint.
-        # Recommendations:
-        # - Use TLS (HTTPS) for this endpoint (server is already configured for 443)
-        # - Keep client_max_body_size sufficiently large for receipts (50m set globally)
-        # - Disable proxy_request_buffering so POST bodies are streamed to the backend
-        # - Increase timeouts to allow backend processing if necessary
-        proxy_pass http://127.0.0.1:1888/yookassa/webhook;
+    location /freekassa/webhook {
+        # FreeKassa Result URL: POST form-data, plain-text YES on success.
+        proxy_pass http://127.0.0.1:1888/freekassa/webhook;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -106,25 +100,16 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
 
-        # Stream request body to upstream without buffering on disk
         proxy_request_buffering off;
-
-        # Timeouts
         proxy_connect_timeout 5s;
         proxy_send_timeout 30s;
         proxy_read_timeout 90s;
-
-        # Don't buffer responses from the upstream (useful for immediate 200 replies)
         proxy_buffering off;
-
-        # Ensure large request bodies are accepted
-        client_max_body_size 50m;
+        client_max_body_size 1m;
         client_body_buffer_size 128k;
 
-        # Allow only POST for webhook (other methods will be proxied but backend should reject)
         limit_except POST {
-            # Optionally return 405 for non-POST requests at the nginx level
-            # return 405;
+            deny all;
         }
     }
 
