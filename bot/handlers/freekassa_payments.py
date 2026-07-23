@@ -5,7 +5,7 @@ import contextlib
 import html
 import logging
 import time
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from aiogram import F, Router, types
@@ -37,7 +37,6 @@ from bot.handlers.payments import (
 )
 from bot.keyboards import get_back_keyboard, get_main_menu_keyboard
 from bot.payment_utils import (
-    TELEGRAM_STARS_PROVIDER,
     package_bonus_credits,
     package_stars_amount,
     total_package_credits,
@@ -54,43 +53,40 @@ FREEKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 FREEKASSA_RECONCILE_BATCH_SIZE = 100
 
 
-def _payment_method_keyboard(
+def _provider_keyboard(
     package_id: str,
     *,
-    has_stars: bool,
-    has_freekassa: bool,
-    has_crypto: bool,
-    has_lava: bool,
+    stars: bool,
+    freekassa: bool,
+    crypto: bool,
+    lava: bool,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if has_freekassa:
+    if freekassa:
         builder.button(
             text="💳 Карта / СБП (FreeKassa)",
             callback_data=f"buy_freekassa_{package_id}",
         )
-    if has_stars:
+    if stars:
         builder.button(
-            text="⭐ Telegram Stars",
-            callback_data=f"buy_stars_{package_id}",
+            text="⭐ Telegram Stars", callback_data=f"buy_stars_{package_id}"
         )
-    if has_crypto:
+    if crypto:
         builder.button(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
         )
-    if has_lava:
+    if lava:
         builder.button(
-            text="🌐 Оплата через Lava",
-            callback_data=f"buy_lava_{package_id}",
+            text="🌐 Оплата через Lava", callback_data=f"buy_lava_{package_id}"
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def _freekassa_confirmation_keyboard(
-    payment_url: str,
-    order_id: str,
+def _confirmation_keyboard(
+    payment_url: str, order_id: str
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Перейти к оплате", url=payment_url)
@@ -116,16 +112,25 @@ def _request_ip(request: web.Request) -> str:
 def _amount_matches(actual: Any, expected: Any) -> bool:
     try:
         return Decimal(normalize_amount(actual)) == Decimal(normalize_amount(expected))
-    except (ValueError, InvalidOperation):
+    except (ValueError, TypeError):
         return False
+
+
+async def _render_completed_payment(message, transaction, bonus_text: str = "") -> None:
+    await message.edit_text(
+        "✅ <b>Оплата подтверждена</b>\n"
+        f"• Начислено: <code>{transaction.credits}</code> бананов\n"
+        f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("choose_pay_"))
 async def choose_payment_method_freekassa(
-    callback: types.CallbackQuery,
-    state: FSMContext,
+    callback: types.CallbackQuery, state: FSMContext
 ):
-    """Render the provider list with FreeKassa replacing YooKassa."""
+    """Show all enabled providers with FreeKassa replacing YooKassa."""
 
     package_id = callback.data.replace("choose_pay_", "", 1)
     package = preset_manager.get_package(package_id)
@@ -133,7 +138,7 @@ async def choose_payment_method_freekassa(
         await callback.answer("Пакет не найден", show_alert=True)
         return
 
-    lava_offer_id, _lava_currency = _package_lava_offer_config(package)
+    lava_offer_id, _ = _package_lava_offer_config(package)
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_freekassa = freekassa_service.enabled
     has_crypto = cryptobot_service.enabled
@@ -151,8 +156,6 @@ async def choose_payment_method_freekassa(
     package_bonus = package_bonus_credits(package)
     promo_bonus = _promo_bonus_for_package(promo, package)
     total_credits = total_package_credits(package, promo_bonus)
-    stars_amount = package_stars_amount(package)
-
     bonus_lines: list[str] = []
     if package_bonus > 0:
         bonus_lines.append(f"Бонус пакета: <code>{package_bonus}</code>🍌")
@@ -161,20 +164,20 @@ async def choose_payment_method_freekassa(
             f"Промокод <code>{html.escape(promo.code)}</code>: "
             f"+<code>{promo_bonus}</code>🍌"
         )
-    bonus_text = f"\n{'\n'.join(bonus_lines)}" if bonus_lines else ""
+    bonus_text = ("\n" + "\n".join(bonus_lines)) if bonus_lines else ""
 
     await callback.message.edit_text(
         "💳 <b>Выберите способ оплаты</b>\n\n"
         f"Пакет: <b>{html.escape(str(package['name']))}</b>\n"
         f"Бананы: <code>{total_credits}</code>🍌\n"
         f"Сумма: <code>{package['price_rub']}</code>₽ / "
-        f"<code>{stars_amount}</code>⭐{bonus_text}",
-        reply_markup=_payment_method_keyboard(
+        f"<code>{package_stars_amount(package)}</code>⭐{bonus_text}",
+        reply_markup=_provider_keyboard(
             package_id,
-            has_stars=has_stars,
-            has_freekassa=has_freekassa,
-            has_crypto=has_crypto,
-            has_lava=has_lava,
+            stars=has_stars,
+            freekassa=has_freekassa,
+            crypto=has_crypto,
+            lava=has_lava,
         ),
         parse_mode="HTML",
     )
@@ -184,10 +187,9 @@ async def choose_payment_method_freekassa(
 @router.callback_query(F.data.startswith("buy_freekassa_"))
 @router.callback_query(F.data.startswith("buy_yookassa_"))
 async def initiate_freekassa_payment(
-    callback: types.CallbackQuery,
-    state: FSMContext,
+    callback: types.CallbackQuery, state: FSMContext
 ):
-    """Create a signed FreeKassa SCI checkout for a package."""
+    """Create a signed hosted FreeKassa checkout."""
 
     if not freekassa_service.enabled:
         await callback.message.edit_text(
@@ -213,12 +215,11 @@ async def initiate_freekassa_payment(
     promo_bonus = _promo_bonus_for_package(promo, package)
     total_credits = total_package_credits(package, promo_bonus)
     order_id = f"{callback.from_user.id}_{int(time.time() * 1000)}_{package_id}"
-    description = f"Покупка {total_credits} бананов ({package['name']})"
 
     result = await freekassa_service.create_payment(
         amount_rub=float(package["price_rub"]),
         order_id=order_id,
-        description=description,
+        description=f"Покупка {total_credits} бананов ({package['name']})",
     )
     if not result.get("ok"):
         await callback.message.edit_text(
@@ -266,19 +267,14 @@ async def initiate_freekassa_payment(
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package['price_rub']}</code> ₽\n\n"
         "Нажмите кнопку ниже. После оплаты бананы начислятся автоматически.",
-        reply_markup=_freekassa_confirmation_keyboard(
-            str(result["payment_url"]),
-            order_id,
-        ),
+        reply_markup=_confirmation_keyboard(str(result["payment_url"]), order_id),
         parse_mode="HTML",
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("check_freekassa_"))
-async def check_freekassa_payment(
-    callback: types.CallbackQuery,
-):
+async def check_freekassa_payment(callback: types.CallbackQuery):
     order_id = callback.data.replace("check_freekassa_", "", 1)
     transaction = await get_transaction_by_order(order_id)
     if not transaction or transaction.provider not in {"freekassa", "yookassa"}:
@@ -287,17 +283,16 @@ async def check_freekassa_payment(
 
     telegram_id = await get_telegram_id_by_user_id(transaction.user_id)
     if telegram_id != callback.from_user.id:
-        await callback.answer("Этот платёж создан для другого пользователя", show_alert=True)
+        await callback.answer(
+            "Этот платёж создан для другого пользователя", show_alert=True
+        )
         return
 
     if transaction.status == "completed":
-        await callback.message.edit_text(
-            "✅ <b>Оплата подтверждена</b>\n"
-            f"• Начислено: <code>{transaction.credits}</code> бананов\n"
-            f"• Сумма: <code>{transaction.amount_rub}</code> ₽"
-            f"{_transaction_promo_text(transaction)}",
-            reply_markup=get_main_menu_keyboard(),
-            parse_mode="HTML",
+        await _render_completed_payment(
+            callback.message,
+            transaction,
+            _transaction_promo_text(transaction),
         )
         await callback.answer()
         return
@@ -305,11 +300,10 @@ async def check_freekassa_payment(
     payment = await freekassa_service.get_payment(merchant_order_id=order_id)
     if not payment or payment.get("status") == "webhook_only":
         await callback.answer(
-            "Платёж ещё не подтверждён. После оплаты FreeKassa пришлёт уведомление автоматически.",
+            "Платёж ещё не подтверждён. FreeKassa уведомит бот автоматически.",
             show_alert=True,
         )
         return
-
     if payment.get("failed"):
         await update_transaction_status(order_id, "failed")
         await callback.answer("Платёж отменён или не прошёл", show_alert=True)
@@ -320,47 +314,48 @@ async def check_freekassa_payment(
 
     if not _amount_matches(payment.get("amount"), transaction.amount_rub):
         logger.error(
-            "FreeKassa manual check amount mismatch order=%s actual=%s expected=%s",
+            "FreeKassa manual amount mismatch: order=%s actual=%s expected=%s",
             order_id,
             payment.get("amount"),
             transaction.amount_rub,
         )
-        await callback.answer("Сумма платежа не совпала. Напишите в поддержку.", show_alert=True)
+        await callback.answer(
+            "Сумма платежа не совпала. Напишите в поддержку.", show_alert=True
+        )
         return
     currency = str(payment.get("currency") or freekassa_service.currency).upper()
     if currency != freekassa_service.currency:
-        await callback.answer("Валюта платежа не совпала. Напишите в поддержку.", show_alert=True)
+        await callback.answer(
+            "Валюта платежа не совпала. Напишите в поддержку.", show_alert=True
+        )
         return
 
     provider_payment_id = str(payment.get("id") or "").strip()
     if provider_payment_id:
         await update_transaction_payment_id(order_id, provider_payment_id)
 
-    result = await _complete_transaction(order_id, bot=callback.bot)
-    if not result.get("ok"):
+    completion = await _complete_transaction(order_id, bot=callback.bot)
+    if not completion.get("ok"):
         await callback.answer("Не удалось завершить оплату", show_alert=True)
         return
-    if result.get("already_completed"):
+    if completion.get("already_completed"):
         await callback.answer("Оплата уже была зачислена ранее", show_alert=True)
         return
 
-    transaction = result["transaction"]
     bonus_text = (
-        _build_promo_bonus_text(result.get("promo_bonus") or {})
-        + _build_bonus_text(result.get("referral_bonus") or {})
+        _build_promo_bonus_text(completion.get("promo_bonus") or {})
+        + _build_bonus_text(completion.get("referral_bonus") or {})
     )
-    await callback.message.edit_text(
-        "✅ <b>Оплата FreeKassa подтверждена</b>\n"
-        f"• Начислено: <code>{transaction.credits}</code> бананов\n"
-        f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode="HTML",
+    await _render_completed_payment(
+        callback.message,
+        completion["transaction"],
+        bonus_text,
     )
     await callback.answer()
 
 
 async def handle_freekassa_webhook(request: web.Request) -> web.Response:
-    """Validate and atomically process a FreeKassa Result URL callback."""
+    """Validate FreeKassa Result URL data and complete the order atomically."""
 
     if not freekassa_service.enabled:
         return web.Response(text="FreeKassa disabled", status=503)
@@ -393,10 +388,9 @@ async def handle_freekassa_webhook(request: web.Request) -> web.Response:
     if not transaction or transaction.provider not in {"freekassa", "yookassa"}:
         logger.warning("FreeKassa transaction not found: order=%s", order_id)
         return web.Response(text="Order not found", status=404)
-
     if not _amount_matches(payload.get("AMOUNT"), transaction.amount_rub):
         logger.error(
-            "Rejected FreeKassa webhook amount mismatch: order=%s actual=%s expected=%s",
+            "Rejected FreeKassa amount mismatch: order=%s actual=%s expected=%s",
             order_id,
             payload.get("AMOUNT"),
             transaction.amount_rub,
@@ -413,7 +407,7 @@ async def handle_freekassa_webhook(request: web.Request) -> web.Response:
         return web.Response(text="YES")
     if not completion.get("ok"):
         logger.error(
-            "FreeKassa webhook completion failed: order=%s reason=%s",
+            "FreeKassa completion failed: order=%s reason=%s",
             order_id,
             completion.get("reason"),
         )
@@ -426,7 +420,6 @@ async def handle_freekassa_webhook(request: web.Request) -> web.Response:
         + _build_bonus_text(completion.get("referral_bonus") or {})
     )
     bot = request.app.get("bot")
-
     if bot and telegram_id:
         try:
             await _notify_user(
@@ -467,7 +460,7 @@ async def handle_freekassa_webhook(request: web.Request) -> web.Response:
     return web.Response(text="YES")
 
 
-async def _freekassa_reconcile_loop(app: web.Application) -> None:
+async def _reconcile_loop(app: web.Application) -> None:
     await asyncio.sleep(FREEKASSA_RECONCILE_INTERVAL_SECONDS)
     while True:
         try:
@@ -475,21 +468,19 @@ async def _freekassa_reconcile_loop(app: web.Application) -> None:
                 limit=FREEKASSA_RECONCILE_BATCH_SIZE,
                 providers=("freekassa",),
                 complete_order=lambda order_id: _complete_transaction(
-                    order_id,
-                    bot=app.get("bot"),
+                    order_id, bot=app.get("bot")
                 ),
             )
             if results:
                 logger.info(
-                    "FreeKassa reconcile tick: checked=%s completed=%s failed=%s pending=%s",
+                    "FreeKassa reconcile: checked=%s completed=%s failed=%s pending=%s",
                     len(results),
                     sum(
-                        1
+                        item.get("action") in {"completed", "already_completed"}
                         for item in results
-                        if item.get("action") in {"completed", "already_completed"}
                     ),
-                    sum(1 for item in results if item.get("action") == "failed"),
-                    sum(1 for item in results if item.get("action") == "still_pending"),
+                    sum(item.get("action") == "failed" for item in results),
+                    sum(item.get("action") == "still_pending" for item in results),
                 )
         except asyncio.CancelledError:
             raise
@@ -498,13 +489,10 @@ async def _freekassa_reconcile_loop(app: web.Application) -> None:
         await asyncio.sleep(FREEKASSA_RECONCILE_INTERVAL_SECONDS)
 
 
-async def _freekassa_cleanup_context(app: web.Application):
+async def _cleanup_context(app: web.Application):
     task = None
     if freekassa_service.api_enabled:
-        task = asyncio.create_task(
-            _freekassa_reconcile_loop(app),
-            name="freekassa-reconcile",
-        )
+        task = asyncio.create_task(_reconcile_loop(app), name="freekassa-reconcile")
     yield
     if task:
         task.cancel()
@@ -517,7 +505,7 @@ def setup_freekassa_routes(app: web.Application) -> None:
     paths = {freekassa_service.webhook_path, "/webhook/freekassa"}
     for path in paths:
         app.router.add_post(path, handle_freekassa_webhook)
-    app.cleanup_ctx.append(_freekassa_cleanup_context)
+    app.cleanup_ctx.append(_cleanup_context)
     logger.info(
         "FreeKassa routes registered: paths=%s enabled=%s api_enabled=%s verify_ip=%s",
         sorted(paths),
