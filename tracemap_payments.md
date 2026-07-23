@@ -4,27 +4,31 @@
 
 ### Telegram bot
 
-- package selection callbacks in `bot/handlers/payments.py`
+- package and provider selection in `bot/handlers/freekassa_payments.py`
+- legacy Stars/CryptoBot/Lava callbacks in `bot/handlers/payments.py`
 - promo code input
 - Telegram Stars pre-checkout + successful payment events
 
 ### Mini App
 
 - `POST /mini-app/api/create-payment`
+- old internal provider value `yookassa` is a compatibility alias that executes FreeKassa only
 
 ### Providers
 
+- `FreeKassa` — card/SBP hosted checkout
 - `CryptoBot`
 - `Lava`
-- `YooKassa`
 - `Telegram Stars`
 - legacy `T-Bank`
+
+YooKassa SDK and production client were removed.
 
 ## 2. Core payment flow
 
 `user selects package`
 -> package resolved from `data/price.json`
--> transaction created in `transactions`
+-> local transaction created in `transactions`
 -> provider-specific invoice/session created
 -> pending transaction stored with provider metadata
 -> user completes payment externally
@@ -35,6 +39,30 @@
 -> UI notification / balance refresh
 
 ## 3. Provider completion map
+
+### FreeKassa
+
+- `/freekassa/webhook`
+- `/webhook/freekassa`
+
+Flow:
+
+-> parse POST form-data
+-> validate source IP when enabled
+-> validate merchant ID
+-> validate MD5 signature with Secret word 2
+-> resolve local merchant order ID
+-> compare exact expected amount
+-> persist FreeKassa `intid`
+-> duplicate completion guard
+-> `_complete_transaction`
+-> answer plain `YES`
+
+Checkout URL:
+
+-> SCI parameters `m`, `oa`, `currency`, `o`, `s`
+-> signature with Secret word 1
+-> hosted `https://pay.fk.money/` page
 
 ### CryptoBot
 
@@ -54,19 +82,6 @@
 -> duplicate completion guard
 -> `_complete_transaction`
 
-### YooKassa
-
-- `/yookassa/webhook`
-- `/webhook/yookassa`
-
-Flow:
-
--> optional signature verification
--> payment id extraction
--> order resolution
--> duplicate completion guard
--> `_complete_transaction`
-
 ### Telegram Stars
 
 `pre_checkout_query` / `successful_payment`
@@ -76,13 +91,16 @@ Flow:
 
 ## 4. Reconciliation loops
 
-### YooKassa reconcile
+### FreeKassa reconcile
 
-Background loop in `bot/main.py`:
+Cleanup context registered from `bot/handlers/freekassa_payments.py`:
 
-- polls pending transactions
-- resolves late confirmations
-- logs tick summary
+- enabled only when `FREEKASSA_API_KEY` is configured
+- polls pending `freekassa` transactions every five minutes
+- uses `/v1/orders` by merchant `paymentId`
+- resolves paid, failed and pending states
+
+Old Mini App rows with provider=`yookassa` are handled by the FreeKassa-only compatibility adapter.
 
 ### Lava reconcile
 
@@ -114,12 +132,16 @@ On successful completion system may:
 - same order must not complete twice
 - provider webhook retry must be safe
 - balance increment must happen only after verified completion
+- callback merchant, signature and amount must match
 - failed payment must not unlock credits
 - provider/order correlation must survive delayed callback
+- FreeKassa receives `YES` only after successful processing or an already-completed order
 
 ## 8. Operational watchpoints
 
-- provider secret not configured
-- provider sends status before backend sees transaction
+- merchant ID or secret words not configured
+- Nginx does not forward `X-Real-IP`
+- Result URL in merchant cabinet points to an obsolete path
+- provider sends callback before backend sees transaction
 - payment already completed via webhook before reconcile loop
-- stale pending rows not cleaned
+- optional API key is missing, so manual status polling is unavailable
