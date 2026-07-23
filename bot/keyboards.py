@@ -1196,7 +1196,7 @@ def get_payment_method_keyboard(
     if has_lava:
         lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
         builder.button(
-            text=f"🌍 Международная оплата (Lava){lava_suffix}",
+            text=f"Оплата картой {lava_suffix}",
             callback_data=f"buy_lava_{package_id}",
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")

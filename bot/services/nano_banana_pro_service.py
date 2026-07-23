@@ -1,4 +1,5 @@
 import logging
+import base64
 from typing import Dict, List, Optional
 
 import aiohttp
@@ -19,6 +20,56 @@ RESOLUTION_ALIASES = {
     "2K": "2K",
     "4K": "4K",
 }
+
+
+def _extract_image_bytes_from_gemini_response(
+    response: Dict,
+) -> tuple[Optional[bytes], Dict[str, int]]:
+    candidates = response.get("candidates", [])
+    if not isinstance(candidates, list):
+        return None, {"candidates": 0, "parts": 0, "text_parts": 0, "thought_parts": 0}
+
+    stats = {
+        "candidates": len(candidates),
+        "parts": 0,
+        "text_parts": 0,
+        "thought_parts": 0,
+    }
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content", {})
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts", [])
+        if not isinstance(parts, list):
+            continue
+
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            stats["parts"] += 1
+            if part.get("text"):
+                stats["text_parts"] += 1
+            if part.get("thought"):
+                stats["thought_parts"] += 1
+
+            inline = part.get("inlineData") or part.get("inline_data")
+            if not isinstance(inline, dict):
+                continue
+            img_b64 = inline.get("data")
+            if not img_b64:
+                continue
+            try:
+                return base64.b64decode(img_b64), stats
+            except Exception:
+                logger.warning(
+                    "Nano Banana Pro Gemini provider: invalid inline image payload"
+                )
+                return None, stats
+
+    return None, stats
 
 
 def _normalize_resolution(resolution: str) -> str:
@@ -397,23 +448,23 @@ ULTRA DETAIL & QUALITY BOOST:
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        for part in parts:
-                            if "inlineData" in part:
-                                import base64
-                                img_b64 = part["inlineData"]["data"]
-                                img_bytes = base64.b64decode(img_b64)
-                                logger.info(
-                                    "Nano Banana Pro Gemini provider: image %d bytes, size=%s, mime=%s",
-                                    len(img_bytes),
-                                    image_size,
-                                    part["inlineData"].get("mimeType", "unknown"),
-                                )
-                                return img_bytes
+                    img_bytes, stats = _extract_image_bytes_from_gemini_response(data)
+                    if img_bytes is not None:
+                        logger.info(
+                            "Nano Banana Pro Gemini provider: image %d bytes, size=%s, candidates=%s, parts=%s",
+                            len(img_bytes),
+                            image_size,
+                            stats["candidates"],
+                            stats["parts"],
+                        )
+                        return img_bytes
                     logger.warning(
-                        "Nano Banana Pro Gemini provider: no inlineData in response"
+                        "Nano Banana Pro Gemini provider: no image part in response "
+                        "(candidates=%s, parts=%s, text_parts=%s, thought_parts=%s)",
+                        stats["candidates"],
+                        stats["parts"],
+                        stats["text_parts"],
+                        stats["thought_parts"],
                     )
                     return None
                 else:

@@ -112,7 +112,7 @@ def _user_display_parts(user: Any) -> tuple[str, str]:
             for value in (
                 getattr(user, "first_name", None),
                 getattr(user, "last_name", None),
-        )
+            )
             if value and str(value).strip()
         )
 
@@ -1317,33 +1317,43 @@ async def handle_lava_webhook(request: web.Request):
         if not raw_body:
             return web.Response(status=200)
 
-        logger.info(
-            "Lava webhook raw headers: %s raw_body: %s",
-            dict(request.headers),
-            raw_body[:500] if raw_body else "empty",
-        )
         try:
             data = json.loads(raw_body.decode("utf-8"))
         except Exception:
             logger.warning("Lava webhook received invalid JSON")
             return web.Response(status=200)
 
-        logger.info(
-            "Lava webhook parsed event_type=%s status=%s data=%s",
-            lava_service.webhook_event_type(data) or "unknown",
-            lava_service.webhook_status(data) or "unknown",
-            json.dumps(data)[:1000],
-        )
+        # Validate HMAC signature (MANDATORY — Lava docs: HMAC-SHA256 of raw body)
+        import hashlib
+        import hmac
+
+        lava_secret = config.LAVA_WEBHOOK_SECRET
+        if not lava_secret:
+            logger.error("LAVA_WEBHOOK_SECRET is not configured — rejecting all webhooks")
+            return web.Response(
+                status=403,
+                text='{"error": "webhook secret not configured"}',
+                content_type="application/json",
+            )
+
+        try:
+            raw_str = raw_body.decode("utf-8")
+            sig = data.get("signature", "")
+            expected = hmac.new(lava_secret.encode(), raw_str.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(sig, expected):
+                logger.warning(
+                    "Rejected Lava webhook: invalid HMAC signature contract_id=%s",
+                    lava_service.webhook_contract_id(data) or "unknown",
+                )
+                return web.Response(status=401)
+        except Exception:
+            logger.exception("Error while validating Lava webhook signature")
+            return web.Response(status=401)
 
         if not (
             lava_service.is_success_webhook(data)
             or lava_service.is_failed_webhook(data)
         ):
-            logger.info(
-                "Lava webhook ignored: not success/failed event event_type=%s status=%s",
-                lava_service.webhook_event_type(data) or "unknown",
-                lava_service.webhook_status(data) or "unknown",
-            )
             return web.Response(status=200)
 
         contract_id = lava_service.webhook_contract_id(data)
