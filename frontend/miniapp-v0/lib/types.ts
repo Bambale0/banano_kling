@@ -83,12 +83,14 @@ export interface PaymentPackage {
   credits: number
   price_rub: number
   price_stars?: number
+  lava_offer_id?: string
+  lava_currency?: string
   bonus_credits?: number
   popular?: boolean
   description?: string
 }
 
-export type PaymentProvider = 'telegram_stars' | 'yookassa'
+export type PaymentProvider = 'telegram_stars' | 'yookassa' | 'lava'
 
 export interface CreatePaymentResponse {
   ok: true

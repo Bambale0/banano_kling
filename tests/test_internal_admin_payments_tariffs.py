@@ -252,6 +252,14 @@ def test_tariff_validation_rejects_duplicate_packages() -> None:
         tariffs._validate_tariff_config(config)
 
 
+def test_tariff_validation_accepts_lava_package_fields() -> None:
+    config = valid_price_config()
+    config["packages"][0]["lava_offer_id"] = "1911ef9d-4d81-4a92-9a4f-1224ff5a6c9c"
+    config["packages"][0]["lava_currency"] = "RUB"
+
+    tariffs._validate_tariff_config(config)
+
+
 def test_atomic_tariff_write_replaces_complete_file(tmp_path: Path) -> None:
     path = tmp_path / "price.json"
     path.write_bytes(b'{"old":true}\n')

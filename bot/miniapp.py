@@ -120,6 +120,7 @@ from bot.payment_utils import (
 from bot.quality_pricing import QUALITY_COSTS
 from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
+from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_local_upload_path,
@@ -224,6 +225,15 @@ def _payment_package_payload(package: dict[str, Any]) -> dict[str, Any]:
     payload = dict(package)
     payload["price_stars"] = package_stars_amount(package)
     return payload
+
+
+def _miniapp_package_lava_offer_config(package: dict[str, Any]) -> tuple[str, str]:
+    package_id = str(package.get("id") or "")
+    offer_id = str(package.get("lava_offer_id") or "").strip()
+    if offer_id:
+        currency = str(package.get("lava_currency") or "RUB").strip().upper() or "RUB"
+        return offer_id, currency
+    return config.lava_offer_id_for_package(package_id), "RUB"
 
 
 IMAGE_MODELS = (
@@ -2536,6 +2546,7 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
             "telegram_stars": TELEGRAM_STARS_PROVIDER,
             "xtr": TELEGRAM_STARS_PROVIDER,
             "yookassa": "yookassa",
+            "lava": "lava",
         }.get(raw_provider)
 
         if not provider:
@@ -2624,6 +2635,71 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
                     "payment_url": payment_url,
                     "invoice_url": payment_url,
                     "stars_amount": stars_amount,
+                    "credits": total_credits,
+                    "promo_bonus_credits": promo_bonus,
+                    "promo_code": promo.code if promo and promo_bonus > 0 else "",
+                }
+            )
+
+        if provider == "lava":
+            if not lava_service.enabled:
+                return web.json_response(
+                    {"ok": False, "error": "Lava not configured"}, status=500
+                )
+
+            offer_id, lava_currency = _miniapp_package_lava_offer_config(package)
+            if not offer_id:
+                return web.json_response(
+                    {"ok": False, "error": "Lava offer is not configured for package"},
+                    status=500,
+                )
+
+            result = await lava_service.create_invoice(
+                email=config.LAVA_DEFAULT_EMAIL,
+                offer_id=offer_id,
+                currency=lava_currency,
+                buyer_language="RU",
+                client_utm={
+                    "telegram_id": str(telegram_id),
+                    "order_id": order_id,
+                    "package_id": str(package_id),
+                },
+            )
+
+            if not result or not result.get("ok"):
+                return web.json_response(
+                    {"ok": False, "error": result or "Failed to create payment"},
+                    status=500,
+                )
+
+            payment_id = lava_service.extract_invoice_id(result)
+            payment_url = lava_service.extract_payment_url(result)
+            if not payment_id or not payment_url:
+                return web.json_response(
+                    {"ok": False, "error": "Failed to get Lava payment link"},
+                    status=500,
+                )
+
+            await create_transaction(
+                order_id=order_id,
+                user_id=user.id,
+                payment_id=payment_id,
+                provider="lava",
+                credits=total_credits,
+                amount_rub=float(package["price_rub"]),
+                status="pending",
+                promo_code_id=promo.id if promo and promo_bonus > 0 else None,
+                promo_code=promo.code if promo and promo_bonus > 0 else None,
+                promo_bonus_credits=promo_bonus,
+            )
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "provider": "lava",
+                    "order_id": order_id,
+                    "payment_id": payment_id,
+                    "payment_url": payment_url,
                     "credits": total_credits,
                     "promo_bonus_credits": promo_bonus,
                     "promo_code": promo.code if promo and promo_bonus > 0 else "",

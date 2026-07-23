@@ -21,6 +21,19 @@ def _preview_lava_error_body(raw_text: str, limit: int = 500) -> str:
     return text
 
 
+def _lava_error_text(response: Dict[str, Any]) -> str:
+    error = response.get("error")
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict):
+        for key in ("error", "message"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    raw = response.get("raw")
+    return raw if isinstance(raw, str) else ""
+
+
 class LavaService:
     """lava.top Public API client.
 
@@ -138,6 +151,7 @@ class LavaService:
         buyer_language: Optional[str] = None,
         periodicity: Optional[str] = None,
         client_utm: Optional[Dict[str, Any]] = None,
+        _allow_product_fallback: bool = True,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "email": email,
@@ -157,7 +171,118 @@ class LavaService:
         if client_utm:
             payload["clientUtm"] = client_utm
 
-        return await self._request("POST", "/api/v3/invoice", payload=payload)
+        response = await self._request("POST", "/api/v3/invoice", payload=payload)
+        if response.get("ok") or not _allow_product_fallback:
+            return response
+
+        error_text = _lava_error_text(response)
+        if "Product with offer id" not in error_text:
+            return response
+
+        resolved_offer_id = await self.resolve_offer_id_from_product_id(
+            product_id=offer_id,
+            currency=currency,
+        )
+        if not resolved_offer_id or resolved_offer_id == offer_id:
+            return response
+
+        logger.info(
+            "Resolved Lava productId=%s to offerId=%s for currency=%s",
+            offer_id,
+            resolved_offer_id,
+            currency,
+        )
+        return await self.create_invoice(
+            email=email,
+            offer_id=resolved_offer_id,
+            currency=currency,
+            amount=amount,
+            payment_provider=payment_provider,
+            payment_method=payment_method,
+            buyer_language=buyer_language,
+            periodicity=periodicity,
+            client_utm=client_utm,
+            _allow_product_fallback=False,
+        )
+
+    async def resolve_offer_id_from_product_id(
+        self,
+        product_id: str,
+        currency: str,
+    ) -> Optional[str]:
+        normalized_product_id = str(product_id or "").strip()
+        normalized_currency = str(currency or "").strip().upper()
+        if not normalized_product_id:
+            return None
+
+        next_path = "/api/v2/products"
+        max_pages = 20
+
+        for _ in range(max_pages):
+            response = await self._request("GET", next_path)
+            if not response.get("ok"):
+                return None
+
+            items = response.get("items") or []
+            if isinstance(items, list):
+                resolved = self._find_offer_id_in_products(
+                    items=items,
+                    product_id=normalized_product_id,
+                    currency=normalized_currency,
+                )
+                if resolved:
+                    return resolved
+
+            next_page = response.get("nextPage")
+            if not isinstance(next_page, str) or not next_page.strip():
+                return None
+            next_path = next_page.strip()
+
+        return None
+
+    @staticmethod
+    def _find_offer_id_in_products(
+        *,
+        items: list[Any],
+        product_id: str,
+        currency: str,
+    ) -> Optional[str]:
+        fallback_offer_id: Optional[str] = None
+
+        for item in items:
+            data = item.get("data") if isinstance(item, dict) else None
+            if not isinstance(data, dict) and isinstance(item, dict):
+                data = item
+            if not isinstance(data, dict):
+                continue
+            if str(data.get("id") or "").strip() != product_id:
+                continue
+
+            offers = data.get("offers") or []
+            if not isinstance(offers, list):
+                return None
+
+            for offer in offers:
+                if not isinstance(offer, dict):
+                    continue
+                offer_id = str(offer.get("id") or "").strip()
+                if not offer_id:
+                    continue
+                if fallback_offer_id is None:
+                    fallback_offer_id = offer_id
+
+                prices = offer.get("prices") or []
+                if not isinstance(prices, list):
+                    continue
+                for price in prices:
+                    if not isinstance(price, dict):
+                        continue
+                    if str(price.get("currency") or "").strip().upper() == currency:
+                        return offer_id
+
+            return fallback_offer_id
+
+        return None
 
     async def get_invoice(self, invoice_id: str) -> Optional[Dict[str, Any]]:
         response = await self._request("GET", f"/api/v2/invoices/{invoice_id}")

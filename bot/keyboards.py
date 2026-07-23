@@ -1176,7 +1176,6 @@ def get_payment_packages_keyboard(packages: list, promo_active: bool = False):
 
 def get_payment_method_keyboard(
     package_id: str,
-    has_yookassa: bool = True,
     has_crypto: bool = True,
     has_lava: bool = False,
     has_stars: bool = True,
@@ -1188,11 +1187,6 @@ def get_payment_method_keyboard(
         builder.button(
             text="⭐ Telegram Stars",
             callback_data=f"buy_stars_{package_id}",
-        )
-    if has_yookassa:
-        builder.button(
-            text="💳 Банковская карта (YooKassa)",
-            callback_data=f"buy_yookassa_{package_id}",
         )
     if has_crypto:
         builder.button(

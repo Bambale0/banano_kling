@@ -126,6 +126,18 @@ def _validate_tariff_config(config: dict[str, Any]) -> None:
                 field=f"packages[{index}].price_usd",
                 positive=True,
             )
+        if "lava_offer_id" in package:
+            lava_offer_id = str(package.get("lava_offer_id") or "").strip()
+            if not lava_offer_id or len(lava_offer_id) > 128:
+                raise CommandValidationError(
+                    f"packages[{index}].lava_offer_id is invalid"
+                )
+        if "lava_currency" in package:
+            lava_currency = str(package.get("lava_currency") or "").strip()
+            if not 2 <= len(lava_currency) <= 8:
+                raise CommandValidationError(
+                    f"packages[{index}].lava_currency is invalid"
+                )
 
     costs_reference = config.get("costs_reference")
     if not isinstance(costs_reference, dict):

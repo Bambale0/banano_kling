@@ -57,6 +57,15 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _package_lava_offer_config(package: dict) -> tuple[str, str]:
+    package_id = str(package.get("id") or "")
+    offer_id = str(package.get("lava_offer_id") or "").strip()
+    if offer_id:
+        currency = str(package.get("lava_currency") or "RUB").strip().upper() or "RUB"
+        return offer_id, currency
+    return config.lava_offer_id_for_package(package_id), "RUB"
+
+
 def _is_ignored_telegram_error(error: Exception) -> bool:
     error_msg = str(error).lower()
     return (
@@ -656,31 +665,23 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
         await callback.answer("Пакет не найден", show_alert=True)
         return
 
-    has_yookassa = yookassa_service.enabled
     has_crypto = cryptobot_service.enabled
-    has_lava = lava_service.enabled and bool(config.lava_offer_id_for_package(package_id))
+    lava_offer_id, _lava_currency = _package_lava_offer_config(package)
+    has_lava = lava_service.enabled and bool(lava_offer_id)
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
 
-    if not has_yookassa and not has_crypto and not has_lava and not has_stars:
+    if not has_crypto and not has_lava and not has_stars:
         await callback.message.edit_text(
             "❌ Платёжные системы временно недоступны.\nОбратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         return
 
-    available_count = sum(
-        1 for value in (has_yookassa, has_crypto, has_lava, has_stars) if value
-    )
+    available_count = sum(1 for value in (has_crypto, has_lava, has_stars) if value)
     if available_count == 1:
         await callback.answer()
         if has_stars:
             fake = callback.model_copy(update={"data": f"buy_stars_{package_id}"})
-            return await initiate_payment(fake, state)
-        if has_yookassa:
-            await callback.bot.answer_callback_query(
-                callback.id, text="Перенаправляем на оплату…"
-            )
-            fake = callback.model_copy(update={"data": f"buy_yookassa_{package_id}"})
             return await initiate_payment(fake, state)
         if has_crypto:
             fake = callback.model_copy(update={"data": f"buy_crypto_{package_id}"})
@@ -709,7 +710,7 @@ async def choose_payment_method(callback: types.CallbackQuery, state: FSMContext
         f"Сумма: <code>{package['price_rub']}</code>₽ / <code>{stars_amount}</code>⭐"
         f"{bonus_text}",
         reply_markup=get_payment_method_keyboard(
-            package_id, has_yookassa, has_crypto, has_lava, has_stars=has_stars
+            package_id, has_crypto, has_lava, has_stars=has_stars
         ),
         parse_mode="HTML",
     )
@@ -865,11 +866,12 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         return
 
     if provider == "lava":
-        offer_id = config.lava_offer_id_for_package(package_id)
+        offer_id, lava_currency = _package_lava_offer_config(package)
         if not offer_id:
             await callback.message.edit_text(
                 "Не удалось создать оплату: для пакета не задан Lava offerId.\n"
-                f"Проверьте переменную окружения <code>LAVA_OFFER_ID_{package_id.upper()}</code>.",
+                "Добавьте <code>lava_offer_id</code> в <code>data/price.json</code> "
+                f"или проверьте переменную окружения <code>LAVA_OFFER_ID_{package_id.upper()}</code>.",
                 reply_markup=get_back_keyboard("menu_topup"),
                 parse_mode="HTML",
             )
@@ -878,7 +880,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         result = await lava_service.create_invoice(
             email=config.LAVA_DEFAULT_EMAIL,
             offer_id=offer_id,
-            currency="USD",
+            currency=lava_currency,
             buyer_language="RU",
             client_utm={
                 "telegram_id": str(callback.from_user.id),
