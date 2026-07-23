@@ -22,12 +22,18 @@ class Config:
     TBANK_API_URL: str = os.getenv("TBANK_API_URL", "https://securepay.tinkoff.ru/v2/")
     TBANK_SUCCESS_URL: str = os.getenv("TBANK_SUCCESS_URL", "")
 
-    # YooKassa (legacy)
-    YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
-    YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
-    YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "")
-    YOOKASSA_WEBHOOK_SECRET: str = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "yookassa").lower()
+    # FreeKassa
+    FREEKASSA_MERCHANT_ID: str = os.getenv("FREEKASSA_MERCHANT_ID", "")
+    FREEKASSA_SECRET_WORD: str = os.getenv("FREEKASSA_SECRET_WORD", "")
+    FREEKASSA_SECRET_WORD_2: str = os.getenv("FREEKASSA_SECRET_WORD_2", "")
+    FREEKASSA_API_KEY: str = os.getenv("FREEKASSA_API_KEY", "")
+    FREEKASSA_CURRENCY: str = os.getenv("FREEKASSA_CURRENCY", "RUB").upper()
+    FREEKASSA_RETURN_URL: str = os.getenv("FREEKASSA_RETURN_URL", "")
+    FREEKASSA_FAILURE_URL: str = os.getenv("FREEKASSA_FAILURE_URL", "")
+    FREEKASSA_WEBHOOK_PATH: str = os.getenv(
+        "FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook"
+    )
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "freekassa").lower()
 
     # Telegram Stars
     TELEGRAM_STARS_ENABLED: bool = os.getenv("TELEGRAM_STARS_ENABLED", "1").lower() in (
@@ -85,29 +91,28 @@ class Config:
     INTERNAL_API_SECRET: str = os.getenv("INTERNAL_API_SECRET", "")
     KIE_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_WEBHOOK_HMAC_KEY", "")
     KIE_MARKET_WEBHOOK_PATH: str = os.getenv("KIE_MARKET_WEBHOOK_PATH", "/webhooks/kie")
-    
+
     # Nano Banana 2 fallback provider - Gemini-compatible (optional)
     NANOBANANA2_FALLBACK_API_KEY: str = os.getenv("NANOBANANA2_FALLBACK_API_KEY", "")
     NANOBANANA2_FALLBACK_BASE_URL: str = os.getenv(
         "NANOBANANA2_FALLBACK_BASE_URL", ""
     )
-    
+    NANOBANANA2_APIYI_MODEL: str = os.getenv("NANOBANANA2_APIYI_MODEL", "")
+
     # Nano Banana Pro fallback provider - Gemini-compatible (optional)
-    NANO_BANANA_PRO_FALLBACK_API_KEY: str = os.getenv("NANO_BANANA_PRO_FALLBACK_API_KEY", "")
+    NANO_BANANA_PRO_FALLBACK_API_KEY: str = os.getenv(
+        "NANO_BANANA_PRO_FALLBACK_API_KEY", ""
+    )
     NANO_BANANA_PRO_FALLBACK_BASE_URL: str = os.getenv(
         "NANO_BANANA_PRO_FALLBACK_BASE_URL", ""
     )
 
     # Legacy API Keys (optional fallbacks)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    PHOTO_PROMPT_MODEL: str = os.getenv(
-        "PHOTO_PROMPT_MODEL", "gpt-5-5"
-    )
+    PHOTO_PROMPT_MODEL: str = os.getenv("PHOTO_PROMPT_MODEL", "gpt-5-5")
 
     # APIYI Vision — analysis photo in prompt (like VK bot)
-    APIYI_VISION_MODEL: str = os.getenv(
-        "APIYI_VISION_MODEL", "gpt-5-4"
-    )
+    APIYI_VISION_MODEL: str = os.getenv("APIYI_VISION_MODEL", "gpt-5-4")
     APIYI_VISION_FALLBACK_MODELS: list[str] = field(default_factory=list)
     APIYI_BASE_URL: str = os.getenv(
         "APIYI_BASE_URL", "https://api.apiyi.com/v1"
@@ -210,7 +215,6 @@ class Config:
 
     @property
     def webhook_url(self) -> str:
-        # Normalize joining host and path to avoid double-slashes or missing slash
         host = (self.WEBHOOK_HOST or "").rstrip("/")
         path = self.WEBHOOK_PATH or "/webhook"
         if not path.startswith("/"):
@@ -222,14 +226,33 @@ class Config:
         return f"{self.WEBHOOK_HOST}/tbank/webhook"
 
     @property
+    def freekassa_notification_url(self) -> str:
+        path = self.FREEKASSA_WEBHOOK_PATH or "/freekassa/webhook"
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
+
+    # Transitional aliases for old Mini App code. They point only to FreeKassa
+    # values and cannot enable or authenticate the removed YooKassa integration.
+    @property
+    def YOOKASSA_RETURN_URL(self) -> str:  # noqa: N802
+        return self.FREEKASSA_RETURN_URL
+
+    @property
     def yookassa_notification_url(self) -> str:
-        return f"{self.WEBHOOK_HOST}/yookassa/webhook"
+        return self.freekassa_notification_url
 
     @property
     def payment_provider(self) -> str:
-        if self.PAYMENT_PROVIDER in {"cryptobot", "lava", "yookassa", "tbank", "telegram_stars"}:
+        if self.PAYMENT_PROVIDER in {
+            "cryptobot",
+            "lava",
+            "freekassa",
+            "tbank",
+            "telegram_stars",
+        }:
             return self.PAYMENT_PROVIDER
-        return "cryptobot"
+        return "freekassa" if self.has_freekassa else "cryptobot"
 
     @property
     def cryptobot_notification_url(self) -> str:
@@ -257,8 +280,17 @@ class Config:
         return mapping.get(package_id, "")
 
     @property
+    def has_freekassa(self) -> bool:
+        return bool(
+            self.FREEKASSA_MERCHANT_ID
+            and self.FREEKASSA_SECRET_WORD
+            and self.FREEKASSA_SECRET_WORD_2
+        )
+
+    @property
     def has_yookassa(self) -> bool:
-        return bool(self.YOOKASSA_SHOP_ID and self.YOOKASSA_SECRET_KEY)
+        """Deprecated compatibility flag; reports FreeKassa availability."""
+        return self.has_freekassa
 
     @property
     def kling_notification_url(self) -> str:
@@ -280,6 +312,7 @@ class Config:
         url = f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
         if self.KIE_AI_WEBHOOK_SECRET:
             import urllib.parse
+
             url += f"?secret={urllib.parse.quote(self.KIE_AI_WEBHOOK_SECRET)}"
         return url
 
