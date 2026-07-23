@@ -30,16 +30,42 @@ RESOLUTION_ALIASES = {
     "4K": "4K",
 }
 
-# Older handlers wrapped the real user prompt in a long identity-preservation
-# instruction. That wrapper noticeably changes APIYI/Gemini output compared with
-# the provider playground, so APIYI receives the original user request instead.
+# Gemini 3.1 Flash Image is the production/GA model behind Nano Banana 2.
+# Keep an environment-backed override for emergency provider migrations without
+# hard-coding another source-level change.
+DEFAULT_APIYI_MODEL = "gemini-3.1-flash-image"
+APIYI_MODEL = (
+    str(getattr(config, "NANOBANANA2_APIYI_MODEL", "") or "").strip()
+    or DEFAULT_APIYI_MODEL
+)
+
+# Explicitly match the least restrictive configurable Gemini safety setup.
+# Provider-level, non-configurable policy checks still apply and are reported
+# separately instead of being disguised as a technical failure.
+APIYI_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
+]
+
+# Legacy bot-side prompt engineering markers. Nano Banana 2 must receive the
+# user's request, not these wrappers. They are removed defensively here so all
+# callers (Telegram, Mini App, repeat/batch flows and Kie fallback) behave alike.
 _LEGACY_EDIT_PREFIX = "EDIT REQUEST (highest priority):"
 _LEGACY_REFERENCE_MARKER = "\n\nReference guidance:"
 _LEGACY_REFERENCE_ONLY_PREFIX = "Reference guidance:"
-_REFERENCE_ONLY_PROMPT = (
-    "Use the uploaded image as the visual reference. Preserve the person's natural "
-    "identity and facial features without beautifying, caricaturing, or smoothing the face."
-)
+_LEGACY_VARIANT_MARKER = "\n\nFor this single output:"
+_REFERENCE_ONLY_PROMPT = ""
+
+_POLICY_FINISH_REASONS = {
+    "SAFETY",
+    "IMAGE_SAFETY",
+    "PROHIBITED_CONTENT",
+    "BLOCKLIST",
+    "RECITATION",
+    "SPII",
+}
 
 
 def _normalize_resolution(resolution: str) -> str:
@@ -61,28 +87,29 @@ def _normalize_resolution(resolution: str) -> str:
 
 
 def _normalize_apiyi_prompt(prompt: str) -> tuple[str, bool]:
-    """Return the user prompt without legacy bot-side prompt engineering.
-
-    APIYI is intentionally the primary Nano Banana 2 provider. To keep its result
-    close to the APIYI playground, the service must not append quality boosters or
-    forward the old verbose ``Reference guidance`` wrapper.
-    """
+    """Return the original user request without legacy bot additions."""
 
     value = str(prompt or "").strip()
     if not value:
         return "", False
 
-    if value.startswith(_LEGACY_EDIT_PREFIX):
-        user_request = value[len(_LEGACY_EDIT_PREFIX) :].lstrip()
-        if _LEGACY_REFERENCE_MARKER in user_request:
-            user_request = user_request.split(_LEGACY_REFERENCE_MARKER, 1)[0].rstrip()
-        if user_request:
-            return user_request, user_request != value
+    changed = False
 
-    if value.startswith(_LEGACY_REFERENCE_ONLY_PREFIX):
+    if value.startswith(_LEGACY_EDIT_PREFIX):
+        value = value[len(_LEGACY_EDIT_PREFIX) :].lstrip()
+        changed = True
+        if _LEGACY_REFERENCE_MARKER in value:
+            value = value.split(_LEGACY_REFERENCE_MARKER, 1)[0].rstrip()
+
+    elif value.startswith(_LEGACY_REFERENCE_ONLY_PREFIX):
+        # Image-only requests are sent without a fabricated text instruction.
         return _REFERENCE_ONLY_PROMPT, True
 
-    return value, False
+    if _LEGACY_VARIANT_MARKER in value:
+        value = value.split(_LEGACY_VARIANT_MARKER, 1)[0].rstrip()
+        changed = True
+
+    return value, changed
 
 
 def _extract_inline_image(result: Dict[str, Any]) -> tuple[bytes, str] | None:
@@ -109,15 +136,92 @@ def _extract_inline_image(result: Dict[str, Any]) -> tuple[bytes, str] | None:
             try:
                 return (
                     base64.b64decode(encoded),
-                    str(inline_data.get("mimeType") or inline_data.get("mime_type") or "unknown"),
+                    str(
+                        inline_data.get("mimeType")
+                        or inline_data.get("mime_type")
+                        or "unknown"
+                    ),
                 )
             except Exception:
-                logger.exception("Nano Banana 2 APIYI returned invalid base64 image data")
+                logger.exception(
+                    "Nano Banana 2 APIYI returned invalid base64 image data"
+                )
     return None
 
 
+def _extract_apiyi_failure(result: Dict[str, Any]) -> tuple[str, list[dict]]:
+    """Extract the provider/model refusal reason without logging image payloads."""
+
+    reasons: list[str] = []
+    ratings: list[dict] = []
+
+    prompt_feedback = result.get("promptFeedback") or result.get("prompt_feedback")
+    if isinstance(prompt_feedback, dict):
+        block_reason = prompt_feedback.get("blockReason") or prompt_feedback.get(
+            "block_reason"
+        )
+        if block_reason:
+            reasons.append(str(block_reason).upper())
+        feedback_ratings = prompt_feedback.get("safetyRatings") or prompt_feedback.get(
+            "safety_ratings"
+        )
+        if isinstance(feedback_ratings, list):
+            ratings.extend(item for item in feedback_ratings if isinstance(item, dict))
+
+    candidates = result.get("candidates") or []
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            finish_reason = candidate.get("finishReason") or candidate.get(
+                "finish_reason"
+            )
+            if finish_reason:
+                reasons.append(str(finish_reason).upper())
+            candidate_ratings = candidate.get("safetyRatings") or candidate.get(
+                "safety_ratings"
+            )
+            if isinstance(candidate_ratings, list):
+                ratings.extend(
+                    item for item in candidate_ratings if isinstance(item, dict)
+                )
+
+    unique_reasons = list(dict.fromkeys(reason for reason in reasons if reason))
+    return ",".join(unique_reasons), ratings
+
+
+def _is_policy_failure(reason: str) -> bool:
+    values = {part.strip().upper() for part in str(reason or "").split(",")}
+    return bool(values & _POLICY_FINISH_REASONS)
+
+
+def _build_apiyi_payload(
+    *,
+    prompt: str,
+    reference_parts: List[Dict[str, Any]],
+    aspect_ratio: str,
+    resolution: str,
+) -> Dict[str, Any]:
+    parts: List[Dict[str, Any]] = []
+    if prompt:
+        parts.append({"text": prompt})
+    parts.extend(reference_parts)
+
+    return {
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": resolution,
+            },
+        },
+        "safetySettings": [dict(item) for item in APIYI_SAFETY_SETTINGS],
+    }
+
+
 class ProviderClient:
-    """Queued Kie.ai client used as the fallback for APIYI."""
+    """Queued Kie.ai client used as the technical fallback for APIYI."""
 
     def __init__(self, api_key: str, base_url: str):
         self.api_key = api_key
@@ -142,9 +246,9 @@ class ProviderClient:
                 f"{self.base_url}{endpoint}",
                 headers=headers,
                 json=payload,
-            ) as resp:
-                body = await resp.text()
-                if resp.status == 200:
+            ) as response:
+                body = await response.text()
+                if response.status == 200:
                     try:
                         parsed = json.loads(body)
                     except json.JSONDecodeError:
@@ -155,7 +259,7 @@ class ProviderClient:
                 logger.warning(
                     "Nano Banana 2 POST failed on provider %s: %s - %s",
                     self.base_url,
-                    resp.status,
+                    response.status,
                     body[:1000],
                 )
                 return None
@@ -175,21 +279,23 @@ class ProviderClient:
                 f"{self.base_url}{endpoint}",
                 headers=headers,
                 params=params,
-            ) as resp:
-                body = await resp.text()
-                if resp.status == 200:
+            ) as response:
+                body = await response.text()
+                if response.status == 200:
                     try:
                         parsed = json.loads(body)
                     except json.JSONDecodeError:
-                        logger.warning("Nano Banana 2 Kie status response is not JSON")
+                        logger.warning(
+                            "Nano Banana 2 Kie status response is not JSON"
+                        )
                         return None
                     return parsed if isinstance(parsed, dict) else None
 
-                if resp.status != 404:
+                if response.status != 404:
                     logger.warning(
                         "Nano Banana 2 GET failed on provider %s: %s - %s",
                         self.base_url,
-                        resp.status,
+                        response.status,
                         body[:1000],
                     )
                 else:
@@ -245,10 +351,6 @@ class NanoBanana2Service:
         if self.fallback_provider is not None and hasattr(
             self.fallback_provider, "_get"
         ):
-            logger.info(
-                "Falling back to secondary provider for Nano Banana 2 GET %s",
-                endpoint,
-            )
             return await self.fallback_provider._get(endpoint, params)
         return None
 
@@ -262,7 +364,8 @@ class NanoBanana2Service:
         callback_url: str = None,
         model: str = "nano-banana-2",
     ) -> Optional[str]:
-        if not prompt and not image_input:
+        clean_prompt, _ = _normalize_apiyi_prompt(prompt)
+        if not clean_prompt and not image_input:
             logger.warning("Nano Banana 2 create_task: no prompt and no image_input")
             return None
 
@@ -283,12 +386,13 @@ class NanoBanana2Service:
         if str(model or "").strip() in NANO_BANANA_2_LITE_MODEL_IDS:
             try:
                 logger.info(
-                    "Nano Banana 2 Lite create_task: refs=%s aspect_ratio=%s model=nano-banana-2-lite",
+                    "Nano Banana 2 Lite create_task: refs=%s aspect_ratio=%s model=nano-banana-2-lite prompt_len=%s",
                     len(normalized_image_input),
                     aspect_ratio,
+                    len(clean_prompt),
                 )
                 return await kie_market_service.create_nano_banana_2_lite_task(
-                    prompt=prompt,
+                    prompt=clean_prompt,
                     image_urls=normalized_image_input[:10],
                     aspect_ratio=aspect_ratio or "auto",
                     callback_url=callback_url,
@@ -301,7 +405,7 @@ class NanoBanana2Service:
         payload = {
             "model": "nano-banana-2",
             "input": {
-                "prompt": prompt,
+                "prompt": clean_prompt,
                 "aspect_ratio": aspect_ratio,
                 "resolution": normalized_resolution,
                 "output_format": output_format,
@@ -317,7 +421,7 @@ class NanoBanana2Service:
             len(normalized_image_input),
             aspect_ratio,
             normalized_resolution,
-            len(prompt or ""),
+            len(clean_prompt),
             payload["model"],
         )
 
@@ -361,9 +465,15 @@ class NanoBanana2Service:
         callback_url: str = None,
         model: str = "nano-banana-2",
     ) -> Optional[Dict]:
+        clean_prompt, stripped = _normalize_apiyi_prompt(prompt)
+        if stripped:
+            logger.info(
+                "Nano Banana 2 removed bot-side prompt additions before provider call"
+            )
+
         if str(model or "").strip() in NANO_BANANA_2_LITE_MODEL_IDS:
             task_id = await self.create_task(
-                prompt,
+                clean_prompt,
                 image_input,
                 aspect_ratio,
                 resolution,
@@ -371,26 +481,49 @@ class NanoBanana2Service:
                 callback_url,
                 model=model,
             )
-            return {"task_id": task_id} if task_id else None
+            return (
+                {
+                    "task_id": task_id,
+                    "provider": "kie_market",
+                    "provider_model": "nano-banana-2-lite",
+                }
+                if task_id
+                else None
+            )
 
+        primary_result: Optional[Dict] = None
         if hasattr(self.primary_provider, "generate_image"):
-            result = await self.primary_provider.generate_image(
-                prompt,
+            raw_result = await self.primary_provider.generate_image(
+                clean_prompt,
                 aspect_ratio,
                 resolution,
                 image_input,
                 output_format,
             )
-            if result is not None:
-                if isinstance(result, (bytes, bytearray)):
-                    return {"image_bytes": bytes(result)}
-                return result
+            if isinstance(raw_result, dict):
+                primary_result = raw_result
+                if raw_result.get("image_bytes"):
+                    return raw_result
+                if not raw_result.get("retryable", True):
+                    # A completed provider response (for example a model policy
+                    # refusal) is not a transport failure and must not silently
+                    # switch the user to a different model/provider behavior.
+                    return raw_result
+            elif isinstance(raw_result, (bytes, bytearray)):
+                return {
+                    "image_bytes": bytes(raw_result),
+                    "provider": "apiyi",
+                    "provider_model": APIYI_MODEL,
+                }
+            elif raw_result is not None:
+                return raw_result
+
             logger.info(
-                "Nano Banana 2 APIYI primary failed; trying Kie queued fallback"
+                "Nano Banana 2 APIYI technical failure; trying Kie queued fallback"
             )
 
         task_id = await self.create_task(
-            prompt,
+            clean_prompt,
             image_input,
             aspect_ratio,
             resolution,
@@ -398,7 +531,13 @@ class NanoBanana2Service:
             callback_url,
             model=model,
         )
-        return {"task_id": task_id} if task_id else None
+        if task_id:
+            return {
+                "task_id": task_id,
+                "provider": "kie",
+                "provider_model": "nano-banana-2",
+            }
+        return primary_result
 
     async def wait_for_completion(
         self,
@@ -449,7 +588,7 @@ class NanoBanana2Service:
 class NanoBanana2GeminiProvider:
     """APIYI Gemini-compatible primary provider for Nano Banana 2."""
 
-    MODEL = "gemini-3.1-flash-image-preview"
+    MODEL = APIYI_MODEL
 
     def __init__(self, api_key: str, base_url: str):
         self.api_key = api_key
@@ -547,7 +686,7 @@ class NanoBanana2GeminiProvider:
         resolution: str = "4K",
         image_input: List[str] = None,
         output_format: str = "png",
-    ) -> Optional[bytes]:
+    ) -> Dict[str, Any]:
         session = await self._get_session()
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -555,55 +694,61 @@ class NanoBanana2GeminiProvider:
         }
 
         provider_prompt, stripped_legacy_wrapper = _normalize_apiyi_prompt(prompt)
-        parts: List[Dict[str, Any]] = [{"text": provider_prompt}]
-
         requested_references = [
-            source
+            source.strip()
             for source in (image_input or [])[:MAX_IMAGE_INPUTS]
             if isinstance(source, str) and source.strip()
         ]
-        loaded_references = 0
+
+        reference_parts: List[Dict[str, Any]] = []
         for index, source in enumerate(requested_references, start=1):
-            part = await self._reference_part(session, source.strip(), index)
+            part = await self._reference_part(session, source, index)
             if part is None:
-                # The first image carries identity. Continuing without it produces a
-                # different person while looking like a successful edit, so fail over.
                 if index == 1:
                     logger.error(
                         "Nano Banana 2 APIYI primary reference unavailable; aborting primary request"
                     )
-                    return None
+                    return {
+                        "error": "APIYI could not load the primary reference image",
+                        "provider": "apiyi",
+                        "provider_model": self.MODEL,
+                        "retryable": True,
+                    }
                 logger.warning(
                     "Nano Banana 2 APIYI skipped unavailable extra reference index=%s",
                     index,
                 )
                 continue
-            parts.append(part)
-            loaded_references += 1
+            reference_parts.append(part)
 
-        if requested_references and loaded_references == 0:
-            logger.error(
-                "Nano Banana 2 APIYI received references but loaded none; aborting primary request"
-            )
-            return None
+        if requested_references and not reference_parts:
+            return {
+                "error": "APIYI could not load reference images",
+                "provider": "apiyi",
+                "provider_model": self.MODEL,
+                "retryable": True,
+            }
+        if not provider_prompt and not reference_parts:
+            return {
+                "error": "Nano Banana 2 request has neither prompt nor reference image",
+                "provider": "apiyi",
+                "provider_model": self.MODEL,
+                "retryable": False,
+            }
 
         normalized_resolution = _normalize_resolution(resolution)
-        payload = {
-            "contents": [{"parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": {
-                    "aspectRatio": aspect_ratio,
-                    "imageSize": normalized_resolution,
-                },
-            },
-        }
+        payload = _build_apiyi_payload(
+            prompt=provider_prompt,
+            reference_parts=reference_parts,
+            aspect_ratio=aspect_ratio,
+            resolution=normalized_resolution,
+        )
         url = f"{self.base_url}/models/{self.MODEL}:generateContent"
 
         logger.info(
-            "Nano Banana 2 APIYI request: model=%s refs=%s/%s aspect_ratio=%s resolution=%s output_format=%s prompt_len=%s legacy_wrapper_stripped=%s",
+            "Nano Banana 2 APIYI request: model=%s refs=%s/%s aspect_ratio=%s resolution=%s output_format=%s prompt_len=%s legacy_wrapper_stripped=%s safety=OFF",
             self.MODEL,
-            loaded_references,
+            len(reference_parts),
             len(requested_references),
             aspect_ratio,
             normalized_resolution,
@@ -616,35 +761,90 @@ class NanoBanana2GeminiProvider:
             async with session.post(url, headers=headers, json=payload) as response:
                 body = await response.text()
                 if response.status != 200:
+                    retryable = response.status in {
+                        408,
+                        409,
+                        425,
+                        429,
+                        500,
+                        502,
+                        503,
+                        504,
+                    }
                     logger.warning(
-                        "Nano Banana 2 APIYI POST failed: status=%s body=%s",
+                        "Nano Banana 2 APIYI POST failed: status=%s retryable=%s body=%s",
                         response.status,
+                        retryable,
                         body[:1000],
                     )
-                    return None
+                    return {
+                        "error": f"APIYI HTTP {response.status}",
+                        "provider": "apiyi",
+                        "provider_model": self.MODEL,
+                        "http_status": response.status,
+                        "retryable": retryable,
+                    }
+
                 try:
                     data = json.loads(body)
                 except json.JSONDecodeError:
                     logger.warning("Nano Banana 2 APIYI response is not JSON")
-                    return None
+                    return {
+                        "error": "APIYI returned an invalid JSON response",
+                        "provider": "apiyi",
+                        "provider_model": self.MODEL,
+                        "retryable": True,
+                    }
 
                 extracted = _extract_inline_image(data)
-                if extracted is None:
-                    logger.warning(
-                        "Nano Banana 2 APIYI response contains no inline image"
+                if extracted is not None:
+                    image_bytes, mime_type = extracted
+                    finish_reason, ratings = _extract_apiyi_failure(data)
+                    logger.info(
+                        "Nano Banana 2 APIYI image ready: bytes=%s resolution=%s mime=%s finish_reason=%s ratings=%s",
+                        len(image_bytes),
+                        normalized_resolution,
+                        mime_type,
+                        finish_reason or "none",
+                        len(ratings),
                     )
-                    return None
-                image_bytes, mime_type = extracted
-                logger.info(
-                    "Nano Banana 2 APIYI image ready: bytes=%s resolution=%s mime=%s",
-                    len(image_bytes),
-                    normalized_resolution,
-                    mime_type,
+                    return {
+                        "image_bytes": image_bytes,
+                        "mime_type": mime_type,
+                        "provider": "apiyi",
+                        "provider_model": self.MODEL,
+                        "finish_reason": finish_reason or None,
+                        "retryable": False,
+                    }
+
+                finish_reason, ratings = _extract_apiyi_failure(data)
+                policy_failure = _is_policy_failure(finish_reason)
+                logger.warning(
+                    "Nano Banana 2 APIYI returned no image: finish_reason=%s policy_failure=%s ratings=%s",
+                    finish_reason or "unknown",
+                    policy_failure,
+                    len(ratings),
                 )
-                return image_bytes
+                return {
+                    "error": (
+                        f"APIYI generation blocked by model policy: {finish_reason}"
+                        if policy_failure
+                        else f"APIYI returned no image: {finish_reason or 'unknown reason'}"
+                    ),
+                    "provider": "apiyi",
+                    "provider_model": self.MODEL,
+                    "finish_reason": finish_reason or None,
+                    "safety_ratings": ratings,
+                    "retryable": not policy_failure,
+                }
         except Exception as exc:
             logger.warning("Nano Banana 2 APIYI provider error: %s", exc)
-            return None
+            return {
+                "error": f"APIYI transport error: {type(exc).__name__}",
+                "provider": "apiyi",
+                "provider_model": self.MODEL,
+                "retryable": True,
+            }
 
     async def close(self) -> None:
         if self._session and not self._session.closed:
@@ -667,7 +867,8 @@ if config.NANOBANANA2_FALLBACK_API_KEY and config.NANOBANANA2_FALLBACK_BASE_URL:
 
 if _apiyi_provider:
     logger.info(
-        "Nano Banana 2: using APIYI Gemini-compatible provider as primary, Kie.ai as fallback"
+        "Nano Banana 2: using APIYI model %s as primary, Kie.ai as technical fallback",
+        APIYI_MODEL,
     )
     nano_banana_2_service = NanoBanana2Service(
         primary_provider=_apiyi_provider,
