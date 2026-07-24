@@ -8,7 +8,7 @@ from bot.handlers.lava_checkout import (
     LAVA_RUB_CARD_PAYMENT_METHOD,
     LAVA_RUB_PAYMENT_METHOD,
     LAVA_RUB_PAYMENT_PROVIDER,
-    _lava_method_keyboard,
+    _payment_options_keyboard,
     normalize_lava_customer_email,
     parse_lava_checkout_callback,
 )
@@ -52,7 +52,7 @@ def test_lava_email_rejects_placeholders_and_invalid_values(value):
     assert normalize_lava_customer_email(value) is None
 
 
-def test_lava_callbacks_support_method_selection_and_legacy_buttons():
+def test_lava_callbacks_support_direct_methods_and_legacy_buttons():
     assert parse_lava_checkout_callback("buy_lava_sbp_start") == (
         LAVA_CHECKOUT_SBP,
         "start",
@@ -61,11 +61,57 @@ def test_lava_callbacks_support_method_selection_and_legacy_buttons():
         LAVA_CHECKOUT_CARD,
         "optimal",
     )
-    assert parse_lava_checkout_callback("buy_lava_pro") == (None, "pro")
+    assert parse_lava_checkout_callback("buy_lava_pro") == (
+        LAVA_CHECKOUT_SBP,
+        "pro",
+    )
 
 
-def test_lava_method_menu_contains_sbp_and_bank_card():
-    keyboard = _lava_method_keyboard("studio")
+def test_payment_menu_lists_methods_without_provider_brands():
+    keyboard = _payment_options_keyboard(
+        "studio",
+        stars=True,
+        direct_rub=True,
+        crypto=True,
+        hosted_fallback=False,
+    )
+    buttons = [
+        button
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
+    labels = [button.text for button in buttons]
+    callbacks = [button.callback_data for button in buttons if button.callback_data]
+
+    assert labels == [
+        "⭐ Stars",
+        "⚡ СБП",
+        "💳 Картой",
+        "₿ Криптовалюта",
+        "◀️ Назад",
+    ]
+    assert "buy_lava_sbp_studio" in callbacks
+    assert "buy_lava_card_studio" in callbacks
+    assert not any(
+        provider in label.lower()
+        for label in labels
+        for provider in ("lava", "freekassa", "cryptobot")
+    )
+
+
+def test_payment_menu_uses_provider_neutral_hosted_fallback():
+    keyboard = _payment_options_keyboard(
+        "start",
+        stars=True,
+        direct_rub=False,
+        crypto=False,
+        hosted_fallback=True,
+    )
+    labels = [
+        button.text
+        for row in keyboard.inline_keyboard
+        for button in row
+    ]
     callbacks = [
         button.callback_data
         for row in keyboard.inline_keyboard
@@ -73,8 +119,9 @@ def test_lava_method_menu_contains_sbp_and_bank_card():
         if button.callback_data
     ]
 
-    assert "buy_lava_sbp_studio" in callbacks
-    assert "buy_lava_card_studio" in callbacks
+    assert "💳 Карта / СБП" in labels
+    assert "buy_freekassa_start" in callbacks
+    assert not any("freekassa" in label.lower() for label in labels)
 
 
 @pytest.mark.asyncio
