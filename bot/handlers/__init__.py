@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Handlers for the Telegram bot.
 """
