@@ -5,6 +5,8 @@ Handlers for the Telegram bot.
 
 from aiogram import Router
 
+from bot.services.lava_payment_safety import install_lava_payment_safety
+
 from . import payments as payments_module
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
@@ -17,7 +19,6 @@ from .notification_campaigns import router as notification_campaigns_router
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .support import router as support_router
-from bot.services.lava_payment_safety import install_lava_payment_safety
 
 # main.py imports callbacks directly from bot.handlers.payments after importing this
 # package. Install the safe Lava callbacks here so both the HTTP route and the
