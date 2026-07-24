@@ -15,10 +15,21 @@ from bot.handlers.lava_checkout import (
 from bot.services.lava_service import LavaService
 
 
-def test_lava_email_accepts_real_customer_address():
-    assert normalize_lava_customer_email(" User.Name+pay@gmail.com ") == (
-        "user.name+pay@gmail.com"
-    )
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (" User.Name+pay@gmail.com ", "user.name+pay@gmail.com"),
+        ("name123@gmail.com", "name123@gmail.com"),
+        ("123name@mail.ru", "123name@mail.ru"),
+        ("user2026@ya.ru", "user2026@ya.ru"),
+        ("user1@domain2026.ru", "user1@domain2026.ru"),
+        ("mailto:user2026@gmail.com", "user2026@gmail.com"),
+        ("User 2026 <user2026@gmail.com>", "user2026@gmail.com"),
+        ("user2026\u200b@gmail.com", "user2026@gmail.com"),
+    ],
+)
+def test_lava_email_accepts_real_customer_addresses_with_digits(raw, expected):
+    assert normalize_lava_customer_email(raw) == expected
 
 
 @pytest.mark.parametrize(
@@ -31,6 +42,10 @@ def test_lava_email_accepts_real_customer_address():
         "test@example.com",
         "customer@localhost",
         "customer@domain.invalid",
+        ".customer@gmail.com",
+        "customer.@gmail.com",
+        "customer..name@gmail.com",
+        "customer@-gmail.com",
     ],
 )
 def test_lava_email_rejects_placeholders_and_invalid_values(value):
@@ -114,7 +129,7 @@ async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
     monkeypatch.setattr(service, "_request", fake_request)
 
     result = await service.create_invoice(
-        email="customer@gmail.com",
+        email="customer2026@gmail.com",
         offer_id="offer-1",
         currency="RUB",
         payment_provider=LAVA_RUB_PAYMENT_PROVIDER,
@@ -127,7 +142,7 @@ async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
     assert captured["method"] == "POST"
     assert captured["path"] == "/api/v3/invoice"
     assert captured["payload"] == {
-        "email": "customer@gmail.com",
+        "email": "customer2026@gmail.com",
         "offerId": "offer-1",
         "currency": "RUB",
         "paymentProvider": "PAY2ME",
@@ -160,7 +175,7 @@ async def test_lava_invoice_payload_uses_bank131_for_card(monkeypatch):
     monkeypatch.setattr(service, "_request", fake_request)
 
     result = await service.create_invoice(
-        email="customer@gmail.com",
+        email="customer2026@gmail.com",
         offer_id="offer-card-1",
         currency="RUB",
         payment_method=LAVA_RUB_CARD_PAYMENT_METHOD,
@@ -172,7 +187,7 @@ async def test_lava_invoice_payload_uses_bank131_for_card(monkeypatch):
     assert captured["method"] == "POST"
     assert captured["path"] == "/api/v3/invoice"
     assert captured["payload"] == {
-        "email": "customer@gmail.com",
+        "email": "customer2026@gmail.com",
         "offerId": "offer-card-1",
         "currency": "RUB",
         "paymentMethod": "BANK131",
