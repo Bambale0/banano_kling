@@ -106,3 +106,17 @@ class TestConfig:
         cfg.STATIC_BASE_URL = ""
         cfg.WEBHOOK_HOST = "https://custom.com"
         assert cfg.static_base_url == "https://custom.com"
+
+    def test_regular_banana_models_are_forced_to_kie(self):
+        from bot.config import config
+        from bot.services import nano_banana_2_service, nano_banana_pro_service
+
+        assert config.NANOBANANA2_FALLBACK_API_KEY == ""
+        assert config.NANOBANANA2_FALLBACK_BASE_URL == ""
+        assert config.NANO_BANANA_PRO_FALLBACK_API_KEY == ""
+        assert config.NANO_BANANA_PRO_FALLBACK_BASE_URL == ""
+
+        assert nano_banana_2_service.primary_provider.base_url == "https://api.kie.ai"
+        assert nano_banana_2_service.fallback_provider is None
+        assert nano_banana_pro_service.primary_provider.base_url == "https://api.kie.ai"
+        assert nano_banana_pro_service.fallback_provider is None
