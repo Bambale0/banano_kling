@@ -33,6 +33,35 @@ def test_lava_email_rejects_placeholders_and_invalid_values(value):
 
 
 @pytest.mark.asyncio
+async def test_lava_service_rejects_placeholder_email_before_api_call(monkeypatch):
+    service = LavaService(api_key="test-key")
+    called = False
+
+    async def fake_request(method, path, payload=None, params=None):
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    result = await service.create_invoice(
+        email="buyer@example.com",
+        offer_id="offer-1",
+        currency="RUB",
+        payment_provider=LAVA_RUB_PAYMENT_PROVIDER,
+        payment_method=LAVA_RUB_PAYMENT_METHOD,
+    )
+
+    assert result == {
+        "ok": False,
+        "status": 400,
+        "code": "invalid_customer_email",
+        "error": "Для оплаты Lava требуется реальная почта покупателя",
+    }
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
     service = LavaService(api_key="test-key")
     captured = {}

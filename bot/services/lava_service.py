@@ -1,6 +1,9 @@
-import logging
+from __future__ import annotations
+
 import asyncio
-from typing import Any, Dict, Optional
+import logging
+import re
+from typing import Any
 
 import aiohttp
 
@@ -8,20 +11,52 @@ from bot.config import config
 
 logger = logging.getLogger(__name__)
 
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+_BLOCKED_EMAIL_DOMAINS = {
+    "example.com",
+    "example.net",
+    "example.org",
+    "localhost",
+    "invalid",
+}
+_BLOCKED_EMAILS = {
+    "buyer@example.com",
+    "client@example.com",
+    "test@example.com",
+}
+
+
+def normalize_lava_customer_email(value: Any) -> str | None:
+    """Validate a buyer email and reject placeholders shared by many users."""
+
+    email = str(value or "").strip().lower()
+    if not email or len(email) > 254 or not _EMAIL_RE.fullmatch(email):
+        return None
+    if email in _BLOCKED_EMAILS:
+        return None
+    domain = email.rsplit("@", 1)[-1]
+    if domain in _BLOCKED_EMAIL_DOMAINS or domain.endswith(".invalid"):
+        return None
+    return email
+
 
 def _preview_lava_error_body(raw_text: str, limit: int = 500) -> str:
     text = (raw_text or "").strip()
     if not text:
         return ""
     lowered = text.lower()
-    if lowered.startswith("<!doctype html") or lowered.startswith("<html"):
+    if lowered.startswith(("<!doctype html", "<html")):
         return f"[html response: {len(text)} chars]"
     if len(text) > limit:
         return text[:limit] + f"... [truncated, {len(text)} chars total]"
     return text
 
 
-def _lava_error_text(response: Dict[str, Any]) -> str:
+def _lava_error_text(response: dict[str, Any]) -> str:
     error = response.get("error")
     if isinstance(error, str):
         return error
@@ -47,7 +82,7 @@ class LavaService:
     def __init__(self, api_key: str, base_url: str = "https://gate.lava.top"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     @property
     def enabled(self) -> bool:
@@ -60,7 +95,7 @@ class LavaService:
             )
         return self._session
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "X-Api-Key": self.api_key,
             "Accept": "application/json",
@@ -71,9 +106,9 @@ class LavaService:
         self,
         method: str,
         path: str,
-        payload: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "error": "LAVA_API_KEY is not configured"}
 
@@ -93,7 +128,7 @@ class LavaService:
                     raw_text = await resp.text()
                     try:
                         data = await resp.json(content_type=None)
-                    except Exception:
+                    except (aiohttp.ContentTypeError, ValueError, UnicodeError):
                         data = {"raw": raw_text}
 
                     if resp.status >= 400:
@@ -145,16 +180,30 @@ class LavaService:
         email: str,
         offer_id: str,
         currency: str = "RUB",
-        amount: Optional[float] = None,
-        payment_provider: Optional[str] = None,
-        payment_method: Optional[str] = None,
-        buyer_language: Optional[str] = None,
-        periodicity: Optional[str] = None,
-        client_utm: Optional[Dict[str, Any]] = None,
+        amount: float | None = None,
+        payment_provider: str | None = None,
+        payment_method: str | None = None,
+        buyer_language: str | None = None,
+        periodicity: str | None = None,
+        client_utm: dict[str, Any] | None = None,
         _allow_product_fallback: bool = True,
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "email": email,
+    ) -> dict[str, Any]:
+        customer_email = normalize_lava_customer_email(email)
+        if not customer_email:
+            logger.error(
+                "Blocked Lava invoice without a real customer email: offer_id=%s currency=%s",
+                offer_id,
+                currency,
+            )
+            return {
+                "ok": False,
+                "status": 400,
+                "code": "invalid_customer_email",
+                "error": "Для оплаты Lava требуется реальная почта покупателя",
+            }
+
+        payload: dict[str, Any] = {
+            "email": customer_email,
             "offerId": offer_id,
             "currency": currency,
         }
@@ -193,7 +242,7 @@ class LavaService:
             currency,
         )
         return await self.create_invoice(
-            email=email,
+            email=customer_email,
             offer_id=resolved_offer_id,
             currency=currency,
             amount=amount,
@@ -209,7 +258,7 @@ class LavaService:
         self,
         product_id: str,
         currency: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         normalized_product_id = str(product_id or "").strip()
         normalized_currency = str(currency or "").strip().upper()
         if not normalized_product_id:
@@ -246,8 +295,8 @@ class LavaService:
         items: list[Any],
         product_id: str,
         currency: str,
-    ) -> Optional[str]:
-        fallback_offer_id: Optional[str] = None
+    ) -> str | None:
+        fallback_offer_id: str | None = None
 
         for item in items:
             data = item.get("data") if isinstance(item, dict) else None
@@ -284,13 +333,13 @@ class LavaService:
 
         return None
 
-    async def get_invoice(self, invoice_id: str) -> Optional[Dict[str, Any]]:
+    async def get_invoice(self, invoice_id: str) -> dict[str, Any] | None:
         response = await self._request("GET", f"/api/v2/invoices/{invoice_id}")
         if not response.get("ok"):
             return None
         return response
 
-    def extract_invoice_id(self, response: Dict[str, Any]) -> Optional[str]:
+    def extract_invoice_id(self, response: dict[str, Any]) -> str | None:
         value = response.get("id")
         if value:
             return str(value)
@@ -302,7 +351,7 @@ class LavaService:
             return str(result["id"])
         return None
 
-    def extract_payment_url(self, response: Dict[str, Any]) -> Optional[str]:
+    def extract_payment_url(self, response: dict[str, Any]) -> str | None:
         candidates = [
             response.get("paymentUrl"),
             response.get("payment_url"),
@@ -323,7 +372,7 @@ class LavaService:
         return next((item for item in candidates if item), None)
 
     @staticmethod
-    def _find_first(payload: Any, keys: tuple[str, ...]) -> Optional[str]:
+    def _find_first(payload: Any, keys: tuple[str, ...]) -> str | None:
         if isinstance(payload, dict):
             for key in keys:
                 value = payload.get(key)
@@ -341,21 +390,24 @@ class LavaService:
         return None
 
     @staticmethod
-    def webhook_event_type(payload: Dict[str, Any]) -> str:
+    def webhook_event_type(payload: dict[str, Any]) -> str:
         return (
             LavaService._find_first(payload, ("eventType", "event_type"))
             or ""
         ).lower()
 
     @staticmethod
-    def webhook_status(payload: Dict[str, Any]) -> str:
+    def webhook_status(payload: dict[str, Any]) -> str:
         return (
-            LavaService._find_first(payload, ("status", "contractStatus", "contract_status"))
+            LavaService._find_first(
+                payload,
+                ("status", "contractStatus", "contract_status"),
+            )
             or ""
         ).lower()
 
     @classmethod
-    def is_success_webhook(cls, payload: Dict[str, Any]) -> bool:
+    def is_success_webhook(cls, payload: dict[str, Any]) -> bool:
         event_type = cls.webhook_event_type(payload)
         status = cls.webhook_status(payload)
         return event_type == "payment.success" or status in {
@@ -366,7 +418,7 @@ class LavaService:
         }
 
     @classmethod
-    def is_failed_webhook(cls, payload: Dict[str, Any]) -> bool:
+    def is_failed_webhook(cls, payload: dict[str, Any]) -> bool:
         event_type = cls.webhook_event_type(payload)
         status = cls.webhook_status(payload)
         return event_type == "payment.failed" or status in {
@@ -377,14 +429,14 @@ class LavaService:
         }
 
     @classmethod
-    def webhook_contract_id(cls, payload: Dict[str, Any]) -> Optional[str]:
+    def webhook_contract_id(cls, payload: dict[str, Any]) -> str | None:
         value = cls._find_first(
             payload,
             ("contractId", "contract_id", "invoiceId", "invoice_id"),
         )
         return str(value) if value else None
 
-    async def close(self):
+    async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
 
