@@ -87,6 +87,7 @@ jobs:
             tests/test_webhook_handler.py \
             tests/test_config.py \
             tests/standalone/test_freekassa_service.py \
+            tests/standalone/test_lava_checkout.py \
             -v \
             --tb=short \
             -x
