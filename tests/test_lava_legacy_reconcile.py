@@ -26,6 +26,35 @@ def test_normalize_statuses_deduplicates_and_rejects_unknown():
         reconcile.normalize_statuses(["mystery"])
 
 
+def test_provider_reference_prefers_contract_id_but_falls_back_to_get_id():
+    assert reconcile.provider_reference(
+        {"id": "invoice-id", "contractId": "contract-id"}
+    ) == "contract-id"
+    assert reconcile.provider_reference(
+        {"id": "legacy-invoice-id", "status": "IN_PROGRESS"}
+    ) == "legacy-invoice-id"
+    assert reconcile.provider_reference(None) is None
+
+
+@pytest.mark.asyncio
+async def test_get_invoice_top_level_id_is_reported_without_false_update(monkeypatch):
+    async def fake_get_invoice(payment_id: str):
+        assert payment_id == "legacy-invoice-id"
+        return {"id": "legacy-invoice-id", "status": "IN_PROGRESS", "ok": True}
+
+    monkeypatch.setattr(reconcile.lava_service, "get_invoice", fake_get_invoice)
+
+    result = await reconcile.reconcile_candidate(
+        _candidate(),
+        apply=False,
+        complete_paid=False,
+    )
+
+    assert result.contract_id == "legacy-invoice-id"
+    assert result.provider_status == "in_progress"
+    assert result.action == "dry_run:no_change"
+
+
 @pytest.mark.asyncio
 async def test_dry_run_reports_contract_id_and_paid_action(monkeypatch):
     async def fake_get_invoice(payment_id: str):
