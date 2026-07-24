@@ -1301,13 +1301,17 @@ async def handle_cryptobot_webhook(request: web.Request):
 
 
 async def _resolve_lava_provider_status(transaction, contract_id: str | None) -> str:
-    payment_id = str(getattr(transaction, "payment_id", "") or contract_id or "")
-    if not payment_id:
-        return ""
-    invoice = await lava_service.get_invoice(payment_id)
-    if not invoice:
-        return ""
-    return lava_service.webhook_status(invoice) or str(invoice.get("status") or "").lower()
+    payment_id = str(getattr(transaction, "payment_id", "") or "")
+    if contract_id:
+        # Пробуем contractId (основной), затем payment_id из БД
+        invoice = await lava_service.get_invoice(contract_id)
+        if invoice:
+            return lava_service.webhook_status(invoice) or str(invoice.get("status") or "").lower()
+    if payment_id and payment_id != contract_id:
+        invoice = await lava_service.get_invoice(payment_id)
+        if invoice:
+            return lava_service.webhook_status(invoice) or str(invoice.get("status") or "").lower()
+    return ""
 
 
 async def handle_lava_webhook(request: web.Request):

@@ -351,6 +351,23 @@ class LavaService:
             return str(result["id"])
         return None
 
+    def extract_contract_id(self, response: dict[str, Any]) -> str | None:
+        """Извлекает contractId из ответа create_invoice.
+
+        Lava возвращает свой contractId при создании,
+        который затем приходит в webhook. Сохраняем его как payment_id."""
+        value = self._find_first(response, ("contractId", "contract_id"))
+        if value:
+            return str(value)
+        # Если contractId нет на верхнем уровне, пробуем внутри data / result
+        for container_name in ("data", "result"):
+            container = response.get(container_name)
+            if isinstance(container, dict):
+                value = self._find_first(container, ("contractId", "contract_id"))
+                if value:
+                    return str(value)
+        return None
+
     def extract_payment_url(self, response: dict[str, Any]) -> str | None:
         candidates = [
             response.get("paymentUrl"),

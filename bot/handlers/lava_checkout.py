@@ -424,6 +424,7 @@ async def create_lava_checkout(
         return
 
     invoice_id = lava_service.extract_invoice_id(result)
+    contract_id = lava_service.extract_contract_id(result)
     payment_url = lava_service.extract_payment_url(result)
     if not invoice_id or not payment_url:
         await state.clear()
@@ -440,10 +441,11 @@ async def create_lava_checkout(
         return
 
     user = await get_or_create_user(message.from_user.id)
+    payment_id = contract_id or str(invoice_id)
     created = await create_transaction(
         order_id=order_id,
         user_id=user.id,
-        payment_id=str(invoice_id),
+        payment_id=payment_id,
         provider="lava",
         credits=total_credits,
         amount_rub=float(package["price_rub"]),
