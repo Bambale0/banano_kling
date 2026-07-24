@@ -22,6 +22,12 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 _INTERNAL_PREFIX = "/internal/v1"
+_DISABLED_LEGACY_PAYMENT_PATHS = frozenset(
+    {
+        "/yookassa/webhook",
+        "/webhook/yookassa",
+    }
+)
 
 
 def _verify_hmac(request: web.Request, secret: str) -> bool:
@@ -36,7 +42,6 @@ def _verify_hmac(request: web.Request, secret: str) -> bool:
         timestamp = int(timestamp_str)
     except (ValueError, TypeError):
         return False
-    # Допускаем расхождение часов не более 30 секунд
     if abs(time.time() - timestamp) > 30:
         return False
     method = request.method.upper()
@@ -58,7 +63,16 @@ def _verify_hmac(request: web.Request, secret: str) -> bool:
 
 @web.middleware
 async def internal_auth_middleware(request: web.Request, handler: Any) -> web.Response:
-    """Middleware, проверяющая HMAC для всех /internal/* запросов."""
+    """Protect internal API and permanently retire old payment endpoints."""
+    if request.path in _DISABLED_LEGACY_PAYMENT_PATHS:
+        return web.json_response(
+            {
+                "error": "payment_provider_removed",
+                "provider": "freekassa",
+                "webhook": "/freekassa/webhook",
+            },
+            status=410,
+        )
     if not request.path.startswith(_INTERNAL_PREFIX):
         return await handler(request)
     secret = request.app.get("internal_api_secret", "")
@@ -112,16 +126,12 @@ def setup_internal_api(app: web.Application, secret: str, version: str = "") -> 
     app["internal_api_secret"] = secret
     app["bot_version"] = version
 
-    # Middleware должна быть первой, чтобы перехватывать /internal/* запросы
     app.middlewares.append(internal_auth_middleware)
 
     router = app.router
     router.add_get(f"{_INTERNAL_PREFIX}/health", handle_internal_health)
     router.add_get(f"{_INTERNAL_PREFIX}/stats", handle_internal_stats)
 
-    # Payment webhooks are registered here to keep provider-specific setup out of
-    # the already large main.py. setup_internal_api runs while the aiohttp app is
-    # still being assembled, before AppRunner freezes the router.
     from bot.handlers.freekassa_payments import setup_freekassa_routes
 
     setup_freekassa_routes(app)
