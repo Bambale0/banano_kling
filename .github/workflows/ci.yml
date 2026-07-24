@@ -31,6 +31,8 @@ jobs:
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
       - name: Lint changed Python files with ruff
+        id: ruff
+        continue-on-error: true
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -50,14 +52,27 @@ jobs:
           )
 
           if [ "${#changed_files[@]}" -eq 0 ]; then
-            echo "No changed Python files to lint"
+            echo "No changed Python files to lint" | tee ruff-output.txt
             exit 0
           fi
 
-          printf 'Linting changed files:\n%s\n' "${changed_files[*]}"
+          printf 'Linting changed files:\n%s\n' "${changed_files[*]}" | tee ruff-output.txt
+          set -o pipefail
           ruff check "${changed_files[@]}" \
             --ignore=E402,F403,F405,E501 \
-            --output-format=github
+            --output-format=concise 2>&1 | tee -a ruff-output.txt
+
+      - name: Upload Ruff diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-output
+          path: ruff-output.txt
+          if-no-files-found: ignore
+
+      - name: Fail when Ruff failed
+        if: steps.ruff.outcome == 'failure'
+        run: exit 1
 
   test:
     runs-on: ubuntu-latest
