@@ -314,7 +314,7 @@ async def handle_lava_checkout_entry(
         return
 
     mode, package_id = parse_lava_checkout_callback(callback.data)
-    package, error = _validate_lava_package(package_id)
+    _, error = _validate_lava_package(package_id)
     if error:
         await callback.message.edit_text(
             f"{error} Выберите другой способ оплаты или напишите в поддержку.",
