@@ -5,7 +5,6 @@ import base64
 import hmac
 import logging
 import os
-from datetime import datetime
 from types import ModuleType
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -49,7 +48,6 @@ async def _ensure_bindings_table() -> None:
                 f"ON {_BINDINGS_TABLE}(invoice_id)"
             )
         except db_backend.OperationalError:
-            # Existing duplicate legacy rows must not make payment handling fail.
             logger.warning("Could not create unique Lava invoice binding index")
         await db.commit()
 
@@ -133,7 +131,7 @@ def _next_page_path(response: dict[str, Any]) -> str | None:
 
 
 async def _discover_invoice_id_by_contract(contract_id: str) -> str | None:
-    """Backfill legacy contractId→invoiceId mappings from the invoice list API."""
+    """Backfill a legacy contractId→invoiceId mapping from the invoice list API."""
 
     mapped = await _invoice_id_for_contract(contract_id)
     if mapped:
@@ -146,6 +144,10 @@ async def _discover_invoice_id_by_contract(contract_id: str) -> str | None:
     for page_index in range(10):
         response = await lava_service._request("GET", path, params=params)
         if not response.get("ok"):
+            # Some pageable APIs are one-based. Retry the first page once using 1.
+            if page_index == 0 and params and params.get("page") == 0:
+                params = {"page": 1, "size": 100}
+                continue
             return None
 
         items = _extract_invoice_items(response)
@@ -172,7 +174,10 @@ async def _discover_invoice_id_by_contract(contract_id: str) -> str | None:
 
         if len(items) < 100:
             break
-        params = {"page": page_index + 1, "size": 100}
+        current_page = 1
+        if params and isinstance(params.get("page"), int):
+            current_page = int(params["page"])
+        params = {"page": current_page + 1, "size": 100}
 
     return None
 
@@ -216,7 +221,6 @@ def _verify_configured_auth(request: web.Request) -> bool:
     if secret and x_api_key:
         candidates.append((secret, x_api_key))
     if secret and decoded_basic:
-        # Supports either a full user:password value or a password-only secret.
         candidates.append((secret, decoded_basic))
         if ":" in decoded_basic:
             candidates.append((secret, decoded_basic.split(":", 1)[1]))
@@ -450,7 +454,6 @@ async def safe_handle_lava_webhook(
         order_id=str(order_id) if order_id else None,
     )
     if not transaction:
-        # A webhook can race the local transaction insert. Non-2xx makes Lava retry.
         logger.warning(
             "Lava transaction not ready contract_id=%s; requesting webhook retry",
             contract_id,
@@ -486,7 +489,6 @@ async def safe_handle_lava_webhook(
                 "marked_failed" if changed else "already_final",
             )
             return web.Response(status=200)
-        # Provider status can lag behind its own webhook; request another delivery.
         return web.Response(status=503)
 
     if provider_status not in _SUCCESS_STATUSES:
@@ -608,7 +610,7 @@ async def safe_reconcile_lava_pending_transactions(
 
 
 def install_lava_payment_safety(payments_module: ModuleType) -> None:
-    """Install the compatibility layer before main.py imports payment callbacks."""
+    """Install corrected callbacks before main.py imports payment functions."""
 
     if getattr(lava_service, _INSTALL_MARKER, False):
         return
@@ -650,7 +652,17 @@ def install_lava_payment_safety(payments_module: ModuleType) -> None:
     async def get_invoice_with_binding(identifier: str) -> dict[str, Any] | None:
         raw_id = str(identifier or "").strip()
         mapped_id = await _invoice_id_for_contract(raw_id)
-        return await original_get_invoice(mapped_id or raw_id)
+        if mapped_id:
+            return await original_get_invoice(mapped_id)
+
+        direct = await original_get_invoice(raw_id)
+        if direct:
+            return direct
+
+        discovered_id = await _discover_invoice_id_by_contract(raw_id)
+        if discovered_id:
+            return await original_get_invoice(discovered_id)
+        return None
 
     lava_service.create_invoice = create_invoice_with_binding  # type: ignore[method-assign]
     lava_service.get_invoice = get_invoice_with_binding  # type: ignore[method-assign]
