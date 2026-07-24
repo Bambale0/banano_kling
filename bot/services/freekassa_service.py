@@ -6,8 +6,9 @@ import hmac
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable, Iterable
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Awaitable, Callable, Iterable, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
@@ -34,10 +35,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def normalize_amount(value: Any) -> str:
-    """Return a stable two-decimal amount used in SCI signatures and DB checks."""
-
+    """Return a stable two-decimal amount used in signatures and DB checks."""
     try:
-        amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        amount = Decimal(str(value)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise ValueError("Invalid payment amount") from exc
     if amount <= 0:
@@ -54,7 +56,9 @@ def build_sci_signature(
 ) -> str:
     amount_text = normalize_amount(amount)
     source = f"{merchant_id}:{amount_text}:{secret_word}:{currency}:{order_id}"
-    return hashlib.md5(source.encode("utf-8")).hexdigest()
+    return hashlib.md5(
+        source.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()
 
 
 def build_notification_signature(
@@ -64,7 +68,9 @@ def build_notification_signature(
     order_id: str,
 ) -> str:
     source = f"{merchant_id}:{raw_amount}:{secret_word_2}:{order_id}"
-    return hashlib.md5(source.encode("utf-8")).hexdigest()
+    return hashlib.md5(
+        source.encode("utf-8"), usedforsecurity=False
+    ).hexdigest()
 
 
 def build_api_signature(payload: dict[str, Any], api_key: str) -> str:
@@ -100,17 +106,24 @@ class FreeKassaService:
         self.secret_word = os.getenv("FREEKASSA_SECRET_WORD", "").strip()
         self.secret_word_2 = os.getenv("FREEKASSA_SECRET_WORD_2", "").strip()
         self.api_key = os.getenv("FREEKASSA_API_KEY", "").strip()
-        self.currency = os.getenv("FREEKASSA_CURRENCY", "RUB").strip().upper() or "RUB"
-        self.language = os.getenv("FREEKASSA_LANGUAGE", "ru").strip().lower() or "ru"
+        self.currency = (
+            os.getenv("FREEKASSA_CURRENCY", "RUB").strip().upper() or "RUB"
+        )
+        self.language = (
+            os.getenv("FREEKASSA_LANGUAGE", "ru").strip().lower() or "ru"
+        )
         self.pay_base_url = os.getenv(
             "FREEKASSA_PAY_BASE_URL", "https://pay.fk.money/"
         ).strip()
-        self.api_base_url = os.getenv(
-            "FREEKASSA_API_BASE_URL", "https://api.fk.life/v1"
-        ).strip().rstrip("/")
-        self.webhook_path = os.getenv(
-            "FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook"
-        ).strip() or "/freekassa/webhook"
+        self.api_base_url = (
+            os.getenv("FREEKASSA_API_BASE_URL", "https://api.fk.life/v1")
+            .strip()
+            .rstrip("/")
+        )
+        self.webhook_path = (
+            os.getenv("FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook").strip()
+            or "/freekassa/webhook"
+        )
         if not self.webhook_path.startswith("/"):
             self.webhook_path = f"/{self.webhook_path}"
 
@@ -120,13 +133,15 @@ class FreeKassaService:
             for item in os.getenv("FREEKASSA_ALLOWED_IPS", "").split(",")
             if item.strip()
         }
-        self.allowed_webhook_ips = configured_ips or set(DEFAULT_ALLOWED_WEBHOOK_IPS)
+        self.allowed_webhook_ips = configured_ips or set(
+            DEFAULT_ALLOWED_WEBHOOK_IPS
+        )
         self.enabled = bool(
             self.merchant_id and self.secret_word and self.secret_word_2
         )
         self.api_enabled = bool(self.enabled and self.api_key)
 
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._nonce_lock = asyncio.Lock()
         self._last_nonce = 0
 
@@ -209,11 +224,9 @@ class FreeKassaService:
     ) -> dict[str, Any]:
         """Build hosted SCI checkout.
 
-        return_url and notification_url are accepted for compatibility. SCI uses
-        URLs configured in the FreeKassa merchant cabinet, so they are not added
-        to the signed checkout query.
+        Return and notification URLs are configured in the merchant cabinet.
+        They stay in the signature-compatible method contract for callers.
         """
-
         _ = description, return_url, notification_url
         try:
             payment_url = self.create_payment_url(
@@ -224,7 +237,7 @@ class FreeKassaService:
                 payment_system_id=payment_system_id,
                 custom_params={"us_provider": "freekassa"},
             )
-        except Exception as exc:
+        except (RuntimeError, ValueError) as exc:
             logger.exception("FreeKassa SCI payment creation failed")
             return {"ok": False, "error": str(exc)}
 
@@ -265,7 +278,9 @@ class FreeKassaService:
             return True
         return bool(remote_ip and remote_ip in self.allowed_webhook_ips)
 
-    async def _api_post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    async def _api_post(
+        self, endpoint: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         if not self.api_enabled:
             return None
 
@@ -289,7 +304,7 @@ class FreeKassaService:
                     return None
                 try:
                     data = await response.json(content_type=None)
-                except Exception:
+                except (ValueError, UnicodeError):
                     logger.warning(
                         "FreeKassa API returned invalid JSON: endpoint=%s body=%s",
                         endpoint,
@@ -297,7 +312,7 @@ class FreeKassaService:
                     )
                     return None
                 return data if isinstance(data, dict) else None
-        except Exception:
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             logger.exception("FreeKassa API request error: endpoint=%s", endpoint)
             return None
 
@@ -308,7 +323,6 @@ class FreeKassaService:
         merchant_order_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Look up a payment through the optional merchant API."""
-
         lookup_id = str(merchant_order_id or payment_id or "").strip()
         if not lookup_id:
             return None
@@ -333,7 +347,9 @@ class FreeKassaService:
                 selected = item
                 break
         if selected is None:
-            selected = next((item for item in orders if isinstance(item, dict)), None)
+            selected = next(
+                (item for item in orders if isinstance(item, dict)), None
+            )
         if not selected:
             return None
 
@@ -341,7 +357,9 @@ class FreeKassaService:
         return {
             **status,
             "id": str(selected.get("fk_order_id") or ""),
-            "merchant_order_id": str(selected.get("merchant_order_id") or lookup_id),
+            "merchant_order_id": str(
+                selected.get("merchant_order_id") or lookup_id
+            ),
             "amount": selected.get("amount"),
             "currency": selected.get("currency"),
             "raw": selected,
@@ -352,9 +370,10 @@ class FreeKassaService:
         *,
         limit: int = 100,
         providers: Iterable[str] = ("freekassa",),
-        complete_order: Optional[
-            Callable[[str], Awaitable[dict[str, Any]]]
-        ] = None,
+        complete_order: Callable[
+            [str], Awaitable[dict[str, Any]]
+        ]
+        | None = None,
     ) -> list[dict[str, Any]]:
         if not self.api_enabled:
             return []
@@ -372,7 +391,9 @@ class FreeKassaService:
         )
         async with db_backend.connect() as connection:
             connection.row_factory = db_backend.Row
-            cursor = await connection.execute(query, (*provider_names, int(limit)))
+            cursor = await connection.execute(
+                query, (*provider_names, int(limit))
+            )
             rows = await cursor.fetchall()
 
         results: list[dict[str, Any]] = []
@@ -387,7 +408,9 @@ class FreeKassaService:
 
             item["status"] = payment.get("status")
             if payment.get("paid"):
-                completion = await complete_order(order_id) if complete_order else None
+                completion = (
+                    await complete_order(order_id) if complete_order else None
+                )
                 item["action"] = (
                     "already_completed"
                     if completion and completion.get("already_completed")
@@ -404,7 +427,9 @@ class FreeKassaService:
                         (order_id,),
                     )
                     await connection.commit()
-                item["action"] = "failed" if cursor.rowcount else "already_updated"
+                item["action"] = (
+                    "failed" if cursor.rowcount else "already_updated"
+                )
             else:
                 item["action"] = "still_pending"
             results.append(item)
