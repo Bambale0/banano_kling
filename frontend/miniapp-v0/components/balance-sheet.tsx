@@ -3,7 +3,7 @@
 import type { ComponentType } from 'react'
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Banana, CreditCard, Gift, Globe, Loader2, Receipt, Sparkles, Star, X } from 'lucide-react'
+import { Banana, CreditCard, Gift, Loader2, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -160,12 +160,11 @@ export function BalanceSheet() {
                   {paymentPackages.map((pkg) => {
                     const pricePerBanana = Math.round(pkg.price_rub / pkg.credits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
-                    const hasLava = Boolean(pkg.lava_offer_id)
+                    const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
                     // Backend keeps the old provider identifier only as a compatibility
                     // alias; the actual checkout and webhook are handled by FreeKassa.
                     const freeKassaLoading = loadingPayment === `${pkg.id}:yookassa`
-                    const lavaLoading = loadingPayment === `${pkg.id}:lava`
                     return (
                       <div
                         key={pkg.id}
@@ -216,11 +215,7 @@ export function BalanceSheet() {
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
                             disabled={Boolean(loadingPayment)}
-                            className={cn(
-                              'w-full',
-                              hasLava ? '' : 'col-span-2',
-                              'bg-secondary text-foreground hover:bg-secondary/80'
-                            )}
+                            className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"
                           >
                             {starsLoading ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -229,20 +224,10 @@ export function BalanceSheet() {
                             )}
                             Stars
                           </Button>
-                          {hasLava ? (
-                            <Button
-                              onClick={() => handleTopup(pkg.id, 'lava')}
-                              disabled={Boolean(loadingPayment)}
-                              variant="outline"
-                              className="w-full border-border/50 bg-background/20 text-foreground hover:bg-secondary/40"
-                            >
-                              {lavaLoading ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : (
-                                <Globe className="mr-2 h-4 w-4" />
-                              )}
-                              Lava
-                            </Button>
+                          {lavaConfigured ? (
+                            <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
+                              Lava доступна в Telegram-боте после ввода личной почты покупателя.
+                            </p>
                           ) : null}
                         </div>
                       </div>
