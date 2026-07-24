@@ -4,6 +4,7 @@ import html
 import logging
 import re
 import time
+from email.utils import parseaddr
 from typing import Any
 
 from aiogram import F, Router, types
@@ -36,10 +37,14 @@ LAVA_RUB_CARD_PAYMENT_METHOD = "BANK131"
 LAVA_RUB_PAYMENT_PROVIDER = LAVA_RUB_SBP_PAYMENT_PROVIDER
 LAVA_RUB_PAYMENT_METHOD = LAVA_RUB_SBP_PAYMENT_METHOD
 
-_EMAIL_RE = re.compile(
-    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
-    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+_EMAIL_LOCAL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$")
+_EMAIL_DOMAIN_LABEL_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+_EMAIL_IGNORED_CHARACTERS = str.maketrans(
+    "",
+    "",
+    "\u200b\u200c\u200d\u2060\ufeff",
 )
 _BLOCKED_EMAIL_DOMAINS = {
     "example.com",
@@ -55,18 +60,64 @@ _BLOCKED_EMAILS = {
 }
 
 
-def normalize_lava_customer_email(value: Any) -> str | None:
-    """Validate a buyer email and reject placeholder/test addresses."""
+def _extract_email_candidate(value: Any) -> str:
+    raw = str(value or "").translate(_EMAIL_IGNORED_CHARACTERS).strip()
+    if raw.lower().startswith("mailto:"):
+        raw = raw[7:].strip()
 
-    email = str(value or "").strip().lower()
-    if not email or len(email) > 254 or not _EMAIL_RE.fullmatch(email):
+    _, parsed_address = parseaddr(raw)
+    if parsed_address and "@" in parsed_address:
+        raw = parsed_address
+
+    return raw.strip().strip("<>").strip().lower()
+
+
+def normalize_lava_customer_email(value: Any) -> str | None:
+    """Normalize a real buyer email without rejecting addresses with digits."""
+
+    email = _extract_email_candidate(value)
+    if not email or len(email) > 254 or email.count("@") != 1:
         return None
-    if email in _BLOCKED_EMAILS:
+
+    local_part, domain = email.rsplit("@", 1)
+    if (
+        not local_part
+        or len(local_part) > 64
+        or local_part.startswith(".")
+        or local_part.endswith(".")
+        or ".." in local_part
+        or not _EMAIL_LOCAL_RE.fullmatch(local_part)
+    ):
         return None
-    domain = email.rsplit("@", 1)[-1]
-    if domain in _BLOCKED_EMAIL_DOMAINS or domain.endswith(".invalid"):
+
+    try:
+        ascii_domain = domain.encode("idna").decode("ascii").lower()
+    except UnicodeError:
         return None
-    return email
+
+    if (
+        not ascii_domain
+        or len(ascii_domain) > 253
+        or "." not in ascii_domain
+        or ascii_domain.startswith(".")
+        or ascii_domain.endswith(".")
+        or ".." in ascii_domain
+    ):
+        return None
+
+    labels = ascii_domain.split(".")
+    if any(
+        len(label) > 63 or not _EMAIL_DOMAIN_LABEL_RE.fullmatch(label)
+        for label in labels
+    ):
+        return None
+
+    normalized = f"{local_part}@{ascii_domain}"
+    if normalized in _BLOCKED_EMAILS:
+        return None
+    if ascii_domain in _BLOCKED_EMAIL_DOMAINS or ascii_domain.endswith(".invalid"):
+        return None
+    return normalized
 
 
 def parse_lava_checkout_callback(value: Any) -> tuple[str | None, str]:
@@ -187,8 +238,8 @@ async def handle_lava_checkout_entry(
         f"Способ оплаты: <b>{method_label} через Lava</b>\n\n"
         "Почта будет передана Lava как адрес конкретного покупателя и может "
         "использоваться для уведомления о платеже.\n\n"
-        "Пример: <code>name@gmail.com</code>\n"
-        "Не вводите чужую или тестовую почту.",
+        "Пример: <code>name2026@gmail.com</code>\n"
+        "Цифры в адресе разрешены. Не вводите чужую или тестовую почту.",
         reply_markup=_email_request_keyboard(),
         parse_mode="HTML",
     )
@@ -217,8 +268,9 @@ async def create_lava_checkout(
     if not email:
         await message.answer(
             "Не получилось распознать реальную почту.\n"
-            "Введите адрес в формате <code>name@gmail.com</code>. "
-            "Тестовые адреса вроде <code>buyer@example.com</code> запрещены.",
+            "Введите адрес в формате <code>name2026@gmail.com</code>. "
+            "Цифры разрешены; тестовые адреса вроде "
+            "<code>buyer@example.com</code> запрещены.",
             reply_markup=_email_request_keyboard(),
             parse_mode="HTML",
         )
