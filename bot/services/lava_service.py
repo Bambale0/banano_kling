@@ -49,7 +49,7 @@ def _preview_lava_error_body(raw_text: str, limit: int = 500) -> str:
     if not text:
         return ""
     lowered = text.lower()
-    if lowered.startswith("<!doctype html") or lowered.startswith("<html"):
+    if lowered.startswith(("<!doctype html", "<html")):
         return f"[html response: {len(text)} chars]"
     if len(text) > limit:
         return text[:limit] + f"... [truncated, {len(text)} chars total]"
