@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 Services for the Telegram bot.
 """
