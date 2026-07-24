@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """Unit tests for bot/config.py"""
 
 from bot.config import Config
