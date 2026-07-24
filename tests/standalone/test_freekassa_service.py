@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import json
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 from bot import config as config_module
+from bot import internal_api
 from bot.handlers import freekassa_payments
 from bot.services import freekassa_service as freekassa_module
 from bot.services import yookassa_service as legacy_payment_module
@@ -27,6 +31,25 @@ def test_integration_modules_import_and_legacy_alias_is_freekassa_only():
         legacy_payment_module.yookassa_service.__class__.__name__
         == "FreeKassaLegacyAliasService"
     )
+
+
+def test_legacy_yookassa_webhooks_are_retired():
+    async def unexpected_handler(_request):
+        raise AssertionError("retired YooKassa handler must never run")
+
+    for path in ("/yookassa/webhook", "/webhook/yookassa"):
+        request = SimpleNamespace(path=path)
+        response = asyncio.run(
+            internal_api.internal_auth_middleware(request, unexpected_handler)
+        )
+        payload = json.loads(response.text)
+
+        assert response.status == 410
+        assert payload == {
+            "error": "payment_provider_removed",
+            "provider": "freekassa",
+            "webhook": "/freekassa/webhook",
+        }
 
 
 def test_config_defaults_to_freekassa_when_configured():
