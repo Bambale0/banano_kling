@@ -4,6 +4,16 @@
 в которых локальный `payment_id` содержит `invoice_id`, тогда как webhook Lava
 присылает `contractId`.
 
+Перед режимом `--apply` сделайте резервную копию production-базы. Скрипт
+использует compare-and-set обновления, а начисление выполняет через
+`complete_payment_atomic`.
+
+## Проверить тесты
+
+```bash
+pytest tests/test_lava_legacy_reconcile.py -q
+```
+
 ## Безопасный просмотр
 
 ```bash
