@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Manually inspect and reconcile pending FreeKassa transactions.
 
 Usage:
