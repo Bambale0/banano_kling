@@ -6,7 +6,8 @@ cannot activate YooKassa; every operation delegates to ``freekassa_service``.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from bot.config import config
 from bot.services.freekassa_service import freekassa_service
@@ -34,9 +35,9 @@ class FreeKassaLegacyAliasService:
         amount_rub: float,
         order_id: str,
         description: str,
-        return_url: Optional[str] = None,
-        notification_url: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        return_url: str | None = None,
+        notification_url: str | None = None,
+    ) -> dict[str, Any] | None:
         result = await freekassa_service.create_payment(
             amount_rub=amount_rub,
             order_id=order_id,
@@ -47,7 +48,8 @@ class FreeKassaLegacyAliasService:
         if not result.get("ok"):
             return {
                 "Success": False,
-                "Message": result.get("error") or "FreeKassa payment creation failed",
+                "Message": result.get("error")
+                or "FreeKassa payment creation failed",
                 "Provider": "freekassa",
             }
         return {
@@ -58,7 +60,7 @@ class FreeKassaLegacyAliasService:
             "Raw": result,
         }
 
-    async def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
+    async def get_payment(self, payment_id: str) -> dict[str, Any] | None:
         result = await freekassa_service.get_payment(
             payment_id,
             merchant_order_id=payment_id,
@@ -70,7 +72,9 @@ class FreeKassaLegacyAliasService:
             "status": result.get("status") or "",
             "paid": bool(result.get("paid")),
             "failed": bool(result.get("failed")),
-            "metadata": {"order_id": result.get("merchant_order_id") or payment_id},
+            "metadata": {
+                "order_id": result.get("merchant_order_id") or payment_id
+            },
             "amount": result.get("amount"),
             "currency": result.get("currency"),
             "Raw": result,
@@ -79,10 +83,8 @@ class FreeKassaLegacyAliasService:
     async def poll_pending_transactions(
         self,
         limit: int = 100,
-        complete_order: Optional[
-            Callable[[str], Awaitable[Dict[str, Any]]]
-        ] = None,
-    ) -> List[Dict[str, Any]]:
+        complete_order: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
+    ) -> list[dict[str, Any]]:
         return await freekassa_service.poll_pending_transactions(
             limit=limit,
             providers=("yookassa",),
@@ -90,7 +92,7 @@ class FreeKassaLegacyAliasService:
         )
 
     @staticmethod
-    def extract_order_id(payment: Any) -> Optional[str]:
+    def extract_order_id(payment: Any) -> str | None:
         if isinstance(payment, dict):
             metadata = payment.get("metadata") or {}
             order_id = (
