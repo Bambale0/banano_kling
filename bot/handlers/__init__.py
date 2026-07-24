@@ -11,6 +11,7 @@ from .common import router as legacy_common_router
 from .freekassa_payments import router as freekassa_payments_router
 from .generation import router as generation_router
 from .image_analyzer import router as legacy_image_analyzer_router
+from .lava_checkout import router as lava_checkout_router
 from .notification_campaigns import router as notification_campaigns_router
 from .payments import router as legacy_payments_router
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
@@ -24,9 +25,10 @@ image_analyzer_router = Router()
 image_analyzer_router.include_router(prompt_analyzer_v2_router)
 image_analyzer_router.include_router(legacy_image_analyzer_router)
 
-# FreeKassa owns package-provider selection and card/SBP checkout. The legacy
-# router remains after it for Stars, CryptoBot, Lava and old callback compatibility.
+# Provider-specific safe flows must run before the broad legacy payments router.
+# Lava now requires a real customer email and explicit RUB/SBP parameters.
 payments_router = Router()
+payments_router.include_router(lava_checkout_router)
 payments_router.include_router(freekassa_payments_router)
 payments_router.include_router(legacy_payments_router)
 
@@ -45,6 +47,7 @@ __all__ = [
     "freekassa_payments_router",
     "generation_router",
     "image_analyzer_router",
+    "lava_checkout_router",
     "notification_campaigns_router",
     "payments_router",
     "prompt_analyzer_v2_router",
