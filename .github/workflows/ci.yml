@@ -102,6 +102,7 @@ jobs:
             tests/standalone/test_lava_checkout.py \
             tests/standalone/test_lava_payment_safety.py \
             tests/standalone/test_lava_invoice_compat.py \
+            tests/standalone/test_lava_binding_schema_compat.py \
             -v \
             --tb=short \
             -x
