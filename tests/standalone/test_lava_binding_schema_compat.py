@@ -19,59 +19,101 @@ class _ConnectionContext:
         return False
 
 
-class _FakeConnection:
-    def __init__(self, events, *, fail_index: bool = False):
+class _CursorContext:
+    def __init__(self, events):
         self.events = events
-        self.fail_index = fail_index
 
-    async def execute(self, sql: str, parameters=None):
-        normalized = " ".join(sql.split())
-        self.events.append(("execute", normalized))
-        if self.fail_index and normalized.startswith("CREATE UNIQUE INDEX"):
-            raise compat.db_backend.OperationalError("concurrent index creation")
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def execute(self, sql: str):
+        self.events.append(("raw_execute", " ".join(sql.split())))
+
+
+class _RawConnection:
+    def __init__(self, events):
+        self.events = events
+
+    def cursor(self):
+        return _CursorContext(self.events)
 
     async def commit(self):
-        self.events.append(("commit", None))
+        self.events.append(("raw_commit", None))
+
+    async def rollback(self):
+        self.events.append(("raw_rollback", None))
+
+
+class _WrappedPostgresConnection:
+    def __init__(self, events):
+        self._conn = _RawConnection(events)
+
+    async def execute(self, sql: str, parameters=None):
+        raise AssertionError("DDL must bypass PostgresConnection.execute()")
 
 
 @pytest.mark.asyncio
-async def test_table_commit_survives_optional_index_failure(monkeypatch):
+async def test_postgres_schema_ddl_uses_raw_psycopg_connection(monkeypatch):
     events = []
-    connections = iter(
-        [
-            _FakeConnection(events),
-            _FakeConnection(events, fail_index=True),
-        ]
-    )
+    connection = _WrappedPostgresConnection(events)
 
+    monkeypatch.setattr(compat.db_backend, "is_postgres", lambda: True)
     monkeypatch.setattr(
         compat.db_backend,
         "connect",
-        lambda: _ConnectionContext(next(connections)),
+        lambda: _ConnectionContext(connection),
     )
+
+    await compat._execute_schema_ddl("CREATE TABLE example (id TEXT)")
+
+    assert events == [
+        ("raw_execute", "CREATE TABLE example (id TEXT)"),
+        ("raw_commit", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_optional_index_failure_does_not_hide_table(monkeypatch):
+    events = []
+
+    async def execute_ddl(sql: str):
+        normalized = " ".join(sql.split())
+        events.append(("ddl", normalized))
+        if normalized.startswith("CREATE UNIQUE INDEX"):
+            raise compat.db_backend.OperationalError("concurrent index creation")
+
+    async def verify_table():
+        events.append(("verify", safety._BINDINGS_TABLE))
+
+    monkeypatch.setattr(compat, "_execute_schema_ddl", execute_ddl)
+    monkeypatch.setattr(compat, "_verify_bindings_table", verify_table)
     monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_READY", False)
     monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_LOCK", asyncio.Lock())
 
     await compat._ensure_bindings_table_postgres_safe()
 
-    assert events[0][0] == "execute"
+    assert events[0][0] == "ddl"
     assert f"CREATE TABLE IF NOT EXISTS {safety._BINDINGS_TABLE}" in events[0][1]
-    assert events[1] == ("commit", None)
-    assert events[2][0] == "execute"
-    assert events[2][1].startswith("CREATE UNIQUE INDEX IF NOT EXISTS")
+    assert events[1][1].startswith("CREATE UNIQUE INDEX IF NOT EXISTS")
+    assert events[2] == ("verify", safety._BINDINGS_TABLE)
     assert compat._BINDINGS_SCHEMA_READY is True
 
 
 @pytest.mark.asyncio
-async def test_schema_initializer_runs_only_once(monkeypatch):
+async def test_schema_initializer_verifies_and_runs_only_once(monkeypatch):
     events = []
-    connections = iter([_FakeConnection(events), _FakeConnection(events)])
 
-    monkeypatch.setattr(
-        compat.db_backend,
-        "connect",
-        lambda: _ConnectionContext(next(connections)),
-    )
+    async def execute_ddl(sql: str):
+        events.append(("ddl", " ".join(sql.split())))
+
+    async def verify_table():
+        events.append(("verify", safety._BINDINGS_TABLE))
+
+    monkeypatch.setattr(compat, "_execute_schema_ddl", execute_ddl)
+    monkeypatch.setattr(compat, "_verify_bindings_table", verify_table)
     monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_READY", False)
     monkeypatch.setattr(compat, "_BINDINGS_SCHEMA_LOCK", asyncio.Lock())
 
@@ -80,6 +122,7 @@ async def test_schema_initializer_runs_only_once(monkeypatch):
     await compat._ensure_bindings_table_postgres_safe()
 
     assert events == first_run_events
+    assert [event[0] for event in events] == ["ddl", "ddl", "verify"]
 
 
 def test_install_replaces_safety_initializer(monkeypatch):
