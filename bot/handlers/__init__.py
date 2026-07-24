@@ -5,8 +5,10 @@ Handlers for the Telegram bot.
 
 from aiogram import Router
 
+from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
 
+from . import lava_checkout as lava_checkout_module
 from . import payments as payments_module
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
@@ -14,7 +16,6 @@ from .common import router as legacy_common_router
 from .freekassa_payments import router as freekassa_payments_router
 from .generation import router as generation_router
 from .image_analyzer import router as legacy_image_analyzer_router
-from .lava_checkout import router as lava_checkout_router
 from .notification_campaigns import router as notification_campaigns_router
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
@@ -24,7 +25,9 @@ from .support import router as support_router
 # package. Install the safe Lava callbacks here so both the HTTP route and the
 # periodic reconcile loop receive the corrected implementations.
 install_lava_payment_safety(payments_module)
+install_lava_invoice_compat(payments_module, lava_checkout_module)
 legacy_payments_router = payments_module.router
+lava_checkout_router = lava_checkout_module.router
 
 # The unified analyzer must run before the legacy photo/video analyzer. It owns
 # only the photo-to-prompt callback and waiting_for_photo state; the legacy router
