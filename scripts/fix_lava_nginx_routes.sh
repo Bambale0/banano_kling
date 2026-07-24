@@ -68,6 +68,9 @@ text = path.read_text(encoding="utf-8")
 
 SERVER_START_RE = re.compile(r"(?m)^[ \t]*server[ \t]*\{")
 SERVER_NAME_RE = re.compile(r"(?m)^[ \t]*server_name[ \t]+([^;]+);")
+HTTPS_LISTEN_RE = re.compile(
+    r"(?m)^[ \t]*listen[ \t]+(?:\[[^\]]+\]:)?443(?:[ \t;]|$)"
+)
 LOCATION_START_RE = re.compile(
     r"(?m)^[ \t]*location[ \t]+(?:=[ \t]+)?/lava/webhook(?:[ \t]+|\{)"
 )
@@ -121,7 +124,11 @@ def matching_brace(source: str, opening_index: int) -> int:
     raise RuntimeError("Не удалось найти закрывающую фигурную скобку")
 
 
-def patch_lava_location(block: str, port: str, domain: str) -> tuple[str, int]:
+def patch_existing_lava_location(
+    block: str,
+    port: str,
+    domain: str,
+) -> tuple[str, int]:
     patched = 0
     search_from = 0
 
@@ -132,11 +139,12 @@ def patch_lava_location(block: str, port: str, domain: str) -> tuple[str, int]:
 
         opening = block.find("{", location_match.start(), location_match.end() + 2)
         if opening == -1:
-            raise RuntimeError(f"{domain}: у location /lava/webhook нет открывающей скобки")
+            raise RuntimeError(
+                f"{domain}: у location /lava/webhook нет открывающей скобки"
+            )
 
         closing = matching_brace(block, opening)
         location = block[location_match.start(): closing + 1]
-
         replacement_count = 0
 
         def replace_proxy(match: re.Match[str]) -> str:
@@ -150,7 +158,8 @@ def patch_lava_location(block: str, port: str, domain: str) -> tuple[str, int]:
         new_location = PROXY_RE.sub(replace_proxy, location, count=1)
         if replacement_count != 1:
             raise RuntimeError(
-                f"{domain}: внутри location /lava/webhook не найден однозначный proxy_pass"
+                f"{domain}: внутри location /lava/webhook не найден "
+                "однозначный proxy_pass"
             )
 
         block = block[: location_match.start()] + new_location + block[closing + 1 :]
@@ -160,6 +169,35 @@ def patch_lava_location(block: str, port: str, domain: str) -> tuple[str, int]:
     return block, patched
 
 
+def ensure_lava_location(block: str, port: str, domain: str) -> tuple[str, int, bool]:
+    block, count = patch_existing_lava_location(block, port, domain)
+    if count > 1:
+        raise RuntimeError(
+            f"{domain}: в одном HTTPS server-блоке найдено несколько "
+            f"location /lava/webhook: {count}"
+        )
+    if count == 1:
+        return block, 1, False
+
+    closing = block.rfind("}")
+    if closing == -1:
+        raise RuntimeError(f"{domain}: не найдена закрывающая скобка server-блока")
+
+    location = (
+        "\n    # Lava payment webhook — managed by fix_lava_nginx_routes.sh\n"
+        "    location = /lava/webhook {\n"
+        f"        proxy_pass http://127.0.0.1:{port};\n"
+        "        proxy_http_version 1.1;\n"
+        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header X-Real-IP $remote_addr;\n"
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+        "    }\n"
+    )
+    block = block[:closing].rstrip() + "\n" + location + block[closing:]
+    return block, 1, True
+
+
 parts: list[str] = []
 cursor = 0
 patched_by_domain = {
@@ -167,6 +205,7 @@ patched_by_domain = {
     "tanyavk.chillcreative.ru": 0,
     "devtanyapi.chillcreative.ru": 0,
 }
+inserted_by_domain = {domain: False for domain in patched_by_domain}
 
 for server_match in SERVER_START_RE.finditer(text):
     if server_match.start() < cursor:
@@ -184,16 +223,18 @@ for server_match in SERVER_START_RE.finditer(text):
 
     domain: str | None = None
     port: str | None = None
-    if "tanyapi.chillcreative.ru" in names:
-        domain, port = "tanyapi.chillcreative.ru", tg_port
-    elif "tanyavk.chillcreative.ru" in names:
-        domain, port = "tanyavk.chillcreative.ru", vk_port
-    elif "devtanyapi.chillcreative.ru" in names:
-        domain, port = "devtanyapi.chillcreative.ru", tg_port
+    if HTTPS_LISTEN_RE.search(block):
+        if "tanyapi.chillcreative.ru" in names:
+            domain, port = "tanyapi.chillcreative.ru", tg_port
+        elif "tanyavk.chillcreative.ru" in names:
+            domain, port = "tanyavk.chillcreative.ru", vk_port
+        elif "devtanyapi.chillcreative.ru" in names:
+            domain, port = "devtanyapi.chillcreative.ru", tg_port
 
     if domain and port:
-        block, count = patch_lava_location(block, port, domain)
+        block, count, inserted = ensure_lava_location(block, port, domain)
         patched_by_domain[domain] += count
+        inserted_by_domain[domain] = inserted_by_domain[domain] or inserted
 
     parts.append(block)
     cursor = closing + 1
@@ -210,14 +251,18 @@ for required in ("tanyapi.chillcreative.ru", "tanyavk.chillcreative.ru"):
 path.write_text("".join(parts), encoding="utf-8")
 
 print("Маршруты в каноническом конфиге:")
-print(f"  tanyapi.chillcreative.ru/lava/webhook -> 127.0.0.1:{tg_port}")
-print(f"  tanyavk.chillcreative.ru/lava/webhook -> 127.0.0.1:{vk_port}")
-if patched_by_domain["devtanyapi.chillcreative.ru"]:
-    print(f"  devtanyapi.chillcreative.ru/lava/webhook -> 127.0.0.1:{tg_port}")
+for domain, port in (
+    ("tanyapi.chillcreative.ru", tg_port),
+    ("tanyavk.chillcreative.ru", vk_port),
+    ("devtanyapi.chillcreative.ru", tg_port),
+):
+    if patched_by_domain[domain]:
+        action = "добавлен" if inserted_by_domain[domain] else "обновлён"
+        print(f"  {domain}/lava/webhook -> 127.0.0.1:{port} ({action})")
 PY
 
-# banano-kling.conf уже содержит полноценные server-блоки tanyapi, tanyavk и devtanyapi.
-# Убираем из sites-enabled все остальные файлы, которые повторно объявляют эти домены.
+# banano-kling.conf содержит полноценные HTTPS server-блоки Tanya-доменов.
+# Убираем из sites-enabled остальные файлы, повторно объявляющие эти домены.
 mapfile -d '' DUPLICATE_CONFIGS < <(
   find "$SITES_ENABLED" -maxdepth 1 \( -type f -o -type l \) -print0 |
     while IFS= read -r -d '' file; do
