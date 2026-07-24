@@ -968,8 +968,10 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
         )
         return
 
+    contract_id = None
     if provider == "lava":
         invoice_id = lava_service.extract_invoice_id(result)
+        contract_id = lava_service.extract_contract_id(result)
         payment_url = lava_service.extract_payment_url(result)
     elif provider == "yookassa":
         invoice_id = result.get("PaymentId") if result else None
@@ -995,7 +997,7 @@ async def initiate_payment(callback: types.CallbackQuery, state: FSMContext):
     await create_transaction(
         order_id=order_id,
         user_id=user.id,
-        payment_id=invoice_id,
+        payment_id=contract_id or str(invoice_id),
         provider=provider,
         credits=total_credits,
         amount_rub=float(package["price_rub"]),
