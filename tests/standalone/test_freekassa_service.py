@@ -4,46 +4,70 @@ import hashlib
 import hmac
 from urllib.parse import parse_qs, urlsplit
 
-from bot.services.freekassa_service import (
-    FreeKassaService,
-    build_api_signature,
-    build_notification_signature,
-    build_sci_signature,
-    normalize_amount,
-    normalize_order_status,
-)
+from bot import config as config_module
+from bot.handlers import freekassa_payments
+from bot.services import freekassa_service as freekassa_module
+from bot.services import yookassa_service as legacy_payment_module
 
 
-def _configured_service(monkeypatch) -> FreeKassaService:
+def _configured_service(monkeypatch) -> freekassa_module.FreeKassaService:
     monkeypatch.setenv("FREEKASSA_MERCHANT_ID", "7012")
     monkeypatch.setenv("FREEKASSA_SECRET_WORD", "secret")
     monkeypatch.setenv("FREEKASSA_SECRET_WORD_2", "secret2")
     monkeypatch.setenv("FREEKASSA_CURRENCY", "RUB")
     monkeypatch.setenv("FREEKASSA_VERIFY_IP", "1")
-    return FreeKassaService()
+    return freekassa_module.FreeKassaService()
+
+
+def test_integration_modules_import_and_legacy_alias_is_freekassa_only():
+    assert freekassa_payments.router is not None
+    assert callable(freekassa_payments.handle_freekassa_webhook)
+    assert callable(freekassa_payments.setup_freekassa_routes)
+    assert (
+        legacy_payment_module.yookassa_service.__class__.__name__
+        == "FreeKassaLegacyAliasService"
+    )
+
+
+def test_config_defaults_to_freekassa_when_configured():
+    cfg = config_module.Config()
+    cfg.PAYMENT_PROVIDER = "freekassa"
+    cfg.FREEKASSA_MERCHANT_ID = "7012"
+    cfg.FREEKASSA_SECRET_WORD = "secret"
+    cfg.FREEKASSA_SECRET_WORD_2 = "secret2"
+    assert cfg.payment_provider == "freekassa"
+    assert cfg.has_freekassa is True
 
 
 def test_amount_is_stable_for_signatures():
-    assert normalize_amount(100) == "100.00"
-    assert normalize_amount("100.1") == "100.10"
-    assert normalize_amount("100.115") == "100.12"
+    assert freekassa_module.normalize_amount(100) == "100.00"
+    assert freekassa_module.normalize_amount("100.1") == "100.10"
+    assert freekassa_module.normalize_amount("100.115") == "100.12"
 
 
 def test_sci_signature_matches_documented_formula():
-    actual = build_sci_signature("7012", "100.11", "secret", "RUB", "154")
-    expected = hashlib.md5(b"7012:100.11:secret:RUB:154").hexdigest()
+    actual = freekassa_module.build_sci_signature(
+        "7012", "100.11", "secret", "RUB", "154"
+    )
+    expected = hashlib.md5(
+        b"7012:100.11:secret:RUB:154", usedforsecurity=False
+    ).hexdigest()
     assert actual == expected
 
 
 def test_notification_signature_uses_raw_provider_amount():
-    actual = build_notification_signature("7012", "100.00", "secret2", "154")
-    expected = hashlib.md5(b"7012:100.00:secret2:154").hexdigest()
+    actual = freekassa_module.build_notification_signature(
+        "7012", "100.00", "secret2", "154"
+    )
+    expected = hashlib.md5(
+        b"7012:100.00:secret2:154", usedforsecurity=False
+    ).hexdigest()
     assert actual == expected
 
 
 def test_api_signature_sorts_fields_before_hmac():
     payload = {"paymentId": "order-1", "nonce": 123, "shopId": 7012}
-    actual = build_api_signature(payload, "api-key")
+    actual = freekassa_module.build_api_signature(payload, "api-key")
     expected = hmac.new(
         b"api-key",
         b"123|order-1|7012",
@@ -63,7 +87,9 @@ def test_checkout_url_contains_signed_required_fields(monkeypatch):
     assert query["o"] == ["order-1"]
     assert query["lang"] == ["ru"]
     assert query["s"] == [
-        build_sci_signature("7012", "100.00", "secret", "RUB", "order-1")
+        freekassa_module.build_sci_signature(
+            "7012", "100.00", "secret", "RUB", "order-1"
+        )
     ]
 
 
@@ -73,7 +99,7 @@ def test_notification_verification_checks_shop_and_signature(monkeypatch):
         "MERCHANT_ID": "7012",
         "AMOUNT": "100.00",
         "MERCHANT_ORDER_ID": "order-1",
-        "SIGN": build_notification_signature(
+        "SIGN": freekassa_module.build_notification_signature(
             "7012", "100.00", "secret2", "order-1"
         ),
     }
@@ -91,13 +117,13 @@ def test_webhook_ip_allowlist_defaults_to_documented_addresses(monkeypatch):
 
 
 def test_order_status_mapping():
-    assert normalize_order_status(0) == {
+    assert freekassa_module.normalize_order_status(0) == {
         "status_code": 0,
         "status": "new",
         "paid": False,
         "failed": False,
     }
-    assert normalize_order_status(1)["paid"] is True
-    assert normalize_order_status(6)["failed"] is True
-    assert normalize_order_status(8)["failed"] is True
-    assert normalize_order_status(9)["failed"] is True
+    assert freekassa_module.normalize_order_status(1)["paid"] is True
+    assert freekassa_module.normalize_order_status(6)["failed"] is True
+    assert freekassa_module.normalize_order_status(8)["failed"] is True
+    assert freekassa_module.normalize_order_status(9)["failed"] is True
