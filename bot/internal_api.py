@@ -21,7 +21,6 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-
 _INTERNAL_PREFIX = "/internal/v1"
 
 
@@ -43,13 +42,17 @@ def _verify_hmac(request: web.Request, secret: str) -> bool:
     method = request.method.upper()
     path = str(request.rel_url.path)
     body = b""
-    message = b"\n".join([
-        timestamp_str.encode("ascii"),
-        method.encode("ascii"),
-        path.encode("utf-8"),
-        body,
-    ])
-    expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    message = b"\n".join(
+        [
+            timestamp_str.encode("ascii"),
+            method.encode("ascii"),
+            path.encode("utf-8"),
+            body,
+        ]
+    )
+    expected = hmac.new(
+        secret.encode("utf-8"), message, hashlib.sha256
+    ).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 
@@ -64,9 +67,6 @@ async def internal_auth_middleware(request: web.Request, handler: Any) -> web.Re
     return await handler(request)
 
 
-# ──────────────────────── handlers ────────────────────────
-
-
 async def handle_internal_health(request: web.Request) -> web.Response:
     """Детальный статус бота — версия, аптайм, база данных."""
     from bot.internal_api_db import simple_db_query_ok
@@ -75,14 +75,20 @@ async def handle_internal_health(request: web.Request) -> web.Response:
     db_error: str | None = None
     try:
         db_ok = await simple_db_query_ok()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - health endpoint reports any DB failure
         db_error = str(exc)
 
     payload: dict[str, Any] = {
         "service": "tanya-telegram",
         "status": "ok" if db_ok else "degraded",
         "version": request.app.get("bot_version", "unknown"),
-        "database": "connected" if db_ok else f"error: {db_error}" if db_error else "unknown",
+        "database": (
+            "connected"
+            if db_ok
+            else f"error: {db_error}"
+            if db_error
+            else "unknown"
+        ),
     }
     status_code = 200 if db_ok else 503
     return web.json_response(payload, status=status_code)
@@ -99,9 +105,6 @@ async def handle_internal_stats(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
     return web.json_response(stats)
-
-
-# ──────────────────────── setup ────────────────────────
 
 
 def setup_internal_api(app: web.Application, secret: str, version: str = "") -> None:
