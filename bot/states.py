@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from aiogram.fsm.state import State, StatesGroup
 
 
