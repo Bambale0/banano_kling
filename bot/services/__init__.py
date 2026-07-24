@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: I001
 
 """
 Services for the Telegram bot.
@@ -27,22 +28,22 @@ from .seedream_service import SeedreamService, seedream_service
 from .veo_service import VeoService, veo_service
 
 __all__ = [
-    "cryptobot_service",
     "CryptoBotService",
-    "gpt_image_service",
     "GPTImageService",
-    "gemini_omni_service",
     "GeminiOmniService",
-    "kling_service",
-    "KlingService",
-    "kie_market_service",
     "KieMarketService",
-    "nano_banana_pro_service",
-    "NanoBananaProService",
-    "nano_banana_2_service",
+    "KlingService",
     "NanoBanana2Service",
-    "seedream_service",
+    "NanoBananaProService",
     "SeedreamService",
-    "veo_service",
     "VeoService",
+    "cryptobot_service",
+    "gemini_omni_service",
+    "gpt_image_service",
+    "kie_market_service",
+    "kling_service",
+    "nano_banana_2_service",
+    "nano_banana_pro_service",
+    "seedream_service",
+    "veo_service",
 ]
