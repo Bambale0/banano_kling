@@ -88,7 +88,7 @@ ACTIVE_LOG_FILENAMES = {"bot.log"}
 YOOKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 YOOKASSA_RECONCILE_BATCH_SIZE = 50
 LAVA_RECONCILE_INTERVAL_SECONDS = 5 * 60
-LAVA_RECONCILE_BATCH_SIZE = 50
+LAVA_RECONCILE_BATCH_SIZE = 200
 MEMORY_DUMP_INTERVAL_SECONDS = 3 * 3600
 DB_BACKUP_INTERVAL_SECONDS = 3 * 3600
 DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
@@ -167,13 +167,15 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
                 completed = sum(1 for item in results if item.get("action") == "completed")
                 failed = sum(1 for item in results if item.get("action") == "failed")
                 still_pending = sum(1 for item in results if item.get("action") == "still_pending")
+                expired = sum(item.get("count", 0) for item in results if item.get("action") == "expired")
                 errors = sum(1 for item in results if item.get("error"))
                 logger.info(
-                    "Lava reconcile tick: checked=%s completed=%s failed=%s pending=%s errors=%s",
+                    "Lava reconcile tick: checked=%s completed=%s failed=%s pending=%s expired=%s errors=%s",
                     len(results),
                     completed,
                     failed,
                     still_pending,
+                    expired,
                     errors,
                 )
         except Exception:

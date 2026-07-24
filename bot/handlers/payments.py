@@ -444,13 +444,41 @@ async def cleanup_stale_cryptobot_pending(limit: int = 500) -> dict[str, int]:
 
 async def reconcile_lava_pending_transactions(
     *,
-    limit: int = 50,
+    limit: int = 200,
     bot: Bot | None = None,
 ) -> list[dict[str, Any]]:
-    """Poll Lava for pending invoices and complete paid transactions."""
+    """Poll Lava for pending invoices and complete paid transactions.
+
+    Pending-инвойсы старше ``config.LAVA_PENDING_TTL_HOURS`` часов считаются
+    брошенными: они помечаются ``failed`` без опроса Lava API, чтобы не
+    блокировать очередь reconcile (Lava держит их в ``in_progress`` очень долго).
+    """
 
     if not lava_service.enabled:
         return []
+
+    results: list[dict[str, Any]] = []
+
+    # TTL-очистка: протухшие pending -> failed (без запроса к Lava API)
+    ttl_hours = max(int(getattr(config, "LAVA_PENDING_TTL_HOURS", 24) or 24), 1)
+    ttl_cutoff = (datetime.now() - timedelta(hours=ttl_hours)).isoformat()
+    async with db_backend.connect() as db:
+        cursor = await db.execute(
+            """
+            UPDATE transactions
+            SET status = 'failed'
+            WHERE provider = 'lava' AND status = 'pending' AND created_at < ?
+            """,
+            (ttl_cutoff,),
+        )
+        await db.commit()
+        expired_count = cursor.rowcount or 0
+    if expired_count:
+        logger.info(
+            "Lava reconcile: expired %s stale pending transactions (ttl=%sh)",
+            expired_count,
+            ttl_hours,
+        )
 
     async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
@@ -460,14 +488,13 @@ async def reconcile_lava_pending_transactions(
                 SELECT order_id, payment_id
                 FROM transactions
                 WHERE provider = 'lava' AND status = 'pending'
-                ORDER BY created_at ASC
+                ORDER BY created_at DESC
                 LIMIT ?
                 """,
                 (limit,),
             )
         ).fetchall()
 
-    results: list[dict[str, Any]] = []
     for row in rows:
         order_id = row["order_id"]
         payment_id = row["payment_id"]

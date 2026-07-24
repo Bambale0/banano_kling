@@ -70,6 +70,7 @@ class Config:
     LAVA_OFFER_ID_STUDIO: str = os.getenv("LAVA_OFFER_ID_STUDIO", "")
     LAVA_OFFER_ID_BUSINESS: str = os.getenv("LAVA_OFFER_ID_BUSINESS", "")
     LAVA_WEBHOOK_SECRET: str = os.getenv("LAVA_WEBHOOK_SECRET", "")
+    LAVA_PENDING_TTL_HOURS: int = int(os.getenv("LAVA_PENDING_TTL_HOURS", "24"))
 
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
