@@ -2,8 +2,6 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-from typing import List
-
 from bot.env import load_project_env
 
 logger = logging.getLogger(__name__)
@@ -56,7 +54,6 @@ class Config:
     CRYPTOBOT_WEBHOOK_PATH: str = os.getenv(
         "CRYPTOBOT_WEBHOOK_PATH", "/cryptobot/webhook"
     )
-
     CRYPTOBOT_PENDING_TTL_DAYS: int = int(
         os.getenv("CRYPTOBOT_PENDING_TTL_DAYS", "7")
     )
@@ -76,17 +73,13 @@ class Config:
 
     # AI Services API Keys
     NANOBANANA_API_KEY: str = os.getenv("NANOBANANA_API_KEY", "")
-
     FREEPIK_API_KEY: str = os.getenv("FREEPIK_API_KEY", "")
     NOVITA_API_KEY: str = os.getenv("NOVITA_API_KEY", "")
     REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
-    # Optional secret used to verify incoming Replicate webhooks (HMAC SHA256).
-    # If set, the webhook handler will validate signatures to prevent spoofing.
     REPLICATE_WEBHOOK_SECRET: str = os.getenv("REPLICATE_WEBHOOK_SECRET", "")
     KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
     KIE_AI_WEBHOOK_PATH: str = os.getenv("KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
     KIE_AI_WEBHOOK_SECRET: str = os.getenv("KIE_AI_WEBHOOK_SECRET", "")
-    # If set, /health endpoint requires Authorization: Bearer <secret>
     HEALTH_CHECK_SECRET: str = os.getenv("HEALTH_CHECK_SECRET", "")
     INTERNAL_API_SECRET: str = os.getenv("INTERNAL_API_SECRET", "")
     KIE_WEBHOOK_HMAC_KEY: str = os.getenv("KIE_WEBHOOK_HMAC_KEY", "")
@@ -128,8 +121,6 @@ class Config:
         os.getenv("VIDEO_PROMPT_MAX_DURATION_SECONDS", "60")
     )
     KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
-    # PIAPI_API_KEY is used by kling_service. Allow fallback to KLING_API_KEY
-    # for environments that still provide the old variable name.
     PIAPI_API_KEY: str = os.getenv("PIAPI_API_KEY", "") or os.getenv(
         "KLING_API_KEY", ""
     )
@@ -144,20 +135,14 @@ class Config:
 
     # API Endpoints
     NANOBANANA_BASE_URL: str = "https://api.nanobanana.com/v1"
-
     FREEPIK_BASE_URL: str = "https://api.freepik.com/v1"
     KLING_BASE_URL: str = "https://api.freepik.com/v1"  # Legacy alias
     PIAPI_BASE_URL: str = "https://api.piapi.ai"
     NOVITA_BASE_URL: str = "https://api.novita.ai"
-
     KIE_BASE_URL: str = "https://api.kie.ai"
 
-    # Вебхуки
-    # WEBHOOK_HOST must be the full external URL, e.g. "https://example.com"
+    # Webhooks
     WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "")
-    # NOTE: previously a typo included a leading space in the env var name
-    # which caused WEBHOOK_PATH to be empty even when WEBHOOK_PATH was set.
-    # Default to "/webhook" to avoid registering an empty route in aiohttp.
     WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "/webhook")
     WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8443"))
     WEBHOOK_BIND_HOST: str = os.getenv("WEBHOOK_BIND_HOST", "127.0.0.1")
@@ -171,42 +156,37 @@ class Config:
     MINI_APP_PATH: str = os.getenv("MINI_APP_PATH", "/mini-app")
     MINI_APP_URL: str = os.getenv("MINI_APP_URL", "")
 
-    # База данных
+    # Database / Redis
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///bot.db")
-
-    # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
     REDIS_PREFIX: str = os.getenv("REDIS_PREFIX", "banano_kling")
 
-    # Партнёрская программа
+    # Partner programme
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
     PARTNER_MIN_WITHDRAWAL_RUB: int = int(
         os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "1000")
     )
 
-    # Пути к JSON
     PRESETS_PATH: str = "data/presets.json"
     PRICE_PATH: str = "data/price.json"
-
-    # Админы (список ID через запятую)
     ADMIN_IDS_STR: str = os.getenv("ADMIN_IDS", "")
 
     @property
-    def admin_ids(self) -> List[int]:
-        """Парсит список ID админов из строки"""
+    def admin_ids(self) -> list[int]:
         if not self.ADMIN_IDS_STR:
             return []
         try:
             return [
-                int(id.strip()) for id in self.ADMIN_IDS_STR.split(",") if id.strip()
+                int(item.strip())
+                for item in self.ADMIN_IDS_STR.split(",")
+                if item.strip()
             ]
         except ValueError:
-            logger.warning(f"Invalid ADMIN_IDS format: {self.ADMIN_IDS_STR}")
+            logger.warning("Invalid ADMIN_IDS format: %s", self.ADMIN_IDS_STR)
             return []
 
     def is_admin(self, telegram_id: int) -> bool:
-        """Проверяет, является ли пользователь админом"""
         return telegram_id in self.admin_ids
 
     @property
@@ -232,10 +212,8 @@ class Config:
             path = "/" + path
         return f"{self.WEBHOOK_HOST.rstrip('/')}{path}"
 
-    # Transitional aliases for old Mini App code. They point only to FreeKassa
-    # values and cannot enable or authenticate the removed YooKassa integration.
     @property
-    def YOOKASSA_RETURN_URL(self) -> str:  # noqa: N802
+    def YOOKASSA_RETURN_URL(self) -> str:  # transitional API name
         return self.FREEKASSA_RETURN_URL
 
     @property
@@ -332,7 +310,6 @@ class Config:
 
     @property
     def static_base_url(self) -> str:
-        """URL для доступа к статическим файлам"""
         if (self.STATIC_BASE_URL or "").strip():
             return self.STATIC_BASE_URL.strip().rstrip("/")
         if (self.WEBHOOK_HOST or "").strip():
