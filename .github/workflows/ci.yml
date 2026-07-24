@@ -55,9 +55,21 @@ jobs:
           fi
 
           printf 'Linting changed files:\n%s\n' "${changed_files[*]}"
+          set +e
           ruff check "${changed_files[@]}" \
             --ignore=E402,F403,F405,E501 \
-            --output-format=github
+            --output-format=concise 2>&1 | tee ruff-output.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      - name: Upload ruff diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-output
+          path: ruff-output.txt
+          if-no-files-found: ignore
 
   test:
     runs-on: ubuntu-latest
@@ -88,6 +100,7 @@ jobs:
             tests/test_config.py \
             tests/standalone/test_freekassa_service.py \
             tests/standalone/test_lava_checkout.py \
+            tests/standalone/test_lava_payment_safety.py \
             -v \
             --tb=short \
             -x
