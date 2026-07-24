@@ -11,6 +11,7 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.config import config
 from bot.database import create_transaction, get_or_create_user
 from bot.handlers.payments import (
     _get_selected_promo,
@@ -18,7 +19,13 @@ from bot.handlers.payments import (
     _promo_bonus_for_package,
 )
 from bot.keyboards import get_back_keyboard, get_payment_confirmation_keyboard
-from bot.payment_utils import package_bonus_credits, total_package_credits
+from bot.payment_utils import (
+    package_bonus_credits,
+    package_stars_amount,
+    total_package_credits,
+)
+from bot.services.cryptobot_service import cryptobot_service
+from bot.services.freekassa_service import freekassa_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
 from bot.states import PaymentStates
@@ -120,7 +127,7 @@ def normalize_lava_customer_email(value: Any) -> str | None:
     return normalized
 
 
-def parse_lava_checkout_callback(value: Any) -> tuple[str | None, str]:
+def parse_lava_checkout_callback(value: Any) -> tuple[str, str]:
     """Return checkout mode and package ID from current and legacy callbacks."""
 
     payload = str(value or "").removeprefix("buy_lava_")
@@ -128,12 +135,15 @@ def parse_lava_checkout_callback(value: Any) -> tuple[str | None, str]:
         prefix = f"{mode}_"
         if payload.startswith(prefix):
             return mode, payload.removeprefix(prefix)
-    return None, payload
+
+    # Old already-sent buttons used buy_lava_<package>. Keep them working without
+    # restoring the removed intermediate provider screen.
+    return LAVA_CHECKOUT_SBP, payload
 
 
 def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
     if mode == LAVA_CHECKOUT_CARD:
-        return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Банковская карта"
+        return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Картой"
     return (
         LAVA_RUB_SBP_PAYMENT_PROVIDER,
         LAVA_RUB_SBP_PAYMENT_METHOD,
@@ -141,16 +151,41 @@ def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
     )
 
 
-def _lava_method_keyboard(package_id: str) -> types.InlineKeyboardMarkup:
+def _payment_options_keyboard(
+    package_id: str,
+    *,
+    stars: bool,
+    direct_rub: bool,
+    crypto: bool,
+    hosted_fallback: bool,
+) -> types.InlineKeyboardMarkup:
+    """Show payment methods, not internal provider brands."""
+
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="⚡ СБП · Lava",
-        callback_data=f"buy_lava_sbp_{package_id}",
-    )
-    builder.button(
-        text="💳 Банковская карта · Lava",
-        callback_data=f"buy_lava_card_{package_id}",
-    )
+    if stars:
+        builder.button(
+            text="⭐ Stars",
+            callback_data=f"buy_stars_{package_id}",
+        )
+    if direct_rub:
+        builder.button(
+            text="⚡ СБП",
+            callback_data=f"buy_lava_sbp_{package_id}",
+        )
+        builder.button(
+            text="💳 Картой",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    elif hosted_fallback:
+        builder.button(
+            text="💳 Карта / СБП",
+            callback_data=f"buy_freekassa_{package_id}",
+        )
+    if crypto:
+        builder.button(
+            text="₿ Криптовалюта",
+            callback_data=f"buy_crypto_{package_id}",
+        )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()
@@ -163,29 +198,104 @@ def _email_request_keyboard() -> types.InlineKeyboardMarkup:
 
 
 def _format_lava_error(response: dict[str, Any] | None) -> str:
+    """Return a compact provider error for server logs only."""
+
     data = response or {}
     error = data.get("error") or data.get("message") or data.get("raw")
     if isinstance(error, dict):
         error = error.get("message") or error.get("error") or str(error)
-    return html.escape(str(error or "Lava не создала платёж"))[:700]
+    return str(error or "payment provider did not create an invoice")[:700]
 
 
 def _validate_lava_package(package_id: str) -> tuple[dict[str, Any] | None, str | None]:
     package = preset_manager.get_package(package_id)
     if not package:
-        return None, "Пакет не найден"
+        return None, "Пакет не найден."
 
     offer_id, currency = _package_lava_offer_config(package)
     if not offer_id:
-        return None, "Для этого пакета не настроен продукт Lava."
+        return None, "Этот способ оплаты пока недоступен для выбранного пакета."
     if str(currency or "").upper() != "RUB":
         logger.error(
             "Blocked non-RUB Lava checkout: package=%s currency=%s",
             package_id,
             currency,
         )
-        return None, "Оплата Lava для этого пакета настроена не в рублях."
+        return None, "Этот способ оплаты пока недоступен для выбранного пакета."
     return package, None
+
+
+def _checkout_title(mode: str) -> str:
+    if mode == LAVA_CHECKOUT_CARD:
+        return "💳 <b>Оплата картой</b>"
+    return "⚡ <b>Оплата по СБП</b>"
+
+
+@router.callback_query(F.data.startswith("choose_pay_"))
+async def show_direct_payment_methods(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Render one flat payment-method list before legacy provider handlers."""
+
+    package_id = callback.data.replace("choose_pay_", "", 1)
+    package = preset_manager.get_package(package_id)
+    if not package:
+        await callback.answer("Пакет не найден", show_alert=True)
+        return
+
+    lava_offer_id, lava_currency = _package_lava_offer_config(package)
+    has_direct_rub = bool(
+        lava_service.enabled
+        and lava_offer_id
+        and str(lava_currency or "").upper() == "RUB"
+    )
+    has_hosted_fallback = bool(freekassa_service.enabled and not has_direct_rub)
+    has_stars = bool(config.TELEGRAM_STARS_ENABLED)
+    has_crypto = bool(cryptobot_service.enabled)
+
+    if not any((has_direct_rub, has_hosted_fallback, has_stars, has_crypto)):
+        await callback.message.edit_text(
+            "❌ Способы оплаты временно недоступны. Обратитесь в поддержку.",
+            reply_markup=get_back_keyboard("menu_topup"),
+        )
+        await callback.answer()
+        return
+
+    promo = await _get_selected_promo(state)
+    package_bonus = package_bonus_credits(package)
+    promo_bonus = _promo_bonus_for_package(promo, package)
+    total_credits = total_package_credits(package, promo_bonus)
+
+    bonus_lines: list[str] = []
+    if package_bonus > 0:
+        bonus_lines.append(f"Бонус пакета: <code>{package_bonus}</code>🍌")
+    if promo_bonus > 0 and promo:
+        bonus_lines.append(
+            f"Промокод <code>{html.escape(promo.code)}</code>: "
+            f"+<code>{promo_bonus}</code>🍌"
+        )
+    bonus_text = ("\n" + "\n".join(bonus_lines)) if bonus_lines else ""
+
+    amount_parts = [f"<code>{package['price_rub']}</code>₽"]
+    if has_stars:
+        amount_parts.append(f"<code>{package_stars_amount(package)}</code>⭐")
+
+    await callback.message.edit_text(
+        "💳 <b>Выберите способ оплаты</b>\n\n"
+        f"Пакет: <b>{html.escape(str(package['name']))}</b>\n"
+        f"Бананы: <code>{total_credits}</code>🍌\n"
+        f"Сумма: {' / '.join(amount_parts)}{bonus_text}",
+        reply_markup=_payment_options_keyboard(
+            package_id,
+            stars=has_stars,
+            direct_rub=has_direct_rub,
+            crypto=has_crypto,
+            hosted_fallback=has_hosted_fallback,
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("buy_lava_"))
@@ -193,11 +303,11 @@ async def handle_lava_checkout_entry(
     callback: types.CallbackQuery,
     state: FSMContext,
 ) -> None:
-    """Choose Lava method, then collect the actual buyer email."""
+    """Collect the buyer email for the selected card or SBP method."""
 
     if not lava_service.enabled:
         await callback.message.edit_text(
-            "Lava временно недоступна. Выберите другой способ оплаты.",
+            "Этот способ оплаты временно недоступен. Выберите другой.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         await callback.answer()
@@ -213,20 +323,6 @@ async def handle_lava_checkout_entry(
         await callback.answer()
         return
 
-    if mode is None:
-        await state.set_state(None)
-        await callback.message.edit_text(
-            "💳 <b>Оплата через Lava</b>\n\n"
-            f"Пакет: <b>{html.escape(str(package['name']))}</b>\n"
-            f"Сумма: <code>{package['price_rub']}</code> ₽\n\n"
-            "Выберите способ оплаты. Для СБП и банковской карты потребуется "
-            "реальная электронная почта покупателя.",
-            reply_markup=_lava_method_keyboard(package_id),
-            parse_mode="HTML",
-        )
-        await callback.answer()
-        return
-
     _, _, method_label = _lava_checkout_params(mode)
     await state.update_data(
         lava_checkout_package_id=package_id,
@@ -234,10 +330,9 @@ async def handle_lava_checkout_entry(
     )
     await state.set_state(PaymentStates.waiting_lava_email)
     await callback.message.edit_text(
-        "📧 <b>Введите вашу электронную почту</b>\n\n"
-        f"Способ оплаты: <b>{method_label} через Lava</b>\n\n"
-        "Почта будет передана Lava как адрес конкретного покупателя и может "
-        "использоваться для уведомления о платеже.\n\n"
+        "📧 <b>Введите электронную почту</b>\n\n"
+        f"Способ оплаты: <b>{method_label}</b>\n\n"
+        "Почта нужна для оформления платежа и уведомления об оплате.\n\n"
         "Пример: <code>name2026@gmail.com</code>\n"
         "Цифры в адресе разрешены. Не вводите чужую или тестовую почту.",
         reply_markup=_email_request_keyboard(),
@@ -253,7 +348,7 @@ async def cancel_lava_email(
 ) -> None:
     await state.clear()
     await callback.message.edit_text(
-        "Оплата через Lava отменена.",
+        "Оплата отменена.",
         reply_markup=get_back_keyboard("menu_topup"),
     )
     await callback.answer()
@@ -322,10 +417,9 @@ async def create_lava_checkout(
             _format_lava_error(result),
         )
         await message.answer(
-            f"Не удалось создать оплату через Lava ({method_label}).\n"
-            f"Причина: <code>{_format_lava_error(result)}</code>",
+            f"Не удалось создать оплату ({method_label}). "
+            "Попробуйте ещё раз или выберите другой способ.",
             reply_markup=get_back_keyboard("menu_topup"),
-            parse_mode="HTML",
         )
         return
 
@@ -340,7 +434,7 @@ async def create_lava_checkout(
             payment_method,
         )
         await message.answer(
-            "Lava не вернула ссылку на оплату. Выберите другой способ оплаты.",
+            "Не удалось получить ссылку на оплату. Выберите другой способ.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         return
@@ -379,11 +473,11 @@ async def create_lava_checkout(
     bonus_text = "\n" + "\n".join(bonus_lines) if bonus_lines else ""
 
     await message.answer(
-        f"💳 <b>Оплата через Lava · {method_label}</b>\n"
+        f"{_checkout_title(mode)}\n"
         f"• Пакет: <code>{html.escape(str(package['name']))}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package['price_rub']}</code> ₽\n"
-        f"• Почта покупателя: <code>{html.escape(email)}</code>\n\n"
+        f"• Почта: <code>{html.escape(email)}</code>\n\n"
         "Проверьте данные и перейдите к оплате.",
         reply_markup=get_payment_confirmation_keyboard(payment_url, order_id),
         parse_mode="HTML",
