@@ -153,7 +153,7 @@ async def test_lava_invoice_payload_uses_real_email_rub_and_sbp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lava_invoice_payload_uses_bank131_for_card(monkeypatch):
+async def test_lava_invoice_payload_uses_card_method(monkeypatch):
     service = LavaService(api_key="test-key")
     captured = {}
 
@@ -190,7 +190,7 @@ async def test_lava_invoice_payload_uses_bank131_for_card(monkeypatch):
         "email": "customer2026@gmail.com",
         "offerId": "offer-card-1",
         "currency": "RUB",
-        "paymentMethod": "BANK131",
+        "paymentMethod": "CARD",
         "buyerLanguage": "RU",
         "clientUtm": {"telegram_id": "123", "payment_mode": "card"},
     }
