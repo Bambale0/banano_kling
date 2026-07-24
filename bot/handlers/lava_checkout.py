@@ -25,8 +25,17 @@ from bot.states import PaymentStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-LAVA_RUB_PAYMENT_PROVIDER = "PAY2ME"
-LAVA_RUB_PAYMENT_METHOD = "SBP"
+LAVA_CHECKOUT_SBP = "sbp"
+LAVA_CHECKOUT_CARD = "card"
+
+LAVA_RUB_SBP_PAYMENT_PROVIDER = "PAY2ME"
+LAVA_RUB_SBP_PAYMENT_METHOD = "SBP"
+LAVA_RUB_CARD_PAYMENT_METHOD = "BANK131"
+
+# Backward-compatible names used by existing tests and integrations.
+LAVA_RUB_PAYMENT_PROVIDER = LAVA_RUB_SBP_PAYMENT_PROVIDER
+LAVA_RUB_PAYMENT_METHOD = LAVA_RUB_SBP_PAYMENT_METHOD
+
 _EMAIL_RE = re.compile(
     r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
@@ -60,6 +69,42 @@ def normalize_lava_customer_email(value: Any) -> str | None:
     return email
 
 
+def parse_lava_checkout_callback(value: Any) -> tuple[str | None, str]:
+    """Return checkout mode and package ID from current and legacy callbacks."""
+
+    payload = str(value or "").removeprefix("buy_lava_")
+    for mode in (LAVA_CHECKOUT_SBP, LAVA_CHECKOUT_CARD):
+        prefix = f"{mode}_"
+        if payload.startswith(prefix):
+            return mode, payload.removeprefix(prefix)
+    return None, payload
+
+
+def _lava_checkout_params(mode: str) -> tuple[str | None, str, str]:
+    if mode == LAVA_CHECKOUT_CARD:
+        return None, LAVA_RUB_CARD_PAYMENT_METHOD, "Банковская карта"
+    return (
+        LAVA_RUB_SBP_PAYMENT_PROVIDER,
+        LAVA_RUB_SBP_PAYMENT_METHOD,
+        "СБП",
+    )
+
+
+def _lava_method_keyboard(package_id: str) -> types.InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="⚡ СБП · Lava",
+        callback_data=f"buy_lava_sbp_{package_id}",
+    )
+    builder.button(
+        text="💳 Банковская карта · Lava",
+        callback_data=f"buy_lava_card_{package_id}",
+    )
+    builder.button(text="◀️ Назад", callback_data="menu_topup")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def _email_request_keyboard() -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="❌ Отменить оплату", callback_data="cancel_lava_email")
@@ -74,12 +119,30 @@ def _format_lava_error(response: dict[str, Any] | None) -> str:
     return html.escape(str(error or "Lava не создала платёж"))[:700]
 
 
+def _validate_lava_package(package_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    package = preset_manager.get_package(package_id)
+    if not package:
+        return None, "Пакет не найден"
+
+    offer_id, currency = _package_lava_offer_config(package)
+    if not offer_id:
+        return None, "Для этого пакета не настроен продукт Lava."
+    if str(currency or "").upper() != "RUB":
+        logger.error(
+            "Blocked non-RUB Lava checkout: package=%s currency=%s",
+            package_id,
+            currency,
+        )
+        return None, "Оплата Lava для этого пакета настроена не в рублях."
+    return package, None
+
+
 @router.callback_query(F.data.startswith("buy_lava_"))
-async def request_lava_customer_email(
+async def handle_lava_checkout_entry(
     callback: types.CallbackQuery,
     state: FSMContext,
 ) -> None:
-    """Collect the actual buyer email before creating a Lava contract."""
+    """Choose Lava method, then collect the actual buyer email."""
 
     if not lava_service.enabled:
         await callback.message.edit_text(
@@ -89,39 +152,40 @@ async def request_lava_customer_email(
         await callback.answer()
         return
 
-    package_id = callback.data.replace("buy_lava_", "", 1)
-    package = preset_manager.get_package(package_id)
-    if not package:
-        await callback.answer("Пакет не найден", show_alert=True)
-        return
-
-    offer_id, currency = _package_lava_offer_config(package)
-    if not offer_id:
+    mode, package_id = parse_lava_checkout_callback(callback.data)
+    package, error = _validate_lava_package(package_id)
+    if error:
         await callback.message.edit_text(
-            "Для этого пакета не настроен продукт Lava. Выберите другой способ оплаты.",
-            reply_markup=get_back_keyboard("menu_topup"),
-        )
-        await callback.answer()
-        return
-    if str(currency or "").upper() != "RUB":
-        logger.error(
-            "Blocked non-RUB Lava checkout: package=%s currency=%s",
-            package_id,
-            currency,
-        )
-        await callback.message.edit_text(
-            "Оплата Lava для этого пакета настроена не в рублях. "
-            "Пожалуйста, выберите FreeKassa или напишите в поддержку.",
+            f"{error} Выберите другой способ оплаты или напишите в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         await callback.answer()
         return
 
-    await state.update_data(lava_checkout_package_id=package_id)
+    if mode is None:
+        await state.set_state(None)
+        await callback.message.edit_text(
+            "💳 <b>Оплата через Lava</b>\n\n"
+            f"Пакет: <b>{html.escape(str(package['name']))}</b>\n"
+            f"Сумма: <code>{package['price_rub']}</code> ₽\n\n"
+            "Выберите способ оплаты. Для СБП и банковской карты потребуется "
+            "реальная электронная почта покупателя.",
+            reply_markup=_lava_method_keyboard(package_id),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    _, _, method_label = _lava_checkout_params(mode)
+    await state.update_data(
+        lava_checkout_package_id=package_id,
+        lava_checkout_mode=mode,
+    )
     await state.set_state(PaymentStates.waiting_lava_email)
     await callback.message.edit_text(
         "📧 <b>Введите вашу электронную почту</b>\n\n"
-        "Она будет передана Lava как почта конкретного покупателя и может "
+        f"Способ оплаты: <b>{method_label} через Lava</b>\n\n"
+        "Почта будет передана Lava как адрес конкретного покупателя и может "
         "использоваться для уведомления о платеже.\n\n"
         "Пример: <code>name@gmail.com</code>\n"
         "Не вводите чужую или тестовую почту.",
@@ -145,7 +209,7 @@ async def cancel_lava_email(
 
 
 @router.message(PaymentStates.waiting_lava_email, F.text)
-async def create_lava_sbp_checkout(
+async def create_lava_checkout(
     message: types.Message,
     state: FSMContext,
 ) -> None:
@@ -162,31 +226,18 @@ async def create_lava_sbp_checkout(
 
     state_data = await state.get_data()
     package_id = str(state_data.get("lava_checkout_package_id") or "").strip()
-    package = preset_manager.get_package(package_id)
-    if not package:
+    mode = str(state_data.get("lava_checkout_mode") or LAVA_CHECKOUT_SBP).strip()
+    package, error = _validate_lava_package(package_id)
+    if error:
         await state.clear()
         await message.answer(
-            "Пакет оплаты больше не найден. Выберите его заново.",
+            f"{error} Выберите пакет заново или обратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
         )
         return
 
-    offer_id, configured_currency = _package_lava_offer_config(package)
-    currency = str(configured_currency or "").upper()
-    if not offer_id or currency != "RUB":
-        await state.clear()
-        logger.error(
-            "Invalid Lava RUB package configuration: package=%s offer=%s currency=%s",
-            package_id,
-            bool(offer_id),
-            currency,
-        )
-        await message.answer(
-            "Оплата Lava для этого пакета сейчас настроена некорректно. "
-            "Выберите FreeKassa или обратитесь в поддержку.",
-            reply_markup=get_back_keyboard("menu_topup"),
-        )
-        return
+    offer_id, _ = _package_lava_offer_config(package)
+    payment_provider, payment_method, method_label = _lava_checkout_params(mode)
 
     promo = await _get_selected_promo(state)
     package_bonus = package_bonus_credits(package)
@@ -198,26 +249,28 @@ async def create_lava_sbp_checkout(
         email=email,
         offer_id=offer_id,
         currency="RUB",
-        payment_provider=LAVA_RUB_PAYMENT_PROVIDER,
-        payment_method=LAVA_RUB_PAYMENT_METHOD,
+        payment_provider=payment_provider,
+        payment_method=payment_method,
         buyer_language="RU",
         client_utm={
             "telegram_id": str(message.from_user.id),
             "order_id": order_id,
             "package_id": package_id,
+            "payment_mode": mode,
         },
     )
     if not result.get("ok"):
         await state.clear()
         logger.error(
-            "Lava RUB/SBP invoice creation failed: user=%s package=%s status=%s error=%s",
+            "Lava RUB/%s invoice creation failed: user=%s package=%s status=%s error=%s",
+            payment_method,
             message.from_user.id,
             package_id,
             result.get("status"),
             _format_lava_error(result),
         )
         await message.answer(
-            "Не удалось создать оплату через Lava.\n"
+            f"Не удалось создать оплату через Lava ({method_label}).\n"
             f"Причина: <code>{_format_lava_error(result)}</code>",
             reply_markup=get_back_keyboard("menu_topup"),
             parse_mode="HTML",
@@ -229,9 +282,10 @@ async def create_lava_sbp_checkout(
     if not invoice_id or not payment_url:
         await state.clear()
         logger.error(
-            "Lava response has no invoice URL: user=%s package=%s",
+            "Lava response has no invoice URL: user=%s package=%s method=%s",
             message.from_user.id,
             package_id,
+            payment_method,
         )
         await message.answer(
             "Lava не вернула ссылку на оплату. Выберите другой способ оплаты.",
@@ -273,7 +327,7 @@ async def create_lava_sbp_checkout(
     bonus_text = "\n" + "\n".join(bonus_lines) if bonus_lines else ""
 
     await message.answer(
-        "💳 <b>Оплата через Lava · СБП</b>\n"
+        f"💳 <b>Оплата через Lava · {method_label}</b>\n"
         f"• Пакет: <code>{html.escape(str(package['name']))}</code>\n"
         f"• Бананов: <code>{total_credits}</code>{bonus_text}\n"
         f"• Сумма: <code>{package['price_rub']}</code> ₽\n"
