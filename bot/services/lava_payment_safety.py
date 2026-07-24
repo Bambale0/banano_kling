@@ -5,10 +5,12 @@ import base64
 import hmac
 import logging
 import os
+from collections.abc import Iterable
 from types import ModuleType
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urlparse
 
+from aiogram.exceptions import TelegramAPIError
 from aiohttp import web
 
 from bot import db as db_backend
@@ -144,7 +146,6 @@ async def _discover_invoice_id_by_contract(contract_id: str) -> str | None:
     for page_index in range(10):
         response = await lava_service._request("GET", path, params=params)
         if not response.get("ok"):
-            # Some pageable APIs are one-based. Retry the first page once using 1.
             if page_index == 0 and params and params.get("page") == 0:
                 params = {"page": 1, "size": 100}
                 continue
@@ -364,7 +365,7 @@ async def _notify_completed_payment(
                 f"• Сумма: <code>{transaction.amount_rub}</code> ₽{bonus_text}",
                 parse_mode="HTML",
             )
-        except Exception as exc:
+        except TelegramAPIError as exc:
             logger.warning(
                 "Lava payment completed but Telegram notification failed order=%s: %s",
                 transaction.order_id,
