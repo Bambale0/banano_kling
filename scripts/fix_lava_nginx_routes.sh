@@ -72,15 +72,28 @@ def rewrite(
     for line in lines:
         server_match = server_name_re.match(line)
         if server_match:
-            names = server_match.group(2).split()
-            names = [name for name in names if name not in remove_server_names]
-            if required_server_name in names:
+            original_names = server_match.group(2).split()
+
+            # Меняем только тот server-блок, который действительно относится
+            # к целевому домену текущего конфига. Остальные server_name в этом
+            # же файле оставляем без изменений.
+            if required_server_name in original_names:
                 required_name_found = True
-            if not names:
-                raise RuntimeError(
-                    f"{path}: после удаления чужих доменов server_name оказался пустым"
+                names = [
+                    name
+                    for name in original_names
+                    if name not in remove_server_names
+                ]
+                if required_server_name not in names:
+                    raise RuntimeError(
+                        f"{path}: потерян обязательный server_name "
+                        f"{required_server_name}"
+                    )
+                line = (
+                    server_match.group(1)
+                    + " ".join(names)
+                    + server_match.group(3)
                 )
-            line = server_match.group(1) + " ".join(names) + server_match.group(3)
 
         if location_re.match(line):
             in_lava = True
@@ -108,11 +121,9 @@ def rewrite(
             f"{path}: внутри location /lava/webhook не найден proxy_pass на 127.0.0.1"
         )
     if not required_name_found:
-        combined = "".join(output)
-        if required_server_name not in combined:
-            raise RuntimeError(
-                f"{path}: не найден обязательный server_name {required_server_name}"
-            )
+        raise RuntimeError(
+            f"{path}: не найден обязательный server_name {required_server_name}"
+        )
 
     path.write_text("".join(output), encoding="utf-8")
 
