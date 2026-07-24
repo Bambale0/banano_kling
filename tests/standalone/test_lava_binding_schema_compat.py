@@ -29,7 +29,6 @@ class _FakeConnection:
         self.events.append(("execute", normalized))
         if self.fail_index and normalized.startswith("CREATE UNIQUE INDEX"):
             raise compat.db_backend.OperationalError("concurrent index creation")
-        return None
 
     async def commit(self):
         self.events.append(("commit", None))
