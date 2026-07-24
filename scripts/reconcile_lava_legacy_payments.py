@@ -68,6 +68,24 @@ def provider_status(payload: dict[str, Any] | None) -> str:
     return lava_service.webhook_status(payload)
 
 
+def provider_reference(payload: dict[str, Any] | None) -> str | None:
+    """Resolve the identifier returned by Lava's GET invoice endpoint.
+
+    Create-invoice responses may contain a distinct ``contractId`` and must keep
+    using :meth:`extract_contract_id`. GET ``/api/v2/invoices/{id}``, however,
+    returns the contract identifier as the top-level ``id`` and often omits a
+    separate ``contractId`` field. The fallback is therefore intentionally
+    local to this reconciliation script.
+    """
+
+    if not payload:
+        return None
+    return (
+        lava_service.extract_contract_id(payload)
+        or lava_service.extract_invoice_id(payload)
+    )
+
+
 async def load_candidates(
     *,
     limit: int,
@@ -167,7 +185,7 @@ async def reconcile_candidate(
             details="Lava API did not return the invoice",
         )
 
-    contract_id = lava_service.extract_contract_id(invoice)
+    contract_id = provider_reference(invoice)
     remote_status = provider_status(invoice) or "unknown"
     needs_reference_update = bool(contract_id and contract_id != candidate.payment_id)
     is_paid = remote_status in SUCCESS_STATUSES
