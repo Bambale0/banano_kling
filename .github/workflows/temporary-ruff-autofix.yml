@@ -1,9 +1,9 @@
 name: Temporary Ruff Autofix
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/seedance-multimodal-refs
+      - tanyapi
 
 permissions:
   contents: read
