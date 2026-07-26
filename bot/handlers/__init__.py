@@ -4,6 +4,7 @@ Handlers for the Telegram bot.
 """
 
 from aiogram import Router
+
 from bot.services.lava_binding_schema_compat import (
     install_lava_binding_schema_compat,
 )
@@ -12,7 +13,11 @@ from bot.services.lava_payment_safety import install_lava_payment_safety
 
 from . import (
     generation as generation_module,
+)
+from . import (
     lava_checkout as lava_checkout_module,
+)
+from . import (
     payments as payments_module,
 )
 from .admin import router as admin_router
@@ -24,6 +29,8 @@ from .notification_campaigns import router as notification_campaigns_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
+)
+from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
 )
 from .support import router as support_router
