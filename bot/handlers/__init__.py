@@ -10,9 +10,12 @@ from bot.services.lava_binding_schema_compat import (
 )
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
-from . import generation as generation_module
-from . import lava_checkout as lava_checkout_module
-from . import payments as payments_module
+
+from . import (
+    generation as generation_module,
+    lava_checkout as lava_checkout_module,
+    payments as payments_module,
+)
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .common import router as legacy_common_router
