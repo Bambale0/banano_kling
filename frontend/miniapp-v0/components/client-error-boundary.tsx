@@ -26,6 +26,26 @@ export class ClientErrorBoundary extends Component<
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Mini App client error', error, errorInfo)
+    try {
+      const payload = {
+        event: 'react-error-boundary',
+        href: String(window.location.pathname + window.location.search),
+        hash_len: String(window.location.hash || '').length,
+        has_tg: Boolean(window.Telegram),
+        has_webapp: Boolean(window.Telegram?.WebApp),
+        init_data_len: window.Telegram?.WebApp?.initData?.length || 0,
+        message: String(error?.message || ''),
+        name: String(error?.name || ''),
+        stack: String(error?.stack || '').slice(0, 1200),
+        component_stack: String(errorInfo?.componentStack || '').slice(0, 1200),
+      }
+      fetch('/mini-app/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {})
+    } catch {}
   }
 
   render() {

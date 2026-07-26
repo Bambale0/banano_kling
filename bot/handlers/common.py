@@ -94,11 +94,12 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 FEED_CACHE_TTL_SECONDS = 1800.0
-FEED_CACHE_WARMUP_DELAY_SECONDS = 3.0
+FEED_CACHE_WARMUP_DELAY_SECONDS = 120.0
 _feed_cards_cache: dict[tuple[str, int | None], tuple[float, list[dict]]] = {}
 _profile_feed_cards_cache: dict[tuple[str, int | None], tuple[float, object | None, list[dict]]] = {}
 _bot_username_cache: dict[int, str] = {}
 _feed_cards_cache_locks: dict[tuple[str, int | None], asyncio.Lock] = {}
+_feed_cache_warmup_task: asyncio.Task | None = None
 
 
 def _feed_cache_get(cache: dict, key):
@@ -2645,14 +2646,19 @@ async def _warm_feed_cache() -> None:
 
 
 def ensure_feed_cache_warmup() -> None:
-    asyncio.create_task(_warm_feed_cache())
+    global _feed_cache_warmup_task
+    if _feed_cache_warmup_task and not _feed_cache_warmup_task.done():
+        return
+    _feed_cache_warmup_task = asyncio.create_task(_warm_feed_cache())
 
 
 async def _schedule_feed_cache_warmup(*_args, **_kwargs) -> None:
     ensure_feed_cache_warmup()
 
 
-router.startup.register(_schedule_feed_cache_warmup)
+# Main startup schedules this explicitly. Avoid registering a second warmup task
+# through the router: with a large public feed it can starve Mini App bootstrap
+# right after deploy/restart.
 
 
 async def _render_feed_carousel(

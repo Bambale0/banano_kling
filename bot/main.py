@@ -1787,12 +1787,6 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     logger.info("Database already initialized")
 
     try:
-        feed_storage_stats = await _normalize_public_feed_storage()
-        logger.info("Startup public feed storage normalization stats: %s", feed_storage_stats)
-    except Exception:
-        logger.exception("Failed startup public feed storage normalization")
-
-    try:
         for scope in USER_BOT_COMMAND_SCOPES:
             for language_code in USER_BOT_COMMAND_LANGUAGES:
                 await bot.set_my_commands(
