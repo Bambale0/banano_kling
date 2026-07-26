@@ -16,7 +16,10 @@ from bot.database import (
     get_or_create_user,
     get_task_by_id,
 )
-from bot.handlers.generation import run_no_preset_video_from_callback
+from bot.handlers.generation import (
+    _show_video_creation_screen,
+    run_no_preset_video_from_callback,
+)
 from bot.keyboards import get_video_model_label
 from bot.model_capabilities import (
     VIDEO_MODEL_CAPABILITIES,
@@ -131,7 +134,7 @@ async def select_advanced_video_model(callback: types.CallbackQuery, state: FSMC
     resolution = capability.resolutions[0] if capability.resolutions else "720p"
     await state.update_data(
         generation_type="video",
-        video_flow_step="media",
+        video_flow_step="configure",
         v_model=model,
         v_type=_initial_type_for_model(model),
         v_duration=duration,
@@ -145,12 +148,8 @@ async def select_advanced_video_model(callback: types.CallbackQuery, state: FSMC
         v_end_image_url=None,
         avatar_audio_url=None,
     )
+    await _show_video_creation_screen(callback, state)
     await callback.answer(f"Выбрано: {capability.label}")
-    await callback.message.answer(
-        f"✅ Выбрано: <b>{capability.label}</b>\n\n"
-        "Продолжите настройку в текущем видео-сценарии.",
-        parse_mode="HTML",
-    )
 
 
 @router.callback_query(F.data.startswith("repeat_video_result_"))
