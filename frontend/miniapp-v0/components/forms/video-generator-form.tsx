@@ -352,6 +352,48 @@ export function VideoGeneratorForm({
     if (!model.supports_omni_character_audio_ids) setOmniCharacterAudioIds('')
   }, [model, grokMode, grokResolution, veoGenerationType, veoResolution, omniResolution, omniBaseVoice])
 
+  const handleModelChange = (modelId: string) => {
+    const nextModel = models.find((item) => item.id === modelId)
+    if (!nextModel) {
+      setSelectedModel(modelId)
+      return
+    }
+
+    setSelectedModel(modelId)
+    setSelectedScenario((current) =>
+      nextModel.supports.includes(current) ? current : nextModel.supports[0] || 'text'
+    )
+    setSelectedRatio((current) =>
+      nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || '16:9'
+    )
+    setSelectedDuration((current) =>
+      nextModel.durations.includes(current) ? current : nextModel.durations[0] || 5
+    )
+
+    if (nextModel.id === 'grok_imagine') {
+      setSelectedScenario('imgtxt')
+      setSelectedRatio((current) =>
+        nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || '16:9'
+      )
+      setSelectedDuration((current) =>
+        nextModel.durations.includes(current) ? current : nextModel.durations[0] || 6
+      )
+      setVideoReferences([])
+      setAudioReference([])
+    } else if (nextModel.id === 'grok_imagine_v15') {
+      setSelectedScenario('imgtxt')
+      setSelectedRatio((current) =>
+        nextModel.ratios.includes(current) ? current : nextModel.ratios[0] || 'auto'
+      )
+      setSelectedDuration((current) =>
+        nextModel.durations.includes(current) ? current : nextModel.durations[0] || 1
+      )
+      setPhotoReferences([])
+      setVideoReferences([])
+      setAudioReference([])
+    }
+  }
+
   const handleSubmit = async () => {
     if (!isValid) return
     const submitDuration = isOmniAudio || isOmniCharacter ? 6 : selectedDuration
@@ -414,7 +456,7 @@ export function VideoGeneratorForm({
                     : getVideoModelPerSecondCost(m, selectedDuration, qualityForModel(m)),
             }))}
             value={selectedModel}
-            onChange={setSelectedModel}
+            onChange={handleModelChange}
           />
         </div>
 

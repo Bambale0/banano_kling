@@ -4785,6 +4785,9 @@ async def _apply_video_model_selection(
 
     if model == "grok_imagine":
         current_v_type = "imgtxt"
+        current_duration = (
+            current_duration if current_duration in {6, 10, 20, 30} else 6
+        )
         current_ratio = (
             current_ratio if current_ratio in _GROK_LEGACY_VIDEO_RATIOS else "16:9"
         )
@@ -4794,6 +4797,9 @@ async def _apply_video_model_selection(
         )
     elif model == "grok_imagine_v15":
         current_v_type = "imgtxt"
+        current_duration = (
+            current_duration if 1 <= int(current_duration) <= 15 else 8
+        )
         current_ratio = current_ratio if current_ratio in _GROK_V15_VIDEO_RATIOS else "auto"
         await state.update_data(
             grok_resolution=data.get("grok_resolution", "480p"),
@@ -4871,7 +4877,12 @@ async def _apply_video_model_selection(
     if model in _GROK_VIDEO_MODELS:
         current_v_type = "imgtxt"
 
-    updates = {"v_model": model, "v_type": current_v_type, "v_ratio": current_ratio}
+    updates = {
+        "v_model": model,
+        "v_type": current_v_type,
+        "v_ratio": current_ratio,
+        "v_duration": current_duration,
+    }
     if data.get("video_flow_step") == "select_model":
         updates["video_flow_step"] = "media"
     await state.update_data(**updates)
