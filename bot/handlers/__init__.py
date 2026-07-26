@@ -10,6 +10,9 @@ from bot.services.lava_binding_schema_compat import (
 )
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
+from bot.services.publication_scope_postgres_compat import (
+    install_publication_scope_postgres_compat,
+)
 
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
@@ -20,6 +23,7 @@ from .publication_scope_compat import (
 )
 from .publication_scope_compat import router as publication_scope_compat_router
 
+install_publication_scope_postgres_compat()
 install_publication_scope_compat()
 
 from . import (
