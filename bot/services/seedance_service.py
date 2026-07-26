@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any, ClassVar
 
 from bot.config import config
 from bot.services.kie_file_upload_service import kie_file_upload_service
@@ -13,9 +14,9 @@ from bot.services.media_input_utils import image_sources_to_provider_safe_png_ur
 logger = logging.getLogger(__name__)
 
 
-def _clean_unique_urls(values: Iterable[str] | None) -> List[str]:
+def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
     """Normalize reference URLs without changing their user supplied order."""
-    cleaned: List[str] = []
+    cleaned: list[str] = []
     seen: set[str] = set()
     for value in values or []:
         url = str(value or "").strip()
@@ -78,7 +79,7 @@ class SeedanceService(KlingService):
     """Wrapper for Bytedance Seedance 2.0 on Kie.ai."""
 
     MODEL_NAME = "bytedance/seedance-2"
-    SUPPORTED_RATIOS = {
+    SUPPORTED_RATIOS: ClassVar[set[str]] = {
         "1:1",
         "4:3",
         "3:4",
@@ -87,7 +88,12 @@ class SeedanceService(KlingService):
         "21:9",
         "adaptive",
     }
-    SUPPORTED_RESOLUTIONS = {"480p", "720p", "1080p", "4k"}
+    SUPPORTED_RESOLUTIONS: ClassVar[set[str]] = {
+        "480p",
+        "720p",
+        "1080p",
+        "4k",
+    }
     MAX_REFERENCE_IMAGES = 9
     MAX_REFERENCE_VIDEOS = 3
     MAX_REFERENCE_AUDIO = 3
@@ -96,8 +102,8 @@ class SeedanceService(KlingService):
     MAX_PROMPT_LENGTH = 20_000
 
     async def _prepare_image_urls(
-        self, image_urls: List[str]
-    ) -> tuple[List[str], List[str], List[str]]:
+        self, image_urls: list[str]
+    ) -> tuple[list[str], list[str], list[str]]:
         """Prepare local image inputs before Seedance receives them."""
         if not image_urls:
             return [], [], []
@@ -107,9 +113,9 @@ class SeedanceService(KlingService):
             safe_image_urls
         )
 
-        effective_urls: List[str] = []
-        missing_urls: List[str] = []
-        failed_upload_urls: List[str] = []
+        effective_urls: list[str] = []
+        missing_urls: list[str] = []
+        failed_upload_urls: list[str] = []
         for original_url, uploaded_url in zip(image_urls, uploaded_image_urls):
             uploaded = str(uploaded_url or "").strip()
             if not uploaded:
@@ -129,16 +135,16 @@ class SeedanceService(KlingService):
         duration: int = 5,
         aspect_ratio: str = "16:9",
         resolution: str = "720p",
-        first_frame_url: Optional[str] = None,
-        last_frame_url: Optional[str] = None,
-        reference_image_urls: Optional[List[str]] = None,
-        reference_video_urls: Optional[List[str]] = None,
-        reference_audio_urls: Optional[List[str]] = None,
+        first_frame_url: str | None = None,
+        last_frame_url: str | None = None,
+        reference_image_urls: list[str] | None = None,
+        reference_video_urls: list[str] | None = None,
+        reference_audio_urls: list[str] | None = None,
         return_last_frame: bool = False,
         generate_audio: bool = True,
         web_search: bool = False,
-        callBackUrl: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        callBackUrl: str | None = None,
+    ) -> dict[str, Any]:
         if not prompt or not prompt.strip():
             return self._build_error("prompt_required", "Prompt is required")
 
@@ -167,8 +173,8 @@ class SeedanceService(KlingService):
                 "Seedance 2.0 does not allow first/last-frame inputs together with multimodal references in one task.",
             )
 
-        frame_fields: List[str] = []
-        frame_image_urls: List[str] = []
+        frame_fields: list[str] = []
+        frame_image_urls: list[str] = []
         if first_frame_url:
             frame_fields.append("first_frame_url")
             frame_image_urls.append(first_frame_url)
@@ -238,7 +244,7 @@ class SeedanceService(KlingService):
         except (TypeError, ValueError):
             normalized_duration = 5
 
-        input_data: Dict[str, Any] = {
+        input_data: dict[str, Any] = {
             "prompt": conditioned_prompt[: self.MAX_PROMPT_LENGTH],
             "duration": max(
                 self.MIN_DURATION,
@@ -267,7 +273,7 @@ class SeedanceService(KlingService):
         if limited_reference_audio_urls:
             input_data["reference_audio_urls"] = limited_reference_audio_urls
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": self.MODEL_NAME,
             "input": input_data,
         }
