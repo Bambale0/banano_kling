@@ -68,6 +68,14 @@ function getPublicReferences(item: FeedItem | null) {
   ].filter((item) => isHttpUrl(item.url))
 }
 
+function feedInteractionsEnabled(item: FeedItem | null | undefined) {
+  return Boolean(
+    item &&
+      item.feed_interactions_enabled !== false &&
+      item.publication_scope !== 'profile'
+  )
+}
+
 export function ProfileTab() {
   const { state, viewedProfileCode, setActiveTab, setPromptPreset, setVideoPromptPreset } = useApp()
   const { user } = state
@@ -288,7 +296,7 @@ export function ProfileTab() {
     let ignore = false
 
     async function loadComments() {
-      if (!commentsItem || !isLive) {
+      if (!commentsItem || !isLive || !feedInteractionsEnabled(commentsItem)) {
         setComments([])
         return
       }
@@ -326,7 +334,7 @@ export function ProfileTab() {
   }
 
   async function handleCopyPostLink(item: FeedItem) {
-    if (!isLive) return
+    if (!isLive || !feedInteractionsEnabled(item)) return
     setBusyId(item.id)
     try {
       const { item: updated, link } = await shareFeedItem(item.id)
@@ -356,7 +364,7 @@ export function ProfileTab() {
 
   async function handleSubmitComment() {
     const text = commentText.trim()
-    if (!isLive || !commentsItem || !text) return
+    if (!isLive || !commentsItem || !text || !feedInteractionsEnabled(commentsItem)) return
     setBusyId(commentsItem.id)
     try {
       const { comment, commentsCount } = await addFeedComment(commentsItem.id, text)
@@ -388,6 +396,7 @@ export function ProfileTab() {
   }
 
   function handleRemix(item: FeedItem) {
+    if (!feedInteractionsEnabled(item)) return
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
       setVideoPromptPreset({
@@ -633,6 +642,11 @@ export function ProfileTab() {
                   <Sparkles className="h-3 w-3" />
                   {formatCompactNumber(item.remixes)}
                 </span>
+                {!feedInteractionsEnabled(item) ? (
+                  <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 rounded bg-background/85 px-1.5 py-0.5 text-[9px] font-semibold text-cyan backdrop-blur">
+                    Только профиль
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -641,7 +655,7 @@ export function ProfileTab() {
                   'bg-background/80 text-foreground backdrop-blur transition-colors hover:bg-background',
                   (!isLive || busyId === item.id) && 'opacity-60'
                 )}
-                disabled={!isLive || busyId === item.id}
+                disabled={!isLive || busyId === item.id || !feedInteractionsEnabled(item)}
                 onClick={() => handleCopyPostLink(item)}
                 aria-label="Скопировать ссылку на пост"
               >
@@ -656,7 +670,7 @@ export function ProfileTab() {
               <button
                 type="button"
                 className="absolute bottom-1 right-1 flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full bg-background/80 px-1.5 text-[10px] font-medium text-foreground backdrop-blur transition-colors hover:bg-background disabled:opacity-60"
-                disabled={!isLive}
+                disabled={!isLive || !feedInteractionsEnabled(item)}
                 onClick={() => setCommentsItem(item)}
                 aria-label="Комментарии"
               >
@@ -672,7 +686,7 @@ export function ProfileTab() {
             <Grid3X3 className="h-6 w-6" />
           </div>
           <p className="mt-3 text-sm font-medium text-foreground">Публикаций пока нет</p>
-          <p className="mt-1 text-sm text-muted-foreground">В профиле появятся фото и видео, опубликованные в ленте.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Здесь появятся работы, опубликованные в ленте или только в профиле.</p>
           <Button
             type="button"
             variant="secondary"
@@ -749,7 +763,7 @@ export function ProfileTab() {
               type="button"
               variant="secondary"
               className="h-10 rounded-full bg-secondary/90 px-4"
-              disabled={!isLive}
+              disabled={!isLive || !feedInteractionsEnabled(previewItem)}
               onClick={() => setCommentsItem(previewItem)}
             >
               <MessageCircle className="h-4 w-4" />
@@ -758,6 +772,7 @@ export function ProfileTab() {
             <Button
               type="button"
               className="h-10 rounded-full px-4"
+              disabled={!feedInteractionsEnabled(previewItem)}
               onClick={() => handleRemix(previewItem)}
             >
               <Repeat2 className="h-4 w-4" />
@@ -821,7 +836,12 @@ export function ProfileTab() {
                 type="button"
                 size="icon"
                 className="h-10 w-10 rounded-full"
-                disabled={!commentText.trim() || busyId === commentsItem.id || !isLive}
+                disabled={
+                  !commentText.trim() ||
+                  busyId === commentsItem.id ||
+                  !isLive ||
+                  !feedInteractionsEnabled(commentsItem)
+                }
                 onClick={handleSubmitComment}
                 aria-label="Отправить"
               >
