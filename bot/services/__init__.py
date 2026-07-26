@@ -11,6 +11,12 @@ from .nano_banana_2_service import NanoBanana2Service, nano_banana_2_service
 from .nano_banana_pro_service import NanoBananaProService, nano_banana_pro_service
 from .seedream_service import SeedreamService, seedream_service
 from .veo_service import VeoService, veo_service
+from .photo_prompt_vk_compat import install_vk_photo_prompt_instructions
+
+# Keep Telegram photo analysis aligned with the prompt that produces the best
+# results in the VK bot. The patch preserves Telegram's structured JSON output,
+# voice mode and provider fallback chain.
+install_vk_photo_prompt_instructions()
 
 __all__ = [
     "cryptobot_service",
