@@ -24,7 +24,10 @@ from . import generation as generation_module
 
 router = Router()
 
-SEEDANCE_MODELS = {"seedance_2", "seedance_2_fast"}
+# The established Telegram dispatcher currently has an explicit provider branch
+# for the standard model only. Do not claim Fast support until its own provider
+# dispatch and pricing are wired into the legacy flow.
+SEEDANCE_MODELS = {"seedance_2"}
 SEEDANCE_MAX_IMAGES = 9
 SEEDANCE_MAX_VIDEOS = 3
 SEEDANCE_MAX_VIDEO_BYTES = 50 * 1024 * 1024
