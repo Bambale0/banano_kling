@@ -7,6 +7,7 @@ prompt followed by a short usage hint.
 
 from __future__ import annotations
 
+import importlib
 from functools import wraps
 from typing import Any
 
@@ -77,7 +78,7 @@ def _prompt_from_result(result: dict[str, Any]) -> str:
 def install_vk_photo_prompt_result_compat() -> None:
     """Patch only ordinary photo-only result delivery in the legacy handler."""
 
-    from bot.handlers import image_analyzer as module
+    module = importlib.import_module("bot.handlers.image_analyzer")
 
     if getattr(module, "_vk_photo_prompt_result_compat_installed", False):
         return
