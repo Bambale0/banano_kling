@@ -1,8 +1,8 @@
-"""Run image-only Telegram photo analysis with the exact VK contract.
+"""Use the exact VK photo-analysis request for ordinary Telegram photos.
 
-The established Telegram UX remains untouched. This module replaces only the
-provider call used when a user sends a photo without an audio prompt. Photo +
-voice and voice-only requests continue to use the richer Telegram pipeline.
+Only the internal provider call changes. Telegram handlers, buttons, FSM and
+result layout remain untouched. Photo+voice and voice-only requests keep using
+the existing richer Telegram pipeline.
 """
 
 from __future__ import annotations
@@ -28,29 +28,24 @@ VK_PHOTO_ANALYSIS_PROMPT = (
     "Сохрани все мелкие детали, лицо, одежду, позу, освещение, стиль, цвета. "
     "На русском языке."
 )
-
 VK_PHOTO_ANALYSIS_INSTRUCTIONS = (
     "Ты эксперт по промптам для генерации изображений. "
     "Отвечай только готовым промптом без вводных фраз."
 )
-
 VK_MAX_OUTPUT_TOKENS = 1200
 VK_DEFAULT_VISION_MODEL = "gpt-5.4"
 VK_DEFAULT_FALLBACK_MODELS = ("gpt-5.5", "gpt-4o")
 
 
 def build_vk_photo_analysis_payload(*, model: str, image_url: str) -> dict[str, Any]:
-    """Build the byte-for-byte semantic request contract used by the VK bot."""
+    """Build the same Responses payload used by the VK bot."""
     return {
         "model": model,
         "input": [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "input_text",
-                        "text": VK_PHOTO_ANALYSIS_PROMPT,
-                    },
+                    {"type": "input_text", "text": VK_PHOTO_ANALYSIS_PROMPT},
                     {
                         "type": "input_image",
                         "image_url": image_url,
@@ -95,7 +90,7 @@ def _content_type_for_path(path: Path) -> str:
 
 
 async def _inline_image_url(photo_url: str) -> str:
-    """Inline Telegram media exactly as VK does before the Responses request."""
+    """Inline the photo as a data URL, matching the VK implementation."""
     if photo_url.startswith("data:image/"):
         return photo_url
 
@@ -110,29 +105,27 @@ async def _inline_image_url(photo_url: str) -> str:
 
     timeout = aiohttp.ClientTimeout(total=20)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(photo_url) as response:
-                if response.status != 200:
-                    raise ValueError(
-                        f"image download failed with status {response.status} for {photo_url}"
-                    )
-                content_type = (
-                    response.headers.get("Content-Type", "image/jpeg")
-                    .split(";", 1)[0]
-                    .strip()
+        async with aiohttp.ClientSession(timeout=timeout) as session, session.get(
+            photo_url
+        ) as response:
+            if response.status != 200:
+                raise ValueError(
+                    f"image download failed with status {response.status} for {photo_url}"
                 )
-                if not content_type.startswith("image/"):
-                    raise ValueError(
-                        f"unexpected content type {content_type} for {photo_url}"
-                    )
-                payload = await response.read()
-                if not payload:
-                    raise ValueError(f"empty image payload for {photo_url}")
-    except Exception as exc:
-        logger.warning(
-            "Could not inline image for APIYI vision, using URL: %s",
-            exc,
-        )
+            content_type = (
+                response.headers.get("Content-Type", "image/jpeg")
+                .split(";", 1)[0]
+                .strip()
+            )
+            if not content_type.startswith("image/"):
+                raise ValueError(
+                    f"unexpected content type {content_type} for {photo_url}"
+                )
+            payload = await response.read()
+            if not payload:
+                raise ValueError(f"empty image payload for {photo_url}")
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as exc:
+        logger.warning("Could not inline image for APIYI vision, using URL: %s", exc)
         return photo_url
 
     encoded = base64.b64encode(payload).decode("ascii")
@@ -179,7 +172,7 @@ def _extract_legacy_choice_text(result: dict[str, Any]) -> str:
 
 
 async def analyze_photo_exactly_as_vk(photo_url: str) -> tuple[str, str]:
-    """Return ``(prompt, model)`` using the exact VK prompt and payload."""
+    """Return ``(prompt, model)`` using the exact VK prompt and model chain."""
     if not photo_url:
         raise ValueError("Photo URL is required for analysis")
 
@@ -202,27 +195,26 @@ async def analyze_photo_exactly_as_vk(photo_url: str) -> tuple[str, str]:
                 model=model,
                 image_url=image_url,
             )
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{_apiyi_base_url()}/responses",
-                    headers=headers,
-                    json=payload,
-                ) as response:
-                    text = await response.text()
-                    if response.status != 200:
-                        raise ValueError(
-                            f"APIYI vision error {response.status}: {text}"
-                        )
-                    try:
-                        result = json.loads(text)
-                    except json.JSONDecodeError as exc:
-                        raise ValueError(
-                            f"Invalid JSON response from APIYI: {text[:200]}"
-                        ) from exc
-                    if not isinstance(result, dict):
-                        raise ValueError(
-                            f"Unexpected non-object APIYI response: {result}"
-                        )
+            async with aiohttp.ClientSession() as session, session.post(
+                f"{_apiyi_base_url()}/responses",
+                headers=headers,
+                json=payload,
+            ) as response:
+                text = await response.text()
+                if response.status != 200:
+                    raise ValueError(
+                        f"APIYI vision error {response.status}: {text}"
+                    )
+                try:
+                    result = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON response from APIYI: {text[:200]}"
+                    ) from exc
+                if not isinstance(result, dict):
+                    raise TypeError(
+                        f"Unexpected non-object APIYI response: {result}"
+                    )
 
             output_text = _extract_responses_output_text(result)
             if output_text:
@@ -233,7 +225,7 @@ async def analyze_photo_exactly_as_vk(photo_url: str) -> tuple[str, str]:
                 return legacy_text, model
 
             raise ValueError(f"Unexpected APIYI response structure: {result}")
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             last_error = exc
             logger.warning(
                 "APIYI photo analysis failed with model %s: %s",
