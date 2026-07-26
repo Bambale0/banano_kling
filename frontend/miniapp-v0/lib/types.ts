@@ -122,6 +122,9 @@ export interface Task {
   prompt_hidden?: boolean
   prompt_actions_allowed?: boolean
   is_public_feed?: boolean
+  is_profile_visible?: boolean
+  publication_scope?: 'private' | 'profile' | 'feed'
+  feed_interactions_enabled?: boolean
   is_prompt_library?: boolean
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
@@ -205,6 +208,9 @@ export interface FeedItem {
   author_referral_code?: string | null
   author_photo_url?: string | null
   is_mine: boolean
+  is_profile_visible?: boolean
+  publication_scope?: 'private' | 'profile' | 'feed'
+  feed_interactions_enabled?: boolean
   can_remove?: boolean
   can_blur?: boolean
   remixes: number
