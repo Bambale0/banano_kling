@@ -1,0 +1,47 @@
+name: Publication Scope CI
+
+on:
+  pull_request:
+    branches:
+      - tanyapi
+    paths:
+      - "bot/handlers/publication_scope_compat.py"
+      - "bot/services/publication_scope_postgres_compat.py"
+      - "bot/handlers/__init__.py"
+      - "frontend/miniapp-v0/**"
+      - ".github/workflows/publication-scope-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile publication scope modules
+        run: |
+          python -m py_compile \
+            bot/handlers/publication_scope_compat.py \
+            bot/services/publication_scope_postgres_compat.py \
+            bot/handlers/__init__.py
+
+  miniapp-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Mini App
+        run: npm run build
