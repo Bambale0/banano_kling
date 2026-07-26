@@ -110,22 +110,19 @@ def _format_photo_prompt_result_text(result: dict) -> str:
     prompt_en = (result.get("prompt_en") or "").strip()
     prompt_ru = (result.get("prompt_ru") or "").strip()
     negative_prompt = (result.get("negative_prompt") or "").strip()
-    model_hint = (result.get("model_hint") or "").strip()
     provider = (result.get("provider") or "").strip()
     voice_summary = (result.get("voice_prompt_summary_ru") or "").strip()
     voice_description = (result.get("voice_description_ru") or "").strip()
-    gemini_omni_prompt = (result.get("gemini_omni_prompt") or "").strip()
     source_mode = (result.get("source_mode") or "").strip()
 
     provider_note = ""
     if provider and provider != "gpt-5.5":
         provider_note = f"\n\n<i>Fallback: {html.escape(provider)}</i>"
 
-    has_voice_context = bool(voice_summary or voice_description or gemini_omni_prompt)
+    has_voice_context = bool(voice_summary or voice_description)
     prompt_ru_limit = 680 if has_voice_context else 1600
     prompt_en_limit = 850 if has_voice_context else 950
     negative_limit = 300 if has_voice_context else 350
-    model_hint_limit = 320 if has_voice_context else 360
 
     voice_note = ""
     if voice_summary or voice_description:
@@ -137,13 +134,6 @@ def _format_photo_prompt_result_text(result: dict) -> str:
                 "Голос: " + _escape_clip_text(voice_description, 260)
             )
         voice_note = "\n\n<b>Учтён голосовой промпт:</b>\n" + "\n".join(voice_lines)
-
-    omni_note = ""
-    if gemini_omni_prompt:
-        omni_note = (
-            "\n\n<b>Gemini Omni prompt:</b>\n"
-            f"<pre>{_escape_clip_text(gemini_omni_prompt, 680)}</pre>"
-        )
 
     if source_mode == "voice":
         title = "✅ <b>Промпт по голосу готов</b>"
@@ -160,10 +150,7 @@ def _format_photo_prompt_result_text(result: dict) -> str:
         f"<pre>{_escape_clip_text(prompt_en or '—', prompt_en_limit)}</pre>\n\n"
         "<b>Negative prompt:</b>\n"
         f"<pre>{_escape_clip_text(negative_prompt or '—', negative_limit)}</pre>\n\n"
-        "<b>Рекомендация:</b>\n"
-        f"{_escape_clip_text(model_hint or '—', model_hint_limit)}"
         f"{voice_note}"
-        f"{omni_note}"
         f"{provider_note}"
     )
 
@@ -175,7 +162,6 @@ def _format_video_prompt_result_text(result: dict) -> str:
     camera_movement = (result.get("camera_movement_ru") or "").strip()
     visual_style = (result.get("visual_style_ru") or "").strip()
     audio_notes = (result.get("audio_notes_ru") or "").strip()
-    model_hint = (result.get("model_hint") or "").strip()
     provider = (result.get("provider") or "").strip()
     timeline = result.get("timeline_ru") or []
 
@@ -214,9 +200,7 @@ def _format_video_prompt_result_text(result: dict) -> str:
         f"{_escape_clip_text(visual_style or '—', 220)}"
         f"{audio_note}\n\n"
         "<b>Negative prompt:</b>\n"
-        f"<pre>{_escape_clip_text(negative_prompt or '—', 220)}</pre>\n\n"
-        "<b>Рекомендация:</b>\n"
-        f"{_escape_clip_text(model_hint or '—', 220)}"
+        f"<pre>{_escape_clip_text(negative_prompt or '—', 220)}</pre>"
         f"{provider_note}"
     )
 
@@ -441,9 +425,6 @@ async def _send_photo_prompt_result(
         "VOICE DESCRIPTION\n"
         "-----------------\n"
         f"{result.get('voice_description_ru') or '—'}\n\n"
-        "GEMINI OMNI PROMPT\n"
-        "------------------\n"
-        f"{result.get('gemini_omni_prompt') or '—'}\n\n"
         "PROMPT RU\n"
         "---------\n"
         f"{prompt_ru or '—'}\n\n"
@@ -452,10 +433,7 @@ async def _send_photo_prompt_result(
         f"{prompt_en or '—'}\n\n"
         "NEGATIVE PROMPT\n"
         "---------------\n"
-        f"{negative_prompt or '—'}\n\n"
-        "РЕКОМЕНДАЦИЯ\n"
-        "------------\n"
-        f"{result.get('model_hint') or '—'}\n"
+        f"{negative_prompt or '—'}\n"
     )
     await message.answer_document(
         document=BufferedInputFile(
@@ -511,10 +489,7 @@ async def _send_video_prompt_result(
         f"{negative_prompt or '—'}\n\n"
         "KEY DETAILS\n"
         "-----------\n"
-        f"{chr(10).join('- ' + str(item) for item in (result.get('key_details') or [])) or '—'}\n\n"
-        "РЕКОМЕНДАЦИЯ\n"
-        "------------\n"
-        f"{result.get('model_hint') or '—'}\n"
+        f"{chr(10).join('- ' + str(item) for item in (result.get('key_details') or [])) or '—'}\n"
     )
     await message.answer_document(
         document=BufferedInputFile(
@@ -538,8 +513,7 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         "• точный prompt на английском\n"
         "• понятную версию на русском\n"
         "• negative prompt\n"
-        "• рекомендацию модели\n"
-        "• Gemini Omni prompt, если был голосовой промпт\n\n"
+        "• учёт голосового промпта, если он был отправлен\n\n"
         "<i>Лучше загружать чёткое фото без сильного блюра.</i>"
     )
 
@@ -577,8 +551,7 @@ async def video_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
         "• подробный prompt на русском\n"
         "• английскую версию для video-моделей\n"
         "• описание камеры и динамики\n"
-        "• negative prompt\n"
-        "• рекомендацию модели\n\n"
+        "• negative prompt\n\n"
         f"<i>Тестовый лимит: до {max_mb}MB и до {max_seconds} секунд.</i>"
     )
 
