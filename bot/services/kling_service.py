@@ -1,23 +1,19 @@
-"""
-Kling API Service - Kie.ai only
+"""Kling/Kie.ai service with explicit capability routing.
 
-Supported models/routes:
-- Kling 3.0 video
-- Kling 2.5 Turbo Pro text-to-video / image-to-video
-- Kling AI Avatar Standard / Pro
-- Kling 2.6 Motion Control
-- Kling Glow preset flow
+Supported families:
+- Kling 3.0 video: std, pro and 4K; 3-15 seconds; audio; multi-shot;
+  multi-prompt; image references; Kling Elements.
+- Kling 2.5 Turbo Pro: text/image-to-video, negative prompt and cfg scale.
+- Kling AI Avatar Standard/Pro.
+- Kling Motion Control 2.6 and 3.0 at 720p/1080p.
 
-Endpoints:
-- POST /api/v1/jobs/createTask
-- GET  /api/v1/jobs/{task_id}
-
-Important:
-- This service must not silently accept non-Kling models.
-- Grok, GPT Image, Nano Banana, Seedream and other providers must be routed
-  through their own services from the generation handler.
+The service deliberately rejects non-Kling models so provider routing bugs are
+visible instead of silently falling back to another model.
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
 import os
@@ -29,28 +25,41 @@ logger = logging.getLogger(__name__)
 
 
 class KlingService:
-    """Service for Kie.ai Kling-related task APIs."""
-
     KIE_BASE_URL = "https://api.kie.ai"
     CREATE_TASK_ENDPOINT = "/api/v1/jobs/createTask"
+    RECORD_INFO_ENDPOINT = "/api/v1/jobs/recordInfo"
+    CREATE_TASK_TIMEOUT_SECONDS = 90
 
     ASPECT_RATIOS = {"16:9", "9:16", "1:1"}
+    KLING_3_MODES = {"std", "pro", "4k"}
     KLING_25_DURATIONS = {5, 10}
     KLING_25_CFG_MIN = 0.0
     KLING_25_CFG_MAX = 1.0
-
-    KLING_3_MODELS = {"v3_std", "v3_pro", "kling_v3", "kling_3", "kling_3_pro"}
+    MOTION_MODELS_BY_KEY = {
+        "motion_control": "kling-2.6/motion-control",
+        "motion_control_v26": "kling-2.6/motion-control",
+        "kling-2.6/motion-control": "kling-2.6/motion-control",
+        "motion_control_v30": "kling-3.0/motion-control",
+        "kling-3.0/motion-control": "kling-3.0/motion-control",
+    }
+    KLING_3_MODE_BY_KEY = {
+        "v3_std": "std",
+        "kling_v3": "std",
+        "v3_pro": "pro",
+        "kling_3": "pro",
+        "kling_3_pro": "pro",
+        "v3_4k": "4k",
+        "kling_3_4k": "4k",
+        "kling-3.0-4k": "4k",
+    }
     KLING_25_MODELS = {"v26_pro", "kling_25_turbo_pro"}
-    AVATAR_MODELS = {"avatar_std", "avatar_pro", "kling_avatar_std", "kling_avatar_pro"}
-    MOTION_MODELS = {
-        "kling-2.6/motion-control",
-        "kling-3.0/motion-control",
-        "motion_control",
-        "motion_control_v26",
-        "motion_control_v30",
+    AVATAR_MODELS = {
+        "avatar_std": "kling/ai-avatar-standard",
+        "kling_avatar_std": "kling/ai-avatar-standard",
+        "avatar_pro": "kling/ai-avatar-pro",
+        "kling_avatar_pro": "kling/ai-avatar-pro",
     }
     GLOW_MODELS = {"glow"}
-
     NON_KLING_MODELS = {
         "grok_imagine",
         "grok_imagine_v15",
@@ -59,10 +68,16 @@ class KlingService:
         "banana_pro",
         "banana_2",
         "seedream_edit",
+        "seedream_5_pro",
         "flux_pro",
         "gpt_image_2",
         "nano_banana_pro",
         "nano_banana_2",
+        "veo3",
+        "veo3_fast",
+        "veo3_lite",
+        "gemini_omni",
+        "gemini_omni_video",
     }
 
     def __init__(self, kie_key: Optional[str] = None):
@@ -76,252 +91,183 @@ class KlingService:
             else None
         )
 
-    # ------------------------------------------------------------------
-    # Generic Kie.ai HTTP helpers
-    # ------------------------------------------------------------------
-
     async def _kie_post(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """POST to Kie.ai and normalize task creation response."""
         if not self.kie_headers:
-            logger.error("Kie.ai API key not configured")
-            return {
-                "error": "missing_api_key",
-                "message": "Kie.ai API key is not configured",
-                "status_code": 0,
-            }
-
+            return self._build_error(
+                "missing_api_key", "Kie.ai API key is not configured"
+            )
         url = f"{self.KIE_BASE_URL}{endpoint}"
-
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            try:
+        try:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 async with session.post(
                     url,
                     json=payload,
                     headers=self.kie_headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    text = await resp.text()
-                    return self._parse_kie_create_response(text)
-            except Exception as exc:
-                logger.exception("Kie.ai request error: %s", exc)
-                return {
-                    "error": "network_error",
-                    "message": f"Network error: {exc}",
-                    "status_code": 0,
-                }
+                    timeout=aiohttp.ClientTimeout(
+                        total=self.CREATE_TASK_TIMEOUT_SECONDS
+                    ),
+                ) as response:
+                    return self._parse_kie_create_response(await response.text())
+        except Exception as exc:
+            logger.exception("Kie.ai request error: %s", exc)
+            return self._build_error("network_error", f"Network error: {exc}")
 
     async def _kie_get(
-        self,
-        endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
+        self, endpoint: str, params: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
-        """GET from Kie.ai."""
         if not self.kie_headers:
-            logger.error("Kie.ai API key not configured")
             return None
-
         url = f"{self.KIE_BASE_URL}{endpoint}"
         headers = {k: v for k, v in self.kie_headers.items() if k != "Content-Type"}
-
-        async with aiohttp.ClientSession(trust_env=False) as session:
-            try:
+        try:
+            async with aiohttp.ClientSession(trust_env=False) as session:
                 async with session.get(
                     url,
                     params=params,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    text = await resp.text()
-                    try:
-                        data = json.loads(text)
-                    except json.JSONDecodeError:
-                        logger.error("Kie.ai invalid JSON response: %s", text[:500])
+                ) as response:
+                    text = await response.text()
+                    data = json.loads(text)
+                    if response.status >= 400:
+                        logger.error("Kie.ai GET error %s: %s", response.status, data)
                         return None
-
-                    if resp.status >= 400:
-                        logger.error(
-                            "Kie.ai GET error http_status=%s response=%s",
-                            resp.status,
-                            data,
-                        )
-                        return None
-
-                    return data
-            except Exception as exc:
-                logger.exception("Kie.ai request error: %s", exc)
-                return None
+                    return data if isinstance(data, dict) else None
+        except Exception as exc:
+            logger.exception("Kie.ai GET error: %s", exc)
+            return None
 
     def _parse_kie_create_response(self, text: str) -> Dict[str, Any]:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            logger.error("Kie.ai JSON decode error: %s. Response: %s", exc, text[:500])
-            return {
-                "error": "invalid_json",
-                "message": f"JSON decode error: {exc}",
-                "status_code": 0,
-            }
-
+            return self._build_error("invalid_json", f"JSON decode error: {exc}")
         if not isinstance(data, dict):
-            logger.error("Kie.ai non-dict response: %r", data)
-            return {
-                "error": "invalid_response_type",
-                "message": f"Expected dict, got {type(data).__name__}",
-                "status_code": 0,
-            }
-
-        code = data.get("code")
-        if code != 200:
-            error_msg = data.get("msg") or data.get("message") or "Unknown error"
-            logger.error("Kie.ai API error code %s: %s", code, error_msg)
-            return {
-                "error": "api_error",
-                "message": error_msg,
-                "status_code": code or 0,
-                "raw": data,
-            }
-
-        inner_data = data.get("data")
-        if not isinstance(inner_data, dict):
-            logger.error("Kie.ai data field is not dict: %r", data)
-            return {
-                "error": "invalid_data_structure",
-                "message": "Kie.ai response data field is not a dict",
-                "status_code": code,
-                "raw": data,
-            }
-
-        task_id = inner_data.get("taskId") or inner_data.get("task_id")
+            return self._build_error(
+                "invalid_response_type", f"Expected dict, got {type(data).__name__}"
+            )
+        if data.get("code") != 200:
+            return self._build_error(
+                "api_error",
+                data.get("msg") or data.get("message") or "Unknown Kie.ai error",
+                status_code=int(data.get("code") or 0),
+                extra={"raw": data},
+            )
+        inner = data.get("data")
+        if not isinstance(inner, dict):
+            return self._build_error(
+                "invalid_data_structure",
+                "Kie.ai response data field is not a dict",
+                status_code=200,
+                extra={"raw": data},
+            )
+        task_id = inner.get("taskId") or inner.get("task_id")
         if not task_id:
-            logger.error("No taskId in Kie.ai response: %r", data)
-            return {
-                "error": "no_task_id",
-                "message": "Task ID missing from Kie.ai response",
-                "status_code": code,
-                "raw": data,
-            }
+            return self._build_error(
+                "no_task_id", "Task ID missing from Kie.ai response", extra={"raw": data}
+            )
+        return {"task_id": task_id, "status": "pending", "raw": data}
 
-        logger.info("Kie.ai task created: %s", task_id)
-        return {
-            "task_id": task_id,
-            "status": "pending",
-            "raw": data,
-        }
-
-    # ------------------------------------------------------------------
-    # Normalizers
-    # ------------------------------------------------------------------
-
-    def _safe_aspect_ratio(self, aspect_ratio: str) -> str:
-        return aspect_ratio if aspect_ratio in self.ASPECT_RATIOS else "16:9"
-
-    def _safe_duration_25(self, duration: int) -> int:
-        return 10 if int(duration) == 10 else 5
-
-    def _safe_cfg_scale(self, cfg_scale: float) -> float:
-        return round(
-            max(self.KLING_25_CFG_MIN, min(self.KLING_25_CFG_MAX, float(cfg_scale))),
-            1,
-        )
-
+    @staticmethod
     def _build_error(
-        self,
         error: str,
         message: str,
         *,
         status_code: int = 0,
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
+        result: Dict[str, Any] = {
             "error": error,
             "message": message,
             "status_code": status_code,
         }
         if extra:
-            payload.update(extra)
-        return payload
+            result.update(extra)
+        return result
 
-    # ------------------------------------------------------------------
-    # Task status
-    # ------------------------------------------------------------------
+    def _safe_aspect_ratio(self, value: str) -> str:
+        return value if value in self.ASPECT_RATIOS else "16:9"
+
+    def _safe_kling_3_mode(self, value: str) -> str:
+        normalized = str(value or "std").strip().lower().replace("4K", "4k")
+        return normalized if normalized in self.KLING_3_MODES else "std"
+
+    @staticmethod
+    def _safe_kling_3_duration(value: int) -> int:
+        return max(3, min(int(value), 15))
+
+    def _safe_duration_25(self, value: int) -> int:
+        return 10 if int(value) == 10 else 5
+
+    def _safe_cfg_scale(self, value: float) -> float:
+        return round(
+            max(self.KLING_25_CFG_MIN, min(self.KLING_25_CFG_MAX, float(value))),
+            1,
+        )
 
     async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get Kie.ai task status and normalize output URL."""
         if not task_id:
             return None
-
-        data = await self._kie_get(
-            "/api/v1/jobs/recordInfo",
-            params={"taskId": task_id},
-        )
+        data = await self._kie_get(self.RECORD_INFO_ENDPOINT, {"taskId": task_id})
         if not data:
             return None
-
         task_data = data.get("data") or {}
-        status = str(
-            task_data.get("status") or task_data.get("state") or "unknown"
-        ).lower()
-        output = self._extract_output(task_data)
-
         return {
             "data": {
                 "task_id": task_id,
-                "status": status,
-                "output": output,
+                "status": str(
+                    task_data.get("status") or task_data.get("state") or "unknown"
+                ).lower(),
+                "output": self._extract_output(task_data),
             },
             "raw": data,
         }
 
     async def get_kie_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Backward-compatible alias."""
         return await self.get_task_status(task_id)
 
     async def get_v3_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Backward-compatible status alias used by old tooling."""
         return await self.get_task_status(task_id)
 
     async def get_omni_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Backward-compatible status alias used by old tooling."""
         return await self.get_task_status(task_id)
 
     async def get_r2v_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Backward-compatible status alias used by old tooling."""
         return await self.get_task_status(task_id)
 
-    def _extract_output(self, task_data: Dict[str, Any]) -> Optional[Any]:
-        """Extract result URL(s) from Kie.ai task data."""
-        direct_fields = ["output", "resultUrl", "result_url", "videoUrl", "imageUrl"]
-        for field in direct_fields:
+    @staticmethod
+    def _extract_output(task_data: Dict[str, Any]) -> Optional[Any]:
+        for field in (
+            "output",
+            "resultUrl",
+            "result_url",
+            "videoUrl",
+            "imageUrl",
+            "fullResultUrls",
+        ):
             value = task_data.get(field)
             if value:
                 return value
-
         result_json = task_data.get("resultJson") or task_data.get("result_json")
-        if not result_json:
-            return None
-
         if isinstance(result_json, str):
             try:
                 result_json = json.loads(result_json)
             except json.JSONDecodeError:
-                logger.warning("Could not parse resultJson: %s", result_json[:300])
                 return None
-
         if not isinstance(result_json, dict):
             return None
-
-        for key in ("resultUrls", "result_urls", "urls", "videos", "images"):
+        for key in (
+            "resultUrls",
+            "fullResultUrls",
+            "result_urls",
+            "urls",
+            "videos",
+            "images",
+        ):
             value = result_json.get(key)
-            if isinstance(value, list) and value:
-                return value[0]
-            if isinstance(value, str) and value:
-                return value
-
+            if value:
+                return value[0] if isinstance(value, list) else value
         return None
-
-    # ------------------------------------------------------------------
-    # Create tasks by model family
-    # ------------------------------------------------------------------
 
     async def generate_kling_3_video(
         self,
@@ -337,39 +283,26 @@ class KlingService:
         kling_elements: Optional[List[Dict[str, Any]]] = None,
         webhook: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate video with Kie.ai Kling 3.0."""
         if not prompt or not prompt.strip():
             return self._build_error("prompt_required", "Prompt is required")
-
-        mode = "pro" if mode == "pro" else "std"
-        duration = max(3, min(int(duration), 15))
-
         input_data: Dict[str, Any] = {
-            "prompt": prompt[:2500],
+            "prompt": prompt.strip()[:2500],
             "sound": bool(sound),
-            "duration": str(duration),
+            "duration": str(self._safe_kling_3_duration(duration)),
             "aspect_ratio": self._safe_aspect_ratio(aspect_ratio),
-            "mode": mode,
+            "mode": self._safe_kling_3_mode(mode),
             "multi_shots": bool(multi_shots),
         }
-
-        cleaned_image_urls = [url for url in (image_urls or []) if url]
-        if cleaned_image_urls:
-            input_data["image_urls"] = cleaned_image_urls
-
+        refs = list(dict.fromkeys(url for url in image_urls or [] if url))
+        if refs:
+            input_data["image_urls"] = refs
         if kling_elements:
             input_data["kling_elements"] = kling_elements[:3]
-
         if multi_shots and multi_prompt:
             input_data["multi_prompt"] = multi_prompt[:6]
-
-        payload: Dict[str, Any] = {
-            "model": "kling-3.0/video",
-            "input": input_data,
-        }
+        payload: Dict[str, Any] = {"model": "kling-3.0/video", "input": input_data}
         if webhook:
             payload["callBackUrl"] = webhook
-
         return await self._kie_post(self.CREATE_TASK_ENDPOINT, payload)
 
     async def generate_kling_25_turbo_video(
@@ -383,35 +316,26 @@ class KlingService:
         cfg_scale: float = 0.5,
         webhook: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate video with Kie.ai Kling 2.5 Turbo Pro."""
         if not prompt or not prompt.strip():
             return self._build_error("prompt_required", "Prompt is required")
-
         model = (
             "kling/v2-5-turbo-image-to-video-pro"
             if image_url
             else "kling/v2-5-turbo-text-to-video-pro"
         )
-
         input_data: Dict[str, Any] = {
-            "prompt": prompt[:2500],
+            "prompt": prompt.strip()[:2500],
             "duration": str(self._safe_duration_25(duration)),
             "aspect_ratio": self._safe_aspect_ratio(aspect_ratio),
             "cfg_scale": self._safe_cfg_scale(cfg_scale),
         }
-
         if image_url:
             input_data["image_url"] = image_url
         if negative_prompt:
             input_data["negative_prompt"] = negative_prompt[:500]
-
-        payload: Dict[str, Any] = {
-            "model": model,
-            "input": input_data,
-        }
+        payload: Dict[str, Any] = {"model": model, "input": input_data}
         if webhook:
             payload["callBackUrl"] = webhook
-
         return await self._kie_post(self.CREATE_TASK_ENDPOINT, payload)
 
     async def generate_kling_ai_avatar(
@@ -423,18 +347,14 @@ class KlingService:
         model: str = "kling/ai-avatar-standard",
         webhook: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate talking avatar with Kie.ai Kling AI Avatar."""
         if model not in {"kling/ai-avatar-standard", "kling/ai-avatar-pro"}:
             return self._build_error(
-                "unsupported_avatar_model",
-                f"Unsupported Kling AI Avatar model: {model}",
+                "unsupported_avatar_model", f"Unsupported avatar model: {model}"
             )
-
         if not image_url:
             return self._build_error("image_required", "Avatar image is required")
         if not audio_url:
             return self._build_error("audio_required", "Avatar audio is required")
-
         payload: Dict[str, Any] = {
             "model": model,
             "input": {
@@ -445,7 +365,6 @@ class KlingService:
         }
         if webhook:
             payload["callBackUrl"] = webhook
-
         return await self._kie_post(self.CREATE_TASK_ENDPOINT, payload)
 
     async def create_kie_motion_task(
@@ -454,11 +373,11 @@ class KlingService:
         webhook: Optional[str] = None,
         model: str = "kling-2.6/motion-control",
     ) -> Dict[str, Any]:
-        """Create Kie.ai Kling Motion Control task."""
-        payload: Dict[str, Any] = {
-            "model": model,
-            "input": input_data,
-        }
+        if model not in set(self.MOTION_MODELS_BY_KEY.values()):
+            return self._build_error(
+                "unsupported_motion_model", f"Unsupported Motion Control model: {model}"
+            )
+        payload: Dict[str, Any] = {"model": model, "input": input_data}
         if webhook:
             payload["callBackUrl"] = webhook
         return await self._kie_post(self.CREATE_TASK_ENDPOINT, payload)
@@ -471,54 +390,44 @@ class KlingService:
         preset_motion: Optional[str] = None,
         prompt: Optional[str] = None,
         motion_direction: str = "video",
-        mode: str = "std",
+        mode: str = "720p",
         motion_model: str = "kling-2.6/motion-control",
         webhook_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate motion control animation."""
         if not image_url:
             return self._build_error(
                 "image_required", "Motion Control requires image_url"
             )
-
-        cleaned_video_urls = [url for url in (video_urls or []) if url]
-        if not cleaned_video_urls and not preset_motion:
+        videos = list(dict.fromkeys(url for url in video_urls or [] if url))
+        if not videos and not preset_motion:
             return self._build_error(
                 "video_url_required",
-                "Motion Control requires a movement video URL",
+                "Motion Control requires a movement video or preset",
             )
-
+        resolved_model = self.MOTION_MODELS_BY_KEY.get(motion_model, motion_model)
+        if resolved_model not in set(self.MOTION_MODELS_BY_KEY.values()):
+            return self._build_error(
+                "unsupported_motion_model",
+                f"Unsupported Motion Control model: {motion_model}",
+            )
+        orientation = (
+            motion_direction if motion_direction in {"video", "image"} else "video"
+        )
+        quality = "1080p" if str(mode).lower() in {"pro", "1080p"} else "720p"
         input_data: Dict[str, Any] = {
-            "prompt": prompt or "",
+            "prompt": (prompt or "")[:2500],
             "input_urls": [image_url],
-            "character_orientation": motion_direction or "video",
-            "mode": "1080p" if mode in {"pro", "1080p"} else "720p",
+            "character_orientation": orientation,
+            "mode": quality,
             "aspect_ratio": "1:1",
         }
-
-        if cleaned_video_urls:
-            input_data["video_urls"] = cleaned_video_urls
+        if videos:
+            input_data["video_urls"] = videos[:1]
         if preset_motion:
             input_data["preset_motion"] = preset_motion
-
-        if motion_model not in {"kling-2.6/motion-control", "kling-3.0/motion-control"}:
-            motion_model = "kling-2.6/motion-control"
-
-        logger.info(
-            "Motion Control payload prepared: model=%s image=%s videos=%s mode=%s direction=%s",
-            motion_model,
-            bool(image_url),
-            len(cleaned_video_urls),
-            input_data.get("mode"),
-            input_data.get("character_orientation"),
-        )
         return await self.create_kie_motion_task(
-            input_data, webhook_url, model=motion_model
+            input_data, webhook_url, model=resolved_model
         )
-
-    # ------------------------------------------------------------------
-    # Public high-level router
-    # ------------------------------------------------------------------
 
     async def generate_video(
         self,
@@ -539,52 +448,33 @@ class KlingService:
         motion_direction: str = "video",
         motion_mode: str = "720p",
     ) -> Dict[str, Any]:
-        """
-        Route only Kling-supported models.
-
-        Unknown or non-Kling models return explicit errors instead of silently
-        falling back to Kling 3.0. This prevents provider-routing bugs such as
-        Grok image generation being sent to Kie.ai.
-        """
         model = model or "v3_std"
-
         if model in self.NON_KLING_MODELS:
-            logger.error(
-                "Non-Kling model '%s' was routed to KlingService. Fix generation.py routing.",
-                model,
-            )
             return self._build_error(
                 "wrong_provider_route",
                 f"Model '{model}' must not be handled by KlingService",
                 extra={"model": model},
             )
-
-        if model in self.MOTION_MODELS or "motion" in model.lower():
-            motion_model = (
-                "kling-3.0/motion-control"
-                if model in {"motion_control_v30", "kling-3.0/motion-control"}
-                else "kling-2.6/motion-control"
-            )
+        if model in self.MOTION_MODELS_BY_KEY or "motion" in model.lower():
             return await self.generate_motion_control(
                 image_url=image_url or "",
-                video_urls=video_urls or [],
+                video_urls=video_urls,
                 prompt=prompt,
                 motion_direction=motion_direction,
                 mode=motion_mode,
-                motion_model=motion_model,
+                motion_model=model,
                 webhook_url=webhook_url,
             )
-
-        if model in self.KLING_3_MODELS or "v3" in model or "omni" in model:
-            mode = "pro" if "pro" in model else "std"
-            image_urls = self._collect_image_urls(image_url, end_image_url, image_input)
+        if model in self.KLING_3_MODE_BY_KEY:
+            image_urls = self._collect_image_urls(
+                image_url, end_image_url, image_input
+            )
             kling_elements, enhanced_prompt = self._build_kling_elements(
                 elements, prompt
             )
-
             return await self.generate_kling_3_video(
                 prompt=enhanced_prompt,
-                mode=mode,
+                mode=self.KLING_3_MODE_BY_KEY[model],
                 duration=duration,
                 aspect_ratio=aspect_ratio,
                 image_urls=image_urls,
@@ -594,7 +484,6 @@ class KlingService:
                 kling_elements=kling_elements,
                 webhook=webhook_url,
             )
-
         if model in self.KLING_25_MODELS:
             return await self.generate_kling_25_turbo_video(
                 prompt=prompt,
@@ -605,161 +494,86 @@ class KlingService:
                 cfg_scale=cfg_scale,
                 webhook=webhook_url,
             )
-
         if model in self.AVATAR_MODELS:
             return await self.generate_kling_ai_avatar(
                 image_url=image_url or "",
                 audio_url=(video_urls or [""])[0],
-                prompt=prompt or "",
-                model=(
-                    "kling/ai-avatar-standard"
-                    if model in {"avatar_std", "kling_avatar_std"}
-                    else "kling/ai-avatar-pro"
-                ),
+                prompt=prompt,
+                model=self.AVATAR_MODELS[model],
                 webhook=webhook_url,
             )
-
         if model in self.GLOW_MODELS:
-            cleaned_video_urls = [url for url in (video_urls or []) if url]
-            if not cleaned_video_urls:
-                return self._build_error(
-                    "video_url_required",
-                    "Kling Glow requires a movement video URL",
-                )
             return await self.generate_motion_control(
                 image_url=image_url or "",
-                video_urls=cleaned_video_urls,
-                prompt=prompt or "Apply glow-style motion to the reference character",
-                motion_direction="video",
-                mode="std",
+                video_urls=video_urls,
+                prompt=prompt or "Apply glow-style motion to the character",
                 webhook_url=webhook_url,
             )
-
-        logger.error("Unsupported Kling model: %s", model)
         return self._build_error(
             "unsupported_model",
             f"Unsupported Kling model: {model}",
             extra={"model": model},
         )
 
+    @staticmethod
     def _collect_image_urls(
-        self,
         image_url: Optional[str],
         end_image_url: Optional[str],
         image_input: Optional[List[str]],
     ) -> List[str]:
-        image_urls: List[str] = []
-
+        result: List[str] = []
         for url in image_input or []:
-            if url and url not in image_urls:
-                image_urls.append(url)
+            if url and url not in result:
+                result.append(url)
+        if image_url and image_url not in result:
+            result.insert(0, image_url)
+        if end_image_url and end_image_url not in result:
+            result.append(end_image_url)
+        return result
 
-        if image_url and image_url not in image_urls:
-            image_urls.insert(0, image_url)
-
-        if end_image_url and end_image_url not in image_urls:
-            image_urls.append(end_image_url)
-
-        return image_urls
-
+    @staticmethod
     def _build_kling_elements(
-        self,
-        elements: Optional[List[Dict[str, Any]]],
-        prompt: str,
+        elements: Optional[List[Dict[str, Any]]], prompt: str
     ) -> tuple[List[Dict[str, Any]], str]:
         if not elements:
             return [], prompt
-
-        kling_elements: List[Dict[str, Any]] = []
+        built: List[Dict[str, Any]] = []
         enhanced_prompt = prompt
-
         for element in elements:
-            if len(kling_elements) >= 3:
+            if len(built) >= 3:
                 break
             urls = list(element.get("reference_image_urls") or [])
-            frontal = element.get("frontal_image_url")
-            if frontal:
-                urls.append(frontal)
-
-            deduped_urls: List[str] = []
-            for url in urls:
-                if url and url not in deduped_urls:
-                    deduped_urls.append(url)
-                if len(deduped_urls) >= 12:
-                    break
-
-            if len(deduped_urls) < 2:
-                logger.info(
-                    "Skipping Kling element with %s image(s): KIE requires 2-4 images per element",
-                    len(deduped_urls),
-                )
+            if element.get("frontal_image_url"):
+                urls.append(element["frontal_image_url"])
+            urls = list(dict.fromkeys(url for url in urls if url))[:4]
+            if len(urls) < 2:
                 continue
-
-            remaining = deduped_urls
-            chunks: List[List[str]] = []
-            while remaining and len(chunks) < 3:
-                if len(remaining) <= 4:
-                    chunks.append(remaining)
-                    break
-                take = 4
-                if len(remaining) - take == 1:
-                    take = 3
-                chunks.append(remaining[:take])
-                remaining = remaining[take:]
-
-            for chunk in chunks:
-                if len(kling_elements) >= 3:
-                    break
-                if len(chunk) < 2:
-                    continue
-                name = f"element_{len(kling_elements)}"
-                kling_elements.append(
-                    {
-                        "name": name,
-                        "description": element.get(
-                            "description",
-                            f"reference element {len(kling_elements) + 1}",
-                        ),
-                        "element_input_urls": chunk,
-                    }
-                )
-                enhanced_prompt += f" use @{name} as reference"
-
-        return kling_elements, enhanced_prompt
+            name = f"element_{len(built)}"
+            built.append(
+                {
+                    "name": name,
+                    "description": element.get(
+                        "description", f"reference element {len(built) + 1}"
+                    ),
+                    "element_input_urls": urls,
+                }
+            )
+            enhanced_prompt += f" use @{name} as reference"
+        return built, enhanced_prompt
 
     async def wait_for_completion(
-        self,
-        task_id: str,
-        max_attempts: int = 60,
-        delay: int = 5,
+        self, task_id: str, max_attempts: int = 60, delay: int = 5
     ) -> Optional[Dict[str, Any]]:
-        """Poll Kie.ai until task completion or timeout."""
-        import asyncio
-
-        for attempt in range(max_attempts):
+        for _ in range(max_attempts):
             status = await self.get_task_status(task_id)
-            if not status:
-                await asyncio.sleep(delay)
-                continue
-
-            task_status = status.get("data", {}).get("status", "").lower()
-            if task_status in {"completed", "succeeded", "success"}:
-                logger.info("Task %s completed", task_id)
-                return status
-
-            if task_status in {"failed", "error"}:
-                logger.error("Task %s failed", task_id)
-                return status
-
-            logger.debug("Task %s: %s, attempt %s", task_id, task_status, attempt + 1)
+            if status:
+                task_status = status.get("data", {}).get("status", "").lower()
+                if task_status in {"completed", "succeeded", "success", "failed", "error"}:
+                    return status
             await asyncio.sleep(delay)
-
-        logger.warning("Task %s timeout", task_id)
         return None
 
 
 from bot.config import config
 
-kling_service = KlingService(
-    kie_key=config.KIE_AI_API_KEY,
-)
+kling_service = KlingService(kie_key=config.KIE_AI_API_KEY)
