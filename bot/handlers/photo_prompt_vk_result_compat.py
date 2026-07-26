@@ -1,82 +1,124 @@
-"""VK-compatible result layout for Telegram photo-only prompt analysis.
+"""Readable prompt formatting without replacing the established result card.
 
-The established Telegram photo/voice workflow remains untouched. Ordinary photo-only
-analysis returns the same compact result structure as the VK bot: one ready Russian
-prompt followed by a short usage hint.
+The Telegram result keeps the legacy RU / EN / negative prompt / recommendation
+layout, buttons and full text document. Only long prompt fields are split into
+readable paragraphs before the legacy sender renders them.
 """
 
 from __future__ import annotations
 
 import importlib
+import re
 from functools import wraps
 from typing import Any
 
-TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-VK_PROMPT_SOFT_LIMIT = 3800
-
-_RESULT_HEADER = "✅ Готовый промпт:\n\n"
-_RESULT_FOOTER = (
-    "\n\nКак использовать: скопируйте текст и вставьте его в экран «Создать фото» "
-    "или «Создать видео». При необходимости добавьте свои правки: формат, "
-    "настроение, цвет, действие."
+_SENTENCE_BOUNDARY_RE = re.compile(
+    r"(?<=[.!?…])\s+(?=[A-ZА-ЯЁ0-9«\"(])"
 )
-_TRIMMED_FOOTER = (
-    "\n\n⚠️ Промпт был обрезан до лимита Telegram. Его можно вставить в «Создать фото» "
-    "или «Создать видео».\nПри необходимости добавьте свои правки: формат, "
-    "настроение, цвет, действие."
-)
+_CLAUSE_BOUNDARY_RE = re.compile(r"(?<=[;:])\s+")
+_WHITESPACE_RE = re.compile(r"[ \t]+")
+
+_MAX_PARAGRAPH_CHARS = 460
+_MAX_SENTENCES_PER_PARAGRAPH = 2
+_MIN_TEXT_TO_REFORMAT = 520
 
 
-def _trim_prompt(prompt: str, max_len: int) -> tuple[str, bool]:
-    value = str(prompt or "").strip()
-    if len(value) <= max_len:
-        return value, False
-
-    trimmed = value[:max_len]
-    last_space = trimmed.rfind(" ")
-    if last_space > max_len // 2:
-        trimmed = trimmed[:last_space]
-    return trimmed.rstrip() + "…", True
-
-
-def format_vk_photo_prompt_result(prompt: str) -> tuple[str, bool]:
-    """Return the VK-style Telegram result and whether the prompt was trimmed."""
-
-    value = str(prompt or "").strip()
-    normal_budget = min(
-        VK_PROMPT_SOFT_LIMIT,
-        TELEGRAM_MAX_MESSAGE_LENGTH - len(_RESULT_HEADER) - len(_RESULT_FOOTER),
-    )
-    trimmed_value, was_trimmed = _trim_prompt(value, normal_budget)
-
-    if not was_trimmed:
-        return f"{_RESULT_HEADER}{trimmed_value}{_RESULT_FOOTER}", False
-
-    trimmed_budget = min(
-        VK_PROMPT_SOFT_LIMIT,
-        TELEGRAM_MAX_MESSAGE_LENGTH - len(_RESULT_HEADER) - len(_TRIMMED_FOOTER),
-    )
-    trimmed_value, _ = _trim_prompt(value, trimmed_budget)
-    return f"{_RESULT_HEADER}{trimmed_value}{_TRIMMED_FOOTER}", True
+def _normalize_existing_paragraphs(value: str) -> str:
+    paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", value.replace("\r\n", "\n")):
+        lines = [
+            _WHITESPACE_RE.sub(" ", line).strip()
+            for line in paragraph.split("\n")
+            if line.strip()
+        ]
+        if lines:
+            paragraphs.append("\n".join(lines))
+    return "\n\n".join(paragraphs)
 
 
-def _prompt_from_result(result: dict[str, Any]) -> str:
-    for key in ("prompt_ru", "prompt_en"):
-        value = str(result.get(key) or "").strip()
+def _split_long_single_sentence(value: str) -> list[str]:
+    clauses = [part.strip() for part in _CLAUSE_BOUNDARY_RE.split(value) if part.strip()]
+    if len(clauses) > 1:
+        return clauses
+
+    chunks: list[str] = []
+    current = ""
+    for part in value.split(", "):
+        candidate = f"{current}, {part}" if current else part
+        if current and len(candidate) > _MAX_PARAGRAPH_CHARS:
+            chunks.append(current.strip())
+            current = part
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks or [value]
+
+
+def format_prompt_readably(prompt: str) -> str:
+    """Split a long prose prompt into paragraphs without rewriting its content."""
+
+    value = _normalize_existing_paragraphs(str(prompt or "").strip())
+    if not value or len(value) < _MIN_TEXT_TO_REFORMAT:
+        return value
+
+    if "\n\n" in value:
+        return value
+
+    sentences = [
+        sentence.strip()
+        for sentence in _SENTENCE_BOUNDARY_RE.split(value)
+        if sentence.strip()
+    ]
+    if len(sentences) <= 1:
+        sentences = _split_long_single_sentence(value)
+
+    paragraphs: list[str] = []
+    current: list[str] = []
+    current_length = 0
+
+    for sentence in sentences:
+        separator_length = 1 if current else 0
+        candidate_length = current_length + separator_length + len(sentence)
+        should_flush = bool(current) and (
+            len(current) >= _MAX_SENTENCES_PER_PARAGRAPH
+            or candidate_length > _MAX_PARAGRAPH_CHARS
+        )
+        if should_flush:
+            paragraphs.append(" ".join(current).strip())
+            current = []
+            current_length = 0
+
+        current.append(sentence)
+        current_length += (1 if current_length else 0) + len(sentence)
+
+    if current:
+        paragraphs.append(" ".join(current).strip())
+
+    return "\n\n".join(paragraphs) if len(paragraphs) > 1 else value
+
+
+def _prepare_readable_result(result: dict[str, Any]) -> dict[str, Any]:
+    prepared = dict(result)
+    for key in ("prompt_ru", "prompt_en", "negative_prompt"):
+        value = str(prepared.get(key) or "").strip()
         if value:
-            return value
+            prepared[key] = format_prompt_readably(value)
 
-    raw = result.get("raw")
+    raw = prepared.get("raw")
     if isinstance(raw, dict):
-        for key in ("prompt_ru", "prompt", "output_text"):
-            value = str(raw.get(key) or "").strip()
+        prepared_raw = dict(raw)
+        for key in ("prompt_ru", "prompt_en", "prompt", "output_text"):
+            value = str(prepared_raw.get(key) or "").strip()
             if value:
-                return value
-    return ""
+                prepared_raw[key] = format_prompt_readably(value)
+        prepared["raw"] = prepared_raw
+
+    return prepared
 
 
 def install_vk_photo_prompt_result_compat() -> None:
-    """Patch only ordinary photo-only result delivery in the legacy handler."""
+    """Restore the legacy detailed result and only improve prompt readability."""
 
     module = importlib.import_module("bot.handlers.image_analyzer")
 
@@ -93,30 +135,15 @@ def install_vk_photo_prompt_result_compat() -> None:
         filename: str = "photo_prompt_full.txt",
         document_caption: str = "📝 Полный prompt: RU + EN + negative",
     ) -> None:
-        if str(result.get("source_mode") or "").strip() != "photo":
-            await original_send(
-                message,
-                result,
-                filename=filename,
-                document_caption=document_caption,
-            )
-            return
+        prepared = result
+        if str(result.get("source_mode") or "").strip() == "photo":
+            prepared = _prepare_readable_result(result)
 
-        prompt = _prompt_from_result(result)
-        if not prompt:
-            await original_send(
-                message,
-                result,
-                filename=filename,
-                document_caption=document_caption,
-            )
-            return
-
-        text, _was_trimmed = format_vk_photo_prompt_result(prompt)
-        await message.answer(
-            text,
-            disable_web_page_preview=True,
-            reply_markup=module.get_main_menu_button_keyboard(),
+        await original_send(
+            message,
+            prepared,
+            filename=filename,
+            document_caption=document_caption,
         )
 
     module._send_photo_prompt_result = send_photo_prompt_result
