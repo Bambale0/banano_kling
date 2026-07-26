@@ -33,8 +33,8 @@ VK_PHOTO_ANALYSIS_INSTRUCTIONS = (
     "Отвечай только готовым промптом без вводных фраз."
 )
 VK_MAX_OUTPUT_TOKENS = 1200
-VK_DEFAULT_VISION_MODEL = "gpt-5.4"
-VK_DEFAULT_FALLBACK_MODELS = ("gpt-5.5", "gpt-4o")
+VK_DEFAULT_VISION_MODEL = "gpt-5.5"
+VK_DEFAULT_FALLBACK_MODELS: tuple[str, ...] = ()
 
 
 def build_vk_photo_analysis_payload(*, model: str, image_url: str) -> dict[str, Any]:
@@ -297,12 +297,11 @@ def install_vk_photo_prompt_instructions() -> None:
             try:
                 prompt, model = await analyze_photo_exactly_as_vk(image_url)
                 return _telegram_result_from_vk_prompt(prompt, model)
-            except RuntimeError as exc:
-                if "APIYI_API_KEY is not configured" not in str(exc):
-                    raise
+            except Exception as exc:
                 logger.warning(
-                    "Exact VK photo analysis skipped: APIYI key is not configured; "
-                    "falling back to Telegram photo prompt service"
+                    "Exact VK photo analysis failed; falling back to Telegram "
+                    "photo prompt service: %s",
+                    exc,
                 )
 
         return await original_analyze_photo(
