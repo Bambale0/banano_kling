@@ -1,10 +1,13 @@
 """Align Telegram photo analysis instructions with the proven VK prompt.
 
-The Telegram service still keeps its structured JSON output, RU/EN prompts,
-negative prompt, model hints, voice support and provider fallbacks. Only the
-creative instruction for photo reconstruction is changed to match tanyavk.
+The Telegram service keeps its structured RU/EN output, negative prompt,
+model hints, voice support and provider fallbacks. Gemini Omni-specific output
+is deliberately excluded from the photo-analysis contract.
 """
 from __future__ import annotations
+
+from functools import wraps
+from typing import Any
 
 
 VK_PHOTO_ANALYSIS_PROMPT = (
@@ -19,8 +22,25 @@ VK_PHOTO_ANALYSIS_INSTRUCTIONS = (
 )
 
 
+def _strip_gemini_omni_prompt(result: Any) -> Any:
+    """Remove obsolete Omni-specific data from photo-analysis responses."""
+    if not isinstance(result, dict):
+        return result
+
+    cleaned = dict(result)
+    cleaned.pop("gemini_omni_prompt", None)
+
+    raw = cleaned.get("raw")
+    if isinstance(raw, dict):
+        raw_cleaned = dict(raw)
+        raw_cleaned.pop("gemini_omni_prompt", None)
+        cleaned["raw"] = raw_cleaned
+
+    return cleaned
+
+
 def install_vk_photo_prompt_instructions() -> None:
-    """Patch the photo analyzer prompt once while preserving its JSON contract."""
+    """Patch photo analysis once and exclude Gemini Omni-specific output."""
     from bot.services import photo_prompt_service as module
 
     if getattr(module, "_vk_photo_prompt_instructions_installed", False):
@@ -46,6 +66,7 @@ def install_vk_photo_prompt_instructions() -> None:
 - prompt_en должен быть точным английским переводом prompt_ru.
 - Если пользователь приложил голос или дополнительную инструкцию, аккуратно
   совмести её с фотографией, не теряя детали исходника.
+- Не создавай Gemini Omni prompt и не включай поле gemini_omni_prompt.
 - Не идентифицируй человека, не называй имя, национальность, этничность,
   медицинские или иные чувствительные характеристики.
 - Верни только валидный JSON без markdown и пояснений.
@@ -59,9 +80,16 @@ JSON schema:
   "key_details": ["detail 1", "detail 2", "detail 3"],
   "voice_transcript": "Transcript of attached voice/audio prompt, or empty string",
   "voice_prompt_summary_ru": "Short Russian summary of the attached voice/audio prompt, or empty string",
-  "voice_description_ru": "Neutral Russian description of voice/tone/pace/emotion, or empty string",
-  "gemini_omni_prompt": "Optional polished prompt for Gemini Omni video/image workflows"
+  "voice_description_ru": "Neutral Russian description of voice/tone/pace/emotion, or empty string"
 }}
 """.strip()
 
+    original_analyze_photo = module.PhotoPromptService.analyze_photo
+
+    @wraps(original_analyze_photo)
+    async def analyze_photo_without_gemini_omni(self, *args, **kwargs):
+        result = await original_analyze_photo(self, *args, **kwargs)
+        return _strip_gemini_omni_prompt(result)
+
+    module.PhotoPromptService.analyze_photo = analyze_photo_without_gemini_omni
     module._vk_photo_prompt_instructions_installed = True
