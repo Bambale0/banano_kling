@@ -26,6 +26,7 @@ from .common import router as legacy_common_router
 from .freekassa_payments import router as freekassa_payments_router
 from .image_analyzer import router as image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
+from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .repeat_result_compat import router as repeat_result_compat_router
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
@@ -41,6 +42,10 @@ install_lava_payment_safety(payments_module)
 install_lava_invoice_compat(payments_module, lava_checkout_module)
 legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
+
+# Ordinary photo-only prompt analysis should use the same compact result structure
+# as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
+install_vk_photo_prompt_result_compat()
 
 # Seedance needs a narrow media compatibility layer because the established UX
 # exposes separate photo and video sub-flows while the provider accepts both in
