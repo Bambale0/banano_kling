@@ -17,12 +17,13 @@ from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .common import router as legacy_common_router
 from .freekassa_payments import router as freekassa_payments_router
-from .generation import router as generation_router
+from .generation import router as legacy_generation_router
 from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .support import router as support_router
+from .video_generation_compat import router as video_generation_compat_router
 
 # main.py imports callbacks directly from bot.handlers.payments after importing this
 # package. Install the safe Lava callbacks here so both the HTTP route and the
@@ -47,6 +48,11 @@ payments_router.include_router(lava_checkout_router)
 payments_router.include_router(freekassa_payments_router)
 payments_router.include_router(legacy_payments_router)
 
+# Advanced video callbacks must run before the broad legacy router.
+generation_router = Router()
+generation_router.include_router(video_generation_compat_router)
+generation_router.include_router(legacy_generation_router)
+
 # main.py already places common_router last. Keep that contract while ensuring
 # specific support/repeat handlers run before broad legacy common handlers.
 common_router = Router()
@@ -68,4 +74,5 @@ __all__ = [
     "prompt_analyzer_v2_router",
     "repeat_result_compat_router",
     "support_router",
+    "video_generation_compat_router",
 ]
