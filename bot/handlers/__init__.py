@@ -4,7 +4,6 @@ Handlers for the Telegram bot.
 """
 
 from aiogram import Router
-
 from bot.services.lava_binding_schema_compat import (
     install_lava_binding_schema_compat,
 )
