@@ -59,10 +59,14 @@ class TestConfig:
     def test_payment_provider_fallback(self):
         cfg = Config()
         cfg.PAYMENT_PROVIDER = "invalid"
-        cfg.FREEKASSA_MERCHANT_ID = ""
-        cfg.FREEKASSA_SECRET_WORD = ""
-        cfg.FREEKASSA_SECRET_WORD_2 = ""
+        cfg.LAVA_API_KEY = ""
         assert cfg.payment_provider == "cryptobot"
+
+    def test_payment_provider_fallback_prefers_lava(self):
+        cfg = Config()
+        cfg.PAYMENT_PROVIDER = "invalid"
+        cfg.LAVA_API_KEY = "lava-key"
+        assert cfg.payment_provider == "lava"
 
     def test_has_freekassa_true(self):
         cfg = Config()

@@ -31,7 +31,7 @@ class Config:
     FREEKASSA_WEBHOOK_PATH: str = os.getenv(
         "FREEKASSA_WEBHOOK_PATH", "/freekassa/webhook"
     )
-    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "freekassa").lower()
+    PAYMENT_PROVIDER: str = os.getenv("PAYMENT_PROVIDER", "lava").lower()
 
     # Telegram Stars
     TELEGRAM_STARS_ENABLED: bool = os.getenv("TELEGRAM_STARS_ENABLED", "1").lower() in (
@@ -231,7 +231,7 @@ class Config:
             "telegram_stars",
         }:
             return self.PAYMENT_PROVIDER
-        return "freekassa" if self.has_freekassa else "cryptobot"
+        return "lava" if self.LAVA_API_KEY else "cryptobot"
 
     @property
     def cryptobot_notification_url(self) -> str:

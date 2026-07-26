@@ -68,8 +68,8 @@ async def internal_auth_middleware(request: web.Request, handler: Any) -> web.Re
         return web.json_response(
             {
                 "error": "payment_provider_removed",
-                "provider": "freekassa",
-                "webhook": "/freekassa/webhook",
+                "provider": "lava",
+                "webhook": "/lava/webhook",
             },
             status=410,
         )

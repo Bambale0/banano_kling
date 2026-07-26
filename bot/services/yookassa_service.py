@@ -1,7 +1,8 @@
 """Compatibility adapter for code paths that still use the old provider name.
 
-The product now uses FreeKassa. This module contains no YooKassa SDK calls and
-cannot activate YooKassa; every operation delegates to ``freekassa_service``.
+Lava is the primary payment provider. This module contains no YooKassa SDK calls
+and cannot activate YooKassa; stale ``yookassa`` calls are delegated to
+``freekassa_service`` only as a legacy compatibility path.
 """
 
 from __future__ import annotations

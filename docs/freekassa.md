@@ -1,6 +1,8 @@
 # FreeKassa — настройка оплаты
 
-Ветка `tanyapi` использует FreeKassa вместо YooKassa.
+Основной платёжный провайдер ветки `tanyapi` — Lava. FreeKassa-код сохранён
+как дополнительная интеграция и legacy-совместимость для старых `yookassa`
+путей.
 
 ## Быстро: что вставить в кабинет FreeKassa
 
@@ -123,4 +125,4 @@ FreeKassa routes registered: ... enabled=True
 
 ## 6. Совместимость
 
-Внутренний символ `yookassa_service` временно оставлен как адаптер для старых импортов и старых версий Mini App. Он не содержит YooKassa SDK и всегда выполняет операции через `freekassa_service`. Новые Telegram-транзакции сохраняются с provider=`freekassa`.
+Внутренний символ `yookassa_service` временно оставлен как адаптер для старых импортов. Он не содержит YooKassa SDK и выполняет операции через `freekassa_service` только для legacy-вызовов. Новые основные платежи должны идти через Lava и сохраняться с provider=`lava`.

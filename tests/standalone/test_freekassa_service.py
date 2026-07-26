@@ -61,8 +61,8 @@ def test_legacy_yookassa_webhooks_are_retired():
         assert response.status == 410
         assert payload == {
             "error": "payment_provider_removed",
-            "provider": "freekassa",
-            "webhook": "/freekassa/webhook",
+            "provider": "lava",
+            "webhook": "/lava/webhook",
         }
 
 

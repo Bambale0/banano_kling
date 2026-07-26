@@ -73,8 +73,8 @@ export function BalanceSheet() {
       if (payment.payment_url) {
         openExternalPayment(payment.payment_url)
         toast.message(
-          provider === 'yookassa'
-            ? 'Открыта страница FreeKassa'
+          provider === 'lava'
+            ? 'Открыта страница Lava'
             : 'Открыта страница оплаты'
         )
         return
@@ -162,9 +162,7 @@ export function BalanceSheet() {
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
                     const lavaConfigured = Boolean(pkg.lava_offer_id)
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
-                    // Backend keeps the old provider identifier only as a compatibility
-                    // alias; the actual checkout and webhook are handled by FreeKassa.
-                    const freeKassaLoading = loadingPayment === `${pkg.id}:yookassa`
+                    const lavaLoading = loadingPayment === `${pkg.id}:lava`
                     return (
                       <div
                         key={pkg.id}
@@ -201,16 +199,16 @@ export function BalanceSheet() {
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
                           <Button
-                            onClick={() => handleTopup(pkg.id, 'yookassa')}
+                            onClick={() => handleTopup(pkg.id, 'lava')}
                             disabled={Boolean(loadingPayment)}
                             className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
                           >
-                            {freeKassaLoading ? (
+                            {lavaLoading ? (
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             ) : (
                               <CreditCard className="mr-2 h-4 w-4" />
                             )}
-                            Карта / СБП · FreeKassa
+                            Карта / СБП · Lava
                           </Button>
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
@@ -226,7 +224,7 @@ export function BalanceSheet() {
                           </Button>
                           {lavaConfigured ? (
                             <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Lava доступна в Telegram-боте после ввода личной почты покупателя.
+                              Оплата картой идёт через Lava.
                             </p>
                           ) : null}
                         </div>
@@ -245,10 +243,10 @@ export function BalanceSheet() {
                   Обновить статистику
                 </Button>
                 <Button
-                  onClick={() => handleTopup(paymentPackages[0]?.id || 'mini', 'yookassa')}
+                  onClick={() => handleTopup(paymentPackages[0]?.id || 'mini', 'lava')}
                   className="bg-gold hover:bg-gold/90 text-primary-foreground"
                 >
-                  Пополнить через FreeKassa
+                  Пополнить через Lava
                 </Button>
               </div>
             </div>
