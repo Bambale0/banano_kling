@@ -1,13 +1,9 @@
 """Align Telegram photo analysis instructions with the proven VK prompt.
 
-The Telegram service keeps its structured RU/EN output, negative prompt,
-model hints, voice support and provider fallbacks. Gemini Omni-specific output
-is deliberately excluded from the photo-analysis contract.
+Only the internal analysis prompt is changed. The existing Telegram response
+shape, handlers and user-facing UX remain untouched.
 """
 from __future__ import annotations
-
-from functools import wraps
-from typing import Any
 
 
 VK_PHOTO_ANALYSIS_PROMPT = (
@@ -22,25 +18,8 @@ VK_PHOTO_ANALYSIS_INSTRUCTIONS = (
 )
 
 
-def _strip_gemini_omni_prompt(result: Any) -> Any:
-    """Remove obsolete Omni-specific data from photo-analysis responses."""
-    if not isinstance(result, dict):
-        return result
-
-    cleaned = dict(result)
-    cleaned.pop("gemini_omni_prompt", None)
-
-    raw = cleaned.get("raw")
-    if isinstance(raw, dict):
-        raw_cleaned = dict(raw)
-        raw_cleaned.pop("gemini_omni_prompt", None)
-        cleaned["raw"] = raw_cleaned
-
-    return cleaned
-
-
 def install_vk_photo_prompt_instructions() -> None:
-    """Patch photo analysis once and exclude Gemini Omni-specific output."""
+    """Patch only the analyzer prompt while preserving the legacy UX contract."""
     from bot.services import photo_prompt_service as module
 
     if getattr(module, "_vk_photo_prompt_instructions_installed", False):
@@ -84,12 +63,4 @@ JSON schema:
 }}
 """.strip()
 
-    original_analyze_photo = module.PhotoPromptService.analyze_photo
-
-    @wraps(original_analyze_photo)
-    async def analyze_photo_without_gemini_omni(self, *args, **kwargs):
-        result = await original_analyze_photo(self, *args, **kwargs)
-        return _strip_gemini_omni_prompt(result)
-
-    module.PhotoPromptService.analyze_photo = analyze_photo_without_gemini_omni
     module._vk_photo_prompt_instructions_installed = True
