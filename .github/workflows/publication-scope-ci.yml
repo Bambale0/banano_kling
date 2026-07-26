@@ -28,6 +28,22 @@ jobs:
             bot/handlers/publication_scope_compat.py \
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/__init__.py
+      - name: Prepare ruff autofix preview
+        run: |
+          python -m pip install --quiet ruff
+          ruff check \
+            bot/handlers/publication_scope_compat.py \
+            bot/services/publication_scope_postgres_compat.py \
+            bot/handlers/__init__.py \
+            --fix --unsafe-fixes || true
+      - name: Upload autofixed Python sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-scope-autofix
+          path: |
+            bot/handlers/publication_scope_compat.py
+            bot/services/publication_scope_postgres_compat.py
+            bot/handlers/__init__.py
 
   miniapp-build:
     runs-on: ubuntu-latest
