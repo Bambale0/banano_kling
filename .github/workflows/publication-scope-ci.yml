@@ -55,7 +55,23 @@ jobs:
           python -m pip install --quiet pytest pytest-asyncio
           if [ -f requirements.txt ]; then python -m pip install --quiet -r requirements.txt; fi
       - name: Run publication scope lifecycle test
-        run: pytest tests/test_publication_scope_compat.py -v --tb=short
+        id: scope_test
+        shell: bash
+        run: |
+          set +e
+          pytest tests/test_publication_scope_compat.py -vv -s --tb=long 2>&1 | tee publication-scope-test.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload publication scope diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-scope-test-log
+          path: publication-scope-test.log
+      - name: Fail when lifecycle test failed
+        if: steps.scope_test.outputs.exit_code != '0'
+        run: exit 1
 
   miniapp-build:
     runs-on: ubuntu-latest
