@@ -81,7 +81,15 @@ def _apiyi_base_url() -> str:
 
 
 def _apiyi_api_key() -> str:
-    return os.getenv("APIYI_API_KEY", "").strip()
+    for name in (
+        "APIYI_API_KEY",
+        "NANO_BANANA_PRO_FALLBACK_API_KEY",
+        "NANOBANANA2_FALLBACK_API_KEY",
+    ):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _content_type_for_path(path: Path) -> str:
@@ -286,8 +294,16 @@ def install_vk_photo_prompt_instructions() -> None:
         audio_format: str = "",
     ) -> dict[str, Any]:
         if image_url and not audio_bytes:
-            prompt, model = await analyze_photo_exactly_as_vk(image_url)
-            return _telegram_result_from_vk_prompt(prompt, model)
+            try:
+                prompt, model = await analyze_photo_exactly_as_vk(image_url)
+                return _telegram_result_from_vk_prompt(prompt, model)
+            except RuntimeError as exc:
+                if "APIYI_API_KEY is not configured" not in str(exc):
+                    raise
+                logger.warning(
+                    "Exact VK photo analysis skipped: APIYI key is not configured; "
+                    "falling back to Telegram photo prompt service"
+                )
 
         return await original_analyze_photo(
             image_url=image_url,
