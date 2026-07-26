@@ -293,7 +293,6 @@ def install_vk_photo_prompt_instructions() -> None:
         audio_bytes: bytes | None = None,
         audio_format: str = "",
     ) -> dict[str, Any]:
-        del preserve, goal, user_note
         if image_url and not audio_bytes:
             prompt, model = await analyze_photo_exactly_as_vk(image_url)
             return _telegram_result_from_vk_prompt(prompt, model)
