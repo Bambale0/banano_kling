@@ -1,45 +1,51 @@
-"""Shared limits for video reference flows."""
+"""Shared limits and normalization for video reference flows."""
 
 from collections.abc import Iterable
 
-
-VIDEO_REFERENCE_LIMITS = {
-    "seedance_2": 3,
-    "gemini_omni": 1,
-    "gemini_omni_video": 1,
-    "motion_control_v26": 1,
-    "motion_control_v30": 1,
-}
-
-VIDEO_IMAGE_REFERENCE_LIMITS = {
-    "grok_imagine": 7,
-    "grok_imagine_v15": 1,
-    "seedance_2": 9,
-    "gemini_omni": 7,
-    "gemini_omni_video": 7,
-    "gemini_omni_character": 1,
-    "v3_std": 9,
-    "v3_pro": 9,
-}
+from bot.model_capabilities import (
+    get_video_capability,
+    max_image_references,
+    max_video_references,
+    normalize_video_model_key,
+    supports_video_reference,
+)
 
 DEFAULT_VIDEO_REFERENCE_MODEL = "seedance_2"
 
 
 def video_model_supports_reference_videos(model: str | None) -> bool:
-    return (model or "") in VIDEO_REFERENCE_LIMITS
+    return supports_video_reference(model)
 
 
 def get_max_video_references(model: str | None) -> int:
-    return VIDEO_REFERENCE_LIMITS.get(model or "", 3)
+    capability = get_video_capability(model)
+    if capability is None:
+        return 0
+    return max_video_references(model)
 
 
 def get_max_video_image_references(model: str | None) -> int:
-    return VIDEO_IMAGE_REFERENCE_LIMITS.get(model or "", 9)
+    capability = get_video_capability(model)
+    if capability is None:
+        return 0
+    return max_image_references(model)
+
+
+def get_video_reference_capabilities(model: str | None) -> dict[str, object]:
+    normalized = normalize_video_model_key(model)
+    capability = get_video_capability(normalized)
+    return {
+        "model": normalized,
+        "supports_video": bool(capability and capability.supports_reference_videos),
+        "max_videos": capability.max_reference_videos if capability else 0,
+        "max_images": capability.max_reference_images if capability else 0,
+    }
 
 
 def choose_video_reference_model(model: str | None) -> str:
-    if video_model_supports_reference_videos(model):
-        return str(model)
+    normalized = normalize_video_model_key(model)
+    if video_model_supports_reference_videos(normalized):
+        return normalized
     return DEFAULT_VIDEO_REFERENCE_MODEL
 
 
