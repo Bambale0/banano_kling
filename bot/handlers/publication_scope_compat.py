@@ -32,7 +32,7 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
     if row is None:
         return default
     try:
-        if hasattr(row, "keys") and key not in row:
+        if hasattr(row, "keys") and key not in row.keys():  # noqa: SIM118 - Row membership checks values
             return default
         return row[key]
     except (AttributeError, IndexError, KeyError, TypeError):
