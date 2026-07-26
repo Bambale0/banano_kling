@@ -2,9 +2,12 @@ import json
 
 import pytest
 
-from bot.services import photo_prompt_service as photo_prompt_module
-from bot.services import photo_prompt_vk_compat as vk_compat
-
+from bot.services import (
+    photo_prompt_service as photo_prompt_module,
+)
+from bot.services import (
+    photo_prompt_vk_compat as vk_compat,
+)
 
 EXPECTED_PROMPT = (
     "Составь подробный промпт для создания максимально похожего фото в Banana Pro. "
