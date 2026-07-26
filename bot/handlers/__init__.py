@@ -26,6 +26,7 @@ from .publication_scope_compat import router as publication_scope_compat_router
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
 
+from . import common as common_module
 from . import (
     generation as generation_module,
 )
@@ -35,7 +36,6 @@ from . import (
 from . import (
     payments as payments_module,
 )
-from . import common as common_module
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router

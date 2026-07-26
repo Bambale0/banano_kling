@@ -4,15 +4,15 @@ import importlib.abc
 import importlib.machinery
 import logging
 import sys
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot import database, keyboards
 from bot import db as db_backend
-from bot import database
-from bot import keyboards
 
 logger = logging.getLogger(__name__)
 router = Router(name="publication_scope_compat")
@@ -32,10 +32,10 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
     if row is None:
         return default
     try:
-        if hasattr(row, "keys") and key not in row.keys():
+        if hasattr(row, "keys") and key not in row:
             return default
         return row[key]
-    except Exception:
+    except (AttributeError, IndexError, KeyError, TypeError):
         return getattr(row, key, default)
 
 
@@ -47,7 +47,7 @@ def _publication_scope_from_row(row: Any) -> str:
     return "private"
 
 
-def _with_publication_scope(card: Optional[dict[str, Any]], row: Any) -> Optional[dict[str, Any]]:
+def _with_publication_scope(card: dict[str, Any] | None, row: Any) -> dict[str, Any] | None:
     if not card:
         return card
     scope = _publication_scope_from_row(row)
@@ -76,9 +76,9 @@ async def _ensure_publication_scope_schema() -> None:
         for statement in migrations:
             try:
                 await db.execute(statement)
-            except Exception:
+            except db_backend.OperationalError:
                 # The compatibility layer is loaded on every start. Existing columns are expected.
-                pass
+                logger.debug("Publication scope column already exists: %s", statement)
 
         await db.execute(
             """
@@ -94,7 +94,7 @@ async def _ensure_publication_scope_schema() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_generation_tasks_profile "
                 "ON generation_tasks(is_profile_visible, user_id, profile_published_at DESC, created_at DESC)"
             )
-        except Exception:
+        except db_backend.OperationalError:
             logger.debug("Could not create publication profile index", exc_info=True)
         await db.commit()
 
@@ -165,7 +165,7 @@ async def _profile_card(
     *,
     viewer_user_id: int | None = None,
     require_visible: bool = True,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     row = await _fetch_generation_with_author(
         identifier,
         require_profile_visible=require_visible,
@@ -255,8 +255,8 @@ async def share_to_feed_scoped(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
-    blurred: Optional[bool] = None,
-) -> Optional[dict[str, Any]]:
+    blurred: bool | None = None,
+) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
     card = await _ORIGINAL_SHARE_TO_FEED(
         gen_id,
@@ -295,8 +295,8 @@ async def share_to_profile(
     *,
     prompt_visible: bool = False,
     references_visible: bool = False,
-    blurred: Optional[bool] = None,
-) -> Optional[dict[str, Any]]:
+    blurred: bool | None = None,
+) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
     async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
@@ -325,7 +325,9 @@ async def share_to_profile(
                 result_urls_json = json.dumps(persisted, ensure_ascii=False)
 
         next_blurred = database.generation_feed_blurred(row) if blurred is None else bool(blurred)
-        published_at = datetime.utcnow().isoformat(sep=" ", timespec="microseconds")
+        published_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(
+            sep=" ", timespec="microseconds"
+        )
         await db.execute(
             """
             UPDATE generation_tasks
@@ -470,7 +472,7 @@ def _replace_publication_button(
 
 def get_image_result_keyboard_scoped(
     image_url: str,
-    task_id: str = None,
+    task_id: str | None = None,
     is_public_feed: bool = False,
     is_prompt_library: bool = False,
 ):
@@ -490,8 +492,8 @@ def get_image_result_keyboard_scoped(
 def get_video_result_keyboard_scoped(
     video_url: str,
     user_credits: int = 0,
-    task_id: str = None,
-    model: str = None,
+    task_id: str | None = None,
+    model: str | None = None,
     is_public_feed: bool = False,
 ):
     markup = _ORIGINAL_VIDEO_RESULT_KEYBOARD(
@@ -537,7 +539,7 @@ def _task_result_markup(task: dict[str, Any], scope: str) -> InlineKeyboardMarku
 async def _refresh_result_markup(callback: types.CallbackQuery, task: dict[str, Any], scope: str) -> None:
     try:
         await callback.message.edit_reply_markup(reply_markup=_task_result_markup(task, scope))
-    except Exception:
+    except (AttributeError, TelegramBadRequest, TypeError):
         logger.debug("Could not refresh publication result keyboard", exc_info=True)
 
 
@@ -547,10 +549,7 @@ def _invalidate_publication_caches() -> None:
         return
     invalidator = getattr(common_module, "_invalidate_feed_and_profile_caches", None)
     if callable(invalidator):
-        try:
-            invalidator()
-        except Exception:
-            logger.debug("Could not invalidate feed/profile caches", exc_info=True)
+        invalidator()
 
 
 @router.callback_query(F.data.startswith("pubscope_"))
@@ -763,7 +762,7 @@ async def _miniapp_generation_share_scoped(module, request):
         return module.web.json_response(
             {"ok": True, "feed_item": card, "publication_scope": "feed"}
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - API boundary converts unexpected failures to JSON
         return module._miniapp_error_response(
             error,
             log_message="Mini App scoped generation publication failed",
@@ -771,7 +770,10 @@ async def _miniapp_generation_share_scoped(module, request):
 
 
 def _patch_miniapp_module(module) -> None:
-    module.miniapp_generation_share = lambda request: _miniapp_generation_share_scoped(module, request)
+    async def scoped_generation_share(request):
+        return await _miniapp_generation_share_scoped(module, request)
+
+    module.miniapp_generation_share = scoped_generation_share
 
 
 class _MiniappPatchLoader(importlib.abc.Loader):
