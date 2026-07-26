@@ -126,9 +126,16 @@ class PostgresCursor:
         return [PostgresRow(self._columns, row) for row in rows]
 
 
+def _normalize_postgres_dsn(value: str | None = None) -> str:
+    url = str(value if value is not None else os.getenv("DATABASE_URL", "") or "").strip()
+    if url.lower().startswith("postgresql+asyncpg://"):
+        return "postgresql://" + url[len("postgresql+asyncpg://") :]
+    return url
+
+
 def _is_postgres_url(value: str | None = None) -> bool:
-    url = value if value is not None else os.getenv("DATABASE_URL", "")
-    return str(url or "").startswith(("postgresql://", "postgres://"))
+    url = _normalize_postgres_dsn(value).lower()
+    return url.startswith(("postgresql://", "postgres://"))
 
 
 def _translate_placeholders(sql: str) -> str:
@@ -799,7 +806,7 @@ class PostgresConnect:
             await semaphore.acquire()
             self._semaphore_acquired = True
             try:
-                dsn = os.getenv("DATABASE_URL", "")
+                dsn = _normalize_postgres_dsn()
                 raw_conn = await psycopg.AsyncConnection.connect(dsn)
                 await _ensure_postgres_helpers(raw_conn)
                 self._conn = PostgresConnection(raw_conn)

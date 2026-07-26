@@ -2,6 +2,34 @@
 
 Ветка `tanyapi` использует FreeKassa вместо YooKassa.
 
+## Быстро: что вставить в кабинет FreeKassa
+
+Для текущего продакшн-домена:
+
+```text
+URL оповещения: https://tanyapi.chillcreative.ru/freekassa/webhook
+Метод оповещения: POST
+```
+
+```text
+URL успешной оплаты: https://tanyapi.chillcreative.ru/payment/success
+Метод успешной оплаты: GET
+```
+
+```text
+URL возврата в случае неудачи: https://tanyapi.chillcreative.ru/payment/fail
+Метод возврата в случае неудачи: GET
+```
+
+Секреты:
+
+```text
+Секретное слово: значение FREEKASSA_SECRET_WORD из .env
+Секретное слово 2: значение FREEKASSA_SECRET_WORD_2 из .env
+```
+
+Не вставляйте секреты в Git и публичные документы. Значения должны совпадать между кабинетом FreeKassa и `.env` на сервере.
+
 ## 1. Переменные окружения
 
 Обязательные:

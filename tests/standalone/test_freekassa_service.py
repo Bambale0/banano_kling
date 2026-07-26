@@ -27,10 +27,24 @@ def test_integration_modules_import_and_legacy_alias_is_freekassa_only():
     assert freekassa_payments.router is not None
     assert callable(freekassa_payments.handle_freekassa_webhook)
     assert callable(freekassa_payments.setup_freekassa_routes)
+    assert callable(freekassa_payments.handle_freekassa_success_return)
+    assert callable(freekassa_payments.handle_freekassa_fail_return)
     assert (
         legacy_payment_module.yookassa_service.__class__.__name__
         == "FreeKassaLegacyAliasService"
     )
+
+
+def test_freekassa_return_pages_are_domain_safe():
+    success = asyncio.run(freekassa_payments.handle_freekassa_success_return(None))
+    failure = asyncio.run(freekassa_payments.handle_freekassa_fail_return(None))
+
+    assert success.status == 200
+    assert failure.status == 200
+    assert "Оплата принята" in success.text
+    assert "Оплата не завершена" in failure.text
+    assert "https://t.me/Neuromixx_bot" in success.text
+    assert "https://t.me/Neuromixx_bot" in failure.text
 
 
 def test_legacy_yookassa_webhooks_are_retired():

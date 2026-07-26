@@ -51,6 +51,82 @@ router = Router()
 
 FREEKASSA_RECONCILE_INTERVAL_SECONDS = 5 * 60
 FREEKASSA_RECONCILE_BATCH_SIZE = 100
+FREEKASSA_BOT_RETURN_URL = "https://t.me/Neuromixx_bot"
+
+
+def _payment_return_page(*, title: str, message: str) -> str:
+    bot_url = html.escape(FREEKASSA_BOT_RETURN_URL, quote=True)
+    miniapp_url = html.escape(config.mini_app_url, quote=True)
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #fff7df;
+      color: #21180a;
+    }}
+    main {{
+      width: min(92vw, 460px);
+      padding: 32px;
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 18px 60px rgba(52, 35, 8, .16);
+      text-align: center;
+    }}
+    h1 {{ margin: 0 0 12px; font-size: 28px; }}
+    p {{ margin: 0 0 24px; line-height: 1.5; color: #5f513d; }}
+    a {{
+      display: block;
+      padding: 14px 18px;
+      margin-top: 10px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      background: #ffc83d;
+      color: #21180a;
+    }}
+    a.secondary {{ background: #f2ead8; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{html.escape(title)}</h1>
+    <p>{html.escape(message)}</p>
+    <a href="{bot_url}">Открыть бота</a>
+    <a class="secondary" href="{miniapp_url}">Открыть Mini App</a>
+  </main>
+</body>
+</html>"""
+
+
+async def handle_freekassa_success_return(request: web.Request) -> web.Response:
+    _ = request
+    return web.Response(
+        text=_payment_return_page(
+            title="Оплата принята",
+            message="Вернитесь в бота. Бананы начислятся автоматически после подтверждения FreeKassa.",
+        ),
+        content_type="text/html",
+    )
+
+
+async def handle_freekassa_fail_return(request: web.Request) -> web.Response:
+    _ = request
+    return web.Response(
+        text=_payment_return_page(
+            title="Оплата не завершена",
+            message="Платеж отменен или не прошел. Можно вернуться в бота и попробовать еще раз.",
+        ),
+        content_type="text/html",
+    )
 
 
 def _provider_keyboard(
@@ -505,6 +581,8 @@ def setup_freekassa_routes(app: web.Application) -> None:
     paths = {freekassa_service.webhook_path, "/webhook/freekassa"}
     for path in paths:
         app.router.add_post(path, handle_freekassa_webhook)
+    app.router.add_get("/payment/success", handle_freekassa_success_return)
+    app.router.add_get("/payment/fail", handle_freekassa_fail_return)
     app.cleanup_ctx.append(_cleanup_context)
     logger.info(
         "FreeKassa routes registered: paths=%s enabled=%s api_enabled=%s verify_ip=%s",

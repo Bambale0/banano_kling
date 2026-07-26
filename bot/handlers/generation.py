@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from aiogram import Bot, F, Router, types
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -7913,7 +7914,7 @@ async def motion_control_reference_video_upload(
     """Upload movement video for dedicated Motion Control flow."""
     data = await state.get_data()
     if data.get("v_type") != "motion":
-        return
+        raise SkipHandler
 
     if message.video:
         video_obj = message.video

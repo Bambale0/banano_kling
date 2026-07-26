@@ -443,12 +443,18 @@ class KlingService:
         negative_prompt: Optional[str] = None,
         cfg_scale: float = 0.5,
         generate_audio: bool = True,
-        multi_shots: Optional[List[Dict[str, Any]]] = None,
+        multi_shots: Optional[Any] = None,
         image_input: Optional[List[str]] = None,
         motion_direction: str = "video",
         motion_mode: str = "720p",
+        sound: Optional[bool] = None,
+        mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         model = model or "v3_std"
+        if sound is not None:
+            generate_audio = bool(sound)
+        if mode:
+            motion_mode = mode
         if model in self.NON_KLING_MODELS:
             return self._build_error(
                 "wrong_provider_route",
@@ -472,6 +478,7 @@ class KlingService:
             kling_elements, enhanced_prompt = self._build_kling_elements(
                 elements, prompt
             )
+            multi_prompt = multi_shots if isinstance(multi_shots, list) else None
             return await self.generate_kling_3_video(
                 prompt=enhanced_prompt,
                 mode=self.KLING_3_MODE_BY_KEY[model],
@@ -480,7 +487,7 @@ class KlingService:
                 image_urls=image_urls,
                 sound=generate_audio,
                 multi_shots=bool(multi_shots),
-                multi_prompt=multi_shots,
+                multi_prompt=multi_prompt,
                 kling_elements=kling_elements,
                 webhook=webhook_url,
             )

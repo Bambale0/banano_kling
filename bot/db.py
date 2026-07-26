@@ -47,7 +47,10 @@ class _ConfiguredSqliteConnection:
 
 
 def is_postgres() -> bool:
-    return os.getenv("DATABASE_URL", DATABASE_URL).startswith(("postgresql://", "postgres://"))
+    database_url = os.getenv("DATABASE_URL", DATABASE_URL).strip().lower()
+    return database_url.startswith(
+        ("postgresql://", "postgres://", "postgresql+asyncpg://")
+    )
 
 
 def backend_name() -> str:

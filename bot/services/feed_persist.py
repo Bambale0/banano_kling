@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import os
+import shutil
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -57,7 +58,8 @@ async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) ->
                             logger.warning("Feed persist: file too large (>%d) for %s", max_size_bytes, url)
                             return None
 
-                local_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/{filename}"
+                filepath = _rename_to_detected_ext(filepath)
+                local_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/{filepath.name}"
                 logger.info("Feed persist: downloaded %s -> %s (%d bytes)", url, local_url, downloaded)
                 return local_url
 
@@ -94,6 +96,36 @@ def _content_type_to_ext(content_type: str, fallback_url: str) -> str:
             return ext
 
     return ".jpg"  # fallback
+
+
+def _detect_file_ext_by_magic(path: Path) -> str | None:
+    try:
+        header = path.read_bytes()[:16]
+    except OSError:
+        return None
+    if header.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+        return ".gif"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return ".webp"
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return ".mp4"
+    return None
+
+
+def _rename_to_detected_ext(path: Path) -> Path:
+    detected_ext = _detect_file_ext_by_magic(path)
+    if not detected_ext or path.suffix.lower() == detected_ext:
+        return path
+    destination = path.with_suffix(detected_ext)
+    if destination.exists():
+        destination = path.with_name(f"{path.stem}-{uuid.uuid4().hex[:8]}{detected_ext}")
+    os.replace(path, destination)
+    logger.info("Feed persist: corrected media extension %s -> %s", path, destination)
+    return destination
 
 
 def _local_feed_upload_path(url: str) -> Path | None:
@@ -133,6 +165,9 @@ def ensure_feed_thumbnail(url: str) -> str | None:
         return None
     if source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
+    if _detect_file_ext_by_magic(source) not in {".jpg", ".png", ".gif", ".webp"}:
+        logger.warning("Feed thumbnail: skipped non-image feed file %s", source)
+        return None
 
     thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg"
     tmp = thumb.with_suffix(".tmp.jpg")
@@ -155,19 +190,61 @@ def ensure_feed_thumbnail(url: str) -> str | None:
         return None
 
 
+def _copy_local_upload_to_feed(url: str) -> str | None:
+    """Copy an existing local /uploads result into durable feed storage."""
+    try:
+        from bot.services.media_input_utils import (
+            is_local_upload_source,
+            resolve_local_upload_path,
+        )
+
+        if not is_local_upload_source(url):
+            return None
+
+        source_path = resolve_local_upload_path(url)
+        if not source_path:
+            return None
+
+        source = Path(source_path)
+        try:
+            source.resolve().relative_to(FEED_STORAGE_DIR.resolve())
+            ensure_feed_thumbnail(url)
+            return url
+        except ValueError:
+            pass
+
+        ext = source.suffix.lower() or _content_type_to_ext("", str(source))
+        filename = f"{uuid.uuid4().hex}{ext}"
+        FEED_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        destination = FEED_STORAGE_DIR / filename
+        shutil.copy2(source, destination)
+        destination = _rename_to_detected_ext(destination)
+
+        local_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/{destination.name}"
+        ensure_feed_thumbnail(local_url)
+        logger.info("Feed persist: copied local upload %s -> %s", url, local_url)
+        return local_url
+    except Exception:
+        logger.exception("Feed persist: failed to copy local upload %s", url)
+        return None
+
+
 async def persist_feed_result_urls(result_urls: list[str]) -> list[str]:
     """
     Принимает список URL результатов генерации.
     Если URL ведёт на эфемерный хост — скачивает локально.
+    Если URL уже ведёт на локальный /uploads, копирует в durable feed storage.
     Возвращает список URL (некоторые могут быть заменены на локальные).
     """
     from bot.database import FEED_EPHEMERAL_RESULT_HOSTS, _feed_result_host
 
-    if not FEED_EPHEMERAL_RESULT_HOSTS:
-        return result_urls
-
     persisted: list[str] = []
     for url in result_urls:
+        local = _copy_local_upload_to_feed(url)
+        if local:
+            persisted.append(local)
+            continue
+
         host = _feed_result_host(url)
         is_ephemeral = any(
             host == ephemeral or host.endswith(f".{ephemeral}")

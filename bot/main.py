@@ -1569,6 +1569,7 @@ async def _remove_old_files(
     *,
     skip_filenames: set[str] | None = None,
     skip_dirnames: set[str] | None = None,
+    protected_paths: set[str] | None = None,
 ):
     """Удаляет файлы старше max_age_seconds в каталоге base_dir (рекурсивно)."""
     try:
@@ -1577,6 +1578,7 @@ async def _remove_old_files(
             return
         skip_filenames = skip_filenames or set()
         skip_dirnames = skip_dirnames or set()
+        protected_paths = {os.path.abspath(path) for path in (protected_paths or set())}
 
         for root, dirs, files in os.walk(base_dir):
             dirs[:] = [name for name in dirs if name not in skip_dirnames]
@@ -1585,6 +1587,9 @@ async def _remove_old_files(
                     continue
                 path = os.path.join(root, name)
                 try:
+                    if os.path.abspath(path) in protected_paths:
+                        logger.info("Cleanup kept public feed file: %s", path)
+                        continue
                     mtime = os.path.getmtime(path)
                     if now - mtime > max_age_seconds:
                         os.remove(path)
@@ -1603,16 +1608,153 @@ async def _remove_old_files(
     except Exception:
         logger.exception("Error during cleanup for %s", base_dir)
 
+
+async def _public_feed_protected_upload_paths() -> set[str]:
+    """Return local upload files that must never be removed by generic cleanup."""
+    protected: set[str] = set()
+    try:
+        from bot.services.media_input_utils import (
+            is_local_upload_source,
+            resolve_local_upload_path,
+        )
+
+        async with db_backend.connect() as db:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                """
+                SELECT result_url, result_urls
+                FROM generation_tasks
+                WHERE is_public_feed = 1
+                  AND status = 'completed'
+                  AND (result_url IS NOT NULL OR result_urls IS NOT NULL)
+                """
+            )
+            rows = await cursor.fetchall()
+
+        for row in rows:
+            urls: list[str] = []
+            result_url = str(row["result_url"] or "").strip()
+            if result_url:
+                urls.append(result_url)
+
+            raw_result_urls = row["result_urls"] if "result_urls" in row.keys() else None
+            if raw_result_urls:
+                try:
+                    parsed = json.loads(raw_result_urls)
+                except (TypeError, json.JSONDecodeError):
+                    parsed = []
+                if isinstance(parsed, list):
+                    urls.extend(str(item or "").strip() for item in parsed)
+
+            for url in urls:
+                if not url or not is_local_upload_source(url):
+                    continue
+                local_path = resolve_local_upload_path(url)
+                if local_path:
+                    protected.add(os.path.abspath(local_path))
+    except Exception:
+        logger.exception("Failed to collect public feed protected upload paths")
+    return protected
+
+
+def _row_public_result_urls(row) -> list[str]:
+    urls: list[str] = []
+    result_url = str(row["result_url"] or "").strip()
+    if result_url:
+        urls.append(result_url)
+
+    raw_result_urls = row["result_urls"] if "result_urls" in row.keys() else None
+    if raw_result_urls:
+        try:
+            parsed = json.loads(raw_result_urls)
+        except (TypeError, json.JSONDecodeError):
+            parsed = []
+        if isinstance(parsed, list):
+            for item in parsed:
+                url = str(item or "").strip()
+                if url and url not in urls:
+                    urls.append(url)
+    return urls
+
+
+async def _normalize_public_feed_storage() -> dict[str, int]:
+    """Move every available public feed result into static/uploads/feed."""
+    stats = {"checked": 0, "updated": 0, "unchanged": 0, "failed": 0}
+    try:
+        from bot.services.feed_persist import persist_feed_result_urls
+
+        async with db_backend.connect() as db:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                """
+                SELECT id, result_url, result_urls
+                FROM generation_tasks
+                WHERE is_public_feed = 1
+                  AND status = 'completed'
+                  AND (result_url IS NOT NULL OR result_urls IS NOT NULL)
+                """
+            )
+            rows = await cursor.fetchall()
+
+            for row in rows:
+                stats["checked"] += 1
+                result_urls = _row_public_result_urls(row)
+                if not result_urls:
+                    stats["unchanged"] += 1
+                    continue
+
+                try:
+                    persisted = await persist_feed_result_urls(result_urls)
+                except Exception:
+                    logger.exception(
+                        "Failed to persist public feed storage for generation %s",
+                        row["id"],
+                    )
+                    stats["failed"] += 1
+                    continue
+
+                if not persisted or persisted == result_urls:
+                    stats["unchanged"] += 1
+                    continue
+
+                await db.execute(
+                    """
+                    UPDATE generation_tasks
+                    SET result_url = ?,
+                        result_urls = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        persisted[0],
+                        json.dumps(persisted, ensure_ascii=False),
+                        row["id"],
+                    ),
+                )
+                stats["updated"] += 1
+
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to normalize public feed storage")
+        stats["failed"] += 1
+    return stats
+
+
 async def _cleanup_loop():
     """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
     await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
     while True:
         try:
+            feed_storage_stats = await _normalize_public_feed_storage()
+            if feed_storage_stats["updated"] or feed_storage_stats["failed"]:
+                logger.info("Public feed storage normalization stats: %s", feed_storage_stats)
+            public_feed_paths = await _public_feed_protected_upload_paths()
             await _remove_old_files(
                 "static/uploads",
                 max_age_seconds=UPLOAD_RETENTION_SECONDS,
                 skip_filenames=set(),
                 skip_dirnames={"refs", "feed"},
+                protected_paths=public_feed_paths,
             )
             await _remove_old_files(
                 "logs",
@@ -1643,6 +1785,12 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
 
     # База данных уже инициализирована в main() функции
     logger.info("Database already initialized")
+
+    try:
+        feed_storage_stats = await _normalize_public_feed_storage()
+        logger.info("Startup public feed storage normalization stats: %s", feed_storage_stats)
+    except Exception:
+        logger.exception("Failed startup public feed storage normalization")
 
     try:
         for scope in USER_BOT_COMMAND_SCOPES:
