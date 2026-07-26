@@ -11,6 +11,17 @@ from bot.services.lava_binding_schema_compat import (
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
 
+# Publication scope must be installed before generation/common/miniapp import
+# their database and keyboard functions. This keeps the established flow while
+# adding a separate "profile only" state next to the public discovery feed.
+from .publication_scope_compat import (
+    install_common_publication_scope_compat,
+    install_publication_scope_compat,
+)
+from .publication_scope_compat import router as publication_scope_compat_router
+
+install_publication_scope_compat()
+
 from . import (
     generation as generation_module,
 )
@@ -20,9 +31,9 @@ from . import (
 from . import (
     payments as payments_module,
 )
+from . import common as common_module
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
-from .common import router as legacy_common_router
 from .freekassa_payments import router as freekassa_payments_router
 from .image_analyzer import router as image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
@@ -42,6 +53,7 @@ install_lava_payment_safety(payments_module)
 install_lava_invoice_compat(payments_module, lava_checkout_module)
 legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
+legacy_common_router = common_module.router
 
 # Ordinary photo-only prompt analysis should use the same compact result structure
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
@@ -54,6 +66,7 @@ install_vk_photo_prompt_result_compat()
 # router below it.
 install_seedance_multimodal_runtime_compat()
 generation_router = Router()
+generation_router.include_router(publication_scope_compat_router)
 generation_router.include_router(seedance_multimodal_compat_router)
 generation_router.include_router(generation_module.router)
 
@@ -66,6 +79,7 @@ payments_router.include_router(legacy_payments_router)
 
 # Keep the established common-menu flow. Specific background/support handlers are
 # included before the broad legacy common router without replacing its UI.
+install_common_publication_scope_compat(common_module)
 common_router = Router()
 common_router.include_router(notification_campaigns_router)
 common_router.include_router(repeat_result_compat_router)
@@ -82,6 +96,7 @@ __all__ = [
     "lava_checkout_router",
     "notification_campaigns_router",
     "payments_router",
+    "publication_scope_compat_router",
     "repeat_result_compat_router",
     "seedance_multimodal_compat_router",
     "support_router",
