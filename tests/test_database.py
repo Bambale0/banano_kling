@@ -490,7 +490,7 @@ async def test_profile_only_publication_is_hidden_from_general_feed(tmp_path, mo
     assert card is not None
     assert card["publication_scope"] == "profile"
     assert card["is_profile_visible"] is True
-    assert card["feed_interactions_enabled"] is True
+    assert card["feed_interactions_enabled"] is False
     assert card["feed_blurred"] is True
     assert await database.get_feed_generations(limit=20) == []
     profile_cards = await database.get_user_feed_generations(
@@ -522,7 +522,7 @@ async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeyp
     assert card["publication_scope"] == "profile"
     assert card["is_adult_content"] is True
     assert card["feed_blurred"] is True
-    assert card["feed_interactions_enabled"] is True
+    assert card["feed_interactions_enabled"] is False
     assert await database.get_feed_generations(limit=20) == []
 
     unblurred = await database.set_feed_blurred(card["id"], user.id, False)

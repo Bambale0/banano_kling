@@ -431,6 +431,7 @@ async def test_lava_reconcile_completes_paid_pending_transaction(monkeypatch):
         {
             "order_id": "lava-paid-order",
             "payment_id": "lava-paid-invoice",
+            "invoice_id": "lava-paid-invoice",
             "status": "completed",
             "action": "completed",
         }
@@ -440,7 +441,7 @@ async def test_lava_reconcile_completes_paid_pending_transaction(monkeypatch):
     transaction = await database.get_transaction_by_order("lava-paid-order")
     assert transaction.status == "completed"
     bot.send_message.assert_awaited_once()
-    assert "Оплата Lava успешно обработана" in bot.send_message.await_args.args[1]
+    assert "Оплата успешно обработана" in bot.send_message.await_args.args[1]
 
 
 @pytest.mark.asyncio
@@ -473,6 +474,7 @@ async def test_lava_reconcile_marks_failed_pending_transaction(monkeypatch):
         {
             "order_id": "lava-failed-order",
             "payment_id": "lava-failed-invoice",
+            "invoice_id": "lava-failed-invoice",
             "status": "failed",
             "action": "failed",
         }
@@ -508,11 +510,15 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
     from bot import database
     from bot.handlers import payments as payments_module
     from bot.handlers.payments import handle_lava_webhook
+    from bot.services import lava_payment_safety
 
     async def _fake_status(_transaction, _contract_id):
         return "completed"
 
-    monkeypatch.setattr(payments_module, "_resolve_lava_provider_status", _fake_status)
+    async def _fake_provider_status(_transaction, **_kwargs):
+        return "completed", "lava-webhook-invoice"
+
+    monkeypatch.setattr(lava_payment_safety, "_provider_status", _fake_provider_status)
     monkeypatch.setattr(payments_module.config, "LAVA_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(hmac, "compare_digest", lambda _actual, _expected: True)
 
@@ -532,10 +538,13 @@ async def test_lava_webhook_completes_transaction_by_order_id(monkeypatch):
         read=AsyncMock(
             return_value=(
                 b'{"eventType":"payment.success","status":"success",'
+                b'"contractId":"lava-webhook-invoice","amount":700,"currency":"RUB",'
                 b'"clientUtm":{"order_id":"lava-webhook-order"},'
                 b'"signature":"test-signature"}'
             )
         ),
+        headers={"X-Api-Key": "test-secret"},
+        remote="158.160.60.174",
         app={"bot": bot},
     )
 

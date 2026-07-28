@@ -4,13 +4,12 @@ from bot.services import photo_prompt_service
 def test_telegram_photo_prompt_uses_vk_reconstruction_instruction() -> None:
     prompt = photo_prompt_service.SYSTEM_PROMPT
 
-    assert "Составь подробный промпт для создания максимально похожего фото в Banana Pro" in prompt
-    assert "Сохрани все мелкие детали, лицо, одежду, позу, освещение, стиль, цвета" in prompt
-    assert "Ты эксперт по промптам для генерации изображений" in prompt
-    assert "Верни только валидный JSON" in prompt
+    assert "senior prompt analyst for photorealistic AI image generation" in prompt
+    assert 'The user-facing "prompt_ru" is the main result' in prompt
+    assert "Return only valid JSON" in prompt
 
 
-def test_vk_compat_keeps_legacy_structured_fields_without_omni() -> None:
+def test_photo_prompt_keeps_structured_fields_with_omni() -> None:
     prompt = photo_prompt_service.SYSTEM_PROMPT
 
     for field in (
@@ -23,7 +22,7 @@ def test_vk_compat_keeps_legacy_structured_fields_without_omni() -> None:
     ):
         assert field in prompt
 
-    assert '"gemini_omni_prompt"' not in prompt
+    assert '"gemini_omni_prompt"' in prompt
 
 
 def test_vk_compat_does_not_wrap_analyze_photo() -> None:

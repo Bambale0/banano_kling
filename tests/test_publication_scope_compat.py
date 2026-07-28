@@ -35,7 +35,7 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     publication_scope = _load_publication_scope_module()
     database_path = str(tmp_path / "publication-scope.db")
     monkeypatch.setattr(database, "DATABASE_PATH", database_path)
-    publication_scope._SCHEMA_READY = False
+    publication_scope._SCHEMA_READY_PATHS.clear()
 
     async def keep_result_urls(urls):
         return list(urls)

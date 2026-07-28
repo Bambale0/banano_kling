@@ -158,8 +158,13 @@ async def _provider_status_compatible(
         extracted_invoice_id = lava_service.extract_invoice_id(invoice)
         if extracted_invoice_id:
             resolved_invoice_id = str(extracted_invoice_id)
+        elif candidate == payment_id:
+            # Current transactions persist the invoice ID directly. Some
+            # status endpoints omit it from the response body, so keep the
+            # identifier that successfully resolved the invoice.
+            resolved_invoice_id = payment_id
 
-        if contract and resolved_invoice_id:
+        if contract and resolved_invoice_id and contract != resolved_invoice_id:
             try:
                 await safety._save_binding(contract, resolved_invoice_id)
             except Exception:

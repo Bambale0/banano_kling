@@ -17,7 +17,7 @@ from bot import db as db_backend
 logger = logging.getLogger(__name__)
 router = Router(name="publication_scope_compat")
 
-_SCHEMA_READY = False
+_SCHEMA_READY_PATHS: set[str] = set()
 _INSTALLED = False
 _MINIAPP_HOOK_INSTALLED = False
 _COMMON_PATCHED = False
@@ -64,8 +64,8 @@ def _generation_row_to_card_scoped(*args, **kwargs):
 
 
 async def _ensure_publication_scope_schema() -> None:
-    global _SCHEMA_READY
-    if _SCHEMA_READY:
+    database_path = str(database.DATABASE_PATH)
+    if database_path in _SCHEMA_READY_PATHS:
         return
 
     async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
@@ -98,7 +98,7 @@ async def _ensure_publication_scope_schema() -> None:
             logger.debug("Could not create publication profile index", exc_info=True)
         await db.commit()
 
-    _SCHEMA_READY = True
+    _SCHEMA_READY_PATHS.add(database_path)
 
 
 def _generation_identifier(identifier: int | str) -> tuple[str, Any]:
@@ -259,37 +259,19 @@ async def share_to_feed_scoped(
     prompt_visible: bool = False,
     references_visible: bool = False,
     blurred: bool | None = None,
+    publication_scope: str = "feed",
+    adult_content: bool = False,
 ) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
-    card = await _ORIGINAL_SHARE_TO_FEED(
+    return await _ORIGINAL_SHARE_TO_FEED(
         gen_id,
         user_id,
         prompt_visible=prompt_visible,
         references_visible=references_visible,
         blurred=blurred,
+        publication_scope=publication_scope,
+        adult_content=adult_content,
     )
-    if not card:
-        return None
-
-    clause, value = database._generation_identifier_clause(gen_id)
-    async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
-        await db.execute(
-            f"""
-            UPDATE generation_tasks
-            SET is_profile_visible = 1,
-                profile_published_at = COALESCE(profile_published_at, feed_published_at, CURRENT_TIMESTAMP),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE {clause} AND user_id = ?
-            """,
-            (value, user_id),
-        )
-        await db.commit()
-
-    card["is_public_feed"] = True
-    card["is_profile_visible"] = True
-    card["publication_scope"] = "feed"
-    card["feed_interactions_enabled"] = True
-    return card
 
 
 async def share_to_profile(

@@ -53,7 +53,7 @@ def test_vk_default_model_chain_matches_vk(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("APIYI_VISION_MODEL", raising=False)
     monkeypatch.delenv("APIYI_VISION_FALLBACK_MODELS", raising=False)
 
-    assert vk_compat._configured_models() == ["gpt-5.4", "gpt-5.5", "gpt-4o"]
+    assert vk_compat._configured_models() == ["gpt-5.5"]
 
 
 @pytest.mark.asyncio

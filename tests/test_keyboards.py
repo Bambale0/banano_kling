@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
+import bot.keyboards as keyboards_module
 
 from bot.keyboards import (get_admin_keyboard, get_balance_keyboard,
                            get_create_hub_keyboard, get_create_video_keyboard,
@@ -647,18 +648,20 @@ async def test_gemini_omni_async_audio_task_is_polled_to_asset():
 
 
 def test_get_image_result_keyboard_contains_repeat_and_main_menu():
-    kb = get_image_result_keyboard("https://example.com/image.png", task_id="img_123")
+    kb = keyboards_module.get_image_result_keyboard(
+        "https://example.com/image.png", task_id="img_123"
+    )
     button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
     assert "🎬 Оживить в Grok" in button_texts
     assert "🎬 Grok 1.5" in button_texts
-    assert "🖼 В ленту" in button_texts
+    assert "📤 Опубликовать" in button_texts
     assert "📚 В промпты" in button_texts
     assert "grokvid_img_123" in callback_ids
     assert "grok15vid_img_123" in callback_ids
-    assert "feedpub_img_123" in callback_ids
+    assert "pubscope_img_123" in callback_ids
     assert "promptsave_img_123" in callback_ids
     assert "🔁 Повторить" in button_texts
     assert "repeat_result_img_123" in callback_ids
@@ -666,7 +669,7 @@ def test_get_image_result_keyboard_contains_repeat_and_main_menu():
 
 
 def test_get_image_result_keyboard_allows_author_removal_from_public_surfaces():
-    kb = get_image_result_keyboard(
+    kb = keyboards_module.get_image_result_keyboard(
         "https://example.com/image.png",
         task_id="img_123",
         is_public_feed=True,
@@ -676,9 +679,9 @@ def test_get_image_result_keyboard_allows_author_removal_from_public_surfaces():
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
-    assert "🗑 Убрать из ленты" in button_texts
+    assert "🌐 В ленте · изменить" in button_texts
     assert "🗑 Убрать из промптов" in button_texts
-    assert "feedrm_img_123" in callback_ids
+    assert "pubscope_img_123" in callback_ids
     assert "promptrm_img_123" in callback_ids
 
 
@@ -693,18 +696,20 @@ def test_repeat_image_keyboard_edits_prompt_inside_repeat_flow():
 
 
 def test_get_video_result_keyboard_contains_feed_button_when_task_is_known():
-    kb = get_video_result_keyboard("https://example.com/video.mp4", task_id="vid_123")
+    kb = keyboards_module.get_video_result_keyboard(
+        "https://example.com/video.mp4", task_id="vid_123"
+    )
     button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
-    assert "🎞 В ленту" in button_texts
-    assert "feedpub_vid_123" in callback_ids
+    assert "📤 Опубликовать" in button_texts
+    assert "pubscope_vid_123" in callback_ids
     assert "back_main" in callback_ids
 
 
 def test_get_video_result_keyboard_allows_author_removal_from_feed():
-    kb = get_video_result_keyboard(
+    kb = keyboards_module.get_video_result_keyboard(
         "https://example.com/video.mp4",
         task_id="vid_123",
         is_public_feed=True,
@@ -713,8 +718,8 @@ def test_get_video_result_keyboard_allows_author_removal_from_feed():
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
-    assert "🗑 Убрать из ленты" in button_texts
-    assert "feedrm_vid_123" in callback_ids
+    assert "🌐 В ленте · изменить" in button_texts
+    assert "pubscope_vid_123" in callback_ids
 
 
 @pytest.mark.asyncio

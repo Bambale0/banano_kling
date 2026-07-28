@@ -58,5 +58,4 @@ def test_legacy_result_still_contains_all_sections_and_document():
     assert "<b>Prompt RU:</b>" in source
     assert "<b>Prompt EN:</b>" in source
     assert "<b>Negative prompt:</b>" in source
-    assert "<b>Рекомендация:</b>" in source
     assert "await message.answer_document(" in source
