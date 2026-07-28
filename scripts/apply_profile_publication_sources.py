@@ -1,6 +1,11 @@
 from pathlib import Path
+import sys
 
-from scripts.apply_profile_publication_scope import (
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from scripts.apply_profile_publication_scope import (  # noqa: E402
     patch_docs,
     patch_frontend_contracts,
     patch_miniapp,
