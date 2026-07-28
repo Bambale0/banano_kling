@@ -15,6 +15,11 @@ _MISSING_RESULT_RE = re.compile(
     r"(response did not include|task id missing|no taskId|missing task|unexpected result type)",
     re.IGNORECASE,
 )
+_REAL_PERSON_IMAGE_RE = re.compile(
+    r"input image.*(?:may contain|contains?).*real person|real person.*input image",
+    re.IGNORECASE,
+)
+_CONTENT_INDEX_RE = re.compile(r"content\[(\d+)]", re.IGNORECASE)
 
 
 def make_user_friendly_generation_error(message: object | None) -> str | None:
@@ -34,6 +39,16 @@ def make_user_friendly_generation_error(message: object | None) -> str | None:
 
     if _MISSING_RESULT_RE.search(text):
         return "Сервис генерации не вернул готовый результат. Попробуйте ещё раз."
+
+    if _REAL_PERSON_IMAGE_RE.search(text):
+        match = _CONTENT_INDEX_RE.search(text)
+        position = int(match.group(1)) + 1 if match else 1
+        return (
+            f"Seedance отклонил фото-референс №{position}: фильтр модели распознал "
+            "на изображении возможного реального человека. Уточнение в промпте "
+            "не меняет проверку самого изображения. Замените этот референс на "
+            "явно вымышленного персонажа — например, иллюстрацию или 3D-рендер."
+        )
 
     text = _PROVIDER_RE.sub("сервис генерации", text)
     text = re.sub(r"\bAPI error\b", "ошибка сервиса", text, flags=re.IGNORECASE)

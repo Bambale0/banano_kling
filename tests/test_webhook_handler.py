@@ -159,6 +159,23 @@ def test_plain_result_link_text_does_not_use_html_markup():
     assert "parse_mode" not in text
 
 
+def test_seedance_real_person_image_failure_is_retryable_once_by_model():
+    task = Mock(type="video", model="seedance_2")
+
+    assert main._is_retryable_seedance_real_person_failure(
+        task,
+        "The input image 'content[0]' may contain real person.",
+    )
+    assert not main._is_retryable_seedance_real_person_failure(
+        Mock(type="video", model="v3_pro"),
+        "The input image 'content[0]' may contain real person.",
+    )
+    assert not main._is_retryable_seedance_real_person_failure(
+        task,
+        "The request contains prohibited content.",
+    )
+
+
 class _FakeContent:
     def __init__(self, chunks):
         self._chunks = chunks

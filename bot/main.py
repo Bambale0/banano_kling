@@ -81,6 +81,7 @@ from bot.services.subscription_service import (
 from bot.services.memory_dump_service import build_memory_dump, ensure_memory_tracing
 from bot.notification_service import ensure_notification_campaign_worker
 from bot.support_service import ensure_support_outbox_worker
+from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
@@ -1348,7 +1349,11 @@ def _build_failure_notification_text(
     media_kind: str = "результата",
     refund_text: str = "",
 ) -> str:
-    safe_reason = _html_fragment(reason or "сервис не смог обработать запрос", limit=700)
+    friendly_reason = make_user_friendly_generation_error(reason)
+    safe_reason = _html_fragment(
+        friendly_reason or "сервис не смог обработать запрос",
+        limit=700,
+    )
     return (
         f"Не удалось завершить генерацию {media_kind}.\n"
         f"• Модель: <code>{_html_fragment(service_name or 'AI')}</code>\n"
@@ -1395,6 +1400,93 @@ def _is_retryable_wan_timeout_failure(task, fail_code, fail_msg) -> bool:
     if model_name != "wan_27":
         return False
     return str(fail_code) == "500" and "timed out" in str(fail_msg or "").lower()
+
+
+def _is_retryable_seedance_real_person_failure(task, fail_msg) -> bool:
+    if not task or getattr(task, "type", None) != "video":
+        return False
+    if str(getattr(task, "model", "") or "").strip() != "seedance_2":
+        return False
+    normalized = " ".join(str(fail_msg or "").lower().split())
+    return (
+        "input image" in normalized
+        and "real person" in normalized
+        and ("may contain" in normalized or "contains" in normalized)
+    )
+
+
+async def _retry_transient_seedance_real_person_failure(
+    task,
+    failed_task_id: str,
+) -> str | None:
+    if not _is_retryable_seedance_real_person_failure(
+        task,
+        "input image may contain real person",
+    ):
+        return None
+
+    request_data = _extract_task_request_data(task)
+    retry_attempt = int(request_data.get("seedance_real_person_retry_attempt") or 0)
+    if retry_attempt >= 1:
+        return None
+
+    prompt = request_data.get("prompt") or getattr(task, "prompt", None)
+    if not prompt:
+        return None
+
+    from bot.handlers.generation import _seedance_media_inputs
+    from bot.services.seedance_service import seedance_service
+
+    v_type = str(request_data.get("v_type") or "text")
+    first_frame, image_refs, video_refs = _seedance_media_inputs(
+        v_type,
+        request_data.get("v_image_url"),
+        request_data.get("reference_images") or [],
+        request_data.get("v_reference_videos") or [],
+    )
+    result = await seedance_service.generate_video(
+        prompt=str(prompt),
+        duration=int(getattr(task, "duration", None) or 5),
+        aspect_ratio=str(getattr(task, "aspect_ratio", None) or "16:9"),
+        resolution="720p",
+        generate_audio=True,
+        first_frame_url=first_frame,
+        reference_image_urls=image_refs or None,
+        reference_video_urls=video_refs or None,
+        callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
+    )
+    new_task_id = result.get("task_id") if isinstance(result, dict) else None
+    if not new_task_id or new_task_id == failed_task_id:
+        return None
+
+    retry_request_data = dict(request_data)
+    retry_request_data["seedance_real_person_retry_attempt"] = retry_attempt + 1
+    retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
+    retry_request_data = _merge_task_id_aliases(
+        retry_request_data,
+        failed_task_id,
+        new_task_id,
+    )
+
+    async with db_backend.connect() as db:
+        await db.execute(
+            "UPDATE generation_tasks SET task_id = ?, request_data = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ?",
+            (
+                new_task_id,
+                json.dumps(retry_request_data, ensure_ascii=False),
+                failed_task_id,
+                task.user_id,
+            ),
+        )
+        await db.commit()
+
+    logger.warning(
+        "Auto-retried Seedance real-person false positive: old_task_id=%s new_task_id=%s attempt=%s",
+        failed_task_id,
+        new_task_id,
+        retry_attempt + 1,
+    )
+    return new_task_id
 
 async def _retry_transient_wan_timeout_failure(task, failed_task_id: str) -> str | None:
     if not task or getattr(task, "type", None) != "image":
@@ -3870,6 +3962,28 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 except Exception as retry_error:
                     logger.exception(
                         "Automatic retry failed for transient WAN image task %s: %s",
+                        task_id,
+                        retry_error,
+                    )
+
+            if task and _is_retryable_seedance_real_person_failure(task, fail_msg):
+                try:
+                    retried_task_id = (
+                        await _retry_transient_seedance_real_person_failure(
+                            task,
+                            task_id,
+                        )
+                    )
+                    if retried_task_id:
+                        logger.info(
+                            "Seedance task %s requeued automatically as %s after real-person false positive",
+                            task_id,
+                            retried_task_id,
+                        )
+                        return web.Response(status=200)
+                except Exception as retry_error:
+                    logger.exception(
+                        "Automatic retry failed for Seedance task %s: %s",
                         task_id,
                         retry_error,
                     )
