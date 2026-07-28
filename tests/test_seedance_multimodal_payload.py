@@ -4,6 +4,7 @@ from bot.handlers.seedance_multimodal_compat import (
     SEEDANCE_MODELS,
     seedance_needs_multimodal_promotion,
 )
+from bot.handlers.generation import _seedance_media_inputs
 from bot.services.seedance_service import SeedanceService
 
 
@@ -129,3 +130,33 @@ def test_legacy_image_led_seedance_state_is_promoted_only_when_video_refs_exist(
             "v_reference_videos": ["https://cdn.test/dance.mp4"],
         }
     )
+
+
+def test_seedance_transport_keeps_primary_photo_with_video_reference() -> None:
+    first_frame, images, videos = _seedance_media_inputs(
+        "imgtxt",
+        "https://cdn.test/person.jpg",
+        [],
+        ["https://cdn.test/dance.mp4"],
+    )
+
+    assert first_frame is None
+    assert images == ["https://cdn.test/person.jpg"]
+    assert videos == ["https://cdn.test/dance.mp4"]
+
+
+def test_seedance_transport_preserves_all_photo_reference_order() -> None:
+    first_frame, images, videos = _seedance_media_inputs(
+        "video",
+        "https://cdn.test/person.jpg",
+        ["https://cdn.test/outfit.jpg", "https://cdn.test/location.jpg"],
+        ["https://cdn.test/dance.mp4"],
+    )
+
+    assert first_frame is None
+    assert images == [
+        "https://cdn.test/person.jpg",
+        "https://cdn.test/outfit.jpg",
+        "https://cdn.test/location.jpg",
+    ]
+    assert videos == ["https://cdn.test/dance.mp4"]

@@ -44,9 +44,6 @@ from .notification_campaigns import router as notification_campaigns_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .repeat_result_compat import router as repeat_result_compat_router
 from .seedance_multimodal_compat import (
-    install_seedance_multimodal_runtime_compat,
-)
-from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
 )
 from .support import router as support_router
@@ -63,12 +60,9 @@ legacy_common_router = common_module.router
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
 install_vk_photo_prompt_result_compat()
 
-# Seedance needs a narrow media compatibility layer because the established UX
-# exposes separate photo and video sub-flows while the provider accepts both in
-# one multimodal request. The compatibility router owns media messages only;
-# every menu callback, screen and keyboard remains in the legacy generation
-# router below it.
-install_seedance_multimodal_runtime_compat()
+# Seedance accepts photos and videos through the established separate upload
+# screens. The launcher now forwards both collections without mutating the
+# user-selected generation mode or prompt.
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
 generation_router.include_router(seedance_multimodal_compat_router)

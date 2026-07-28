@@ -187,6 +187,27 @@ def _clean_unique_urls(values) -> list[str]:
     return cleaned
 
 
+def _seedance_media_inputs(
+    generation_type: str,
+    image_url: str | None,
+    reference_images,
+    reference_videos,
+) -> tuple[str | None, list[str], list[str]]:
+    """Build one Seedance scenario without changing prompt or user mode."""
+    images = normalize_reference_urls(
+        reference_images,
+        max_count=get_max_video_image_references("seedance_2"),
+    )
+    videos = normalize_reference_urls(
+        reference_videos,
+        max_count=get_max_video_references("seedance_2"),
+    )
+    has_multimodal_refs = bool(images or videos)
+    if generation_type == "imgtxt" and image_url and not has_multimodal_refs:
+        return image_url, [], []
+    return None, _clean_unique_urls([image_url, *images]), videos
+
+
 def _collect_gemini_omni_image_urls(
     image_url: str | None,
     reference_images,
@@ -6934,19 +6955,25 @@ async def run_no_preset_video_from_callback(
                 callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
             )
         elif v_model == "seedance_2":
-            seedance_refs = [v_image_url] if v_image_url else []
-            for ref_url in (reference_images or []):
-                if ref_url and ref_url not in seedance_refs:
-                    seedance_refs.append(ref_url)
+            (
+                seedance_first_frame,
+                seedance_refs,
+                seedance_video_refs,
+            ) = _seedance_media_inputs(
+                v_type,
+                v_image_url,
+                reference_images,
+                v_reference_videos,
+            )
             result = await seedance_service.generate_video(
                 prompt=prompt,
                 duration=v_duration,
                 aspect_ratio=v_ratio,
                 resolution="720p",
                 generate_audio=True,
-                first_frame_url=v_image_url if v_type == "imgtxt" and v_image_url and not seedance_refs[1:] else None,
+                first_frame_url=seedance_first_frame,
                 reference_image_urls=seedance_refs or None,
-                reference_video_urls=normalize_reference_urls(v_reference_videos, max_count=get_max_video_references(v_model)) or None,
+                reference_video_urls=seedance_video_refs or None,
                 callBackUrl=config.kie_notification_url if config.WEBHOOK_HOST else None,
             )
         elif v_model in {"avatar_std", "avatar_pro"}:
@@ -7113,7 +7140,11 @@ async def run_no_preset_video_from_message(
             raw_video_urls,
             max_count=max_video_refs,
         )
-        video_urls = video_urls if v_type in {"video", "motion"} else None
+        video_urls = (
+            video_urls
+            if v_type in {"video", "motion"} or v_model == "seedance_2"
+            else None
+        )
         image_refs = normalize_reference_urls(
             data.get("reference_images", []),
             max_count=get_max_video_image_references(v_model),
@@ -7371,10 +7402,15 @@ async def run_no_preset_video_from_message(
                 ),
             )
         elif v_model == "seedance_2":
-            seedance_reference_images = []
-            seedance_reference_videos = normalize_reference_urls(
+            (
+                seedance_first_frame,
+                seedance_reference_images,
+                seedance_reference_videos,
+            ) = _seedance_media_inputs(
+                v_type,
+                image_url,
+                image_refs,
                 video_urls or [],
-                max_count=get_max_video_references(v_model),
             )
 
             if v_type == "imgtxt":
@@ -7388,21 +7424,13 @@ async def run_no_preset_video_from_message(
                     await state.clear()
                     return
 
-                if image_refs or seedance_reference_videos:
-                    seedance_reference_images.append(image_url)
-                    for ref_url in image_refs:
-                        if ref_url and ref_url not in seedance_reference_images:
-                            seedance_reference_images.append(ref_url)
-
                 result = await seedance_service.generate_video(
                     prompt=prompt,
                     duration=v_duration,
                     aspect_ratio=v_ratio,
                     resolution="720p",
                     generate_audio=True,
-                    first_frame_url=image_url
-                    if not (image_refs or seedance_reference_videos)
-                    else None,
+                    first_frame_url=seedance_first_frame,
                     reference_image_urls=seedance_reference_images or None,
                     reference_video_urls=seedance_reference_videos or None,
                     callBackUrl=(
@@ -7410,12 +7438,6 @@ async def run_no_preset_video_from_message(
                     ),
                 )
             else:
-                if image_url:
-                    seedance_reference_images.append(image_url)
-                for ref_url in image_refs:
-                    if ref_url and ref_url not in seedance_reference_images:
-                        seedance_reference_images.append(ref_url)
-
                 result = await seedance_service.generate_video(
                     prompt=prompt,
                     duration=v_duration,
