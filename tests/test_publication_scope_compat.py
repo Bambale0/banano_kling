@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot import database
 from bot import db as db_backend
@@ -25,6 +26,33 @@ def _load_publication_scope_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("scope", ["private", "profile", "feed"])
+def test_publication_result_uses_one_stable_publish_action(scope):
+    publication_scope = _load_publication_scope_module()
+    original = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="old", callback_data="feedpub_task-1")],
+            [InlineKeyboardButton(text="repeat", callback_data="repeat_task-1")],
+        ]
+    )
+
+    markup = publication_scope._replace_publication_button(
+        original,
+        "task-1",
+        scope=scope,
+    )
+
+    publication_buttons = [
+        button
+        for row in markup.inline_keyboard
+        for button in row
+        if str(button.callback_data or "").startswith("pubscope_")
+    ]
+    assert len(publication_buttons) == 1
+    assert publication_buttons[0].text == "📤 Опубликовать"
+    assert publication_buttons[0].callback_data == "pubscope_task-1"
 
 
 @pytest.mark.asyncio

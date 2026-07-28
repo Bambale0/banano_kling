@@ -423,11 +423,10 @@ def _replace_publication_button(
 ) -> InlineKeyboardMarkup:
     if not task_id:
         return markup
-    label = {
-        "feed": "🌐 В ленте · изменить",
-        "profile": "👤 Только в профиле · изменить",
-        "private": "📤 Опубликовать",
-    }.get(scope, "📤 Опубликовать")
+    # Publication state is edited through one stable action.  Showing the
+    # current scope as a second action made the result keyboard look as if it
+    # could create another publication instead of updating the existing one.
+    label = "📤 Опубликовать"
 
     rows: list[list[InlineKeyboardButton]] = []
     replaced = False

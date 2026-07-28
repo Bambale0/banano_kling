@@ -66,7 +66,10 @@ from bot.handlers.payments import (
     reconcile_lava_pending_transactions,
 )
 from bot.miniapp import setup_miniapp_routes
-from bot.keyboards import get_required_subscription_keyboard
+from bot.keyboards import (
+    get_main_menu_button_keyboard,
+    get_required_subscription_keyboard,
+)
 from bot.services.preset_manager import preset_manager
 from bot.services.redis_service import redis_service
 from bot.services.subscription_service import (
@@ -1106,6 +1109,7 @@ async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, r
             text=prefix + make_block(prompt),
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=get_main_menu_button_keyboard(),
         )
         return
 
@@ -1126,6 +1130,11 @@ async def _send_used_prompt_message(bot_instance: Bot, telegram_id: int, task, r
             text=f"Промпт (продолжение {idx}):\n" + make_block(chunk),
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=(
+                get_main_menu_button_keyboard()
+                if idx == len(chunks) + 1
+                else None
+            ),
         )
 
 def _collect_http_urls(value) -> list[str]:

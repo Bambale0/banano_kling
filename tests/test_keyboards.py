@@ -679,7 +679,7 @@ def test_get_image_result_keyboard_allows_author_removal_from_public_surfaces():
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
-    assert "🌐 В ленте · изменить" in button_texts
+    assert "📤 Опубликовать" in button_texts
     assert "🗑 Убрать из промптов" in button_texts
     assert "pubscope_img_123" in callback_ids
     assert "promptrm_img_123" in callback_ids
@@ -718,7 +718,7 @@ def test_get_video_result_keyboard_allows_author_removal_from_feed():
     callback_ids = [
         btn.callback_data for row in kb.inline_keyboard for btn in row if btn.callback_data
     ]
-    assert "🌐 В ленте · изменить" in button_texts
+    assert "📤 Опубликовать" in button_texts
     assert "pubscope_vid_123" in callback_ids
 
 
