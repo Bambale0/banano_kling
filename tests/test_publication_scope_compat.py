@@ -74,6 +74,7 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     profile_feed = await publication_scope.get_user_profile_generations(
         user.id,
         limit=20,
+        profile_visible_only=True,
     )
     assert public_feed == []
     assert [item["task_id"] for item in profile_feed] == ["scope-image-1"]

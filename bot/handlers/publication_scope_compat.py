@@ -186,13 +186,16 @@ async def get_user_profile_generations(
     offset: int = 0,
     *,
     include_unpublished_owned: bool = False,
+    profile_visible_only: bool = True,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     await _ensure_publication_scope_schema()
     safe_limit = max(0, int(limit or 0))
     safe_offset = max(0, int(offset or 0))
 
-    visibility_clause = "(COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)"
+    visibility_clause = "gt.is_public_feed = 1"
+    if profile_visible_only:
+        visibility_clause = "(COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)"
     if include_unpublished_owned:
         visibility_clause = "gt.source_feed_gen_id IS NULL"
 
