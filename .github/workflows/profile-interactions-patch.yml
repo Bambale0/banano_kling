@@ -1,5 +1,6 @@
 name: Apply profile interactions
 
+# This follow-up commit activates the workflow after its initial creation.
 on:
   push:
     branches:
@@ -59,7 +60,7 @@ jobs:
         run: |
           rm -f .github/workflows/profile-interactions-patch.yml
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898218+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "feat: enable profile-only interactions and links [profile-interactions-patch]"
           git push origin HEAD:agent/profile-publication-scope
