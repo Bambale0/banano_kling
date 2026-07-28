@@ -31,7 +31,7 @@
 -> `Лента и профиль`: safe publication is visible on both surfaces
 -> `Только профиль`: publication never enters the general feed
 -> content marked `18+` is forced to `Только профиль` and blur
--> likes/shares/comments/remix remain available only for general-feed publications
+-> profile-only likes/comments/shares/remix are available from the author profile; the general feed still never lists the publication
 
 ## 3. Prompt library flow
 

@@ -12,6 +12,7 @@ import {
   fetchMyFeed,
   fetchPartnerOverview,
   fetchProfileFeed,
+  likeFeedItem,
   saveProfileChannel,
   setFeedItemBlurred,
   shareFeedItem,
@@ -71,16 +72,24 @@ function getPublicReferences(item: FeedItem | null) {
   ].filter((item) => isHttpUrl(item.url))
 }
 
-function feedInteractionsEnabled(item: FeedItem | null | undefined) {
+function profileInteractionsEnabled(item: FeedItem | null | undefined) {
   return Boolean(
     item &&
-      item.feed_interactions_enabled !== false &&
-      item.publication_scope !== 'profile'
+      item.publication_scope !== 'private' &&
+      item.is_profile_visible !== false
   )
 }
 
 export function ProfileTab() {
-  const { state, viewedProfileCode, setActiveTab, setPromptPreset, setVideoPromptPreset } = useApp()
+  const {
+    state,
+    viewedProfileCode,
+    feedDeepLink,
+    consumeFeedDeepLink,
+    setActiveTab,
+    setPromptPreset,
+    setVideoPromptPreset,
+  } = useApp()
   const { user } = state
   const [items, setItems] = useState<FeedItem[]>([])
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
@@ -99,7 +108,7 @@ export function ProfileTab() {
   } | null>(null)
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
-  const [copied, setCopied] = useState<'profile' | number | null>(null)
+  const [copied, setCopied] = useState<string | number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
   const [revealedIds, setRevealedIds] = useState<Set<number>>(() => new Set())
@@ -210,6 +219,19 @@ export function ProfileTab() {
   }, [])
 
   useEffect(() => {
+    if (!isLive || !feedDeepLink || feedDeepLink.action !== 'preview') return
+    if (feedDeepLink.item.publication_scope !== 'profile') return
+    setItems((prev) => {
+      const exists = prev.some((item) => item.id === feedDeepLink.item.id)
+      return exists
+        ? prev.map((item) => (item.id === feedDeepLink.item.id ? feedDeepLink.item : item))
+        : [feedDeepLink.item, ...prev]
+    })
+    setPreviewItem(feedDeepLink.item)
+    consumeFeedDeepLink()
+  }, [consumeFeedDeepLink, feedDeepLink, isLive])
+
+  useEffect(() => {
     let ignore = false
 
     async function loadProfileFeed() {
@@ -300,13 +322,13 @@ export function ProfileTab() {
     let ignore = false
 
     async function loadComments() {
-      if (!commentsItem || !isLive || !feedInteractionsEnabled(commentsItem)) {
+      if (!commentsItem || !isLive || !profileInteractionsEnabled(commentsItem)) {
         setComments([])
         return
       }
       setCommentsLoading(true)
       try {
-        const nextComments = await fetchFeedComments(commentsItem.id)
+        const nextComments = await fetchFeedComments(commentsItem.id, 40, 'profile')
         if (!ignore) setComments(nextComments)
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить комментарии'))
@@ -321,7 +343,7 @@ export function ProfileTab() {
     }
   }, [commentsItem, isLive])
 
-  async function copyText(text: string, marker: 'profile' | number) {
+  async function copyText(text: string, marker: string | number) {
     if (!text || typeof navigator === 'undefined' || !navigator.clipboard) return
     await navigator.clipboard.writeText(text)
     setCopied(marker)
@@ -337,15 +359,32 @@ export function ProfileTab() {
     }
   }
 
-  async function handleCopyPostLink(item: FeedItem) {
-    if (!isLive || !feedInteractionsEnabled(item)) return
+  async function handleLike(item: FeedItem) {
+    if (!isLive || !profileInteractionsEnabled(item)) return
     setBusyId(item.id)
     try {
-      const { item: updated, link } = await shareFeedItem(item.id)
-      setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
-      await copyText(link, item.id)
+      const updated = await likeFeedItem(item.id, 'profile')
+      setItems((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)))
+      setPreviewItem((prev) => (prev?.id === updated.id ? updated : prev))
+      setCommentsItem((prev) => (prev?.id === updated.id ? updated : prev))
     } catch (e) {
-      setError(getErrorMessage(e, 'Не удалось создать ссылку на пост'))
+      setError(getErrorMessage(e, 'Не удалось поставить лайк'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleCopyPostLink(item: FeedItem, kind: 'post' | 'remix' = 'post') {
+    if (!isLive || !profileInteractionsEnabled(item)) return
+    setBusyId(item.id)
+    try {
+      const { item: updated, postLink, remixLink } = await shareFeedItem(item.id, 'profile')
+      setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
+      setPreviewItem((prev) => (prev?.id === updated.id ? updated : prev))
+      const marker = kind === 'remix' ? `remix_${item.id}` : item.id
+      await copyText(kind === 'remix' ? remixLink : postLink, marker)
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось создать ссылку на публикацию'))
     } finally {
       setBusyId(null)
     }
@@ -391,10 +430,10 @@ export function ProfileTab() {
 
   async function handleSubmitComment() {
     const text = commentText.trim()
-    if (!isLive || !commentsItem || !text || !feedInteractionsEnabled(commentsItem)) return
+    if (!isLive || !commentsItem || !text || !profileInteractionsEnabled(commentsItem)) return
     setBusyId(commentsItem.id)
     try {
-      const { comment, commentsCount } = await addFeedComment(commentsItem.id, text)
+      const { comment, commentsCount } = await addFeedComment(commentsItem.id, text, 'profile')
       setComments((prev) => [...prev, comment])
       setCommentText('')
       setItems((prev) =>
@@ -423,7 +462,7 @@ export function ProfileTab() {
   }
 
   function handleRemix(item: FeedItem) {
-    if (!feedInteractionsEnabled(item)) return
+    if (!profileInteractionsEnabled(item)) return
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
       setVideoPromptPreset({
@@ -699,7 +738,7 @@ export function ProfileTab() {
                   <Sparkles className="h-3 w-3" />
                   {formatCompactNumber(item.remixes)}
                 </span>
-                {!feedInteractionsEnabled(item) ? (
+                {item.publication_scope === 'profile' ? (
                   <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 rounded bg-background/85 px-1.5 py-0.5 text-[9px] font-semibold text-cyan backdrop-blur">
                     Только профиль
                   </span>
@@ -712,7 +751,7 @@ export function ProfileTab() {
                   'bg-background/80 text-foreground backdrop-blur transition-colors hover:bg-background',
                   (!isLive || busyId === item.id) && 'opacity-60'
                 )}
-                disabled={!isLive || busyId === item.id || !feedInteractionsEnabled(item)}
+                disabled={!isLive || busyId === item.id || !profileInteractionsEnabled(item)}
                 onClick={() => handleCopyPostLink(item)}
                 aria-label="Скопировать ссылку на пост"
               >
@@ -727,7 +766,7 @@ export function ProfileTab() {
               <button
                 type="button"
                 className="absolute bottom-1 right-1 flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-full bg-background/80 px-1.5 text-[10px] font-medium text-foreground backdrop-blur transition-colors hover:bg-background disabled:opacity-60"
-                disabled={!isLive || !feedInteractionsEnabled(item)}
+                disabled={!isLive || !profileInteractionsEnabled(item)}
                 onClick={() => setCommentsItem(item)}
                 aria-label="Комментарии"
               >
@@ -830,17 +869,49 @@ export function ProfileTab() {
               </div>
             </div>
           ) : null}
-          <div className="absolute bottom-4 left-3 right-3 flex justify-center gap-2">
+          <div className="absolute bottom-4 left-3 right-3 flex flex-wrap justify-center gap-2">
             <Button
               type="button"
               variant="secondary"
               className="h-10 rounded-full bg-secondary/90 px-4"
-              disabled={!isLive || !feedInteractionsEnabled(previewItem)}
+              disabled={!isLive || busyId === previewItem.id || !profileInteractionsEnabled(previewItem)}
+              onClick={() => handleLike(previewItem)}
+            >
+              <Heart className="h-4 w-4" />
+              {previewItem.likes_count || 0}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 rounded-full bg-secondary/90 px-4"
+              disabled={!isLive || !profileInteractionsEnabled(previewItem)}
               onClick={() => setCommentsItem(previewItem)}
             >
               <MessageCircle className="h-4 w-4" />
               {previewItem.comments_count || 0}
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-10 rounded-full px-4"
+              disabled={!isLive || busyId === previewItem.id || !profileInteractionsEnabled(previewItem)}
+              onClick={() => handleCopyPostLink(previewItem, 'post')}
+            >
+              {copied === previewItem.id ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
+              <span>{copied === previewItem.id ? 'Скопировано' : 'Поделиться'}</span>
+            </Button>
+            {previewItem.gen_type === 'image' ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-full px-4"
+                disabled={!isLive || busyId === previewItem.id || !profileInteractionsEnabled(previewItem)}
+                onClick={() => handleCopyPostLink(previewItem, 'remix')}
+              >
+                {copied === `remix_${previewItem.id}` ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+                <span>{copied === `remix_${previewItem.id}` ? 'Скопировано' : 'Ссылка ремикса'}</span>
+              </Button>
+            ) : null}
             {previewItem.can_blur || previewItem.is_mine ? (
               <Button
                 type="button"
@@ -862,13 +933,12 @@ export function ProfileTab() {
             <Button
               type="button"
               className="h-10 rounded-full px-4"
-              disabled={!feedInteractionsEnabled(previewItem)}
+              disabled={!profileInteractionsEnabled(previewItem)}
               onClick={() => handleRemix(previewItem)}
             >
               <Repeat2 className="h-4 w-4" />
               <span>Повторить</span>
             </Button>
-
           </div>
         </div>
       ) : null}
@@ -930,7 +1000,7 @@ export function ProfileTab() {
                   !commentText.trim() ||
                   busyId === commentsItem.id ||
                   !isLive ||
-                  !feedInteractionsEnabled(commentsItem)
+                  !profileInteractionsEnabled(commentsItem)
                 }
                 onClick={handleSubmitComment}
                 aria-label="Отправить"

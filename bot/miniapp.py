@@ -38,6 +38,7 @@ from bot.database import (
     get_feed_comments,
     get_feed_generation_card,
     get_feed_generations,
+    get_profile_generation_card,
     get_generation_task_payload,
     get_or_create_user,
     get_partner_overview,
@@ -3038,7 +3039,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             init_data,
             body.get("start_param_fallback"),
         )
-        card = await get_feed_generation_card(
+        card = await get_profile_generation_card(
             gen_id,
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
@@ -3308,10 +3309,15 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        card = await like_feed_generation(gen_id, ctx["user"].id)
+        card = await like_feed_generation(
+            gen_id,
+            ctx["user"].id,
+            allow_profile=allow_profile,
+        )
         if not card:
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed like failed")
@@ -3322,10 +3328,11 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        card = await increment_feed_share(gen_id)
+        card = await increment_feed_share(gen_id, allow_profile=allow_profile)
         if not card:
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         me = await request.app["bot"].get_me()
         author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
         is_image_feed_item = str(card.get("gen_type") or "").strip().lower() == "image"
@@ -3374,7 +3381,16 @@ async def miniapp_feed_comments(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         limit = min(max(int(body.get("limit", 80) or 80), 1), 150)
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        card = await getter(
+            gen_id,
+            viewer_user_id=ctx["user"].id,
+            include_unavailable=True,
+        )
+        if not card:
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         comments = await get_feed_comments(
             gen_id,
             limit=limit,
@@ -3391,14 +3407,21 @@ async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         text = str(body.get("text", "") or "")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        comment = await add_feed_comment(gen_id, ctx["user"].id, text)
+        comment = await add_feed_comment(
+            gen_id,
+            ctx["user"].id,
+            text,
+            allow_profile=allow_profile,
+        )
         if not comment:
             return web.json_response(
                 {"ok": False, "error": "Комментарий не удалось добавить"},
                 status=400,
             )
-        card = await get_feed_generation_card(
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        card = await getter(
             gen_id,
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
@@ -3450,10 +3473,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         gen_id = body.get("gen_id") or body.get("task_id")
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
 
-        source = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        source = await getter(gen_id, viewer_user_id=user.id)
         if not source or source.get("gen_type") != "image":
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
 
         source_task = await get_generation_task_payload(source["id"])
         if not source_task:

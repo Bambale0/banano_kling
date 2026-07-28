@@ -5842,7 +5842,7 @@ def _generation_row_to_card(
         "is_profile_visible": generation_profile_visible(row),
         "is_adult_content": generation_adult_content(row),
         "publication_scope": generation_publication_scope(row),
-        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
+        "feed_interactions_enabled": generation_profile_visible(row),
     }
 
 
@@ -6168,6 +6168,8 @@ async def add_feed_comment(
     gen_id: int | str,
     user_id: int,
     text: str,
+    *,
+    allow_profile: bool = False,
 ) -> Optional[dict[str, Any]]:
     normalized = " ".join(str(text or "").split()).strip()
     if not normalized:
@@ -6180,21 +6182,16 @@ async def add_feed_comment(
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        generation_cursor = await db.execute(
-            """
-            SELECT *
-            FROM generation_tasks
-            WHERE id = ?
-              AND type IN ('image', 'video')
-              AND status = 'completed'
-              AND result_url IS NOT NULL
-              AND is_public_feed = 1
-            LIMIT 1
-            """,
-            (internal_id,),
+        generation = await _fetch_generation_row(
+            db,
+            internal_id,
+            public_only=not allow_profile,
         )
-        generation = await generation_cursor.fetchone()
-        if not generation or not _feed_result_urls(generation):
+        if (
+            not generation
+            or (allow_profile and not generation_profile_visible(generation))
+            or not _feed_result_urls(generation)
+        ):
             return None
 
         cursor = await db.execute(
@@ -6507,11 +6504,20 @@ async def remove_from_library(gen_id: int | str, user_id: int) -> bool:
         return True
 
 
-async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict[str, Any]]:
+async def like_feed_generation(
+    gen_id: int | str,
+    user_id: int,
+    *,
+    allow_profile: bool = False,
+) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        row = await _fetch_generation_row(db, gen_id, public_only=True)
-        if not row or not _feed_result_urls(row):
+        row = await _fetch_generation_row(db, gen_id, public_only=not allow_profile)
+        if (
+            not row
+            or (allow_profile and not generation_profile_visible(row))
+            or not _feed_result_urls(row)
+        ):
             return None
         cursor = await db.execute(
             """
@@ -6527,14 +6533,25 @@ async def like_feed_generation(gen_id: int | str, user_id: int) -> Optional[dict
             )
         await db.commit()
         internal_id = row["id"]
-    return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+        scope = generation_publication_scope(row)
+    if scope == "feed":
+        return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+    return await get_profile_generation_card(internal_id, viewer_user_id=user_id)
 
 
-async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
+async def increment_feed_share(
+    gen_id: int | str,
+    *,
+    allow_profile: bool = False,
+) -> Optional[dict[str, Any]]:
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        row = await _fetch_generation_row(db, gen_id, public_only=True)
-        if not row or not _feed_result_urls(row):
+        row = await _fetch_generation_row(db, gen_id, public_only=not allow_profile)
+        if (
+            not row
+            or (allow_profile and not generation_profile_visible(row))
+            or not _feed_result_urls(row)
+        ):
             return None
         await db.execute(
             "UPDATE generation_tasks SET shares_count = shares_count + 1 WHERE id = ?",
@@ -6542,7 +6559,10 @@ async def increment_feed_share(gen_id: int | str) -> Optional[dict[str, Any]]:
         )
         await db.commit()
         internal_id = row["id"]
-    return await get_feed_generation_card(internal_id)
+        scope = generation_publication_scope(row)
+    if scope == "feed":
+        return await get_feed_generation_card(internal_id)
+    return await get_profile_generation_card(internal_id)
 
 
 async def create_feed_remix_event(remix_task_id: int | str) -> bool:

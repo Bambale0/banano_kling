@@ -556,7 +556,12 @@ export async function fetchProfileFeed(
   return { profile: response.profile, feed: response.feed }
 }
 
-export async function likeFeedItem(genId: number): Promise<FeedItem> {
+export type FeedInteractionSurface = 'feed' | 'profile'
+
+export async function likeFeedItem(
+  genId: number,
+  surface: FeedInteractionSurface = 'feed'
+): Promise<FeedItem> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -564,11 +569,15 @@ export async function likeFeedItem(genId: number): Promise<FeedItem> {
   const response = await postJson<{ ok: true; feed_item: FeedItem }>('feed/like', {
     init_data: initData,
     gen_id: genId,
+    surface,
   })
   return response.feed_item
 }
 
-export async function shareFeedItem(genId: number): Promise<{ item: FeedItem; link: string }> {
+export async function shareFeedItem(
+  genId: number,
+  surface: FeedInteractionSurface = 'feed'
+): Promise<{ item: FeedItem; link: string; postLink: string; remixLink: string }> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -585,15 +594,26 @@ export async function shareFeedItem(genId: number): Promise<{ item: FeedItem; li
   }>('feed/share', {
     init_data: initData,
     gen_id: genId,
+    surface,
   })
   const isImage = String(response.feed_item?.gen_type || '').toLowerCase() === 'image'
-  const preferredLink = isImage
-    ? response.repeat_link || response.post_link || response.link
-    : response.post_link || response.link
-  return { item: response.feed_item, link: preferredLink }
+  const postLink =
+    surface === 'profile'
+      ? response.miniapp_post_link || response.miniapp_link || response.post_link || response.link
+      : response.post_link || response.miniapp_post_link || response.link
+  const remixLink =
+    surface === 'profile'
+      ? response.miniapp_repeat_link || response.repeat_link || postLink
+      : response.repeat_link || response.miniapp_repeat_link || postLink
+  const preferredLink = isImage ? remixLink : postLink
+  return { item: response.feed_item, link: preferredLink, postLink, remixLink }
 }
 
-export async function fetchFeedComments(genId: number, limit = 40): Promise<FeedComment[]> {
+export async function fetchFeedComments(
+  genId: number,
+  limit = 40,
+  surface: FeedInteractionSurface = 'feed'
+): Promise<FeedComment[]> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -602,13 +622,15 @@ export async function fetchFeedComments(genId: number, limit = 40): Promise<Feed
     init_data: initData,
     gen_id: genId,
     limit,
+    surface,
   })
   return response.comments
 }
 
 export async function addFeedComment(
   genId: number,
-  text: string
+  text: string,
+  surface: FeedInteractionSurface = 'feed'
 ): Promise<{ comment: FeedComment; commentsCount: number }> {
   const initData = getInitData()
   if (!initData) {
@@ -618,6 +640,7 @@ export async function addFeedComment(
     init_data: initData,
     gen_id: genId,
     text,
+    surface,
   })
   return { comment: response.comment, commentsCount: response.comments_count }
 }

@@ -490,7 +490,7 @@ async def test_profile_only_publication_is_hidden_from_general_feed(tmp_path, mo
     assert card is not None
     assert card["publication_scope"] == "profile"
     assert card["is_profile_visible"] is True
-    assert card["feed_interactions_enabled"] is False
+    assert card["feed_interactions_enabled"] is True
     assert card["feed_blurred"] is True
     assert await database.get_feed_generations(limit=20) == []
     profile_cards = await database.get_user_feed_generations(
@@ -522,12 +522,68 @@ async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeyp
     assert card["publication_scope"] == "profile"
     assert card["is_adult_content"] is True
     assert card["feed_blurred"] is True
-    assert card["feed_interactions_enabled"] is False
+    assert card["feed_interactions_enabled"] is True
     assert await database.get_feed_generations(limit=20) == []
 
     unblurred = await database.set_feed_blurred(card["id"], user.id, False)
     assert unblurred is not None
     assert unblurred["feed_blurred"] is True
+
+
+@pytest.mark.asyncio
+async def test_profile_only_interactions_require_profile_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "profile_interactions.db"))
+    await database.init_db()
+    author = await database.get_or_create_user(440010)
+    viewer = await database.get_or_create_user(440011)
+    await database.add_generation_task(
+        author.id,
+        author.telegram_id,
+        "profile-interactions-task",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="profile interaction test",
+        cost=2,
+    )
+    await database.complete_video_task(
+        "profile-interactions-task",
+        "https://example.com/profile-interactions.png",
+    )
+    card = await database.share_to_feed(
+        "profile-interactions-task",
+        author.id,
+        publication_scope="profile",
+    )
+
+    assert await database.like_feed_generation(card["id"], viewer.id) is None
+    assert await database.increment_feed_share(card["id"]) is None
+    assert await database.add_feed_comment(card["id"], viewer.id, "hidden") is None
+
+    liked = await database.like_feed_generation(
+        card["id"],
+        viewer.id,
+        allow_profile=True,
+    )
+    shared = await database.increment_feed_share(card["id"], allow_profile=True)
+    comment = await database.add_feed_comment(
+        card["id"],
+        viewer.id,
+        "Работает в профиле",
+        allow_profile=True,
+    )
+
+    assert liked is not None
+    assert liked["publication_scope"] == "profile"
+    assert liked["likes_count"] == 1
+    assert shared is not None
+    assert shared["shares_count"] == 1
+    assert comment is not None
+    assert comment["text"] == "Работает в профиле"
+    comments = await database.get_feed_comments(card["id"], viewer_user_id=viewer.id)
+    assert [item["text"] for item in comments] == ["Работает в профиле"]
+    assert await database.get_feed_generations(limit=20) == []
 
 
 @pytest.mark.asyncio
