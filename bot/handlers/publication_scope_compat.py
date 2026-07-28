@@ -536,6 +536,29 @@ def _invalidate_publication_caches() -> None:
         invalidator()
 
 
+def _profile_blur_keyboard(task_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👁 Без blur",
+                    callback_data=f"profileblur_0_{task_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🙈 С blur",
+                    callback_data=f"profileblur_1_{task_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data=f"pubscope_{task_id}",
+                )
+            ],
+        ]
+    )
+
+
 @router.callback_query(F.data.startswith("pubscope_"))
 async def choose_publication_scope(callback: types.CallbackQuery):
     task_id = (callback.data or "").replace("pubscope_", "", 1)
@@ -548,8 +571,7 @@ async def choose_publication_scope(callback: types.CallbackQuery):
     rows: list[list[InlineKeyboardButton]] = []
     if scope != "feed":
         rows.append([InlineKeyboardButton(text="🌐 В общую ленту", callback_data=f"feedpub_{task_id}")])
-    if scope != "profile":
-        rows.append([InlineKeyboardButton(text="👤 Только в мой профиль", callback_data=f"profilepub_{task_id}")])
+    rows.append([InlineKeyboardButton(text="👤 Только в мой профиль", callback_data=f"profilepub_{task_id}")])
     if scope != "private":
         rows.append([InlineKeyboardButton(text="🗑 Убрать публикацию", callback_data=f"profilehide_{task_id}")])
     rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"pubcancel_{task_id}")])
@@ -583,7 +605,25 @@ async def publish_only_to_profile(callback: types.CallbackQuery):
     if not task:
         await callback.answer("Генерация не найдена", show_alert=True)
         return
-    card = await share_to_profile(task_id, user.id)
+    await callback.message.edit_reply_markup(
+        reply_markup=_profile_blur_keyboard(task_id)
+    )
+    await callback.answer("Выберите, блюрить публикацию или нет")
+
+
+@router.callback_query(F.data.startswith("profileblur_"))
+async def publish_only_to_profile_with_blur(callback: types.CallbackQuery):
+    payload = (callback.data or "").replace("profileblur_", "", 1)
+    blur_value, separator, task_id = payload.partition("_")
+    if not separator or blur_value not in {"0", "1"} or not task_id:
+        await callback.answer("Некорректный выбор blur", show_alert=True)
+        return
+    user, task = await _task_and_user(callback, task_id)
+    if not task:
+        await callback.answer("Генерация не найдена", show_alert=True)
+        return
+    blurred = blur_value == "1"
+    card = await share_to_profile(task_id, user.id, blurred=blurred)
     if not card:
         await callback.answer("Не удалось добавить в профиль", show_alert=True)
         return
@@ -591,7 +631,11 @@ async def publish_only_to_profile(callback: types.CallbackQuery):
     task["is_public_feed"] = False
     task["is_profile_visible"] = True
     await _refresh_result_markup(callback, task, "profile")
-    await callback.answer("Добавлено только в ваш профиль")
+    await callback.answer(
+        "Добавлено в профиль с blur"
+        if blurred
+        else "Добавлено в профиль без blur"
+    )
 
 
 @router.callback_query(F.data.startswith("feedrm_"))

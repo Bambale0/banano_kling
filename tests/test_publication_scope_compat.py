@@ -55,6 +55,19 @@ def test_publication_result_uses_one_stable_publish_action(scope):
     assert publication_buttons[0].callback_data == "pubscope_task-1"
 
 
+def test_profile_publication_requires_explicit_blur_choice():
+    publication_scope = _load_publication_scope_module()
+
+    markup = publication_scope._profile_blur_keyboard("task-1")
+    buttons = [button for row in markup.inline_keyboard for button in row]
+
+    assert [(button.text, button.callback_data) for button in buttons] == [
+        ("👁 Без blur", "profileblur_0_task-1"),
+        ("🙈 С blur", "profileblur_1_task-1"),
+        ("◀️ Назад", "pubscope_task-1"),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     if db_backend.is_postgres():
@@ -97,6 +110,22 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     assert profile_card["is_profile_visible"] is True
     assert profile_card["is_public_feed"] is False
     assert profile_card["feed_interactions_enabled"] is False
+
+    blurred_profile_card = await publication_scope.share_to_profile(
+        "scope-image-1",
+        user.id,
+        blurred=True,
+    )
+    assert blurred_profile_card is not None
+    assert blurred_profile_card["feed_blurred"] is True
+
+    visible_profile_card = await publication_scope.share_to_profile(
+        "scope-image-1",
+        user.id,
+        blurred=False,
+    )
+    assert visible_profile_card is not None
+    assert visible_profile_card["feed_blurred"] is False
 
     public_feed = await database.get_feed_generations(limit=20)
     profile_feed = await publication_scope.get_user_profile_generations(
