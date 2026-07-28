@@ -1,11 +1,16 @@
 import pytest
 
+from bot.handlers import image_analyzer_router, prompt_analyzer_v2_router
 from bot.handlers.prompt_analyzer_v2 import _format_prompt_result_text
 from bot.services.prompt_analyzer_v2_service import (
     PromptAnalyzerV2Service,
     _build_gpt_user_content,
     _build_result,
 )
+
+
+def test_unified_prompt_analyzer_is_registered_before_legacy_router():
+    assert image_analyzer_router.sub_routers[0] is prompt_analyzer_v2_router
 
 
 def test_result_contains_only_bilingual_prompt_fields():

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
@@ -14,25 +13,28 @@ from bot.services.media_input_utils import image_sources_to_provider_safe_png_ur
 
 logger = logging.getLogger(__name__)
 
-_PERSON_WORD_RE = re.compile(
-    r"\b(?:девушк\w*|женщин\w*|мужчин\w*|парн\w*|girl|woman|women|man|men|person|people)\b",
-    re.IGNORECASE,
-)
-_FICTIONAL_CHARACTER_RE = re.compile(
-    r"\b(?:персонаж\w*|вымышлен\w*|character(?:s)?|fictional)\b",
-    re.IGNORECASE,
-)
-_FICTIONAL_CHARACTER_CONTEXT = (
-    "Все упомянутые люди — вымышленные совершеннолетние персонажи, "
-    "а не реальные люди."
-)
+SEEDANCE_IDENTITY_SOURCE_LOCK = """IDENTITY / SOURCE LOCK:
+Use the uploaded source image as the primary identity and character reference.
+Preserve the same recognizable person: face geometry, eyes, nose, lips, skin tone, hair, body proportions, outfit, and distinctive marks.
+Do not replace the person with a different actor, lookalike, or invented character.
+Do not add extra people unless the user explicitly asks for multiple people.
+The first-frame image is the exact starting frame and must anchor the video."""
 
 
-def apply_fictional_character_context(prompt: str) -> str:
-    """Clarify human subjects for Seedance without touching media aliases."""
-    if _PERSON_WORD_RE.search(prompt) and not _FICTIONAL_CHARACTER_RE.search(prompt):
-        return f"{_FICTIONAL_CHARACTER_CONTEXT}\n\n{prompt}"
-    return prompt
+def prepare_seedance_prompt(prompt: str, *, max_length: int) -> str:
+    """Append only the Seedance identity lock and preserve it in full."""
+    if SEEDANCE_IDENTITY_SOURCE_LOCK in prompt:
+        return prompt[:max_length]
+
+    separator = "\n\n"
+    user_prompt_limit = max(
+        0,
+        max_length - len(separator) - len(SEEDANCE_IDENTITY_SOURCE_LOCK),
+    )
+    return (
+        f"{prompt[:user_prompt_limit]}{separator}"
+        f"{SEEDANCE_IDENTITY_SOURCE_LOCK}"
+    )[:max_length]
 
 
 def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
@@ -210,9 +212,12 @@ class SeedanceService(KlingService):
         except (TypeError, ValueError):
             normalized_duration = 5
 
-        seedance_prompt = apply_fictional_character_context(prompt)
+        seedance_prompt = prepare_seedance_prompt(
+            prompt,
+            max_length=self.MAX_PROMPT_LENGTH,
+        )
         input_data: dict[str, Any] = {
-            "prompt": seedance_prompt[: self.MAX_PROMPT_LENGTH],
+            "prompt": seedance_prompt,
             "duration": max(
                 self.MIN_DURATION,
                 min(normalized_duration, self.MAX_DURATION),

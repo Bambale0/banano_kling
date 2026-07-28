@@ -92,6 +92,11 @@ def test_get_main_menu_keyboard_shows_video_prompt_for_regular_user(monkeypatch)
 
     assert "photo_to_prompt" in callback_ids
     assert "video_to_prompt" in callback_ids
+    assert any(
+        btn.text == "✍️ Промпт по описанию"
+        for row in kb.inline_keyboard
+        for btn in row
+    )
 
 
 def test_get_main_menu_keyboard_shows_video_prompt_for_admin(monkeypatch):

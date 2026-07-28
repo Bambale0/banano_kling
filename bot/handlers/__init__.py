@@ -39,9 +39,10 @@ from . import (
 from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
-from .image_analyzer import router as image_analyzer_router
+from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
+from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
@@ -59,6 +60,13 @@ legacy_common_router = common_module.router
 # Ordinary photo-only prompt analysis should use the same compact result structure
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
 install_vk_photo_prompt_result_compat()
+
+# The unified analyzer owns text, photo, and voice prompt creation. Keep it
+# before the legacy analyzer, which still handles video-to-prompt and fallback
+# compatibility routes using the same FSM state.
+image_analyzer_router = Router()
+image_analyzer_router.include_router(prompt_analyzer_v2_router)
+image_analyzer_router.include_router(legacy_image_analyzer_router)
 
 # Seedance accepts photos and videos through the established separate upload
 # screens. The launcher now forwards both collections without mutating the
@@ -94,6 +102,7 @@ __all__ = [
     "lava_checkout_router",
     "notification_campaigns_router",
     "payments_router",
+    "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
     "repeat_result_compat_router",
     "seedance_multimodal_compat_router",

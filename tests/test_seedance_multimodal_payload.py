@@ -6,8 +6,9 @@ from bot.handlers.seedance_multimodal_compat import (
 )
 from bot.handlers.generation import _seedance_media_inputs
 from bot.services.seedance_service import (
+    SEEDANCE_IDENTITY_SOURCE_LOCK,
     SeedanceService,
-    apply_fictional_character_context,
+    prepare_seedance_prompt,
 )
 from bot.video_reference_policy import apply_video_reference_cost
 
@@ -59,8 +60,10 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    assert payload["input"]["prompt"].endswith(prompt)
-    assert "вымышленные совершеннолетние персонажи" in payload["input"]["prompt"]
+    prepared_prompt = payload["input"]["prompt"]
+    assert prompt in prepared_prompt
+    assert prepared_prompt.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
+    assert "вымышленные совершеннолетние персонажи" not in prepared_prompt
     assert "@image1" in payload["input"]["prompt"]
     assert "@image2" in payload["input"]["prompt"]
     assert "@image3" in payload["input"]["prompt"]
@@ -68,19 +71,22 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
     assert "IDENTITY AND REFERENCE ROLE LOCK" not in payload["input"]["prompt"]
 
 
-def test_seedance_keeps_explicit_fictional_character_prompt_unchanged() -> None:
-    prompt = "Вымышленный персонаж @image1 повторяет движения @video1"
+def test_seedance_appends_identity_source_lock_once() -> None:
+    prompt = "Animate the uploaded person waving to the camera."
 
-    assert apply_fictional_character_context(prompt) == prompt
+    prepared = prepare_seedance_prompt(prompt, max_length=20_000)
+
+    assert f"{prompt}\n\n{SEEDANCE_IDENTITY_SOURCE_LOCK}" in prepared
+    assert prepared.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
+    assert prepared.count(SEEDANCE_IDENTITY_SOURCE_LOCK) == 1
+    assert prepare_seedance_prompt(prepared, max_length=20_000) == prepared
 
 
-def test_seedance_character_context_is_idempotent() -> None:
-    prompt = "Девушка @image1 танцует"
+def test_seedance_preserves_complete_identity_lock_at_prompt_limit() -> None:
+    prepared = prepare_seedance_prompt("x" * 25_000, max_length=20_000)
 
-    prepared = apply_fictional_character_context(prompt)
-
-    assert apply_fictional_character_context(prepared) == prepared
-    assert prepared.count("вымышленные совершеннолетние персонажи") == 1
+    assert len(prepared) == 20_000
+    assert prepared.endswith(SEEDANCE_IDENTITY_SOURCE_LOCK)
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:

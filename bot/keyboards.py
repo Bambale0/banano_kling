@@ -83,7 +83,7 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
     )
     builder.row(
         InlineKeyboardButton(text="🎯 Motion Control", callback_data="motion_control"),
-        InlineKeyboardButton(text="📸 Промпт по фото", callback_data="photo_to_prompt"),
+        InlineKeyboardButton(text="✍️ Промпт по описанию", callback_data="photo_to_prompt"),
     )
     builder.row(
         InlineKeyboardButton(text=f"🎞 Промпт по видео • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt"),
