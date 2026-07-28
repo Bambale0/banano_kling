@@ -525,6 +525,8 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     for _column_name, statement in [
         ("result_urls", "ALTER TABLE generation_tasks ADD COLUMN result_urls TEXT"),
         ("is_public_feed", "ALTER TABLE generation_tasks ADD COLUMN is_public_feed BOOLEAN DEFAULT 0"),
+        ("is_profile_visible", "ALTER TABLE generation_tasks ADD COLUMN is_profile_visible BOOLEAN DEFAULT 0"),
+        ("is_adult_content", "ALTER TABLE generation_tasks ADD COLUMN is_adult_content BOOLEAN DEFAULT 0"),
         ("is_prompt_library", "ALTER TABLE generation_tasks ADD COLUMN is_prompt_library BOOLEAN DEFAULT 0"),
         ("source_feed_gen_id", "ALTER TABLE generation_tasks ADD COLUMN source_feed_gen_id INTEGER"),
         ("parent_generation_id", "ALTER TABLE generation_tasks ADD COLUMN parent_generation_id INTEGER"),
@@ -546,6 +548,12 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed_safe ON generation_tasks(is_public_feed, is_adult_content, status, created_at DESC)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_tasks_profile ON generation_tasks(user_id, is_profile_visible, status, created_at DESC)"
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed_published ON generation_tasks(is_public_feed, status, feed_published_at DESC, created_at DESC)"
@@ -5538,6 +5546,31 @@ def generation_feed_blurred(
     return bool(_generation_attr(generation, "feed_blurred", False))
 
 
+def generation_profile_visible(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(
+        _generation_attr(generation, "is_profile_visible", False)
+        or _generation_attr(generation, "is_public_feed", False)
+    )
+
+
+def generation_adult_content(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> bool:
+    return bool(_generation_attr(generation, "is_adult_content", False))
+
+
+def generation_publication_scope(
+    generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
+) -> str:
+    if bool(_generation_attr(generation, "is_public_feed", False)) and not generation_adult_content(generation):
+        return "feed"
+    if generation_profile_visible(generation):
+        return "profile"
+    return "private"
+
+
 def generation_prompt_hidden(
     generation: GenerationTask | dict[str, Any] | db_backend.Row | None,
 ) -> bool:
@@ -5571,6 +5604,7 @@ async def _fetch_generation_row(
                 "status = 'completed'",
                 "result_url IS NOT NULL",
                 "is_public_feed = 1",
+                "COALESCE(is_adult_content, 0) = 0",
             ]
         )
     cursor = await db.execute(
@@ -5805,6 +5839,10 @@ def _generation_row_to_card(
         "feed_prompt_visible": generation_feed_prompt_visible(row),
         "feed_references_visible": references_visible,
         "feed_blurred": generation_feed_blurred(row),
+        "is_profile_visible": generation_profile_visible(row),
+        "is_adult_content": generation_adult_content(row),
+        "publication_scope": generation_publication_scope(row),
+        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
     }
 
 
@@ -5825,6 +5863,7 @@ async def get_feed_generations(
         "gt.status = 'completed'",
         "gt.result_url IS NOT NULL",
         "gt.is_public_feed = 1",
+        "COALESCE(gt.is_adult_content, 0) = 0",
     ]
     if source == "top_day":
         where.append("gt.created_at >= datetime('now', '-1 day')")
@@ -5877,9 +5916,10 @@ async def get_user_feed_generations(
     offset: int = 0,
     *,
     include_unpublished_owned: bool = False,
+    profile_visible_only: bool = False,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return user feed items."""
+    """Return publications for a user profile or the legacy public-only view."""
     limit = max(0, int(limit or 0))
     offset = max(0, int(offset or 0))
     where_clause = """
@@ -5888,8 +5928,17 @@ async def get_user_feed_generations(
               AND gt.status = 'completed'
               AND gt.result_url IS NOT NULL
               AND gt.is_public_feed = 1
+              AND COALESCE(gt.is_adult_content, 0) = 0
     """
-    if include_unpublished_owned:
+    if profile_visible_only:
+        where_clause = """
+            WHERE gt.user_id = ?
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND (COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)
+        """
+    elif include_unpublished_owned:
         where_clause = """
             WHERE gt.user_id = ?
               AND gt.type IN ('image', 'video')
@@ -5935,7 +5984,12 @@ async def get_user_feed_generations(
 
 
 async def get_user_feed_summary(user_id: int) -> dict[str, int]:
-    cards = await get_user_feed_generations(user_id, limit=0, include_unavailable=True)
+    cards = await get_user_feed_generations(
+        user_id,
+        limit=0,
+        profile_visible_only=True,
+        include_unavailable=True,
+    )
     return {
         "posts_count": len(cards),
         "likes_count": sum(int(card.get("likes_count") or 0) for card in cards),
@@ -5987,6 +6041,7 @@ async def get_feed_generation_card(
               AND gt.status = 'completed'
               AND gt.result_url IS NOT NULL
               AND gt.is_public_feed = 1
+              AND COALESCE(gt.is_adult_content, 0) = 0
             LIMIT 1
             """,
             (param,),
@@ -5995,6 +6050,59 @@ async def get_feed_generation_card(
     if not row:
         return None
     return _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable)
+
+
+async def get_profile_generation_card(
+    gen_id: int | str,
+    *,
+    viewer_user_id: Optional[int] = None,
+    include_unavailable: bool = False,
+) -> Optional[dict[str, Any]]:
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        value = str(gen_id).strip()
+        if value.isdigit():
+            clause, param = "gt.id = ?", int(value)
+        else:
+            clause, param = "gt.task_id = ?", value
+        cursor = await db.execute(
+            f"""
+            SELECT gt.*, u.telegram_id AS author_telegram_id,
+                   u.username AS author_username,
+                   u.first_name AS author_first_name,
+                   u.last_name AS author_last_name,
+                   u.referral_code AS author_referral_code,
+                   u.photo_url AS author_photo_url,
+                   (
+                       SELECT COUNT(*)
+                       FROM generation_tasks child
+                       WHERE child.parent_generation_id = gt.id
+                         AND child.status = 'completed'
+                   ) AS remix_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM feed_comments fc
+                       WHERE fc.generation_id = gt.id
+                   ) AS comments_count
+            FROM generation_tasks gt
+            LEFT JOIN users u ON u.id = gt.user_id
+            WHERE {clause}
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND (COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)
+            LIMIT 1
+            """,
+            (param,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return None
+    return _generation_row_to_card(
+        row,
+        viewer_user_id=viewer_user_id,
+        include_unavailable=include_unavailable,
+    )
 
 
 async def get_public_feed_generation(gen_id: int | str) -> Optional[dict[str, Any]]:
@@ -6139,7 +6247,17 @@ async def share_to_feed(
     prompt_visible: bool = False,
     references_visible: bool = False,
     blurred: Optional[bool] = None,
+    publication_scope: str = "feed",
+    adult_content: bool = False,
 ) -> Optional[dict[str, Any]]:
+    normalized_scope = str(publication_scope or "feed").strip().lower()
+    if normalized_scope not in {"feed", "profile"}:
+        normalized_scope = "feed"
+
+    adult_content = bool(adult_content)
+    if adult_content:
+        normalized_scope = "profile"
+
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
         row = await _fetch_generation_row(db, gen_id, user_id=user_id)
@@ -6153,10 +6271,10 @@ async def share_to_feed(
         ):
             return None
 
-        # Скачиваем эфемерные файлы на сервер, чтобы они не исчезали по TTL
         result_urls = _generation_result_urls(row)
         if result_urls:
             from bot.services.feed_persist import persist_feed_result_urls
+
             persisted = await persist_feed_result_urls(result_urls)
             result_url = persisted[0] if persisted else row["result_url"]
             result_urls_json = json.dumps(persisted, ensure_ascii=False) if persisted else None
@@ -6166,10 +6284,15 @@ async def share_to_feed(
 
         published_at = datetime.utcnow().isoformat(sep=" ", timespec="microseconds")
         next_blurred = generation_feed_blurred(row) if blurred is None else bool(blurred)
+        if adult_content:
+            next_blurred = True
+        is_public_feed = normalized_scope == "feed" and not adult_content
         await db.execute(
             """
             UPDATE generation_tasks
-            SET is_public_feed = 1,
+            SET is_public_feed = ?,
+                is_profile_visible = 1,
+                is_adult_content = ?,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
                 feed_blurred = ?,
@@ -6180,6 +6303,8 @@ async def share_to_feed(
             WHERE id = ?
             """,
             (
+                int(is_public_feed),
+                int(adult_content),
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),
                 int(next_blurred),
@@ -6190,8 +6315,11 @@ async def share_to_feed(
             ),
         )
         await db.commit()
-        gen_id = row["id"]
-    return await get_feed_generation_card(gen_id, viewer_user_id=user_id)
+        internal_id = row["id"]
+
+    if is_public_feed:
+        return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+    return await get_profile_generation_card(internal_id, viewer_user_id=user_id)
 
 
 async def set_feed_blurred(
@@ -6207,9 +6335,8 @@ async def set_feed_blurred(
             db,
             gen_id,
             user_id=None if allow_any_user else user_id,
-            public_only=True,
         )
-        if not row:
+        if not row or not generation_profile_visible(row):
             return None
         await db.execute(
             "UPDATE generation_tasks SET feed_blurred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -6217,7 +6344,10 @@ async def set_feed_blurred(
         )
         await db.commit()
         internal_id = row["id"]
-    return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+
+    if generation_publication_scope(row) == "feed":
+        return await get_feed_generation_card(internal_id, viewer_user_id=user_id)
+    return await get_profile_generation_card(internal_id, viewer_user_id=user_id)
 
 
 async def remove_from_feed(
@@ -6237,7 +6367,15 @@ async def remove_from_feed(
         if not row:
             return False
         await db.execute(
-            "UPDATE generation_tasks SET is_public_feed = 0, feed_published_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            """
+            UPDATE generation_tasks
+            SET is_public_feed = 0,
+                is_profile_visible = 0,
+                is_adult_content = 0,
+                feed_published_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
             (row["id"],),
         )
         await db.commit()
