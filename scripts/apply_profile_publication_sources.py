@@ -47,7 +47,7 @@ def load_publication_patch():
         1,
     )
 
-    old_profile_query_patch = '''    text = read(path)
+    old_profile_query_patch = """    text = read(path)
     text, count = re.subn(
         r'''(get_user_feed_generations\\(\\n\\s+user\\.id,\\n\\s+limit=limit,\\n\\s+offset=offset,\\n)(\\s+include_unavailable=True,)''',
         r'''\\1            profile_visible_only=True,
@@ -59,8 +59,8 @@ def load_publication_patch():
     if count != 2:
         raise AssertionError(f"{path}: expected two profile feed calls, got {count}")
     write(path, text)
-'''
-    new_profile_query_patch = '''    replace_once(
+"""
+    new_profile_query_patch = """    replace_once(
         path,
         '''        feed = await get_user_feed_generations(
             ctx["user"].id,
@@ -87,7 +87,7 @@ def load_publication_patch():
             include_unavailable=True,
         )''',
     )
-'''
+"""
     if old_profile_query_patch not in source:
         raise AssertionError("publication patch profile-query block not found")
     source = source.replace(old_profile_query_patch, new_profile_query_patch, 1)
