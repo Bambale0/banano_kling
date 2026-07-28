@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - agent/profile-publication-scope
+  pull_request:
+    branches:
+      - tanyapi
 
 permissions:
   contents: write
 
 jobs:
   patch-and-test:
-    if: ${{ !contains(github.event.head_commit.message, '[publication-patch]') }}
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[publication-patch]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
