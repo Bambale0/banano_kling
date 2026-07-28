@@ -51,6 +51,9 @@ from bot.database import (
     get_user_feed_generations,
     get_user_feed_summary,
     get_user_stats,
+    generation_adult_content,
+    generation_profile_visible,
+    generation_publication_scope,
     increment_feed_share,
     is_channel_subscription_required,
     like_feed_generation,
@@ -1218,8 +1221,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, created_at
+               source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+               feed_blurred, is_profile_visible, is_adult_content, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -1259,6 +1262,10 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
                 "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
                 "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
+                "is_profile_visible": generation_profile_visible(row),
+                "is_adult_content": generation_adult_content(row),
+                "publication_scope": generation_publication_scope(row),
+                "feed_interactions_enabled": generation_publication_scope(row) == "feed",
                 "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
@@ -1289,7 +1296,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -1303,7 +1310,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -1357,6 +1364,10 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
+        "is_profile_visible": generation_profile_visible(row),
+        "is_adult_content": generation_adult_content(row),
+        "publication_scope": generation_publication_scope(row),
+        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
         "created_at": row["created_at"],
         "request_data": request_data,
     }
@@ -3056,6 +3067,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
             ctx["user"].id,
             limit=limit,
             offset=offset,
+            profile_visible_only=True,
             include_unavailable=True,
         )
         is_admin = config.is_admin(telegram_id)
@@ -3127,7 +3139,13 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
 
-        feed = await get_user_feed_generations(author.id, limit=limit, offset=offset, include_unavailable=True)
+        feed = await get_user_feed_generations(
+            author.id,
+            limit=limit,
+            offset=offset,
+            profile_visible_only=True,
+            include_unavailable=True,
+        )
         feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
         is_admin = config.is_admin(telegram_id)
@@ -3183,6 +3201,13 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
                 body.get("blurred", body.get("feed_blurred")),
                 False,
             )
+        publication_scope = str(
+            body.get("publication_scope", body.get("scope", "feed")) or "feed"
+        ).strip().lower()
+        adult_content = _payload_bool(
+            body.get("adult_content", body.get("is_adult_content")),
+            False,
+        )
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await share_to_feed(
             gen_id,
@@ -3190,6 +3215,8 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             prompt_visible=prompt_visible,
             references_visible=references_visible,
             blurred=blurred,
+            publication_scope=publication_scope,
+            adult_content=adult_content,
         )
         if not card:
             logger.warning(
@@ -3200,7 +3227,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
                 sorted(body.keys()),
             )
             return web.json_response(
-                {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
+                {"ok": False, "error": "Нельзя опубликовать эту генерацию"},
                 status=403,
             )
         try:

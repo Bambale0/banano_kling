@@ -5,8 +5,8 @@ import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
 import { 
   X, Image, Video, Clock, CheckCircle2, XCircle, 
-  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen, Eye, EyeOff
-} from 'lucide-react'
+  Banana, ExternalLink, Copy, RefreshCw, Headphones, UserRound, Images, BookOpen, Eye, EyeOff, ShieldAlert
+} from 'lucide-react' 
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import {
@@ -24,6 +24,8 @@ export function TaskDetailPanel() {
   const [feedPromptVisible, setFeedPromptVisible] = useState(false)
   const [feedReferencesVisible, setFeedReferencesVisible] = useState(false)
   const [feedBlurred, setFeedBlurred] = useState(false)
+  const [publicationScope, setPublicationScope] = useState<'profile' | 'feed'>('feed')
+  const [adultContent, setAdultContent] = useState(false)
 
   const referenceCount =
     (taskDetail?.request_data?.reference_images?.length || 0) +
@@ -33,11 +35,15 @@ export function TaskDetailPanel() {
     setFeedPromptVisible(Boolean(taskDetail?.feed_prompt_visible))
     setFeedReferencesVisible(Boolean(taskDetail?.feed_references_visible))
     setFeedBlurred(Boolean(taskDetail?.feed_blurred))
+    setPublicationScope(taskDetail?.publication_scope === 'profile' ? 'profile' : 'feed')
+    setAdultContent(Boolean(taskDetail?.is_adult_content))
   }, [
     taskDetail?.task_id,
     taskDetail?.feed_prompt_visible,
     taskDetail?.feed_references_visible,
     taskDetail?.feed_blurred,
+    taskDetail?.publication_scope,
+    taskDetail?.is_adult_content,
   ])
 
   const confirmPublication = (target: string) => {
@@ -73,30 +79,48 @@ export function TaskDetailPanel() {
     }
   }
 
+  const isPublished = Boolean(taskDetail?.is_profile_visible || taskDetail?.is_public_feed)
+
   const handlePublish = async () => {
     if (!taskDetail || publishBusy) return
-    if (!taskDetail.is_public_feed && !confirmPublication('ленту работ')) return
+    const target = publicationScope === 'profile' ? 'свой профиль' : 'ленту и свой профиль'
+    if (!isPublished && !confirmPublication(target)) return
     setPublishBusy(true)
     try {
-      if (taskDetail.is_public_feed) {
+      if (isPublished) {
         await unpublishGeneration(taskDetail.task_id)
-        updateTask(taskDetail.task_id, { is_public_feed: false })
+        updateTask(taskDetail.task_id, {
+          is_public_feed: false,
+          is_profile_visible: false,
+          publication_scope: 'private',
+          is_adult_content: false,
+        })
         notifyFeedChanged()
-        toast.success('Убрано из ленты')
+        toast.success('Публикация убрана')
       } else {
-        await publishGeneration(taskDetail.task_id, {
+        const published = await publishGeneration(taskDetail.task_id, {
           promptVisible: feedPromptVisible,
           referencesVisible: feedReferencesVisible,
           blurred: feedBlurred,
+          publicationScope,
+          adultContent,
         })
         updateTask(taskDetail.task_id, {
-          is_public_feed: true,
+          is_public_feed: published.publication_scope === 'feed',
+          is_profile_visible: true,
+          publication_scope: published.publication_scope,
+          is_adult_content: Boolean(published.is_adult_content),
+          feed_interactions_enabled: published.feed_interactions_enabled,
           feed_prompt_visible: feedPromptVisible,
           feed_references_visible: feedReferencesVisible,
-          feed_blurred: feedBlurred,
+          feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged()
-        toast.success('Опубликовано в ленте')
+        toast.success(
+          published.publication_scope === 'profile'
+            ? 'Опубликовано только в профиле'
+            : 'Опубликовано в ленте и профиле'
+        )
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
@@ -106,22 +130,28 @@ export function TaskDetailPanel() {
   }
 
   const handleUpdateFeedSettings = async () => {
-    if (!taskDetail || publishBusy || !taskDetail.is_public_feed) return
+    if (!taskDetail || publishBusy || !isPublished) return
     setPublishBusy(true)
     try {
-      await publishGeneration(taskDetail.task_id, {
+      const published = await publishGeneration(taskDetail.task_id, {
         promptVisible: feedPromptVisible,
         referencesVisible: feedReferencesVisible,
         blurred: feedBlurred,
+        publicationScope,
+        adultContent,
       })
       updateTask(taskDetail.task_id, {
-        is_public_feed: true,
+        is_public_feed: published.publication_scope === 'feed',
+        is_profile_visible: true,
+        publication_scope: published.publication_scope,
+        is_adult_content: Boolean(published.is_adult_content),
+        feed_interactions_enabled: published.feed_interactions_enabled,
         feed_prompt_visible: feedPromptVisible,
         feed_references_visible: feedReferencesVisible,
-        feed_blurred: feedBlurred,
+        feed_blurred: Boolean(published.feed_blurred),
       })
       notifyFeedChanged()
-      toast.success('Настройки ленты обновлены')
+      toast.success('Настройки публикации обновлены')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось обновить ленту')
     } finally {
@@ -383,8 +413,64 @@ export function TaskDetailPanel() {
               {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
                 <div className="space-y-2">
                   {canPublishToFeed ? (
-                    <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
-                      <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={adultContent}
+                      onClick={() => setPublicationScope('feed')}
+                      className={cn(
+                        'rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+                        publicationScope === 'feed'
+                          ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                          : 'border-border/50 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      Лента и профиль
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPublicationScope('profile')}
+                      className={cn(
+                        'rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                        publicationScope === 'profile'
+                          ? 'border-cyan/40 bg-cyan/10 text-cyan'
+                          : 'border-border/50 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      Только профиль
+                    </button>
+                  </div>
+                  {taskDetail.type === 'image' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdultContent((current) => {
+                          const next = !current
+                          if (next) {
+                            setPublicationScope('profile')
+                            setFeedBlurred(true)
+                          }
+                          return next
+                        })
+                      }}
+                      className={cn(
+                        'mb-3 flex w-full items-start gap-2 rounded-lg border p-3 text-left transition-colors',
+                        adultContent
+                          ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                          : 'border-border/50 bg-background/40 text-muted-foreground'
+                      )}
+                    >
+                      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block text-xs font-semibold">Контент 18+</span>
+                        <span className="mt-0.5 block text-[11px] leading-relaxed">
+                          Публикуется только в профиле и всегда скрывается блюром. В общей ленте его не будет.
+                        </span>
+                      </span>
+                    </button>
+                  ) : null}
+                  <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
                           onClick={() => setFeedPromptVisible((prev) => !prev)}
@@ -426,8 +512,8 @@ export function TaskDetailPanel() {
                           Blur
                         </button>
                       </div>
-                      {taskDetail.is_public_feed ? (
-                        <Button
+              {isPublished ? (
+                <Button
                           type="button"
                           variant="secondary"
                           className="mt-2 w-full"
@@ -435,7 +521,7 @@ export function TaskDetailPanel() {
                           onClick={handleUpdateFeedSettings}
                         >
                           {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-                          Обновить ленту
+                          Обновить публикацию
                         </Button>
                       ) : null}
                     </div>
@@ -450,7 +536,7 @@ export function TaskDetailPanel() {
                         onClick={handlePublish}
                       >
                         {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-                        {taskDetail.is_public_feed ? 'Убрать из ленты' : 'В ленту'}
+                        {isPublished ? 'Убрать публикацию' : 'Опубликовать'}
                       </Button>
                       ) : null}
                       {canSavePrompt ? (

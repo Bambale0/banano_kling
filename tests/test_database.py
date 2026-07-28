@@ -471,6 +471,113 @@ async def test_share_to_feed_controls_prompt_and_reference_visibility(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_profile_only_publication_is_hidden_from_general_feed(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "profile_scope.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(440001)
+    await database.add_generation_task(
+        user.id, user.telegram_id, "profile-only-task", "image", "banana_pro",
+        model="banana_pro", aspect_ratio="1:1", prompt="portrait", cost=2,
+    )
+    await database.complete_video_task(
+        "profile-only-task", "https://example.com/profile-only.png"
+    )
+
+    card = await database.share_to_feed(
+        "profile-only-task", user.id, publication_scope="profile", blurred=True
+    )
+
+    assert card is not None
+    assert card["publication_scope"] == "profile"
+    assert card["is_profile_visible"] is True
+    assert card["feed_interactions_enabled"] is False
+    assert card["feed_blurred"] is True
+    assert await database.get_feed_generations(limit=20) == []
+    profile_cards = await database.get_user_feed_generations(
+        user.id, profile_visible_only=True, include_unavailable=True
+    )
+    assert [item["id"] for item in profile_cards] == [card["id"]]
+
+
+@pytest.mark.asyncio
+async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "adult_scope.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(440002)
+    await database.add_generation_task(
+        user.id, user.telegram_id, "adult-task", "image", "banana_pro",
+        model="banana_pro", aspect_ratio="1:1", prompt="adult portrait", cost=2,
+    )
+    await database.complete_video_task("adult-task", "https://example.com/adult.png")
+
+    card = await database.share_to_feed(
+        "adult-task",
+        user.id,
+        publication_scope="feed",
+        adult_content=True,
+        blurred=False,
+    )
+
+    assert card is not None
+    assert card["publication_scope"] == "profile"
+    assert card["is_adult_content"] is True
+    assert card["feed_blurred"] is True
+    assert card["feed_interactions_enabled"] is False
+    assert await database.get_feed_generations(limit=20) == []
+
+
+@pytest.mark.asyncio
+async def test_feed_publication_is_visible_in_feed_and_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "feed_scope.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(440003)
+    await database.add_generation_task(
+        user.id, user.telegram_id, "feed-and-profile-task", "image", "banana_pro",
+        model="banana_pro", aspect_ratio="1:1", prompt="safe portrait", cost=2,
+    )
+    await database.complete_video_task(
+        "feed-and-profile-task", "https://example.com/feed.png"
+    )
+
+    card = await database.share_to_feed(
+        "feed-and-profile-task", user.id, publication_scope="feed"
+    )
+
+    assert card is not None
+    assert card["publication_scope"] == "feed"
+    assert card["is_profile_visible"] is True
+    assert card["feed_interactions_enabled"] is True
+    assert [item["id"] for item in await database.get_feed_generations(limit=20)] == [card["id"]]
+    profile_cards = await database.get_user_feed_generations(
+        user.id, profile_visible_only=True, include_unavailable=True
+    )
+    assert [item["id"] for item in profile_cards] == [card["id"]]
+
+
+@pytest.mark.asyncio
+async def test_profile_owner_can_toggle_blur_without_general_feed(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "profile_blur.db"))
+    await database.init_db()
+    user = await database.get_or_create_user(440004)
+    await database.add_generation_task(
+        user.id, user.telegram_id, "profile-blur-task", "image", "banana_pro",
+        model="banana_pro", aspect_ratio="1:1", prompt="portrait", cost=2,
+    )
+    await database.complete_video_task(
+        "profile-blur-task", "https://example.com/profile-blur.png"
+    )
+    published = await database.share_to_feed(
+        "profile-blur-task", user.id, publication_scope="profile"
+    )
+    updated = await database.set_feed_blurred(published["id"], user.id, True)
+
+    assert updated is not None
+    assert updated["publication_scope"] == "profile"
+    assert updated["feed_blurred"] is True
+    assert await database.get_feed_generations(limit=20) == []
+
+
+@pytest.mark.asyncio
 async def test_cleanup_stale_local_generation_tasks_refunds_old_img_tasks(monkeypatch):
     user = await database.get_or_create_user(987654321)
 

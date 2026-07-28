@@ -642,6 +642,8 @@ export async function publishGeneration(
     promptVisible?: boolean
     referencesVisible?: boolean
     blurred?: boolean
+    publicationScope?: 'profile' | 'feed'
+    adultContent?: boolean
   } = {}
 ): Promise<FeedItem> {
   const initData = getInitData()
@@ -654,6 +656,8 @@ export async function publishGeneration(
     prompt_visible: Boolean(options.promptVisible),
     references_visible: Boolean(options.referencesVisible),
     feed_blurred: Boolean(options.blurred),
+    publication_scope: options.publicationScope || 'feed',
+    adult_content: Boolean(options.adultContent),
   })
   return response.feed_item
 }

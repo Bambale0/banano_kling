@@ -13,12 +13,15 @@ import {
   fetchPartnerOverview,
   fetchProfileFeed,
   saveProfileChannel,
+  setFeedItemBlurred,
   shareFeedItem,
 } from '@/lib/api'
 import {
   Check,
   Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   Grid3X3,
   Heart,
   ImageOff,
@@ -99,6 +102,7 @@ export function ProfileTab() {
   const [copied, setCopied] = useState<'profile' | number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
+  const [revealedIds, setRevealedIds] = useState<Set<number>>(() => new Set())
 
   const isLive = state.mode === 'live'
   const ownReferralCode = String(user.referralCode || '').trim().toUpperCase()
@@ -345,6 +349,29 @@ export function ProfileTab() {
     } finally {
       setBusyId(null)
     }
+  }
+
+  async function handleToggleBlur(item: FeedItem) {
+    if (!isLive || !(item.can_blur || item.is_mine)) return
+    setBusyId(item.id)
+    try {
+      const updated = await setFeedItemBlurred(item.id, !item.feed_blurred)
+      setItems((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)))
+      setPreviewItem((prev) => (prev?.id === updated.id ? updated : prev))
+      setRevealedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось обновить blur'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  function revealItem(item: FeedItem) {
+    setRevealedIds((prev) => new Set(prev).add(item.id))
   }
 
   async function handleSaveChannel() {
@@ -606,7 +633,10 @@ export function ProfileTab() {
                       playsInline
                       preload="metadata"
                       onError={() => handleMediaError(item)}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                      className={cn(
+                        'h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
+                        item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
+                      )}
                     />
                   ) : (
                     <img
@@ -614,7 +644,10 @@ export function ProfileTab() {
                       alt=""
                       loading="lazy"
                       onError={() => handleMediaError(item)}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                      className={cn(
+                        'h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
+                        item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
+                      )}
                     />
                   )
                 ) : (
@@ -630,6 +663,30 @@ export function ProfileTab() {
                   </span>
                 ) : null}
                 <span className="pointer-events-none absolute inset-0 bg-background/0 transition-colors group-hover:bg-background/35" />
+                {item.feed_blurred && !revealedIds.has(item.id) ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      revealItem(item)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        revealItem(item)
+                      }
+                    }}
+                    className="absolute inset-0 z-10 flex cursor-pointer flex-col items-center justify-center gap-1 bg-background/25 text-center text-foreground backdrop-blur-[2px]"
+                  >
+                    <Eye className="h-5 w-5" />
+                    <span className="rounded-full bg-background/80 px-2 py-1 text-[10px] font-semibold">
+                      {item.is_adult_content ? 'Показать 18+' : 'Показать'}
+                    </span>
+                  </span>
+                ) : null}
                 <span className="pointer-events-none absolute left-1 top-1 flex items-center gap-0.5 rounded bg-background/80 px-1 py-0.5 text-[9px] font-semibold text-foreground backdrop-blur">
                   <Heart className="h-3 w-3" />
                   {formatCompactNumber(item.likes_count)}
@@ -729,7 +786,10 @@ export function ProfileTab() {
                   handleMediaError(previewItem)
                   setPreviewItem(null)
                 }}
-                className="max-h-full w-auto max-w-full object-contain"
+                className={cn(
+                  'max-h-full w-auto max-w-full object-contain transition-all',
+                  previewItem.feed_blurred && !revealedIds.has(previewItem.id) && 'scale-105 blur-2xl'
+                )}
               />
             )
           ) : (
@@ -737,6 +797,18 @@ export function ProfileTab() {
               <ImageOff className="h-8 w-8" />
             </div>
           )}
+          {previewItem.feed_blurred && !revealedIds.has(previewItem.id) ? (
+            <button
+              type="button"
+              onClick={() => revealItem(previewItem)}
+              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/25 text-foreground"
+            >
+              <Eye className="h-7 w-7" />
+              <span className="rounded-full bg-background/85 px-4 py-2 text-sm font-semibold backdrop-blur">
+                {previewItem.is_adult_content ? 'Показать контент 18+' : 'Показать изображение'}
+              </span>
+            </button>
+          ) : null}
           {previewReferences.length ? (
             <div className="absolute bottom-[4.5rem] left-3 right-3 flex justify-center">
               <div className="flex max-w-full gap-2 overflow-x-auto rounded-xl border border-border/60 bg-background/80 p-2 backdrop-blur">
@@ -769,6 +841,18 @@ export function ProfileTab() {
               <MessageCircle className="h-4 w-4" />
               {previewItem.comments_count || 0}
             </Button>
+            {previewItem.can_blur || previewItem.is_mine ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-full px-4"
+                disabled={!isLive || busyId === previewItem.id}
+                onClick={() => handleToggleBlur(previewItem)}
+              >
+                {previewItem.feed_blurred ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                <span>{previewItem.feed_blurred ? 'Убрать blur' : 'Blur'}</span>
+              </Button>
+            ) : null}
             <Button
               type="button"
               className="h-10 rounded-full px-4"

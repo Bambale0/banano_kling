@@ -129,6 +129,7 @@ export interface Task {
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
   feed_blurred?: boolean
+  is_adult_content?: boolean
 }
 
 export interface TaskDetail extends Task {
@@ -221,6 +222,7 @@ export interface FeedItem {
   feed_prompt_visible?: boolean
   feed_references_visible?: boolean
   feed_blurred?: boolean
+  is_adult_content?: boolean
 }
 
 export interface FeedDeepLink {
