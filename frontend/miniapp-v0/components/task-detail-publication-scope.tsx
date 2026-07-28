@@ -85,7 +85,13 @@ export function TaskDetailPanel() {
       const button = (event.target as HTMLElement | null)?.closest('button') as HTMLButtonElement | null
       if (!button) return
       const label = String(button.textContent || '').replace(/\s+/g, ' ').trim()
-      if (label !== 'В ленту' && label !== 'Убрать из ленты') return
+      const isPublicationAction = button.dataset.publicationAction === 'scope'
+      if (!isPublicationAction &&
+        label !== 'Опубликовать' &&
+        label !== 'Убрать публикацию' &&
+        label !== 'В ленту' &&
+        label !== 'Убрать из ленты'
+      ) return
 
       if (bypassNextClick.current) {
         bypassNextClick.current = false

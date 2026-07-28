@@ -530,6 +530,7 @@ export function TaskDetailPanel() {
                       {canPublishToFeed ? (
                       <Button
                         type="button"
+                        data-publication-action="scope"
                         variant="secondary"
                         disabled={publishBusy}
                         onClick={handlePublish}
