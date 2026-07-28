@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     result_url TEXT,
     result_urls TEXT,
     is_public_feed BOOLEAN DEFAULT FALSE,
+    is_profile_visible BOOLEAN DEFAULT FALSE,
+    is_adult_content BOOLEAN DEFAULT FALSE,
     is_prompt_library BOOLEAN DEFAULT FALSE,
     source_feed_gen_id BIGINT,
     parent_generation_id BIGINT,
@@ -102,12 +104,16 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     shares_count INTEGER DEFAULT 0,
     feed_prompt_visible BOOLEAN DEFAULT FALSE,
     feed_references_visible BOOLEAN DEFAULT FALSE,
+    feed_blurred BOOLEAN DEFAULT FALSE,
+    feed_published_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP,
     updated_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created ON generation_tasks(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed ON generation_tasks(is_public_feed, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_generation_tasks_feed_safe ON generation_tasks(is_public_feed, is_adult_content, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_generation_tasks_profile ON generation_tasks(user_id, is_profile_visible, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_source_feed ON generation_tasks(source_feed_gen_id);
 CREATE INDEX IF NOT EXISTS idx_generation_tasks_parent_status ON generation_tasks(parent_generation_id, status);
 

@@ -38,6 +38,7 @@ from bot.database import (
     get_feed_comments,
     get_feed_generation_card,
     get_feed_generations,
+    get_profile_generation_card,
     get_generation_task_payload,
     get_or_create_user,
     get_partner_overview,
@@ -51,6 +52,9 @@ from bot.database import (
     get_user_feed_generations,
     get_user_feed_summary,
     get_user_stats,
+    generation_adult_content,
+    generation_profile_visible,
+    generation_publication_scope,
     increment_feed_share,
     is_channel_subscription_required,
     like_feed_generation,
@@ -1218,8 +1222,8 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
-                   source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, created_at
+               source_feed_gen_id, feed_prompt_visible, feed_references_visible,
+               feed_blurred, is_profile_visible, is_adult_content, created_at
             FROM generation_tasks
             WHERE telegram_id = ?
             ORDER BY created_at DESC
@@ -1259,6 +1263,10 @@ async def _fetch_recent_tasks(telegram_id: int, limit: int = 8) -> list[dict[str
                 "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
                 "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
                 "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
+                "is_profile_visible": generation_profile_visible(row),
+                "is_adult_content": generation_adult_content(row),
+                "publication_scope": generation_publication_scope(row),
+                "feed_interactions_enabled": generation_publication_scope(row) == "feed",
                 "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
@@ -1289,7 +1297,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ? AND id = ?
                 LIMIT 1
@@ -1303,7 +1311,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
                 SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                        result_url, result_urls, is_public_feed, is_prompt_library,
                        source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                       feed_blurred, created_at, request_data
+                       feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
                 FROM generation_tasks
                 WHERE telegram_id = ?
                   AND EXISTS (
@@ -1357,6 +1365,10 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
         "feed_prompt_visible": bool(row["feed_prompt_visible"]) if "feed_prompt_visible" in row.keys() else False,
         "feed_references_visible": bool(row["feed_references_visible"]) if "feed_references_visible" in row.keys() else False,
         "feed_blurred": bool(row["feed_blurred"]) if "feed_blurred" in row.keys() else False,
+        "is_profile_visible": generation_profile_visible(row),
+        "is_adult_content": generation_adult_content(row),
+        "publication_scope": generation_publication_scope(row),
+        "feed_interactions_enabled": generation_publication_scope(row) == "feed",
         "created_at": row["created_at"],
         "request_data": request_data,
     }
@@ -3027,7 +3039,7 @@ async def miniapp_feed_item(request: web.Request) -> web.Response:
             init_data,
             body.get("start_param_fallback"),
         )
-        card = await get_feed_generation_card(
+        card = await get_profile_generation_card(
             gen_id,
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
@@ -3056,6 +3068,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
             ctx["user"].id,
             limit=limit,
             offset=offset,
+            profile_visible_only=True,
             include_unavailable=True,
         )
         is_admin = config.is_admin(telegram_id)
@@ -3127,7 +3140,13 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         if not author:
             return web.json_response({"ok": False, "error": "Профиль не найден"}, status=404)
 
-        feed = await get_user_feed_generations(author.id, limit=limit, offset=offset, include_unavailable=True)
+        feed = await get_user_feed_generations(
+            author.id,
+            limit=limit,
+            offset=offset,
+            profile_visible_only=True,
+            include_unavailable=True,
+        )
         feed_summary = await get_user_feed_summary(author.id)
         is_mine = bool(author.id == ctx["user"].id)
         is_admin = config.is_admin(telegram_id)
@@ -3183,6 +3202,13 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
                 body.get("blurred", body.get("feed_blurred")),
                 False,
             )
+        publication_scope = str(
+            body.get("publication_scope", body.get("scope", "feed")) or "feed"
+        ).strip().lower()
+        adult_content = _payload_bool(
+            body.get("adult_content", body.get("is_adult_content")),
+            False,
+        )
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         card = await share_to_feed(
             gen_id,
@@ -3190,6 +3216,8 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             prompt_visible=prompt_visible,
             references_visible=references_visible,
             blurred=blurred,
+            publication_scope=publication_scope,
+            adult_content=adult_content,
         )
         if not card:
             logger.warning(
@@ -3200,7 +3228,7 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
                 sorted(body.keys()),
             )
             return web.json_response(
-                {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
+                {"ok": False, "error": "Нельзя опубликовать эту генерацию"},
                 status=403,
             )
         try:
@@ -3281,10 +3309,15 @@ async def miniapp_feed_like(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        card = await like_feed_generation(gen_id, ctx["user"].id)
+        card = await like_feed_generation(
+            gen_id,
+            ctx["user"].id,
+            allow_profile=allow_profile,
+        )
         if not card:
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App feed like failed")
@@ -3295,10 +3328,11 @@ async def miniapp_feed_share(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        card = await increment_feed_share(gen_id)
+        card = await increment_feed_share(gen_id, allow_profile=allow_profile)
         if not card:
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         me = await request.app["bot"].get_me()
         author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
         is_image_feed_item = str(card.get("gen_type") or "").strip().lower() == "image"
@@ -3347,7 +3381,16 @@ async def miniapp_feed_comments(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         limit = min(max(int(body.get("limit", 80) or 80), 1), 150)
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        card = await getter(
+            gen_id,
+            viewer_user_id=ctx["user"].id,
+            include_unavailable=True,
+        )
+        if not card:
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
         comments = await get_feed_comments(
             gen_id,
             limit=limit,
@@ -3364,14 +3407,21 @@ async def miniapp_feed_comment_add(request: web.Request) -> web.Response:
         init_data = body.get("init_data", "")
         gen_id = body.get("gen_id") or body.get("task_id")
         text = str(body.get("text", "") or "")
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
         _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
-        comment = await add_feed_comment(gen_id, ctx["user"].id, text)
+        comment = await add_feed_comment(
+            gen_id,
+            ctx["user"].id,
+            text,
+            allow_profile=allow_profile,
+        )
         if not comment:
             return web.json_response(
                 {"ok": False, "error": "Комментарий не удалось добавить"},
                 status=400,
             )
-        card = await get_feed_generation_card(
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        card = await getter(
             gen_id,
             viewer_user_id=ctx["user"].id,
             include_unavailable=True,
@@ -3423,10 +3473,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         gen_id = body.get("gen_id") or body.get("task_id")
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         user = ctx["user"]
+        allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
 
-        source = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
+        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
+        source = await getter(gen_id, viewer_user_id=user.id)
         if not source or source.get("gen_type") != "image":
-            return web.json_response({"ok": False, "error": "Пост ленты не найден"}, status=404)
+            return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
 
         source_task = await get_generation_task_payload(source["id"])
         if not source_task:

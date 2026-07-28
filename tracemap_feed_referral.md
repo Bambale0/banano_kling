@@ -27,10 +27,11 @@
 ## 2. Feed publish flow
 
 `completed generation`
--> user chooses share/publish
--> generation row marked public/feed-visible
--> feed card becomes queryable
--> likes/shares/comments/remix routes reference same generation
+-> user chooses `Лента и профиль` or `Только профиль`
+-> `Лента и профиль`: safe publication is visible on both surfaces
+-> `Только профиль`: publication never enters the general feed
+-> content marked `18+` is forced to `Только профиль` and blur
+-> profile-only likes/comments/shares/remix are available from the author profile; the general feed still never lists the publication
 
 ## 3. Prompt library flow
 

@@ -378,7 +378,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return
           }
           setFeedDeepLink({ item, action: 'preview' })
-          setActiveTabState(4)
+          if (item.publication_scope === 'profile') {
+            setViewedProfileCode(String(item.author_referral_code || '').trim().toUpperCase() || null)
+            setActiveTabState(7)
+          } else {
+            setActiveTabState(4)
+          }
           return
         }
 
