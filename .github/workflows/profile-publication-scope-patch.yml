@@ -1,0 +1,53 @@
+name: Apply profile publication scope
+
+on:
+  push:
+    branches:
+      - agent/profile-publication-scope
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: ${{ !contains(github.event.head_commit.message, '[publication-patch]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/profile-publication-scope
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Apply publication scope patch
+        run: python scripts/apply_profile_publication_scope.py
+
+      - name: Python checks
+        run: |
+          python -m py_compile bot/database.py bot/miniapp.py
+          python -m pytest tests/test_database.py -q
+
+      - name: Frontend build
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit generated patch
+        run: |
+          rm -f .github/workflows/profile-publication-scope-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add profile-only and adult publication scopes [publication-patch]"
+          git push origin HEAD:agent/profile-publication-scope
