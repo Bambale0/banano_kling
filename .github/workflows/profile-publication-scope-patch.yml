@@ -33,8 +33,19 @@ jobs:
 
       - name: Python checks
         run: |
-          python -m py_compile bot/database.py bot/miniapp.py
-          python -m pytest tests/test_database.py -q
+          set -o pipefail
+          {
+            python -m py_compile bot/database.py bot/miniapp.py
+            python -m pytest tests/test_database.py -q
+          } 2>&1 | tee /tmp/publication-python-checks.log
+
+      - name: Upload Python diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-python-diagnostics
+          path: /tmp/publication-python-checks.log
+          if-no-files-found: error
 
       - uses: actions/setup-node@v4
         with:
