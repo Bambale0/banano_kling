@@ -525,6 +525,10 @@ async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeyp
     assert card["feed_interactions_enabled"] is False
     assert await database.get_feed_generations(limit=20) == []
 
+    unblurred = await database.set_feed_blurred(card["id"], user.id, False)
+    assert unblurred is not None
+    assert unblurred["feed_blurred"] is True
+
 
 @pytest.mark.asyncio
 async def test_feed_publication_is_visible_in_feed_and_profile(tmp_path, monkeypatch):

@@ -6338,9 +6338,10 @@ async def set_feed_blurred(
         )
         if not row or not generation_profile_visible(row):
             return None
+        next_blurred = True if generation_adult_content(row) else bool(blurred)
         await db.execute(
             "UPDATE generation_tasks SET feed_blurred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (int(bool(blurred)), row["id"]),
+            (int(next_blurred), row["id"]),
         )
         await db.commit()
         internal_id = row["id"]

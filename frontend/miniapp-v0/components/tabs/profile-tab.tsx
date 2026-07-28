@@ -846,11 +846,17 @@ export function ProfileTab() {
                 type="button"
                 variant="secondary"
                 className="h-10 rounded-full px-4"
-                disabled={!isLive || busyId === previewItem.id}
+                disabled={!isLive || previewItem.is_adult_content || busyId === previewItem.id}
                 onClick={() => handleToggleBlur(previewItem)}
               >
                 {previewItem.feed_blurred ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                <span>{previewItem.feed_blurred ? 'Убрать blur' : 'Blur'}</span>
+                <span>
+                  {previewItem.is_adult_content
+                    ? 'Blur обязателен для 18+'
+                    : previewItem.feed_blurred
+                      ? 'Убрать blur'
+                      : 'Blur'}
+                </span>
               </Button>
             ) : null}
             <Button
