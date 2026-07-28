@@ -1,0 +1,65 @@
+name: Apply profile interactions
+
+on:
+  push:
+    branches:
+      - agent/profile-publication-scope
+
+concurrency:
+  group: profile-interactions-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: ${{ !contains(github.event.head_commit.message, '[profile-interactions-patch]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/profile-publication-scope
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Apply profile interaction patch
+        run: python scripts/apply_profile_interactions.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio pytest-mock
+          if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
+
+      - name: Python checks
+        run: |
+          python -m py_compile bot/database.py bot/miniapp.py
+          python -m pytest tests/test_database.py -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Frontend build
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit interaction support
+        run: |
+          rm -f .github/workflows/profile-interactions-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: enable profile-only interactions and links [profile-interactions-patch]"
+          git push origin HEAD:agent/profile-publication-scope
