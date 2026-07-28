@@ -70,7 +70,7 @@ from bot.keyboards import (
     get_video_result_keyboard,
     get_video_type_label,
 )
-from bot.miniapp_links import feed_link
+from bot.miniapp_links import feed_bot_link, feed_link
 from bot.services.gemini_service import gemini_service
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gpt_image_service import gpt_image_service
@@ -1664,7 +1664,18 @@ def _published_feed_link(bot_username: str | None, card: dict) -> str:
     )
 
 
-def _published_feed_link_keyboard(url: str) -> types.InlineKeyboardMarkup:
+def _published_feed_bot_link(bot_username: str | None, card: dict) -> str:
+    return feed_bot_link(
+        bot_username,
+        card["id"],
+        card.get("author_referral_code"),
+    )
+
+
+def _published_feed_link_keyboard(
+    url: str,
+    bot_url: str,
+) -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1675,7 +1686,13 @@ def _published_feed_link_keyboard(url: str) -> types.InlineKeyboardMarkup:
             ],
             [
                 types.InlineKeyboardButton(
-                    text="🔗 Открыть работу",
+                    text="🤖 Открыть работу в боте",
+                    url=bot_url,
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="📱 Открыть работу в Mini App",
                     url=url,
                 )
             ]
@@ -1941,10 +1958,14 @@ async def confirm_publish_image_result_to_feed(
     await _refresh_feed_result_reply_markup(callback, task.task_id)
     me = await callback.bot.get_me()
     publication_url = _published_feed_link(me.username, card)
+    publication_bot_url = _published_feed_bot_link(me.username, card)
     await callback.message.answer(
         "✅ Работа опубликована в общей ленте.\n\n"
         f"🔗 Ссылка на работу:\n{publication_url}",
-        reply_markup=_published_feed_link_keyboard(publication_url),
+        reply_markup=_published_feed_link_keyboard(
+            publication_url,
+            publication_bot_url,
+        ),
         disable_web_page_preview=True,
     )
     await callback.answer("Готово — ссылка отправлена сообщением")
