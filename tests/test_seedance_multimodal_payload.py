@@ -22,14 +22,22 @@ class CaptureSeedanceService(SeedanceService):
 
 def test_seedance_combines_identity_image_and_motion_video() -> None:
     service = CaptureSeedanceService()
+    prompt = (
+        "девушка @image1 одета в @image2, движения танца с @video1. "
+        "Атмосфера и фон из @image3"
+    )
 
     result = asyncio.run(
         service.generate_video(
-            prompt="Replace the performer with the person from the photo.",
+            prompt=prompt,
             duration=8,
             aspect_ratio="9:16",
             resolution="1080p",
-            reference_image_urls=["https://cdn.test/person.jpg"],
+            reference_image_urls=[
+                "https://cdn.test/person.jpg",
+                "https://cdn.test/outfit.jpg",
+                "https://cdn.test/location.jpg",
+            ],
             reference_video_urls=["https://cdn.test/dance.mp4"],
         )
     )
@@ -38,19 +46,16 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
     payload = service.last_payload
     assert payload["model"] == "bytedance/seedance-2"
     assert payload["input"]["reference_image_urls"] == [
-        "https://cdn.test/person.jpg"
+        "https://cdn.test/person.jpg",
+        "https://cdn.test/outfit.jpg",
+        "https://cdn.test/location.jpg",
     ]
     assert payload["input"]["reference_video_urls"] == [
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    assert "Reference Image 1 (@Image1) is the PRIMARY PERSON" in payload["input"][
-        "prompt"
-    ]
-    assert "Reference Video 1 (@Video1)" in payload["input"]["prompt"]
-    assert "do not keep the actor from a reference video" in payload["input"][
-        "prompt"
-    ]
+    assert payload["input"]["prompt"] == prompt
+    assert "IDENTITY AND REFERENCE ROLE LOCK" not in payload["input"]["prompt"]
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:

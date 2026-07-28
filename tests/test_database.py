@@ -500,7 +500,7 @@ async def test_profile_only_publication_is_hidden_from_general_feed(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeypatch):
+async def test_adult_content_is_profile_only_but_blur_is_user_controlled(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_PATH", str(tmp_path / "adult_scope.db"))
     await database.init_db()
     user = await database.get_or_create_user(440002)
@@ -521,13 +521,16 @@ async def test_adult_content_is_forced_to_blurred_profile_only(tmp_path, monkeyp
     assert card is not None
     assert card["publication_scope"] == "profile"
     assert card["is_adult_content"] is True
-    assert card["feed_blurred"] is True
+    assert card["feed_blurred"] is False
     assert card["feed_interactions_enabled"] is False
     assert await database.get_feed_generations(limit=20) == []
 
+    blurred = await database.set_feed_blurred(card["id"], user.id, True)
+    assert blurred is not None
+    assert blurred["feed_blurred"] is True
     unblurred = await database.set_feed_blurred(card["id"], user.id, False)
     assert unblurred is not None
-    assert unblurred["feed_blurred"] is True
+    assert unblurred["feed_blurred"] is False
 
 
 @pytest.mark.asyncio

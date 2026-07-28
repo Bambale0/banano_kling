@@ -6281,8 +6281,6 @@ async def share_to_feed(
 
         published_at = datetime.utcnow().isoformat(sep=" ", timespec="microseconds")
         next_blurred = generation_feed_blurred(row) if blurred is None else bool(blurred)
-        if adult_content:
-            next_blurred = True
         is_public_feed = normalized_scope == "feed" and not adult_content
         await db.execute(
             """
@@ -6335,7 +6333,7 @@ async def set_feed_blurred(
         )
         if not row or not generation_profile_visible(row):
             return None
-        next_blurred = True if generation_adult_content(row) else bool(blurred)
+        next_blurred = bool(blurred)
         await db.execute(
             "UPDATE generation_tasks SET feed_blurred = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (int(next_blurred), row["id"]),

@@ -449,7 +449,6 @@ export function TaskDetailPanel() {
                           const next = !current
                           if (next) {
                             setPublicationScope('profile')
-                            setFeedBlurred(true)
                           }
                           return next
                         })
@@ -465,7 +464,7 @@ export function TaskDetailPanel() {
                       <span>
                         <span className="block text-xs font-semibold">Контент 18+</span>
                         <span className="mt-0.5 block text-[11px] leading-relaxed">
-                          Публикуется только в профиле и всегда скрывается блюром. В общей ленте его не будет.
+                          Публикуется только в профиле. Blur включается отдельно по вашему выбору.
                         </span>
                       </span>
                     </button>

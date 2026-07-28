@@ -27,54 +27,6 @@ def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
     return cleaned
 
 
-def _with_seedance_identity_guidance(
-    prompt: str,
-    *,
-    has_first_frame: bool,
-    reference_image_count: int,
-    reference_video_count: int,
-) -> str:
-    """Assign explicit roles to Seedance image and video references.
-
-    Seedance accepts both media types, but without a strict role description it
-    may preserve the actor from the motion video and borrow only attributes from
-    the identity image. The guidance keeps image #1 authoritative for identity
-    and limits video references to choreography, timing and camera motion.
-    """
-    if not (has_first_frame or reference_image_count):
-        return prompt
-
-    guidance_parts = [
-        "IDENTITY AND REFERENCE ROLE LOCK:",
-        "The person visible in every generated shot must be the same recognizable person from the primary uploaded image.",
-        "Preserve that person's face geometry, eyes, nose, lips, skin tone, hairstyle, body proportions, clothing and distinctive details.",
-        "Re-render the performer as that person; do not keep the actor from a reference video and merely recolor hair or replace clothing.",
-        "Do not replace the primary person with a different actor, lookalike or invented character.",
-        "Do not add extra people unless the user explicitly requests them.",
-    ]
-    if has_first_frame:
-        guidance_parts.append(
-            "The first-frame image is the exact visual and identity anchor for the generated video."
-        )
-    elif reference_image_count:
-        guidance_parts.extend(
-            [
-                "Reference Image 1 (@Image1) is the PRIMARY PERSON AND IDENTITY source.",
-                "Any later reference images are secondary cues for outfit, styling, scene or details unless the user states otherwise.",
-            ]
-        )
-    if reference_video_count:
-        guidance_parts.extend(
-            [
-                "Reference Video 1 (@Video1), and any later videos, provide MOTION ONLY: choreography, pose sequence, timing, camera movement and atmosphere.",
-                "Do not preserve or copy the face, body identity, hair or clothing of performers visible in the reference videos.",
-            ]
-        )
-
-    guidance = "\n".join(guidance_parts)
-    return f"{prompt.strip()}\n\n{guidance}" if prompt.strip() else guidance
-
-
 class SeedanceService(KlingService):
     """Wrapper for Bytedance Seedance 2.0 on Kie.ai."""
 
@@ -232,20 +184,13 @@ class SeedanceService(KlingService):
         )
         prepared_reference_image_urls = prepared_image_urls[len(frame_image_urls) :]
 
-        conditioned_prompt = _with_seedance_identity_guidance(
-            prompt,
-            has_first_frame=bool(prepared_frames.get("first_frame_url")),
-            reference_image_count=len(prepared_reference_image_urls),
-            reference_video_count=len(limited_reference_video_urls),
-        )
-
         try:
             normalized_duration = int(duration)
         except (TypeError, ValueError):
             normalized_duration = 5
 
         input_data: dict[str, Any] = {
-            "prompt": conditioned_prompt[: self.MAX_PROMPT_LENGTH],
+            "prompt": prompt[: self.MAX_PROMPT_LENGTH],
             "duration": max(
                 self.MIN_DURATION,
                 min(normalized_duration, self.MAX_DURATION),
