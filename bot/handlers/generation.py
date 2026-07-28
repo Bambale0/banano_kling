@@ -70,6 +70,7 @@ from bot.keyboards import (
     get_video_result_keyboard,
     get_video_type_label,
 )
+from bot.miniapp_links import feed_link
 from bot.services.gemini_service import gemini_service
 from bot.services.gemini_omni_service import gemini_omni_service
 from bot.services.gpt_image_service import gpt_image_service
@@ -1655,6 +1656,33 @@ def _parse_feed_publish_payload(value: str) -> tuple[str, bool, bool, bool]:
     return task_id, prompt_visible, references_visible, blurred
 
 
+def _published_feed_link(bot_username: str | None, card: dict) -> str:
+    return feed_link(
+        bot_username,
+        card["id"],
+        card.get("author_referral_code"),
+    )
+
+
+def _published_feed_link_keyboard(url: str) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="📋 Скопировать ссылку",
+                    copy_text=types.CopyTextButton(text=url),
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="🔗 Открыть работу",
+                    url=url,
+                )
+            ]
+        ]
+    )
+
+
 def _publication_disclaimer_text(kind: str) -> str:
     target = "ленту работ" if kind == "feed" else "ленту промптов"
     return (
@@ -1911,7 +1939,15 @@ async def confirm_publish_image_result_to_feed(
         logger.exception("Failed to invalidate feed caches after publish")
 
     await _refresh_feed_result_reply_markup(callback, task.task_id)
-    await callback.answer("Готово — появится в Mini App > Лента.")
+    me = await callback.bot.get_me()
+    publication_url = _published_feed_link(me.username, card)
+    await callback.message.answer(
+        "✅ Работа опубликована в общей ленте.\n\n"
+        f"🔗 Ссылка на работу:\n{publication_url}",
+        reply_markup=_published_feed_link_keyboard(publication_url),
+        disable_web_page_preview=True,
+    )
+    await callback.answer("Готово — ссылка отправлена сообщением")
 
 
 @router.callback_query(F.data.startswith("feedrm_"))
