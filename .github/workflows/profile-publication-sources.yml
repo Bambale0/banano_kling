@@ -49,9 +49,20 @@ jobs:
 
       - name: Python checks
         run: |
-          python -m py_compile bot/database.py bot/miniapp.py
-          ruff check bot/database.py bot/miniapp.py tests/test_database.py --ignore=E402,F403,F405,E501
-          python -m pytest tests/test_database.py -q
+          set -o pipefail
+          {
+            python -m py_compile bot/database.py bot/miniapp.py
+            ruff check bot/database.py bot/miniapp.py tests/test_database.py --ignore=E402,F403,F405,E501
+            python -m pytest tests/test_database.py -q
+          } 2>&1 | tee /tmp/publication-sources-python.log
+
+      - name: Upload Python diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-sources-python-diagnostics
+          path: /tmp/publication-sources-python.log
+          if-no-files-found: error
 
       - uses: actions/setup-node@v4
         with:
