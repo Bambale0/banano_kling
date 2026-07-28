@@ -46,6 +46,52 @@ def load_publication_patch():
         'f"{path}: expected 2 task-detail SELECT anchors, got {text.count(old)}"',
         1,
     )
+
+    old_profile_query_patch = '''    text = read(path)
+    text, count = re.subn(
+        r'''(get_user_feed_generations\\(\\n\\s+user\\.id,\\n\\s+limit=limit,\\n\\s+offset=offset,\\n)(\\s+include_unavailable=True,)''',
+        r'''\\1            profile_visible_only=True,
+\\2''',
+        text,
+        count=2,
+        flags=re.S,
+    )
+    if count != 2:
+        raise AssertionError(f"{path}: expected two profile feed calls, got {count}")
+    write(path, text)
+'''
+    new_profile_query_patch = '''    replace_once(
+        path,
+        '''        feed = await get_user_feed_generations(
+            ctx["user"].id,
+            limit=limit,
+            offset=offset,
+            include_unavailable=True,
+        )''',
+        '''        feed = await get_user_feed_generations(
+            ctx["user"].id,
+            limit=limit,
+            offset=offset,
+            profile_visible_only=True,
+            include_unavailable=True,
+        )''',
+    )
+    replace_once(
+        path,
+        '''        feed = await get_user_feed_generations(author.id, limit=limit, offset=offset, include_unavailable=True)''',
+        '''        feed = await get_user_feed_generations(
+            author.id,
+            limit=limit,
+            offset=offset,
+            profile_visible_only=True,
+            include_unavailable=True,
+        )''',
+    )
+'''
+    if old_profile_query_patch not in source:
+        raise AssertionError("publication patch profile-query block not found")
+    source = source.replace(old_profile_query_patch, new_profile_query_patch, 1)
+
     patch_path.write_text(source, encoding="utf-8")
     return import_module("scripts.apply_profile_publication_scope")
 
