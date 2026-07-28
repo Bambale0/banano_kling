@@ -96,6 +96,7 @@ from bot.utils.help_texts import (
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
+    apply_video_reference_cost,
     choose_video_reference_model,
     get_max_video_image_references,
     get_max_video_references,
@@ -2721,9 +2722,14 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
     if task.user_id == user.id:
         reference_images = _source_reference_images_from_request(request_data)
         v_image_url = request_data.get("v_image_url")
+        reference_videos = normalize_reference_urls(
+            request_data.get("v_reference_videos", []),
+            max_count=get_max_video_references(v_model),
+        )
     else:
         reference_images = []
         v_image_url = None
+        reference_videos = []
 
     reference_images, _ = _available_reference_images(reference_images)
 
@@ -2758,7 +2764,7 @@ async def quick_repeat_video_result(callback: types.CallbackQuery, state: FSMCon
             v_ratio=v_ratio,
             v_image_url=v_image_url,
             reference_images=reference_images,
-            v_reference_videos=[],
+            v_reference_videos=reference_videos,
             user_prompt=prompt,
             v_mode=request_data.get("v_mode", "720p"),
             grok_mode=request_data.get("grok_mode", "normal"),
@@ -7031,6 +7037,7 @@ async def run_no_preset_video_from_callback(
                     "v_ratio": v_ratio,
                     "v_image_url": v_image_url,
                     "reference_images": reference_images,
+                    "v_reference_videos": v_reference_videos,
                     "v_mode": data.get("v_mode", "720p"),
                 },
             )
@@ -7210,6 +7217,7 @@ async def run_no_preset_video_from_message(
     cost = preset_manager.get_video_cost_with_quality(
         v_model, v_duration, pricing_quality
     )
+    cost = apply_video_reference_cost(v_model, cost, video_urls)
 
     user = await get_or_create_user(message.from_user.id)
     is_admin = config.is_admin(message.from_user.id)

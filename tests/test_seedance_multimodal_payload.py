@@ -6,6 +6,7 @@ from bot.handlers.seedance_multimodal_compat import (
 )
 from bot.handlers.generation import _seedance_media_inputs
 from bot.services.seedance_service import SeedanceService
+from bot.video_reference_policy import apply_video_reference_cost
 
 
 class CaptureSeedanceService(SeedanceService):
@@ -160,3 +161,25 @@ def test_seedance_transport_preserves_all_photo_reference_order() -> None:
         "https://cdn.test/location.jpg",
     ]
     assert videos == ["https://cdn.test/dance.mp4"]
+
+
+def test_seedance_video_reference_doubles_price_once() -> None:
+    assert apply_video_reference_cost(
+        "seedance_2",
+        7,
+        ["https://cdn.test/a.mp4"],
+    ) == 14
+    assert apply_video_reference_cost(
+        "bytedance/seedance-2",
+        7,
+        ["https://cdn.test/a.mp4", "https://cdn.test/b.mp4"],
+    ) == 14
+
+
+def test_seedance_without_video_reference_keeps_base_price() -> None:
+    assert apply_video_reference_cost("seedance_2", 7, []) == 7
+    assert apply_video_reference_cost(
+        "gemini_omni_video",
+        7,
+        ["https://cdn.test/a.mp4"],
+    ) == 7

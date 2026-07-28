@@ -140,6 +140,7 @@ from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
+    apply_video_reference_cost,
     get_max_video_image_references,
     get_max_video_references,
     normalize_reference_urls,
@@ -1625,6 +1626,7 @@ async def _launch_video_generation_task(
     result_status, error_message = _classify_video_generation_result(result)
     pricing_quality = _video_pricing_quality(model, veo_resolution, omni_resolution)
     cost = preset_manager.get_video_cost_with_quality(model, duration, pricing_quality)
+    cost = apply_video_reference_cost(model, cost, video_references)
     task_type = (
         "audio"
         if model == "gemini_omni_audio"
@@ -4132,6 +4134,11 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         )
         cost = preset_manager.get_video_cost_with_quality(
             effective_model, duration, pricing_quality
+        )
+        cost = apply_video_reference_cost(
+            effective_model,
+            cost,
+            video_references,
         )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, cost):
