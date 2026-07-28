@@ -704,25 +704,11 @@ export function ProfileTab() {
                 <span className="pointer-events-none absolute inset-0 bg-background/0 transition-colors group-hover:bg-background/35" />
                 {item.feed_blurred && !revealedIds.has(item.id) ? (
                   <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      revealItem(item)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        revealItem(item)
-                      }
-                    }}
-                    className="absolute inset-0 z-10 flex cursor-pointer flex-col items-center justify-center gap-1 bg-background/25 text-center text-foreground backdrop-blur-[2px]"
+                    className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-background/25 text-center text-foreground backdrop-blur-[2px]"
                   >
                     <Eye className="h-5 w-5" />
                     <span className="rounded-full bg-background/80 px-2 py-1 text-[10px] font-semibold">
-                      {item.is_adult_content ? 'Показать 18+' : 'Показать'}
+                      Открыть
                     </span>
                   </span>
                 ) : null}
