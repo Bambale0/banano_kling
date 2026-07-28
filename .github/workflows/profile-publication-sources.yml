@@ -1,0 +1,65 @@
+name: Commit profile publication sources
+
+on:
+  pull_request:
+    branches:
+      - tanyapi
+
+concurrency:
+  group: profile-publication-sources-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/profile-publication-scope
+          fetch-depth: 0
+          show-progress: false
+
+      - name: Apply missing source changes
+        run: python scripts/apply_profile_publication_sources.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio pytest-mock ruff
+          if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
+
+      - name: Python checks
+        run: |
+          python -m py_compile bot/database.py bot/miniapp.py
+          ruff check bot/database.py bot/miniapp.py tests/test_database.py --ignore=E402,F403,F405,E501
+          python -m pytest tests/test_database.py -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Frontend build
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit final source diff
+        run: |
+          rm -f .github/workflows/profile-publication-sources.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: complete profile-only publication flow [publication-sources]"
+          git push origin HEAD:agent/profile-publication-scope
