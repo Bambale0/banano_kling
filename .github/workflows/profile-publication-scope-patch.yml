@@ -21,24 +21,26 @@ jobs:
         with:
           ref: agent/profile-publication-scope
           fetch-depth: 0
+          show-progress: false
+
+      - name: Apply publication scope patch
+        run: |
+          python scripts/apply_profile_publication_scope.py 2>&1 | tee /tmp/publication-patch.log
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Python checks
+        run: |
+          python -m py_compile bot/database.py bot/miniapp.py
+          python -m pytest tests/test_database.py -q
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
-
-      - name: Apply publication scope patch
-        run: python scripts/apply_profile_publication_scope.py
-
-      - name: Python checks
-        run: |
-          python -m py_compile bot/database.py bot/miniapp.py
-          python -m pytest tests/test_database.py -q
 
       - name: Frontend build
         working-directory: frontend/miniapp-v0
