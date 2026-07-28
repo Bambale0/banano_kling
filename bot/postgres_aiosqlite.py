@@ -42,6 +42,7 @@ _BOOL_COLUMNS = (
     "attached",
     "has_paid",
     "is_active",
+    "is_adult_content",
     "is_public",
     "is_public_feed",
     "is_prompt_library",
@@ -516,6 +517,13 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
             )
             await cur.execute(
                 'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "feed_published_at" TIMESTAMP'
+            )
+            await cur.execute(
+                'ALTER TABLE "generation_tasks" ADD COLUMN IF NOT EXISTS "is_adult_content" BOOLEAN DEFAULT FALSE'
+            )
+            await cur.execute(
+                'CREATE INDEX IF NOT EXISTS "idx_generation_tasks_feed_safe" '
+                'ON "generation_tasks"("is_public_feed", "is_adult_content", "status", "created_at" DESC)'
             )
             # Новые таблицы: referral_events, partner_commissions
             await cur.execute("""
