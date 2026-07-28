@@ -92,6 +92,14 @@ def load_publication_patch():
         raise AssertionError("publication patch profile-query block not found")
     source = source.replace(old_profile_query_patch, new_profile_query_patch, 1)
 
+    source = source.replace(
+        '''    if text.count(old) != 2:
+        raise AssertionError(f"{path}: expected two preview media anchors, got {text.count(old)}")''',
+        '''    if text.count(old) != 1:
+        raise AssertionError(f"{path}: expected one preview media anchor, got {text.count(old)}")''',
+        1,
+    )
+
     patch_path.write_text(source, encoding="utf-8")
     return import_module("scripts.apply_profile_publication_scope")
 
