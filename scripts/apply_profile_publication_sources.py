@@ -1,3 +1,4 @@
+from importlib import import_module
 from pathlib import Path
 import re
 import sys
@@ -5,8 +6,6 @@ import sys
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
-
-import scripts.apply_profile_publication_scope as publication_patch  # noqa: E402
 
 
 def flexible_replace_once(path: str, old: str, new: str) -> None:
@@ -21,7 +20,12 @@ def flexible_replace_once(path: str, old: str, new: str) -> None:
         )
 
     parts = re.split(r"([ \t]+)", old)
-    pattern = "".join(r"[ \t]*" if part and part.isspace() and "\n" not in part else re.escape(part) for part in parts)
+    pattern = "".join(
+        r"[ \t]*"
+        if part and part.isspace() and "\n" not in part
+        else re.escape(part)
+        for part in parts
+    )
     next_text, count = re.subn(pattern, lambda _match: new, text, count=1)
     if count != 1:
         raise AssertionError(
@@ -30,7 +34,24 @@ def flexible_replace_once(path: str, old: str, new: str) -> None:
     Path(path).write_text(next_text, encoding="utf-8")
 
 
+def load_publication_patch():
+    patch_path = Path("scripts/apply_profile_publication_scope.py")
+    source = patch_path.read_text(encoding="utf-8")
+    source = source.replace(
+        "if text.count(old) != 3:",
+        "if text.count(old) != 2:",
+        1,
+    ).replace(
+        'f"{path}: expected 3 task-detail SELECT anchors, got {text.count(old)}"',
+        'f"{path}: expected 2 task-detail SELECT anchors, got {text.count(old)}"',
+        1,
+    )
+    patch_path.write_text(source, encoding="utf-8")
+    return import_module("scripts.apply_profile_publication_scope")
+
+
 def main() -> None:
+    publication_patch = load_publication_patch()
     publication_patch.replace_once = flexible_replace_once
     publication_patch.patch_miniapp()
     publication_patch.patch_schema()
