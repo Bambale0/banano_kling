@@ -5,7 +5,10 @@ from bot.handlers.seedance_multimodal_compat import (
     seedance_needs_multimodal_promotion,
 )
 from bot.handlers.generation import _seedance_media_inputs
-from bot.services.seedance_service import SeedanceService
+from bot.services.seedance_service import (
+    SeedanceService,
+    apply_fictional_character_context,
+)
 from bot.video_reference_policy import apply_video_reference_cost
 
 
@@ -56,8 +59,28 @@ def test_seedance_combines_identity_image_and_motion_video() -> None:
         "https://cdn.test/dance.mp4"
     ]
     assert "first_frame_url" not in payload["input"]
-    assert payload["input"]["prompt"] == prompt
+    assert payload["input"]["prompt"].endswith(prompt)
+    assert "вымышленные совершеннолетние персонажи" in payload["input"]["prompt"]
+    assert "@image1" in payload["input"]["prompt"]
+    assert "@image2" in payload["input"]["prompt"]
+    assert "@image3" in payload["input"]["prompt"]
+    assert "@video1" in payload["input"]["prompt"]
     assert "IDENTITY AND REFERENCE ROLE LOCK" not in payload["input"]["prompt"]
+
+
+def test_seedance_keeps_explicit_fictional_character_prompt_unchanged() -> None:
+    prompt = "Вымышленный персонаж @image1 повторяет движения @video1"
+
+    assert apply_fictional_character_context(prompt) == prompt
+
+
+def test_seedance_character_context_is_idempotent() -> None:
+    prompt = "Девушка @image1 танцует"
+
+    prepared = apply_fictional_character_context(prompt)
+
+    assert apply_fictional_character_context(prepared) == prepared
+    assert prepared.count("вымышленные совершеннолетние персонажи") == 1
 
 
 def test_seedance_normalizes_duplicate_first_frame_from_old_repeat_payload() -> None:

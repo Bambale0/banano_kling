@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
@@ -12,6 +13,26 @@ from bot.services.kling_service import KlingService
 from bot.services.media_input_utils import image_sources_to_provider_safe_png_urls
 
 logger = logging.getLogger(__name__)
+
+_PERSON_WORD_RE = re.compile(
+    r"\b(?:девушк\w*|женщин\w*|мужчин\w*|парн\w*|girl|woman|women|man|men|person|people)\b",
+    re.IGNORECASE,
+)
+_FICTIONAL_CHARACTER_RE = re.compile(
+    r"\b(?:персонаж\w*|вымышлен\w*|character(?:s)?|fictional)\b",
+    re.IGNORECASE,
+)
+_FICTIONAL_CHARACTER_CONTEXT = (
+    "Все упомянутые люди — вымышленные совершеннолетние персонажи, "
+    "а не реальные люди."
+)
+
+
+def apply_fictional_character_context(prompt: str) -> str:
+    """Clarify human subjects for Seedance without touching media aliases."""
+    if _PERSON_WORD_RE.search(prompt) and not _FICTIONAL_CHARACTER_RE.search(prompt):
+        return f"{_FICTIONAL_CHARACTER_CONTEXT}\n\n{prompt}"
+    return prompt
 
 
 def _clean_unique_urls(values: Iterable[str] | None) -> list[str]:
@@ -189,8 +210,9 @@ class SeedanceService(KlingService):
         except (TypeError, ValueError):
             normalized_duration = 5
 
+        seedance_prompt = apply_fictional_character_context(prompt)
         input_data: dict[str, Any] = {
-            "prompt": prompt[: self.MAX_PROMPT_LENGTH],
+            "prompt": seedance_prompt[: self.MAX_PROMPT_LENGTH],
             "duration": max(
                 self.MIN_DURATION,
                 min(normalized_duration, self.MAX_DURATION),
