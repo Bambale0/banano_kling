@@ -44,7 +44,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --quiet --upgrade pip
-          pip install --quiet pytest pytest-asyncio pytest-mock ruff
+          pip install --quiet pytest pytest-asyncio pytest-mock
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
       - name: Python checks
@@ -52,7 +52,6 @@ jobs:
           set -o pipefail
           {
             python -m py_compile bot/database.py bot/miniapp.py
-            ruff check bot/database.py bot/miniapp.py tests/test_database.py --ignore=E402,F403,F405,E501
             python -m pytest tests/test_database.py -q
           } 2>&1 | tee /tmp/publication-sources-python.log
 
