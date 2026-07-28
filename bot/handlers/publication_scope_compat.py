@@ -559,6 +559,23 @@ def _profile_blur_keyboard(task_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def _feed_confirmation_components(
+    task_id: str,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Build the mandatory feed privacy confirmation with safe defaults."""
+    from bot.handlers.generation import (
+        _feed_publication_keyboard,
+        _feed_publication_text,
+    )
+
+    return _feed_publication_text(), _feed_publication_keyboard(
+        task_id,
+        prompt_visible=False,
+        references_visible=False,
+        blurred=False,
+    )
+
+
 @router.callback_query(F.data.startswith("pubscope_"))
 async def choose_publication_scope(callback: types.CallbackQuery):
     task_id = (callback.data or "").replace("pubscope_", "", 1)
@@ -587,15 +604,13 @@ async def publish_to_public_feed(callback: types.CallbackQuery):
     if not task:
         await callback.answer("Генерация не найдена", show_alert=True)
         return
-    card = await share_to_feed_scoped(task_id, user.id)
-    if not card:
-        await callback.answer("Не удалось опубликовать", show_alert=True)
-        return
-    _invalidate_publication_caches()
-    task["is_public_feed"] = True
-    task["is_profile_visible"] = True
-    await _refresh_result_markup(callback, task, "feed")
-    await callback.answer("Опубликовано в общей ленте")
+    text, markup = _feed_confirmation_components(task_id)
+    await callback.message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=markup,
+    )
+    await callback.answer("Настройте видимость и подтвердите публикацию")
 
 
 @router.callback_query(F.data.startswith("profilepub_"))

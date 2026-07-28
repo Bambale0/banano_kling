@@ -68,6 +68,24 @@ def test_profile_publication_requires_explicit_blur_choice():
     ]
 
 
+def test_feed_publication_requires_explicit_privacy_confirmation():
+    publication_scope = _load_publication_scope_module()
+
+    text, markup = publication_scope._feed_confirmation_components("task-1")
+    buttons = [button for row in markup.inline_keyboard for button in row]
+
+    assert "Prompt: <code>скрыт</code>" in text
+    assert "Референсы: <code>скрыты</code>" in text
+    assert "Blur: <code>выключен</code>" in text
+    assert [(button.text, button.callback_data) for button in buttons] == [
+        ("🔒 Prompt", "feedpubopt_task-1_1_0_0"),
+        ("🔒 Референсы", "feedpubopt_task-1_0_1_0"),
+        ("👁 Blur", "feedpubopt_task-1_0_0_1"),
+        ("✅ Опубликовать", "feedpubok_task-1_0_0_0"),
+        ("❌ Отмена", "ignore"),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     if db_backend.is_postgres():
