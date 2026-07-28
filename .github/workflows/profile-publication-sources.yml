@@ -24,7 +24,17 @@ jobs:
           show-progress: false
 
       - name: Apply missing source changes
-        run: python scripts/apply_profile_publication_sources.py
+        run: |
+          set -o pipefail
+          python scripts/apply_profile_publication_sources.py 2>&1 | tee /tmp/publication-sources-patch.log
+
+      - name: Upload patch diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-sources-patch-diagnostics
+          path: /tmp/publication-sources-patch.log
+          if-no-files-found: error
 
       - uses: actions/setup-python@v5
         with:
