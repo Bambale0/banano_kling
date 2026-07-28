@@ -22,9 +22,18 @@ def install_publication_scope_postgres_compat() -> None:
             *postgres_backend._BOOL_COLUMNS,
             "is_profile_visible",
         )
-        postgres_backend._bool_column_names.cache_clear()
-        postgres_backend._bool_assignment_param_indexes.cache_clear()
-        postgres_backend._bool_insert_param_indexes.cache_clear()
+        for helper_name in (
+            "_bool_column_names",
+            "_bool_assignment_param_indexes",
+            "_bool_insert_param_indexes",
+        ):
+            cache_clear = getattr(
+                getattr(postgres_backend, helper_name),
+                "cache_clear",
+                None,
+            )
+            if cache_clear is not None:
+                cache_clear()
 
     original_helpers = postgres_backend._ensure_postgres_helpers
 
