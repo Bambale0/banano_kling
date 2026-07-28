@@ -17,11 +17,14 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+_KLING_ELEMENT_ALIAS_RE = re.compile(r"@(?P<name>element_[A-Za-z0-9_-]+)\b")
 
 
 class KlingService:
@@ -546,6 +549,12 @@ class KlingService:
             return [], prompt
         built: List[Dict[str, Any]] = []
         enhanced_prompt = prompt
+        prompt_aliases = list(
+            dict.fromkeys(
+                match.group("name")
+                for match in _KLING_ELEMENT_ALIAS_RE.finditer(prompt)
+            )
+        )
         for element in elements:
             if len(built) >= 3:
                 break
@@ -555,7 +564,11 @@ class KlingService:
             urls = list(dict.fromkeys(url for url in urls if url))[:4]
             if len(urls) < 2:
                 continue
-            name = f"element_{len(built)}"
+            name = (
+                prompt_aliases[len(built)]
+                if len(built) < len(prompt_aliases)
+                else f"element_{len(built)}"
+            )
             built.append(
                 {
                     "name": name,
@@ -565,7 +578,8 @@ class KlingService:
                     "element_input_urls": urls,
                 }
             )
-            enhanced_prompt += f" use @{name} as reference"
+            if f"@{name}" not in enhanced_prompt:
+                enhanced_prompt += f" use @{name} as reference"
         return built, enhanced_prompt
 
     async def wait_for_completion(
