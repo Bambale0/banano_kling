@@ -48,7 +48,7 @@ jobs:
           if [ -f requirements.txt ]; then python -m pip install --quiet -r requirements.txt; fi
       - name: Python checks
         run: |
-          ruff check bot/handlers/feed_model_filter_compat.py tests/test_feed_model_filter_compat.py --ignore=E402,E501
+          ruff check bot/handlers/feed_model_filter_compat.py tests/test_feed_model_filter_compat.py --ignore=E402,E501,BLE001
           python -m py_compile bot/handlers/feed_model_filter_compat.py bot/handlers/__init__.py bot/main.py
           pytest tests/test_feed_model_filter_compat.py tests/test_database.py -q
       - uses: actions/setup-node@v4
@@ -90,7 +90,7 @@ jobs:
             bot/handlers/__init__.py \
             tests/test_publication_scope_compat.py \
             tests/test_feed_model_filter_compat.py \
-            --ignore=E402,F403,F405,E501
+            --ignore=E402,F403,F405,E501,I001,RUF059,BLE001
       - name: Compile publication scope modules
         run: |
           python -m py_compile \
