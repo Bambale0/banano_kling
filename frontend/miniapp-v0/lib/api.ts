@@ -497,6 +497,7 @@ export async function deactivatePrompt(promptId: number): Promise<PromptItem | n
 
 export async function fetchFeed(payload: {
   source?: 'recent' | 'top_day' | 'top'
+  model?: string
   limit?: number
   offset?: number
 } = {}): Promise<FeedItem[]> {
@@ -507,6 +508,7 @@ export async function fetchFeed(payload: {
   const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed', {
     init_data: initData,
     source: payload.source || 'recent',
+    model: payload.model || 'banana_pro',
     limit: payload.limit ?? 80,
     offset: payload.offset ?? 0,
   })
