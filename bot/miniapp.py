@@ -1041,6 +1041,18 @@ def _task_prompt_actions_allowed(row_or_payload: Any) -> bool:
     return not _task_has_source_feed(row_or_payload)
 
 
+async def _get_repeat_source_card(
+    gen_id: int,
+    *,
+    viewer_user_id: int,
+) -> dict[str, Any] | None:
+    """Resolve repeat sources published either in the feed or on a profile."""
+    return await get_profile_generation_card(
+        gen_id,
+        viewer_user_id=viewer_user_id,
+    )
+
+
 def _public_result_urls(payload: dict[str, Any]) -> list[str]:
     urls = payload.get("result_urls") or []
     if isinstance(urls, str):
@@ -3624,7 +3636,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
         )
         source_feed_task = None
         if source_feed_gen_id:
-            source_feed_task = await get_feed_generation_card(
+            source_feed_task = await _get_repeat_source_card(
                 source_feed_gen_id,
                 viewer_user_id=user.id,
             )
@@ -3831,7 +3843,7 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
         source_feed_task = None
         source_request_data: dict[str, Any] = {}
         if source_feed_gen_id:
-            source_feed_card = await get_feed_generation_card(
+            source_feed_card = await _get_repeat_source_card(
                 source_feed_gen_id,
                 viewer_user_id=user.id,
             )

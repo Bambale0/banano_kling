@@ -153,6 +153,8 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     )
     assert public_feed == []
     assert [item["task_id"] for item in profile_feed] == ["scope-image-1"]
+    assert await database.get_feed_generation_card(profile_card["id"]) is None
+    assert await database.get_profile_generation_card(profile_card["id"]) is not None
 
     public_card = await publication_scope.share_to_feed_scoped(
         "scope-image-1",
@@ -184,6 +186,7 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
         user.id,
     )
     assert hidden is True
+    assert await database.get_profile_generation_card(profile_card["id"]) is None
     assert await publication_scope.get_user_profile_generations(
         user.id,
         limit=20,

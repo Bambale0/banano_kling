@@ -166,6 +166,10 @@ async def accept_seedance_photo_reference(
         "Первое фото будет главным референсом персонажа.",
         parse_mode="HTML",
     )
+    if data.get("video_flow_step") == "media":
+        await generation_module._show_video_media_screen(message, state, edit=False)
+    else:
+        await generation_module._show_video_creation_screen(message, state, edit=False)
 
 
 @router.message(

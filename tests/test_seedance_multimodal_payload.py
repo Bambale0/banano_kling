@@ -1,9 +1,15 @@
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from bot.handlers.seedance_multimodal_compat import (
     SEEDANCE_MODELS,
+    accept_seedance_photo_reference,
     seedance_needs_multimodal_promotion,
 )
+from bot.handlers import seedance_multimodal_compat
 from bot.handlers.generation import _seedance_media_inputs
 from bot.services.seedance_service import (
     SEEDANCE_IDENTITY_SOURCE_LOCK,
@@ -160,6 +166,47 @@ def test_legacy_image_led_seedance_state_is_promoted_only_when_video_refs_exist(
             "v_reference_videos": ["https://cdn.test/dance.mp4"],
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_seedance_photo_refreshes_media_step_after_upload(monkeypatch) -> None:
+    data = {
+        "v_model": "seedance_2",
+        "v_type": "imgtxt",
+        "video_flow_step": "media",
+        "reference_images": [],
+        "v_reference_videos": [],
+    }
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value=data),
+        update_data=AsyncMock(),
+    )
+    message = SimpleNamespace(answer=AsyncMock())
+    show_media = AsyncMock()
+    show_creation = AsyncMock()
+    monkeypatch.setattr(
+        seedance_multimodal_compat.generation_module,
+        "_save_reference_image_from_message",
+        AsyncMock(return_value=("https://cdn.test/person.jpg", None)),
+    )
+    monkeypatch.setattr(
+        seedance_multimodal_compat.generation_module,
+        "_show_video_media_screen",
+        show_media,
+    )
+    monkeypatch.setattr(
+        seedance_multimodal_compat.generation_module,
+        "_show_video_creation_screen",
+        show_creation,
+    )
+
+    await accept_seedance_photo_reference(message, state)
+
+    state.update_data.assert_awaited_once_with(
+        v_image_url="https://cdn.test/person.jpg"
+    )
+    show_media.assert_awaited_once_with(message, state, edit=False)
+    show_creation.assert_not_awaited()
 
 
 def test_seedance_transport_keeps_primary_photo_with_video_reference() -> None:
