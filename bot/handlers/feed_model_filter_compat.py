@@ -30,6 +30,7 @@ _FILTER_CACHE: dict[
 ] = {}
 _CACHE_TTL_SECONDS = 90.0
 _INSTALLED = False
+_FEED_SOURCE_CODES = {"r", "d", "t"}
 
 
 def normalize_feed_model(value: Any) -> str:
@@ -62,6 +63,54 @@ def _set_selected_model(telegram_id: int, model_id: str) -> str:
     normalized = normalize_feed_model(model_id)
     _SELECTED_MODEL_BY_TELEGRAM_ID[int(telegram_id)] = normalized
     return normalized
+
+
+def _normalize_source_code(value: Any) -> str:
+    source_code = str(value or "r").strip().lower()
+    return source_code if source_code in _FEED_SOURCE_CODES else "r"
+
+
+def _parse_model_picker_callback(data: str | None) -> tuple[str, str, str | None]:
+    parts = str(data or "").split(":", 3)
+    if len(parts) < 3 or parts[0] != "bfm":
+        return "", "r", None
+    action = parts[1]
+    source_code = _normalize_source_code(parts[2])
+    model_id = normalize_feed_model(parts[3]) if len(parts) == 4 and parts[3] else None
+    return action, source_code, model_id
+
+
+def _build_model_picker_markup(
+    *,
+    source_code: str,
+    selected_model: str,
+    model_ids: list[str],
+) -> InlineKeyboardMarkup:
+    source = _normalize_source_code(source_code)
+    selected = normalize_feed_model(selected_model)
+    ordered: list[str] = []
+    for raw_model_id in [DEFAULT_FEED_MODEL, *model_ids]:
+        model_id = normalize_feed_model(raw_model_id)
+        if model_id and model_id not in ordered:
+            ordered.append(model_id)
+
+    buttons = [
+        InlineKeyboardButton(
+            text=("✅ " if model_id == selected else "🧠 ") + _model_label(model_id),
+            callback_data=f"bfm:set:{source}:{model_id}",
+        )
+        for model_id in ordered
+    ]
+    rows = [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад к ленте",
+                callback_data=f"bfm:close:{source}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _cache_key(
@@ -192,11 +241,55 @@ async def _safe_callback_answer(
         logger.debug("Unable to answer feed model callback", exc_info=True)
 
 
+async def _render_selected_feed(
+    callback: types.CallbackQuery,
+    *,
+    source_code: str,
+) -> None:
+    if not callback.from_user or not callback.message:
+        return
+    from bot.handlers import common as common_module
+
+    await common_module._render_feed_by_source(
+        callback.message,
+        telegram_id=callback.from_user.id,
+        source_code=_normalize_source_code(source_code),
+        index=0,
+        photo_index=0,
+        replace_message=False,
+    )
+
+
 @router.callback_query(F.data.startswith("bfm:"))
 async def select_feed_model(callback: types.CallbackQuery) -> None:
     if not callback.from_user or not callback.message:
         return
-    model_id = normalize_feed_model((callback.data or "").split(":", 1)[1])
+
+    action, source_code, model_id = _parse_model_picker_callback(callback.data)
+    if action == "menu":
+        available = await _published_model_ids()
+        selected = _selected_model(callback.from_user.id)
+        markup = _build_model_picker_markup(
+            source_code=source_code,
+            selected_model=selected,
+            model_ids=available,
+        )
+        try:
+            await callback.message.edit_reply_markup(reply_markup=markup)
+        except Exception:
+            logger.debug("Unable to open feed model picker", exc_info=True)
+        await _safe_callback_answer(callback, "Выберите нейросеть")
+        return
+
+    if action == "close":
+        await _safe_callback_answer(callback)
+        await _render_selected_feed(callback, source_code=source_code)
+        return
+
+    if action != "set" or not model_id:
+        await _safe_callback_answer(callback)
+        return
+
     available = await _published_model_ids()
     if model_id not in available:
         await _safe_callback_answer(callback, "Для этой нейросети пока нет работ")
@@ -204,17 +297,7 @@ async def select_feed_model(callback: types.CallbackQuery) -> None:
 
     selected = _set_selected_model(callback.from_user.id, model_id)
     await _safe_callback_answer(callback, _model_label(selected))
-
-    from bot.handlers import common as common_module
-
-    await common_module._render_feed_by_source(
-        callback.message,
-        telegram_id=callback.from_user.id,
-        source_code="r",
-        index=0,
-        photo_index=0,
-        replace_message=False,
-    )
+    await _render_selected_feed(callback, source_code=source_code)
 
 
 def install_feed_model_filter_compat(common_module: Any) -> None:
@@ -266,23 +349,20 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
         **kwargs: Any,
     ) -> InlineKeyboardMarkup:
         markup = await original_build_feed_keyboard(*args, **kwargs)
+        if kwargs.get("profile_code"):
+            return markup
+
         viewer_telegram_id = kwargs.get("viewer_telegram_id")
         selected = _selected_model(viewer_telegram_id)
-        model_ids = await _published_model_ids()
-        model_buttons = [
+        source_code = _normalize_source_code(kwargs.get("source_code"))
+        picker_row = [
             InlineKeyboardButton(
-                text=("✅ " if model_id == selected else "🧠 ")
-                + _model_label(model_id),
-                callback_data=f"bfm:{model_id}",
+                text=f"🧠 Модель: {_model_label(selected)}",
+                callback_data=f"bfm:menu:{source_code}",
             )
-            for model_id in model_ids
-        ]
-        model_rows = [
-            model_buttons[index : index + 2]
-            for index in range(0, len(model_buttons), 2)
         ]
         return InlineKeyboardMarkup(
-            inline_keyboard=[*model_rows, *markup.inline_keyboard]
+            inline_keyboard=[picker_row, *markup.inline_keyboard]
         )
 
     def clear_caches() -> None:
