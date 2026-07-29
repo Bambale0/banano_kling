@@ -14,6 +14,9 @@ from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
 
+from .feed_model_filter_compat import install_feed_model_filter_compat
+from .feed_model_filter_compat import router as feed_model_filter_compat_router
+
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
 # adding a separate "profile only" state next to the public discovery feed.
@@ -22,8 +25,6 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
-from .feed_model_filter_compat import install_feed_model_filter_compat
-from .feed_model_filter_compat import router as feed_model_filter_compat_router
 from .trends_compat import install_trends_compat
 from .trends_compat import router as trends_compat_router
 
