@@ -229,20 +229,42 @@ def _copy_local_upload_to_feed(url: str) -> str | None:
         return None
 
 
-async def persist_feed_result_urls(result_urls: list[str]) -> list[str]:
+def _remove_new_feed_files(urls: list[str]) -> None:
+    """Remove files created by an incomplete all-or-nothing persistence attempt."""
+    for url in urls:
+        path = _local_feed_upload_path(url)
+        if not path:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            (FEED_THUMB_STORAGE_DIR / f"{path.stem}.jpg").unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Feed persist: failed to remove orphaned file %s", path)
+
+
+async def persist_feed_result_urls(
+    result_urls: list[str],
+    *,
+    require_local: bool = False,
+) -> list[str]:
     """
     Принимает список URL результатов генерации.
     Если URL ведёт на эфемерный хост — скачивает локально.
     Если URL уже ведёт на локальный /uploads, копирует в durable feed storage.
+    При require_local=True скачивает любой внешний URL и возвращает пустой
+    список, если хотя бы один файл сохранить не удалось.
     Возвращает список URL (некоторые могут быть заменены на локальные).
     """
     from bot.database import FEED_EPHEMERAL_RESULT_HOSTS, _feed_result_host
 
     persisted: list[str] = []
+    created_urls: list[str] = []
     for url in result_urls:
         local = _copy_local_upload_to_feed(url)
         if local:
             persisted.append(local)
+            if local != url:
+                created_urls.append(local)
             continue
 
         host = _feed_result_host(url)
@@ -250,13 +272,17 @@ async def persist_feed_result_urls(result_urls: list[str]) -> list[str]:
             host == ephemeral or host.endswith(f".{ephemeral}")
             for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS
         )
-        if is_ephemeral:
+        if is_ephemeral or require_local:
             local = await download_to_local(url)
             if local:
                 ensure_feed_thumbnail(local)
                 persisted.append(local)
+                created_urls.append(local)
             else:
-                # Если скачать не удалось — оставляем оригинал
+                if require_local:
+                    _remove_new_feed_files(created_urls)
+                    return []
+                # Для legacy-видео сохраняем прежнее fallback-поведение.
                 persisted.append(url)
         else:
             persisted.append(url)

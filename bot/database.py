@@ -6272,7 +6272,16 @@ async def share_to_feed(
         if result_urls:
             from bot.services.feed_persist import persist_feed_result_urls
 
-            persisted = await persist_feed_result_urls(result_urls)
+            persisted = await persist_feed_result_urls(
+                result_urls,
+                require_local=row["type"] == "image",
+            )
+            if row["type"] == "image" and len(persisted) != len(result_urls):
+                logger.warning(
+                    "Feed publication aborted: image storage failed for generation %s",
+                    row["id"],
+                )
+                return None
             result_url = persisted[0] if persisted else row["result_url"]
             result_urls_json = json.dumps(persisted, ensure_ascii=False) if persisted else None
         else:
@@ -6286,7 +6295,7 @@ async def share_to_feed(
             """
             UPDATE generation_tasks
             SET is_public_feed = ?,
-                is_profile_visible = 1,
+                is_profile_visible = ?,
                 is_adult_content = ?,
                 feed_prompt_visible = ?,
                 feed_references_visible = ?,
@@ -6299,6 +6308,7 @@ async def share_to_feed(
             """,
             (
                 int(is_public_feed),
+                True,
                 int(adult_content),
                 int(bool(prompt_visible)),
                 int(bool(references_visible)),

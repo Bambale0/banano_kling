@@ -1648,11 +1648,11 @@ def _feed_publication_text(
 
 
 def _parse_feed_publish_payload(value: str) -> tuple[str, bool, bool, bool]:
-    parts = str(value or "").split("_")
+    parts = str(value or "").rsplit("_", 3)
     task_id = parts[0] if parts else ""
-    prompt_visible = bool(int(parts[1])) if len(parts) > 1 and parts[1] in {"0", "1"} else False
-    references_visible = bool(int(parts[2])) if len(parts) > 2 and parts[2] in {"0", "1"} else False
-    blurred = bool(int(parts[3])) if len(parts) > 3 and parts[3] in {"0", "1"} else False
+    prompt_visible = bool(int(parts[1])) if len(parts) == 4 and parts[1] in {"0", "1"} else False
+    references_visible = bool(int(parts[2])) if len(parts) == 4 and parts[2] in {"0", "1"} else False
+    blurred = bool(int(parts[3])) if len(parts) == 4 and parts[3] in {"0", "1"} else False
     return task_id, prompt_visible, references_visible, blurred
 
 

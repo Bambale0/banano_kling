@@ -106,7 +106,7 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <head>
-        <script src="/mini-app/telegram-web-app.js" />
+        <script src="/mini-app/telegram-web-app.js" async />
         <script
           id="telegram-early-ready"
           dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}

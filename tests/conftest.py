@@ -1,6 +1,18 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def mock_external_feed_downloads(monkeypatch):
+    """Keep feed database tests deterministic and free of network side effects."""
+    from bot.services import feed_persist
+
+    async def fake_download(_url: str, max_size_bytes: int = 50 * 1024 * 1024):
+        del max_size_bytes
+        return "https://test.example.com/uploads/feed/test-result.png"
+
+    monkeypatch.setattr(feed_persist, "download_to_local", fake_download)
+
+
 @pytest.fixture
 def temp_db_path(tmp_path):
     """Temporary database path"""

@@ -45,6 +45,7 @@ _BOOL_COLUMNS = (
     "is_adult_content",
     "is_public",
     "is_public_feed",
+    "is_profile_visible",
     "is_prompt_library",
     "is_repeat_click",
     "is_self_click",

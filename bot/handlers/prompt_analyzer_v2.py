@@ -8,7 +8,7 @@ import logging
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.handlers.image_analyzer import (
     AUDIO_PROMPT_MIME_TYPES,
@@ -90,6 +90,22 @@ async def _send_prompt_result(message: Message, result: dict) -> None:
         ),
     )
 
+    full_prompt_text = (
+        "PROMPT RU\n"
+        "---------\n"
+        f"{prompt_ru or '—'}\n\n"
+        "PROMPT EN\n"
+        "---------\n"
+        f"{prompt_en or '—'}\n"
+    )
+    await message.answer_document(
+        document=BufferedInputFile(
+            full_prompt_text.encode("utf-8"),
+            filename="photo_prompt_full.txt",
+        ),
+        caption="📝 Полный промпт без сокращений: RU + EN",
+    )
+
 
 @router.callback_query(F.data == "photo_to_prompt")
 async def prompt_analyzer_handler(callback: CallbackQuery, state: FSMContext) -> None:
@@ -103,9 +119,10 @@ async def prompt_analyzer_handler(callback: CallbackQuery, state: FSMContext) ->
         "• голосовое сообщение\n"
         "• сначала голос, затем фотографию\n\n"
         "К фото можно добавить подпись — она будет учтена вместе с изображением.\n\n"
-        "В результате вы получите только две готовые версии:\n"
+        "В результате вы получите две готовые версии и файл с полным текстом:\n"
         "• промпт на русском\n"
-        "• prompt на английском\n\n"
+        "• prompt на английском\n"
+        "• photo_prompt_full.txt без сокращений\n\n"
         "<i>Чем точнее исходная идея или фотография, тем точнее результат.</i>"
     )
     try:

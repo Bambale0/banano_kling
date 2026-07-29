@@ -96,7 +96,7 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_PATH", database_path)
     publication_scope._SCHEMA_READY_PATHS.clear()
 
-    async def keep_result_urls(urls):
+    async def keep_result_urls(urls, **_kwargs):
         return list(urls)
 
     monkeypatch.setattr(feed_persist, "persist_feed_result_urls", keep_result_urls)

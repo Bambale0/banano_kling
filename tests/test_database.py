@@ -9,6 +9,7 @@ import pytest
 
 import bot.database as database
 from bot.services.preset_manager import PresetManager
+from bot.services.feed_persist import persist_feed_result_urls
 
 
 class FakeConnection:
@@ -21,6 +22,25 @@ class FakeConnection:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
+
+
+@pytest.mark.asyncio
+async def test_feed_persistence_downloads_non_ephemeral_photo_when_required(
+    monkeypatch,
+):
+    expected = "https://test.example.com/uploads/feed/downloaded.png"
+    download = AsyncMock(return_value=expected)
+    monkeypatch.setattr("bot.services.feed_persist.download_to_local", download)
+
+    persisted = await persist_feed_result_urls(
+        ["https://permanent-provider.example/result.png"],
+        require_local=True,
+    )
+
+    assert persisted == [expected]
+    download.assert_awaited_once_with(
+        "https://permanent-provider.example/result.png"
+    )
 
 
 @pytest.mark.asyncio
@@ -468,6 +488,47 @@ async def test_share_to_feed_controls_prompt_and_reference_visibility(tmp_path, 
     assert visible_card["references_hidden"] is False
     assert visible_card["feed_prompt_visible"] is True
     assert visible_card["feed_references_visible"] is True
+
+
+@pytest.mark.asyncio
+async def test_share_to_feed_does_not_publish_image_when_storage_fails(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        database,
+        "DATABASE_PATH",
+        str(tmp_path / "feed-storage-failure.db"),
+    )
+    await database.init_db()
+    user = await database.get_or_create_user(332212)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "feed-storage-failure",
+        "image",
+        "banana_pro",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="must stay private",
+        cost=2,
+    )
+    original_url = "https://provider.example/result.png"
+    await database.complete_video_task("feed-storage-failure", original_url)
+
+    async def failed_download(_url):
+        return None
+
+    monkeypatch.setattr(
+        "bot.services.feed_persist.download_to_local",
+        failed_download,
+    )
+
+    assert await database.share_to_feed("feed-storage-failure", user.id) is None
+    task = await database.get_task_by_id("feed-storage-failure")
+    assert task is not None
+    assert task.is_public_feed is False
+    assert task.result_url == original_url
 
 
 @pytest.mark.asyncio
