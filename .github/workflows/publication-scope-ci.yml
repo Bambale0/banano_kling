@@ -8,6 +8,7 @@ on:
       - "bot/handlers/publication_scope_compat.py"
       - "bot/services/publication_scope_postgres_compat.py"
       - "bot/handlers/trends_compat.py"
+      - "bot/handlers/trend_text_upload.py"
       - "bot/handlers/__init__.py"
       - "frontend/miniapp-v0/**"
       - "tests/test_publication_scope_compat.py"
@@ -33,6 +34,7 @@ jobs:
             bot/handlers/publication_scope_compat.py \
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/trends_compat.py \
+            bot/handlers/trend_text_upload.py \
             bot/handlers/__init__.py \
             tests/test_publication_scope_compat.py \
             tests/test_trends_compat.py \
@@ -43,6 +45,7 @@ jobs:
             bot/handlers/publication_scope_compat.py \
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/trends_compat.py \
+            bot/handlers/trend_text_upload.py \
             bot/handlers/__init__.py \
             tests/test_publication_scope_compat.py \
             tests/test_trends_compat.py
