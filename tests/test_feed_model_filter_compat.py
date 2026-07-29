@@ -4,6 +4,8 @@ import pytest
 
 from bot.handlers.feed_model_filter_compat import (
     DEFAULT_FEED_MODEL,
+    _build_model_picker_markup,
+    _parse_model_picker_callback,
     clear_feed_model_cache,
     feed_model_matches,
     filter_feed_cards,
@@ -18,6 +20,35 @@ def test_banana_pro_aliases_share_one_feed_tab() -> None:
     assert normalize_feed_model("gemini-3-pro-image-preview") == DEFAULT_FEED_MODEL
     assert feed_model_matches("nano-banana-pro", "banana_pro") is True
     assert feed_model_matches("banana_2", "banana_pro") is False
+
+
+def test_model_picker_has_banana_first_and_back_button() -> None:
+    markup = _build_model_picker_markup(
+        source_code="d",
+        selected_model="seedream_5_pro",
+        model_ids=["seedream_5_pro", "flux_pro", "banana_pro"],
+    )
+
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    assert buttons[0].text == "🧠 Nano Banana Pro"
+    assert buttons[0].callback_data == "bfm:set:d:banana_pro"
+    assert any(button.text == "✅ Seedream 5 Pro" for button in buttons)
+    assert buttons[-1].text == "⬅️ Назад к ленте"
+    assert buttons[-1].callback_data == "bfm:close:d"
+
+
+def test_model_picker_callback_preserves_source() -> None:
+    assert _parse_model_picker_callback("bfm:menu:t") == ("menu", "t", None)
+    assert _parse_model_picker_callback("bfm:set:d:banana_2") == (
+        "set",
+        "d",
+        "banana_2",
+    )
+    assert _parse_model_picker_callback("bfm:close:unknown") == (
+        "close",
+        "r",
+        None,
+    )
 
 
 @pytest.mark.asyncio
