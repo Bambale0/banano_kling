@@ -38,7 +38,19 @@ jobs:
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
       - name: Apply source changes
-        run: python scripts/apply_trend_video_support.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply_trend_video_support.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '    insert_at = 2 if len(rows) >= 2 else len(rows)\\n',
+              '    insert_at = min(2, len(rows))\\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+          python scripts/apply_trend_video_support.py
 
       - name: Install Python dependencies
         run: |
