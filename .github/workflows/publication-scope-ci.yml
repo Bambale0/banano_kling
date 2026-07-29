@@ -9,10 +9,12 @@ on:
       - "bot/services/publication_scope_postgres_compat.py"
       - "bot/handlers/trends_compat.py"
       - "bot/handlers/trend_text_upload.py"
+      - "bot/handlers/trend_video_compat.py"
       - "bot/handlers/__init__.py"
       - "frontend/miniapp-v0/**"
       - "tests/test_publication_scope_compat.py"
       - "tests/test_trends_compat.py"
+      - "tests/test_trend_video_compat.py"
       - ".github/workflows/publication-scope-ci.yml"
 
 permissions:
@@ -35,9 +37,11 @@ jobs:
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/trends_compat.py \
             bot/handlers/trend_text_upload.py \
+            bot/handlers/trend_video_compat.py \
             bot/handlers/__init__.py \
             tests/test_publication_scope_compat.py \
             tests/test_trends_compat.py \
+            tests/test_trend_video_compat.py \
             --ignore=E402,F403,F405,E501,RUF059
       - name: Compile publication and trends modules
         run: |
@@ -46,9 +50,11 @@ jobs:
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/trends_compat.py \
             bot/handlers/trend_text_upload.py \
+            bot/handlers/trend_video_compat.py \
             bot/handlers/__init__.py \
             tests/test_publication_scope_compat.py \
-            tests/test_trends_compat.py
+            tests/test_trends_compat.py \
+            tests/test_trend_video_compat.py
 
   publication-scope-test:
     runs-on: ubuntu-latest
@@ -68,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          pytest tests/test_publication_scope_compat.py tests/test_trends_compat.py -vv -s --tb=long 2>&1 | tee publication-scope-test.log
+          pytest tests/test_publication_scope_compat.py tests/test_trends_compat.py tests/test_trend_video_compat.py -vv -s --tb=long 2>&1 | tee publication-scope-test.log
           status=${PIPESTATUS[0]}
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0

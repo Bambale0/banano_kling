@@ -390,6 +390,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (startTarget.kind === 'prompt') {
           const prompt = await fetchPromptDetail(startTarget.promptId)
           if (cancelled) return
+          const isVideoTrend =
+            prompt.category === 'video' ||
+            (prompt.tags || []).some((tag) => String(tag).toLowerCase() === 'trend-video') ||
+            state.videoModels.some((model) => model.id === prompt.model)
+
+          if (isVideoTrend) {
+            const videoModel = state.videoModels.find((model) => model.id === prompt.model)
+            setVideoPromptPreset({
+              title: prompt.title,
+              prompt: prompt.prompt_text,
+              model: videoModel?.id || state.videoModels[0]?.id || 'v3_pro',
+              scenario: videoModel?.supports.includes('text')
+                ? 'text'
+                : videoModel?.supports[0] || 'text',
+            })
+            setActiveTabState(2)
+            return
+          }
+
           setPromptPreset({
             promptId: prompt.id,
             title: prompt.title,
@@ -425,7 +444,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [applyFeedRemix, openProfile, state.isLoading, state.mode])
+  }, [applyFeedRemix, openProfile, state.isLoading, state.mode, state.videoModels])
 
   const setCredits = useCallback((amount: number) => {
     setState(prev => ({
