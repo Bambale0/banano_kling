@@ -137,6 +137,7 @@ export function FeedTab() {
     openProfile,
   } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
+  const [model, setModel] = useState('banana_pro')
   const [items, setItems] = useState<FeedItem[]>([])
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(false)
@@ -152,6 +153,20 @@ export function FeedTab() {
   const [loadingMore, setLoadingMore] = useState(false)
 
   const isLive = state.mode === 'live'
+  const modelTabs = useMemo(() => {
+    const byId = new Map<string, { id: string; label: string }>()
+    for (const item of [...state.imageModels, ...state.videoModels]) {
+      const id = String(item.id || '').trim()
+      if (!id || byId.has(id)) continue
+      byId.set(id, {
+        id,
+        label: String(item.label || id).replace('🔥 НОВИНКА', '').trim(),
+      })
+    }
+    const banana = byId.get('banana_pro') || { id: 'banana_pro', label: 'Nano Banana Pro' }
+    return [banana, ...Array.from(byId.values()).filter((item) => item.id !== 'banana_pro')]
+  }, [state.imageModels, state.videoModels])
+  const selectedModelLabel = modelTabs.find((item) => item.id === model)?.label || model
   const visibleItems = useMemo(
     () => items,
     [items]
@@ -182,7 +197,7 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source, limit: FEED_PAGE_SIZE, offset: 0 })
+        const feed = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: 0 })
         if (!ignore) {
           setItems(feed)
           setHasMore(feed.length === FEED_PAGE_SIZE)
@@ -198,14 +213,14 @@ export function FeedTab() {
     return () => {
       ignore = true
     }
-  }, [isLive, source])
+  }, [isLive, source, model])
 
   const handleLoadMore = async () => {
     if (!isLive || loadingMore || !hasMore) return
     setLoadingMore(true)
     setError(null)
     try {
-      const feed = await fetchFeed({ source, limit: FEED_PAGE_SIZE, offset: items.length })
+      const feed = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: items.length })
       setItems((prev) => {
         const seen = new Set(prev.map((item) => item.id))
         const nextItems = feed.filter((item) => !seen.has(item.id))
@@ -386,6 +401,34 @@ export function FeedTab() {
       <div>
         <h2 className="font-serif text-xl font-semibold text-foreground">Лента работ</h2>
         <p className="mt-1 text-sm text-muted-foreground">Публичные фото и видео, которые можно лайкнуть, открыть или повторить.</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Нейросеть</p>
+          <span className="truncate text-xs text-gold">{selectedModelLabel}</span>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {modelTabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                setModel(item.id)
+                setItems([])
+                setHasMore(false)
+              }}
+              className={cn(
+                'shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                model === item.id
+                  ? 'border-cyan/50 bg-cyan/15 text-cyan'
+                  : 'border-border/50 bg-secondary/50 text-muted-foreground'
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
