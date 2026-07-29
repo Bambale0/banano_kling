@@ -517,7 +517,7 @@ export function ProfileTab() {
             </div>
             <div>
               <div className="text-lg font-bold text-foreground">{formatCompactNumber(totals.remixes)}</div>
-              <div className="text-[11px] text-muted-foreground">ремиксов</div>
+              <div className="text-[11px] text-muted-foreground">повторов</div>
             </div>
           </div>
         </div>
@@ -720,8 +720,11 @@ export function ProfileTab() {
                   <Share2 className="h-3 w-3" />
                   {formatCompactNumber(item.shares_count)}
                 </span>
-                <span className="pointer-events-none absolute right-1 bottom-8 hidden items-center gap-0.5 rounded bg-background/75 px-1 py-0.5 text-[9px] font-medium text-foreground backdrop-blur min-[420px]:flex">
-                  <Sparkles className="h-3 w-3" />
+                <span
+                  className="pointer-events-none absolute right-1 bottom-8 flex items-center gap-0.5 rounded bg-background/80 px-1 py-0.5 text-[9px] font-semibold text-foreground backdrop-blur"
+                  aria-label={`Повторов: ${item.remixes || 0}`}
+                >
+                  <Repeat2 className="h-3 w-3" />
                   {formatCompactNumber(item.remixes)}
                 </span>
                 {item.publication_scope === 'profile' ? (
@@ -919,7 +922,7 @@ export function ProfileTab() {
               onClick={() => handleRemix(previewItem)}
             >
               <Repeat2 className="h-4 w-4" />
-              <span>Повторить</span>
+              <span>Повторить · {formatCompactNumber(previewItem.remixes || 0)}</span>
             </Button>
           </div>
         </div>

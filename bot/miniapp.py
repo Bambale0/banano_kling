@@ -1041,6 +1041,11 @@ def _task_prompt_actions_allowed(row_or_payload: Any) -> bool:
     return not _task_has_source_feed(row_or_payload)
 
 
+def _browser_local_reference_urls(urls: list[str]) -> list[str]:
+    """Return references that only exist inside the current browser session."""
+    return [url for url in urls if url.strip().lower().startswith(("blob:", "data:"))]
+
+
 async def _get_repeat_source_card(
     gen_id: int,
     *,
@@ -3519,6 +3524,14 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Слишком много референсов. Максимум: {model_meta['max_references']}"},
                 status=400,
             )
+        if _browser_local_reference_urls(references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Дождитесь окончания загрузки референса и попробуйте снова.",
+                },
+                status=400,
+            )
         if missing_local_upload_sources(references):
             return web.json_response(
                 {
@@ -3717,6 +3730,14 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 {
                     "ok": False,
                     "error": f"Слишком много референсов. Максимум: {model_meta['max_references']}",
+                },
+                status=400,
+            )
+        if _browser_local_reference_urls(references):
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "Дождитесь окончания загрузки референса и попробуйте снова.",
                 },
                 status=400,
             )

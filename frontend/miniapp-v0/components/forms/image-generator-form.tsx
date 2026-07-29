@@ -66,8 +66,9 @@ export function ImageGeneratorForm({
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
   const needsReference = (model?.requires_reference || isFeedRemix) && references.length === 0
+  const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
-  const isValid = hasPrompt && canAfford && !needsReference
+  const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
 
   const CHANGE_CHIPS = [
     {
@@ -456,6 +457,15 @@ export function ImageGeneratorForm({
             <AlertCircle className="w-4 h-4 text-gold flex-shrink-0" />
             <p className="text-xs text-gold">
               {isFeedRemix ? 'Добавьте своё фото для повтора из ленты' : 'Загрузите референс для этой модели'}
+            </p>
+          </div>
+        )}
+
+        {referencesUploading && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-secondary/60 border border-border/50">
+            <Loader2 className="w-4 h-4 animate-spin text-cyan flex-shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              Дождитесь окончания загрузки референса.
             </p>
           </div>
         )}
