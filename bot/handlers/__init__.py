@@ -14,6 +14,7 @@ from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
 
+from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
 
@@ -25,7 +26,6 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
-from . import trends_compat as trends_compat_module
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trends_compat import install_trends_compat
