@@ -172,7 +172,7 @@ export interface PromptItem {
   title: string
   description: string
   prompt_text: string
-  category: 'art' | 'business' | 'marketing' | 'photo' | 'other'
+  category: 'art' | 'business' | 'marketing' | 'photo' | 'video' | 'other'
   tags: string[]
   uses_count: number
   likes: number

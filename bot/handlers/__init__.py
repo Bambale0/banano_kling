@@ -28,6 +28,8 @@ from .publication_scope_compat import (
 from .publication_scope_compat import router as publication_scope_compat_router
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
+from .trend_video_compat import install_trend_video_compat
+from .trend_video_compat import router as trend_video_compat_router
 from .trends_compat import install_trends_compat
 from .trends_compat import router as trends_compat_router
 
@@ -98,8 +100,10 @@ payments_router.include_router(legacy_payments_router)
 install_common_publication_scope_compat(common_module)
 install_trends_compat(common_module, generation_module, admin_module)
 install_text_trend_upload(trends_compat_module)
+install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 common_router = Router()
+common_router.include_router(trend_video_compat_router)
 common_router.include_router(trend_text_upload_router)
 common_router.include_router(trends_compat_router)
 common_router.include_router(feed_model_filter_compat_router)
@@ -125,5 +129,6 @@ __all__ = [
     "seedance_multimodal_compat_router",
     "support_router",
     "trend_text_upload_router",
+    "trend_video_compat_router",
     "trends_compat_router",
 ]
