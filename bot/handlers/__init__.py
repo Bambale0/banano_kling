@@ -22,6 +22,8 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
+from .feed_model_filter_compat import install_feed_model_filter_compat
+from .feed_model_filter_compat import router as feed_model_filter_compat_router
 
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
@@ -86,7 +88,9 @@ payments_router.include_router(legacy_payments_router)
 # Keep the established common-menu flow. Specific background/support handlers are
 # included before the broad legacy common router without replacing its UI.
 install_common_publication_scope_compat(common_module)
+install_feed_model_filter_compat(common_module)
 common_router = Router()
+common_router.include_router(feed_model_filter_compat_router)
 common_router.include_router(notification_campaigns_router)
 common_router.include_router(repeat_result_compat_router)
 common_router.include_router(support_router)
@@ -96,6 +100,7 @@ __all__ = [
     "admin_router",
     "batch_generation_router",
     "common_router",
+    "feed_model_filter_compat_router",
     "freekassa_payments_router",
     "generation_router",
     "image_analyzer_router",
