@@ -138,6 +138,7 @@ export function FeedTab() {
   } = useApp()
   const [source, setSource] = useState<(typeof sources)[number]['id']>('recent')
   const [model, setModel] = useState('banana_pro')
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; label: string }>>([])
   const [items, setItems] = useState<FeedItem[]>([])
   const [brokenMediaIds, setBrokenMediaIds] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(false)
@@ -155,7 +156,7 @@ export function FeedTab() {
   const isLive = state.mode === 'live'
   const modelTabs = useMemo(() => {
     const byId = new Map<string, { id: string; label: string }>()
-    for (const item of [...state.imageModels, ...state.videoModels]) {
+    for (const item of availableModels) {
       const id = String(item.id || '').trim()
       if (!id || byId.has(id)) continue
       byId.set(id, {
@@ -165,7 +166,7 @@ export function FeedTab() {
     }
     const banana = byId.get('banana_pro') || { id: 'banana_pro', label: 'Nano Banana Pro' }
     return [banana, ...Array.from(byId.values()).filter((item) => item.id !== 'banana_pro')]
-  }, [state.imageModels, state.videoModels])
+  }, [availableModels])
   const selectedModelLabel = modelTabs.find((item) => item.id === model)?.label || model
   const visibleItems = useMemo(
     () => items,
@@ -197,10 +198,11 @@ export function FeedTab() {
       setLoading(true)
       setError(null)
       try {
-        const feed = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: 0 })
+        const response = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: 0 })
         if (!ignore) {
-          setItems(feed)
-          setHasMore(feed.length === FEED_PAGE_SIZE)
+          setItems(response.feed)
+          setAvailableModels(response.models)
+          setHasMore(response.feed.length === FEED_PAGE_SIZE)
           setBrokenMediaIds(new Set())
         }
       } catch (e) {
@@ -220,7 +222,7 @@ export function FeedTab() {
     setLoadingMore(true)
     setError(null)
     try {
-      const feed = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: items.length })
+      const { feed } = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: items.length })
       setItems((prev) => {
         const seen = new Set(prev.map((item) => item.id))
         const nextItems = feed.filter((item) => !seen.has(item.id))

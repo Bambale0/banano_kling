@@ -10,6 +10,7 @@ export default tseslint.config(
       '.next/**',
       'out/**',
       'node_modules/**',
+      'public/telegram-web-app.js',
       'next-env.d.ts',
       'tsconfig.tsbuildinfo',
     ],

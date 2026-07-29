@@ -10,6 +10,7 @@ from bot.handlers.trends_compat import (
     _replace_prompt_buttons,
     is_trend_prompt,
 )
+from bot.keyboards import get_main_menu_keyboard
 
 
 def test_only_system_tag_marks_prompt_as_trend() -> None:
@@ -45,6 +46,15 @@ def test_prompt_buttons_are_replaced_with_trends() -> None:
     assert updated.inline_keyboard[1][0].text == "🔥 Тренды"
     assert updated.inline_keyboard[1][0].callback_data == "menu_trends"
     assert updated.inline_keyboard[1][1].callback_data == "menu_feed"
+
+
+def test_main_menu_places_trends_and_feed_on_the_same_row() -> None:
+    updated = _replace_prompt_buttons(get_main_menu_keyboard())
+
+    assert any(
+        [button.callback_data for button in row] == ["menu_trends", "menu_feed"]
+        for row in updated.inline_keyboard
+    )
 
 
 def test_original_markup_is_not_mutated() -> None:

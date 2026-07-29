@@ -87,11 +87,11 @@ def get_main_menu_keyboard(user_credits: int = 0, telegram_id: int | None = None
     )
     builder.row(
         InlineKeyboardButton(text=f"🎞 Промпт по видео • {_video_prompt_price_label()}🍌", callback_data="video_to_prompt"),
-        InlineKeyboardButton(text="🖼 Лента", callback_data="menu_feed"),
+        InlineKeyboardButton(text="🤖 AI-помощник", callback_data="menu_ai_assistant"),
     )
     builder.row(
         InlineKeyboardButton(text="📚 Библиотека промптов", callback_data="menu_prompts"),
-        InlineKeyboardButton(text="🤖 AI-помощник", callback_data="menu_ai_assistant"),
+        InlineKeyboardButton(text="🖼 Лента", callback_data="menu_feed"),
     )
     builder.row(
         InlineKeyboardButton(text=f"🍌 Баланс: {user_credits}", callback_data="menu_balance"),

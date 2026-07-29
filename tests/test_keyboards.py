@@ -3,6 +3,7 @@
 import json
 import logging
 import importlib
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
@@ -131,7 +132,10 @@ def test_get_create_hub_keyboard():
 
 
 def test_get_admin_keyboard():
-    kb = get_admin_keyboard()
+    # Other runtime modules may install the trends compatibility decorator
+    # during test collection. Unwrap it so this test always exercises the base
+    # keyboard contract and remains independent of collection order.
+    kb = inspect.unwrap(get_admin_keyboard)()
     assert kb.inline_keyboard
     assert any(
         "admin_reload" in btn.callback_data for row in kb.inline_keyboard for btn in row

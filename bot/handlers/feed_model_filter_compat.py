@@ -267,6 +267,9 @@ async def select_feed_model(callback: types.CallbackQuery) -> None:
 
     action, source_code, model_id = _parse_model_picker_callback(callback.data)
     if action == "menu":
+        # Telegram callback queries expire quickly. A published-model lookup may
+        # touch a busy database, so acknowledge the click before doing any I/O.
+        await _safe_callback_answer(callback, "Выберите нейросеть")
         available = await _published_model_ids()
         selected = _selected_model(callback.from_user.id)
         markup = _build_model_picker_markup(
@@ -278,7 +281,6 @@ async def select_feed_model(callback: types.CallbackQuery) -> None:
             await callback.message.edit_reply_markup(reply_markup=markup)
         except Exception:
             logger.debug("Unable to open feed model picker", exc_info=True)
-        await _safe_callback_answer(callback, "Выберите нейросеть")
         return
 
     if action == "close":
@@ -290,13 +292,15 @@ async def select_feed_model(callback: types.CallbackQuery) -> None:
         await _safe_callback_answer(callback)
         return
 
+    await _safe_callback_answer(callback, f"Загружаю: {_model_label(model_id)}")
     available = await _published_model_ids()
     if model_id not in available:
-        await _safe_callback_answer(callback, "Для этой нейросети пока нет работ")
+        # The catalog can change between opening the picker and selecting an
+        # item. Restore the feed instead of leaving a dead picker on screen.
+        await _render_selected_feed(callback, source_code=source_code)
         return
 
-    selected = _set_selected_model(callback.from_user.id, model_id)
-    await _safe_callback_answer(callback, _model_label(selected))
+    _set_selected_model(callback.from_user.id, model_id)
     await _render_selected_feed(callback, source_code=source_code)
 
 

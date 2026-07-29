@@ -1,6 +1,21 @@
 """Unit tests for bot/config.py"""
 
+from pathlib import Path
+
+from bot import env
 from bot.config import Config
+
+
+def test_project_env_loading_can_be_disabled(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(env.SKIP_PROJECT_ENV_VAR, "1")
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("production env loader must not run during tests")
+
+    monkeypatch.setattr(env, "load_dotenv", fail_if_called)
+    monkeypatch.setattr(env, "dotenv_values", fail_if_called)
+
+    env.load_project_env(tmp_path)
 
 
 class TestConfig:

@@ -7,6 +7,7 @@ from dotenv import dotenv_values, load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SKIP_PROJECT_ENV_VAR = "BANANO_SKIP_PROJECT_ENV"
 
 
 def load_project_env(project_root: Path | None = None) -> None:
@@ -15,6 +16,14 @@ def load_project_env(project_root: Path | None = None) -> None:
     Real process environment variables keep highest priority. This lets tests or
     one-off maintenance commands force a different database explicitly.
     """
+
+    if os.getenv(SKIP_PROJECT_ENV_VAR, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
 
     root = project_root or PROJECT_ROOT
     original_keys = set(os.environ)

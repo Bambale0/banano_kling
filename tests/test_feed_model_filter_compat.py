@@ -10,6 +10,7 @@ from bot.handlers.feed_model_filter_compat import (
     feed_model_matches,
     filter_feed_cards,
     normalize_feed_model,
+    select_feed_model,
 )
 
 
@@ -130,3 +131,34 @@ async def test_viewer_specific_cards_do_not_share_cache() -> None:
     assert owner_cards[0]["is_mine"] is True
     assert stranger_cards[0]["is_mine"] is False
     assert calls == [7, 8]
+
+
+@pytest.mark.asyncio
+async def test_model_picker_acknowledges_callback_before_database_lookup(monkeypatch) -> None:
+    events: list[str] = []
+
+    class Callback:
+        data = "bfm:menu:r"
+        from_user = type("User", (), {"id": 42})()
+        message = type("Message", (), {})()
+
+        async def answer(self, _text=None):
+            events.append("answer")
+
+    async def published_models():
+        events.append("database")
+        return [DEFAULT_FEED_MODEL]
+
+    async def edit_reply_markup(*, reply_markup):
+        assert reply_markup.inline_keyboard
+        events.append("edit")
+
+    Callback.message.edit_reply_markup = edit_reply_markup
+    monkeypatch.setattr(
+        "bot.handlers.feed_model_filter_compat._published_model_ids",
+        published_models,
+    )
+
+    await select_feed_model(Callback())
+
+    assert events == ["answer", "database", "edit"]

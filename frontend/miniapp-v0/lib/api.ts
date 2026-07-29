@@ -500,19 +500,23 @@ export async function fetchFeed(payload: {
   model?: string
   limit?: number
   offset?: number
-} = {}): Promise<FeedItem[]> {
+} = {}): Promise<{ feed: FeedItem[]; models: Array<{ id: string; label: string }> }> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
-  const response = await postJson<{ ok: true; feed: FeedItem[] }>('feed', {
+  const response = await postJson<{
+    ok: true
+    feed: FeedItem[]
+    models?: Array<{ id: string; label: string }>
+  }>('feed', {
     init_data: initData,
     source: payload.source || 'recent',
     model: payload.model || 'banana_pro',
     limit: payload.limit ?? 80,
     offset: payload.offset ?? 0,
   })
-  return response.feed
+  return { feed: response.feed, models: response.models || [] }
 }
 
 export async function fetchFeedItem(genId: number): Promise<FeedItem> {

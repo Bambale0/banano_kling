@@ -1,3 +1,11 @@
+import os
+
+# This must be set while pytest loads conftest, before test modules import
+# bot.config. Unit and integration tests must never read production .env files.
+os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
+os.environ["BOT_TOKEN"] = "test:fake-bot-token"
+os.environ["ADMIN_IDS"] = "999999999"
+
 import pytest
 
 

@@ -89,43 +89,22 @@ jobs:
           pip install --quiet pytest pytest-asyncio pytest-mock
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
 
-      - name: Run blocking internal and payment regression tests
-        run: |
-          pytest \
-            tests/test_internal_admin_api.py \
-            tests/test_internal_admin_support_cms.py \
-            tests/test_internal_admin_notifications.py \
-            tests/test_notification_worker.py \
-            tests/test_webhook_handler.py \
-            tests/test_config.py \
-            tests/standalone/test_freekassa_service.py \
-            tests/standalone/test_lava_checkout.py \
-            tests/standalone/test_lava_payment_safety.py \
-            tests/standalone/test_lava_invoice_compat.py \
-            tests/standalone/test_lava_binding_schema_compat.py \
-            -v \
-            --tb=short \
-            -x
-
-      - name: Run legacy safe suite diagnostics
-        id: legacy_suite
-        continue-on-error: true
+      - name: Run full safe regression suite
+        id: full_suite
         run: |
           set -o pipefail
           pytest tests/ \
             --ignore=tests/live \
-            --ignore=tests/standalone \
             -m "not live_smoke" \
             -v \
-            --tb=short \
-            -x | tee legacy-pytest-output.txt
+            --tb=short | tee full-pytest-output.txt
 
-      - name: Upload legacy pytest diagnostics
-        if: steps.legacy_suite.outcome == 'failure'
+      - name: Upload full pytest diagnostics
+        if: failure() && steps.full_suite.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: legacy-pytest-output
-          path: legacy-pytest-output.txt
+          name: full-pytest-output
+          path: full-pytest-output.txt
           if-no-files-found: ignore
 
   test-live:

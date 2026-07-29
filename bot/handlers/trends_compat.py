@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import wraps
 import html
 import logging
 from collections.abc import Callable
@@ -236,6 +237,7 @@ def _replace_prompt_buttons(markup: InlineKeyboardMarkup) -> InlineKeyboardMarku
 
 
 def _wrap_keyboard(factory: Callable[..., InlineKeyboardMarkup]) -> Callable[..., InlineKeyboardMarkup]:
+    @wraps(factory)
     def wrapped(*args: Any, **kwargs: Any) -> InlineKeyboardMarkup:
         return _replace_prompt_buttons(factory(*args, **kwargs))
 
