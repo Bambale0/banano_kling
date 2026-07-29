@@ -420,7 +420,7 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                     ],
                 }
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - API boundary converts failures to JSON
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App model-filtered feed failed",
