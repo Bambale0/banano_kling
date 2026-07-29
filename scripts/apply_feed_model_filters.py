@@ -132,28 +132,37 @@ def patch_bot_description() -> None:
     path = "bot/main.py"
     replace_once(
         path,
-        """    try:
-        for language_code in USER_BOT_COMMAND_LANGUAGES:
-            await bot.set_my_short_description(
+        """            await bot.set_my_short_description(
                 "Mini App + текстовый бот. Для обычного режима нажмите /start.",
                 language_code=language_code,
-            )
-            await bot.set_my_description(
-                "Нейросети для фото и видео. Есть два режима: Mini App и обычный текстовый бот.\n\n"
-                "• Mini App — быстрый визуальный интерфейс\n"
+            )""",
+        """            await bot.set_my_short_description(
+                "",
+                language_code=language_code,
+            )""",
+    )
+    replace_once(
+        path,
+        """            await bot.set_my_description(
+                "Нейросети для фото и видео. Есть два режима: Mini App и обычный текстовый бот.\\n\\n"
+                "• Mini App — быстрый визуальный интерфейс\\n"
                 "• /start — текстовое меню и пошаговый режим прямо в чате",
                 language_code=language_code,
-            )
-        logger.info("Registered bot descriptions for Mini App and text mode")
-    except Exception:
-        logger.exception("Failed to register bot descriptions")""",
-        """    try:
-        for language_code in USER_BOT_COMMAND_LANGUAGES:
-            await bot.set_my_short_description("", language_code=language_code)
-            await bot.set_my_description("", language_code=language_code)
-        logger.info("Cleared Telegram bot profile descriptions")
-    except Exception:
-        logger.exception("Failed to clear Telegram bot descriptions")""",
+            )""",
+        """            await bot.set_my_description(
+                "",
+                language_code=language_code,
+            )""",
+    )
+    replace_once(
+        path,
+        """        logger.info("Registered bot descriptions for Mini App and text mode")""",
+        """        logger.info("Cleared Telegram bot profile descriptions")""",
+    )
+    replace_once(
+        path,
+        """        logger.exception("Failed to register bot descriptions")""",
+        """        logger.exception("Failed to clear Telegram bot descriptions")""",
     )
 
 
