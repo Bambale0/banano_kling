@@ -8,8 +8,8 @@ from typing import Any
 from aiogram import F, Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot import db as db_backend
 from bot import database
+from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
 router = Router(name="feed_model_filter_compat")
