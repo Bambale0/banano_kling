@@ -25,6 +25,9 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
+from . import trends_compat as trends_compat_module
+from .trend_text_upload import install_text_trend_upload
+from .trend_text_upload import router as trend_text_upload_router
 from .trends_compat import install_trends_compat
 from .trends_compat import router as trends_compat_router
 
@@ -94,8 +97,10 @@ payments_router.include_router(legacy_payments_router)
 # included before the broad legacy common router without replacing its UI.
 install_common_publication_scope_compat(common_module)
 install_trends_compat(common_module, generation_module, admin_module)
+install_text_trend_upload(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 common_router = Router()
+common_router.include_router(trend_text_upload_router)
 common_router.include_router(trends_compat_router)
 common_router.include_router(feed_model_filter_compat_router)
 common_router.include_router(notification_campaigns_router)
@@ -119,5 +124,6 @@ __all__ = [
     "repeat_result_compat_router",
     "seedance_multimodal_compat_router",
     "support_router",
+    "trend_text_upload_router",
     "trends_compat_router",
 ]
