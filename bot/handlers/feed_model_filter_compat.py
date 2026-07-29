@@ -8,8 +8,8 @@ from typing import Any
 from aiogram import F, Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot import database
 from bot import db as db_backend
+from bot import database
 
 logger = logging.getLogger(__name__)
 router = Router(name="feed_model_filter_compat")
@@ -24,7 +24,10 @@ _MODEL_ALIASES = {
 }
 _MODEL_LABELS: dict[str, str] = {DEFAULT_FEED_MODEL: "Nano Banana Pro"}
 _SELECTED_MODEL_BY_TELEGRAM_ID: dict[int, str] = {}
-_FILTER_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+_FILTER_CACHE: dict[
+    tuple[str, str, int | None, bool],
+    tuple[float, list[dict[str, Any]]],
+] = {}
 _CACHE_TTL_SECONDS = 90.0
 _INSTALLED = False
 
@@ -61,19 +64,42 @@ def _set_selected_model(telegram_id: int, model_id: str) -> str:
     return normalized
 
 
-def _cache_get(source: str, model_id: str) -> list[dict[str, Any]] | None:
-    item = _FILTER_CACHE.get((source, model_id))
+def _cache_key(
+    source: str,
+    model_id: str,
+    viewer_user_id: int | None,
+    include_unavailable: bool,
+) -> tuple[str, str, int | None, bool]:
+    normalized_viewer = int(viewer_user_id) if viewer_user_id is not None else None
+    return source, model_id, normalized_viewer, bool(include_unavailable)
+
+
+def _cache_get(
+    source: str,
+    model_id: str,
+    viewer_user_id: int | None,
+    include_unavailable: bool,
+) -> list[dict[str, Any]] | None:
+    key = _cache_key(source, model_id, viewer_user_id, include_unavailable)
+    item = _FILTER_CACHE.get(key)
     if not item:
         return None
     expires_at, cards = item
     if expires_at <= time.monotonic():
-        _FILTER_CACHE.pop((source, model_id), None)
+        _FILTER_CACHE.pop(key, None)
         return None
     return [dict(card) for card in cards]
 
 
-def _cache_put(source: str, model_id: str, cards: list[dict[str, Any]]) -> None:
-    _FILTER_CACHE[(source, model_id)] = (
+def _cache_put(
+    source: str,
+    model_id: str,
+    viewer_user_id: int | None,
+    include_unavailable: bool,
+    cards: list[dict[str, Any]],
+) -> None:
+    key = _cache_key(source, model_id, viewer_user_id, include_unavailable)
+    _FILTER_CACHE[key] = (
         time.monotonic() + _CACHE_TTL_SECONDS,
         [dict(card) for card in cards],
     )
@@ -93,11 +119,23 @@ async def filter_feed_cards(
 ) -> list[dict[str, Any]]:
     selected = normalize_feed_model(model)
     source = str(kwargs.get("source") or "recent")
-    cached = _cache_get(source, selected)
+    viewer_user_id = kwargs.get("viewer_user_id")
+    include_unavailable = bool(kwargs.get("include_unavailable", False))
+    cached = _cache_get(source, selected, viewer_user_id, include_unavailable)
     if cached is None:
         cards = await getter(limit=0, offset=0, **kwargs)
-        cached = [card for card in cards if feed_model_matches(card.get("model"), selected)]
-        _cache_put(source, selected, cached)
+        cached = [
+            card
+            for card in cards
+            if feed_model_matches(card.get("model"), selected)
+        ]
+        _cache_put(
+            source,
+            selected,
+            viewer_user_id,
+            include_unavailable,
+            cached,
+        )
 
     safe_offset = max(0, int(offset or 0))
     safe_limit = max(0, int(limit or 0))
@@ -133,14 +171,21 @@ async def _published_model_ids() -> list[str]:
 
 
 def _register_model_catalog(miniapp_module: Any) -> None:
-    for item in (*getattr(miniapp_module, "IMAGE_MODELS", ()), *getattr(miniapp_module, "VIDEO_MODELS", ())):
+    catalogs = (
+        *getattr(miniapp_module, "IMAGE_MODELS", ()),
+        *getattr(miniapp_module, "VIDEO_MODELS", ()),
+    )
+    for item in catalogs:
         model_id = normalize_feed_model(item.get("id"))
         label = str(item.get("label") or model_id).strip()
         if model_id:
             _MODEL_LABELS[model_id] = label
 
 
-async def _safe_callback_answer(callback: types.CallbackQuery, text: str | None = None) -> None:
+async def _safe_callback_answer(
+    callback: types.CallbackQuery,
+    text: str | None = None,
+) -> None:
     try:
         await callback.answer(text)
     except Exception:
@@ -216,20 +261,29 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
             replace_message=replace_message,
         )
 
-    async def build_feed_keyboard(*args: Any, **kwargs: Any) -> InlineKeyboardMarkup:
+    async def build_feed_keyboard(
+        *args: Any,
+        **kwargs: Any,
+    ) -> InlineKeyboardMarkup:
         markup = await original_build_feed_keyboard(*args, **kwargs)
         viewer_telegram_id = kwargs.get("viewer_telegram_id")
         selected = _selected_model(viewer_telegram_id)
         model_ids = await _published_model_ids()
         model_buttons = [
             InlineKeyboardButton(
-                text=("✅ " if model_id == selected else "🧠 ") + _model_label(model_id),
+                text=("✅ " if model_id == selected else "🧠 ")
+                + _model_label(model_id),
                 callback_data=f"bfm:{model_id}",
             )
             for model_id in model_ids
         ]
-        model_rows = [model_buttons[index:index + 2] for index in range(0, len(model_buttons), 2)]
-        return InlineKeyboardMarkup(inline_keyboard=[*model_rows, *markup.inline_keyboard])
+        model_rows = [
+            model_buttons[index : index + 2]
+            for index in range(0, len(model_buttons), 2)
+        ]
+        return InlineKeyboardMarkup(
+            inline_keyboard=[*model_rows, *markup.inline_keyboard]
+        )
 
     def clear_caches() -> None:
         clear_feed_model_cache()
@@ -240,8 +294,14 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
             body = await miniapp_module._miniapp_payload(request)
             init_data = body.get("init_data", "")
             source = str(body.get("source", "recent") or "recent")
-            model_id = normalize_feed_model(body.get("model") or DEFAULT_FEED_MODEL)
-            limit = miniapp_module._bounded_int(body.get("limit"), default=80, maximum=999999)
+            model_id = normalize_feed_model(
+                body.get("model") or DEFAULT_FEED_MODEL
+            )
+            limit = miniapp_module._bounded_int(
+                body.get("limit"),
+                default=80,
+                maximum=999999,
+            )
             offset = miniapp_module._bounded_int(
                 body.get("offset"),
                 default=0,
