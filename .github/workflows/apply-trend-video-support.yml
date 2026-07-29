@@ -51,6 +51,9 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
           python scripts/apply_trend_video_support.py
+          git checkout HEAD -- \
+            .github/workflows/publication-scope-ci.yml \
+            .github/workflows/apply-trend-video-support.yml
 
       - name: Install Python dependencies
         run: |
