@@ -2,15 +2,15 @@
 
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, BookOpen, UserRound } from 'lucide-react'
+import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, Flame, UserRound } from 'lucide-react'
 
 const tabs = [
   { id: 0, label: 'Студия', icon: LayoutDashboard },
+  { id: 5, label: 'Тренды', icon: Flame },
   { id: 1, label: 'Фото', icon: Image },
   { id: 2, label: 'Видео', icon: Video },
   { id: 3, label: 'Motion', icon: Sparkles },
   { id: 4, label: 'Лента', icon: Images },
-  { id: 5, label: 'Промпты', icon: BookOpen },
   { id: 6, label: 'Сервисы', icon: Grid3X3 },
   { id: 7, label: 'Профиль', icon: UserRound },
 ]
@@ -40,7 +40,6 @@ export function TabNav() {
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {/* Active indicator */}
                 {isActive && (
                   <span 
                     className="absolute inset-x-2 top-0 h-0.5 rounded-full bg-gold"
@@ -50,7 +49,6 @@ export function TabNav() {
                   />
                 )}
                 
-                {/* Icon with scale animation */}
                 <span className={cn(
                   "transition-transform duration-300",
                   isActive ? "scale-110" : "scale-100"
@@ -58,7 +56,6 @@ export function TabNav() {
                   <Icon className="w-5 h-5" strokeWidth={isActive ? 2.5 : 2} />
                 </span>
                 
-                {/* Label */}
                 <span className={cn(
                   "text-[9px] mt-1 font-medium",
                   "transition-all duration-300",
@@ -67,7 +64,6 @@ export function TabNav() {
                   {tab.label}
                 </span>
 
-                {/* Subtle glow for active state */}
                 {isActive && (
                   <span className="absolute inset-0 rounded-xl bg-gold/5 pointer-events-none" />
                 )}

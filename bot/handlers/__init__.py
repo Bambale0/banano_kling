@@ -14,6 +14,9 @@ from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
 
+from .feed_model_filter_compat import install_feed_model_filter_compat
+from .feed_model_filter_compat import router as feed_model_filter_compat_router
+
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
 # adding a separate "profile only" state next to the public discovery feed.
@@ -22,12 +25,13 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
-from .feed_model_filter_compat import install_feed_model_filter_compat
-from .feed_model_filter_compat import router as feed_model_filter_compat_router
+from .trends_compat import install_trends_compat
+from .trends_compat import router as trends_compat_router
 
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
 
+from . import admin as admin_module
 from . import common as common_module
 from . import (
     generation as generation_module,
@@ -38,7 +42,6 @@ from . import (
 from . import (
     payments as payments_module,
 )
-from .admin import router as admin_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
 from .image_analyzer import router as legacy_image_analyzer_router
@@ -50,6 +53,8 @@ from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
 )
 from .support import router as support_router
+
+admin_router = admin_module.router
 
 # Keep payment safety fixes without changing the established user-facing flow.
 install_lava_binding_schema_compat()
@@ -88,8 +93,10 @@ payments_router.include_router(legacy_payments_router)
 # Keep the established common-menu flow. Specific background/support handlers are
 # included before the broad legacy common router without replacing its UI.
 install_common_publication_scope_compat(common_module)
+install_trends_compat(common_module, generation_module, admin_module)
 install_feed_model_filter_compat(common_module)
 common_router = Router()
+common_router.include_router(trends_compat_router)
 common_router.include_router(feed_model_filter_compat_router)
 common_router.include_router(notification_campaigns_router)
 common_router.include_router(repeat_result_compat_router)
@@ -112,4 +119,5 @@ __all__ = [
     "repeat_result_compat_router",
     "seedance_multimodal_compat_router",
     "support_router",
+    "trends_compat_router",
 ]
