@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command, StateFilter
@@ -138,7 +139,7 @@ async def _render_trends(
                 reply_markup=markup,
             )
             return
-        except Exception:  # noqa: BLE001 - Telegram may reject stale media edits
+        except Exception:
             logger.debug("Unable to edit trend media", exc_info=True)
 
     if preview_url:
@@ -150,7 +151,7 @@ async def _render_trends(
                 parse_mode="HTML",
             )
             return
-        except Exception:  # noqa: BLE001 - fallback to text card
+        except Exception:
             logger.debug("Unable to send trend preview", exc_info=True)
 
     await message.answer(caption, reply_markup=markup, parse_mode="HTML")
@@ -259,7 +260,7 @@ async def _delayed_command_refresh(bot: Bot) -> None:
     await asyncio.sleep(2)
     try:
         await _set_trend_commands(bot)
-    except Exception:  # noqa: BLE001 - startup must not fail because of Telegram metadata
+    except Exception:
         logger.exception("Unable to register trend commands")
 
 
