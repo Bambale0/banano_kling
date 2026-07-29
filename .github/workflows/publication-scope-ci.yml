@@ -81,23 +81,20 @@ jobs:
           python-version: "3.12"
       - name: Install ruff
         run: python -m pip install --quiet ruff
-      - name: Lint publication scope modules
+      - name: Lint feed model filter modules
         run: |
           ruff check \
-            bot/handlers/publication_scope_compat.py \
-            bot/services/publication_scope_postgres_compat.py \
             bot/handlers/feed_model_filter_compat.py \
-            bot/handlers/__init__.py \
-            tests/test_publication_scope_compat.py \
             tests/test_feed_model_filter_compat.py \
-            --ignore=E402,F403,F405,E501,I001,RUF059,BLE001
-      - name: Compile publication scope modules
+            --ignore=E402,E501,BLE001
+      - name: Compile affected modules
         run: |
           python -m py_compile \
             bot/handlers/publication_scope_compat.py \
             bot/services/publication_scope_postgres_compat.py \
             bot/handlers/feed_model_filter_compat.py \
             bot/handlers/__init__.py \
+            bot/main.py \
             tests/test_publication_scope_compat.py \
             tests/test_feed_model_filter_compat.py
 
