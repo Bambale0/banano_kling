@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from functools import wraps
 import html
 import logging
 from collections.abc import Callable
+from functools import wraps
 from typing import Any
 
 from aiogram import Bot, F, Router, types

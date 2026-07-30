@@ -17,6 +17,7 @@ from bot.services.publication_scope_postgres_compat import (
 from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
+from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
@@ -26,7 +27,6 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
-from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
