@@ -8,12 +8,19 @@ type PendingPublication = {
   savedAt: number
 }
 
-// Telegram WebView may reject or delay sessionStorage writes. Keep the latest
-// publication in memory as the primary same-session source of truth, then use
-// sessionStorage only as a fallback across tab remounts.
+declare global {
+  interface Window {
+    __BANANO_PENDING_PUBLICATION__?: PendingPublication | null
+  }
+}
+
+// TaskDetailPanel and ProfileTab are loaded as separate dynamic chunks. A
+// module-scoped variable is therefore not a reliable cross-chunk transport in
+// every Telegram WebView. Keep the authoritative same-session value on window,
+// which is shared by all chunks, and retain module/sessionStorage fallbacks.
 let latestPublication: PendingPublication | null = null
 
-function isFresh(value: PendingPublication | null): value is PendingPublication {
+function isFresh(value: PendingPublication | null | undefined): value is PendingPublication {
   return Boolean(
     value?.item?.id &&
       Number.isFinite(value.savedAt) &&
@@ -26,24 +33,34 @@ function isVisibleOnSurface(item: FeedItem, scope: 'feed' | 'profile'): boolean 
   return item.publication_scope !== 'private' && item.is_profile_visible !== false
 }
 
+function rememberPublication(value: PendingPublication): void {
+  latestPublication = value
+  if (typeof window === 'undefined') return
+  window.__BANANO_PENDING_PUBLICATION__ = value
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value))
+  } catch {
+    // window remains the cross-chunk source of truth in constrained WebViews.
+  }
+}
+
 export function notifyFeedChanged(item?: FeedItem): void {
   if (typeof window === 'undefined') return
-  if (item) {
-    latestPublication = { item, savedAt: Date.now() }
-    try {
-      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(latestPublication))
-    } catch {
-      // The in-memory copy still lets mounted and remounted profile tabs update.
-    }
-  }
+  if (item) rememberPublication({ item, savedAt: Date.now() })
   window.dispatchEvent(new CustomEvent<FeedItem | undefined>('banano:feed-changed', { detail: item }))
 }
 
 function pendingPublication(): FeedItem | null {
+  if (typeof window !== 'undefined' && isFresh(window.__BANANO_PENDING_PUBLICATION__)) {
+    latestPublication = window.__BANANO_PENDING_PUBLICATION__
+    return window.__BANANO_PENDING_PUBLICATION__.item
+  }
   if (isFresh(latestPublication)) return latestPublication.item
-  latestPublication = null
 
+  latestPublication = null
   if (typeof window === 'undefined') return null
+  window.__BANANO_PENDING_PUBLICATION__ = null
+
   try {
     const raw = window.sessionStorage.getItem(STORAGE_KEY)
     if (!raw) return null
@@ -52,7 +69,7 @@ function pendingPublication(): FeedItem | null {
       window.sessionStorage.removeItem(STORAGE_KEY)
       return null
     }
-    latestPublication = value
+    rememberPublication(value)
     return value.item
   } catch {
     return null
