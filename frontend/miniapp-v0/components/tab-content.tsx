@@ -1,18 +1,33 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useEffect } from 'react'
+import { useEffect, type ComponentType } from 'react'
 import { useApp } from '@/lib/app-context'
 import { AnimatePresence, motion } from 'framer-motion'
+import { StudioTab } from './tabs/studio-tab'
 
-const StudioTab = dynamic(() => import('./tabs/studio-tab').then((module) => module.StudioTab))
-const PhotoTab = dynamic(() => import('./tabs/photo-tab').then((module) => module.PhotoTab))
-const VideoTab = dynamic(() => import('./tabs/video-tab').then((module) => module.VideoTab))
-const MotionTab = dynamic(() => import('./tabs/motion-tab').then((module) => module.MotionTab))
-const FeedTab = dynamic(() => import('./tabs/feed-tab').then((module) => module.FeedTab))
-const TrendsTab = dynamic(() => import('./tabs/trends-tab').then((module) => module.TrendsTab))
-const ServicesTab = dynamic(() => import('./tabs/services-tab').then((module) => module.ServicesTab))
-const ProfileTab = dynamic(() => import('./tabs/profile-tab').then((module) => module.ProfileTab))
+function TabLoading() {
+  return (
+    <div className="space-y-3 px-3 py-4 sm:px-4" role="status" aria-label="Загрузка раздела">
+      <div className="h-7 w-36 animate-pulse rounded-lg bg-secondary/70" />
+      <div className="grid grid-cols-2 gap-3">
+        <div className="h-36 animate-pulse rounded-2xl bg-secondary/50" />
+        <div className="h-36 animate-pulse rounded-2xl bg-secondary/50" />
+      </div>
+    </div>
+  )
+}
+
+const dynamicTab = (loader: () => Promise<{ default: ComponentType }>) =>
+  dynamic(loader, { loading: TabLoading })
+
+const PhotoTab = dynamicTab(() => import('./tabs/photo-tab').then((module) => ({ default: module.PhotoTab })))
+const VideoTab = dynamicTab(() => import('./tabs/video-tab').then((module) => ({ default: module.VideoTab })))
+const MotionTab = dynamicTab(() => import('./tabs/motion-tab').then((module) => ({ default: module.MotionTab })))
+const FeedTab = dynamicTab(() => import('./tabs/feed-tab').then((module) => ({ default: module.FeedTab })))
+const TrendsTab = dynamicTab(() => import('./tabs/trends-tab').then((module) => ({ default: module.TrendsTab })))
+const ServicesTab = dynamicTab(() => import('./tabs/services-tab').then((module) => ({ default: module.ServicesTab })))
+const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) => ({ default: module.ProfileTab })))
 
 const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
 

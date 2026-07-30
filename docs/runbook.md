@@ -127,6 +127,7 @@ Authorization: Bearer <secret>
 - `bootstrap` и другие API: проверить proxy и время ответа `tanyapi.chillcreative.ru`
 - hashed `/_next/static/` assets должны иметь `immutable`, HTML — `no-store`
 - при бесконечном стартовом spinner проверить `404` на старые hashed chunks в nginx access log; frontend выкладывать без `rsync --delete`, сохраняя минимум две сборки на время Telegram WebView cache-overlap
+- стартовая `Студия` должна входить в основной bundle; lazy-вкладки обязаны показывать skeleton fallback, а не оставлять пустой центр между header и нижней навигацией
 
 ### Результат пришёл в чат, но карточка всё ещё «В обработке»
 
