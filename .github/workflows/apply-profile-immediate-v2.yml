@@ -6,6 +6,11 @@ on:
       - fix/profile-immediate-publication-v2
     paths:
       - .github/workflows/apply-profile-immediate-v2.yml
+  pull_request:
+    branches:
+      - tanyapi
+    paths:
+      - .github/workflows/apply-profile-immediate-v2.yml
 
 permissions:
   contents: write
