@@ -26,6 +26,7 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
+from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
@@ -98,6 +99,7 @@ payments_router.include_router(legacy_payments_router)
 # Keep the established common-menu flow. Specific background/support handlers are
 # included before the broad legacy common router without replacing its UI.
 install_common_publication_scope_compat(common_module)
+install_profile_feed_deeplink_compat(common_module)
 install_trends_compat(common_module, generation_module, admin_module)
 install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
