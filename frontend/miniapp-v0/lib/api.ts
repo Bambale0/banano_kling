@@ -209,6 +209,48 @@ export function getApiBasePath(): string {
   return '/mini-app/api'
 }
 
+function isTemporaryMediaUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  try {
+    const host = new URL(value).hostname.toLowerCase()
+    return host === 'tempfile.aiquickdraw.com' || host.endsWith('.tempfile.aiquickdraw.com')
+  } catch {
+    return false
+  }
+}
+
+function rewriteTemporaryMedia(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(rewriteTemporaryMedia)
+  if (!value || typeof value !== 'object') return value
+
+  const source = value as Record<string, unknown>
+  const rewritten: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(source)) {
+    rewritten[key] = rewriteTemporaryMedia(item)
+  }
+
+  const taskId = typeof source.task_id === 'string' ? source.task_id.trim() : ''
+  if (!taskId) return rewritten
+  const originalUrls = Array.isArray(source.result_urls)
+    ? source.result_urls.filter((item): item is string => typeof item === 'string')
+    : []
+  const primaryUrl = typeof source.result_url === 'string' ? source.result_url : ''
+  if (primaryUrl && !originalUrls.includes(primaryUrl)) originalUrls.unshift(primaryUrl)
+  const proxyUrl = (index: number) =>
+    `${getApiBasePath()}/media/${encodeURIComponent(taskId)}/${index}`
+
+  rewritten.result_urls = originalUrls.map((url, index) =>
+    isTemporaryMediaUrl(url) ? proxyUrl(index) : url
+  )
+  const primaryIndex = Math.max(0, originalUrls.indexOf(primaryUrl))
+  if (isTemporaryMediaUrl(primaryUrl)) rewritten.result_url = proxyUrl(primaryIndex)
+  if (isTemporaryMediaUrl(source.preview_url)) {
+    const previewIndex = Math.max(0, originalUrls.indexOf(String(source.preview_url)))
+    rewritten.preview_url = proxyUrl(previewIndex)
+  }
+  return rewritten
+}
+
 async function parseJson<T>(response: Response): Promise<T> {
   const contentType = response.headers.get('content-type') || ''
   const text = await response.text()
@@ -234,7 +276,7 @@ async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok || payload.ok === false) {
     throw new Error(payload.error || 'Не удалось выполнить действие')
   }
-  return data as T
+  return rewriteTemporaryMedia(data) as T
 }
 
 async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T> {

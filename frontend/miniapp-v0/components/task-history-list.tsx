@@ -25,7 +25,7 @@ export function TaskHistoryList() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="grid grid-cols-2 gap-2.5">
       {recentTasks.map((task, index) => (
         <TaskCard 
           key={task.task_id} 

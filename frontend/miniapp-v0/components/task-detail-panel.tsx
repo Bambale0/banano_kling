@@ -17,6 +17,7 @@ import {
   unpublishGeneration,
 } from '@/lib/api'
 import { toast } from 'sonner'
+import { copyTextToClipboard } from '@/lib/clipboard'
 
 export function TaskDetailPanel() {
   const { taskDetail, isTaskDetailOpen, closeTaskDetail, updateTask } = useApp()
@@ -27,6 +28,8 @@ export function TaskDetailPanel() {
   const [feedBlurred, setFeedBlurred] = useState(false)
   const [publicationScope, setPublicationScope] = useState<'profile' | 'feed'>('feed')
   const [adultContent, setAdultContent] = useState(false)
+  const [publicationEditorOpen, setPublicationEditorOpen] = useState(false)
+  const [publicationLink, setPublicationLink] = useState<string | null>(null)
 
   const referenceCount =
     (taskDetail?.request_data?.reference_images?.length || 0) +
@@ -38,6 +41,8 @@ export function TaskDetailPanel() {
     setFeedBlurred(Boolean(taskDetail?.feed_blurred))
     setPublicationScope(taskDetail?.publication_scope === 'profile' ? 'profile' : 'feed')
     setAdultContent(Boolean(taskDetail?.is_adult_content))
+    setPublicationEditorOpen(false)
+    setPublicationLink(null)
   }, [
     taskDetail?.task_id,
     taskDetail?.feed_prompt_visible,
@@ -83,18 +88,7 @@ export function TaskDetailPanel() {
     if (!isPublished && !confirmPublication(target)) return
     setPublishBusy(true)
     try {
-      if (isPublished) {
-        await unpublishGeneration(taskDetail.task_id)
-        updateTask(taskDetail.task_id, {
-          is_public_feed: false,
-          is_profile_visible: false,
-          publication_scope: 'private',
-          is_adult_content: false,
-        })
-        notifyFeedChanged()
-        toast.success('Публикация убрана')
-      } else {
-        const published = await publishGeneration(taskDetail.task_id, {
+      const published = await publishGeneration(taskDetail.task_id, {
           promptVisible: feedPromptVisible,
           referencesVisible: feedReferencesVisible,
           blurred: feedBlurred,
@@ -112,12 +106,13 @@ export function TaskDetailPanel() {
           feed_blurred: Boolean(published.feed_blurred),
         })
         notifyFeedChanged(published)
+        setPublicationLink(published.publication_link || null)
+        setPublicationEditorOpen(false)
         toast.success(
           published.publication_scope === 'profile'
             ? 'Опубликовано только в профиле'
             : 'Опубликовано в ленте и профиле'
         )
-      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
     } finally {
@@ -125,33 +120,35 @@ export function TaskDetailPanel() {
     }
   }
 
-  const handleUpdateFeedSettings = async () => {
+  const handleUnpublish = async () => {
     if (!taskDetail || publishBusy || !isPublished) return
     setPublishBusy(true)
     try {
-      const published = await publishGeneration(taskDetail.task_id, {
-        promptVisible: feedPromptVisible,
-        referencesVisible: feedReferencesVisible,
-        blurred: feedBlurred,
-        publicationScope,
-        adultContent,
-      })
+      await unpublishGeneration(taskDetail.task_id)
       updateTask(taskDetail.task_id, {
-        is_public_feed: published.publication_scope === 'feed',
-        is_profile_visible: true,
-        publication_scope: published.publication_scope,
-        is_adult_content: Boolean(published.is_adult_content),
-        feed_interactions_enabled: published.feed_interactions_enabled,
-        feed_prompt_visible: feedPromptVisible,
-        feed_references_visible: feedReferencesVisible,
-        feed_blurred: Boolean(published.feed_blurred),
+        is_public_feed: false,
+        is_profile_visible: false,
+        publication_scope: 'private',
+        is_adult_content: false,
       })
-      notifyFeedChanged(published)
-      toast.success('Настройки публикации обновлены')
+      setPublicationLink(null)
+      setPublicationEditorOpen(false)
+      notifyFeedChanged()
+      toast.success('Публикация убрана')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось обновить ленту')
+      toast.error(e instanceof Error ? e.message : 'Не удалось убрать публикацию')
     } finally {
       setPublishBusy(false)
+    }
+  }
+
+  const handleCopyPublicationLink = async () => {
+    if (!publicationLink) return
+    try {
+      await copyTextToClipboard(publicationLink)
+      toast.success('Ссылка скопирована')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось скопировать ссылку')
     }
   }
 
@@ -406,10 +403,11 @@ export function TaskDetailPanel() {
               )}
 
               {/* Actions */}
-              {taskDetail.status === 'completed' && taskDetail.result_url && taskDetail.result_url.startsWith('http') && (
+              {taskDetail.status === 'completed' && taskDetail.result_url && (
                 <div className="space-y-2">
-                  {canPublishToFeed ? (
+                  {canPublishToFeed && publicationEditorOpen ? (
                 <div className="rounded-xl border border-border/50 bg-secondary/35 p-3">
+                  <p className="mb-3 text-sm font-semibold text-foreground">Куда опубликовать?</p>
                   <div className="mb-3 grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -507,18 +505,31 @@ export function TaskDetailPanel() {
                           Blur
                         </button>
                       </div>
-              {isPublished ? (
-                <Button
-                          type="button"
-                          variant="secondary"
-                          className="mt-2 w-full"
-                          disabled={publishBusy}
-                          onClick={handleUpdateFeedSettings}
-                        >
-                          {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-                          Обновить публикацию
-                        </Button>
-                      ) : null}
+                  <div className="mt-3 grid gap-2">
+                    <Button type="button" disabled={publishBusy} onClick={handlePublish}>
+                      {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+                      {isPublished ? 'Сохранить публикацию' : 'Опубликовать'}
+                    </Button>
+                    {isPublished ? (
+                      <Button type="button" variant="outline" disabled={publishBusy} onClick={handleUnpublish}>
+                        Убрать публикацию
+                      </Button>
+                    ) : null}
+                  </div>
+                    </div>
+                  ) : null}
+                  {publicationLink ? (
+                    <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-secondary/35 p-2">
+                      <Button asChild type="button" variant="secondary" size="sm">
+                        <a href={publicationLink} target="_blank" rel="noreferrer">
+                          <ExternalLink className="h-4 w-4" />
+                          Открыть
+                        </a>
+                      </Button>
+                      <Button type="button" variant="secondary" size="sm" onClick={handleCopyPublicationLink}>
+                        <Copy className="h-4 w-4" />
+                        Скопировать
+                      </Button>
                     </div>
                   ) : null}
                   {(canPublishToFeed || canSavePrompt) && (
@@ -526,13 +537,12 @@ export function TaskDetailPanel() {
                       {canPublishToFeed ? (
                       <Button
                         type="button"
-                        data-publication-action="scope"
                         variant="secondary"
                         disabled={publishBusy}
-                        onClick={handlePublish}
+                        onClick={() => setPublicationEditorOpen((open) => !open)}
                       >
-                        {publishBusy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-                        {isPublished ? 'Убрать публикацию' : 'Опубликовать'}
+                        <Images className="h-4 w-4" />
+                        {isPublished ? 'Настроить публикацию' : 'Опубликовать'}
                       </Button>
                       ) : null}
                       {canSavePrompt ? (

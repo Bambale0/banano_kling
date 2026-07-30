@@ -127,6 +127,24 @@ Authorization: Bearer <secret>
 - `bootstrap` и другие API: проверить proxy и время ответа `tanyapi.chillcreative.ru`
 - hashed `/_next/static/` assets должны иметь `immutable`, HTML — `no-store`
 
+### Результат пришёл в чат, но карточка всё ещё «В обработке»
+
+- проверить, что bootstrap возвращает тот же `task_id` со статусом `completed` и `result_url`
+- проверить 5-секундный bootstrap sync в видимой вкладке и повторный sync при возврате в приложение
+- проверить Telegram `initData`; при `401` локальное состояние намеренно не подменяется
+- убедиться, что свежая задача обновляет `recentTasks`, `selectedTask` и `taskDetail`
+
+### В ленте или профиле чёрные карточки
+
+- адрес результата должен быть переписан на `/mini-app/api/media/{task_id}/{index}`
+- upstream host должен входить в allowlist media gateway
+- backend должен иметь доступ к provider URL и право записи в `static/uploads/miniapp-media-cache`
+- proxy `/mini-app/api/` на frontend host должен вести на `tanyapi.chillcreative.ru`
+
+### Публикация из Mini App
+
+Нормальный поток: одна кнопка в деталях → `Лента и профиль` либо `Только профиль` → настройки приватности → сохранение. `POST /mini-app/api/generations/share` возвращает `feed_item` с `publication_link`; повторный вызов обновляет существующую публикацию. Удаление должно убрать работу и из общей ленты, и из профиля.
+
 Команды замера и подробная диагностика: [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md#10-если-mini-app-долго-грузится).
 
 ## 6. Incident checklist

@@ -1,5 +1,7 @@
 # Run Guide
 
+Pytest изолирован от production `.env`: `tests/conftest.py` запрещает загрузку project env и очищает уже экспортированные application settings до импорта `bot.config`. Тестовые значения задаются отдельно, поэтому локальный полный gate не должен использовать production API keys, базы, Redis или webhook settings.
+
 ## 1. Назначение
 
 Этот файл описывает безопасный способ локально поднять проект и проверить, что документация, конфиг и runtime не расходятся.

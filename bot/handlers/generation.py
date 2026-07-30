@@ -869,7 +869,7 @@ def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -
         "This is an edit of the first uploaded image, not a request to invent a new composition: change only the details explicitly requested by the user and keep all other visible details unchanged.",
         "Use the first uploaded image only as the primary person identity reference.",
         "Preserve only the person's identity, but preserve facial identity exactly: face shape, facial geometry, eyes, eyebrows, nose, lips, cheekbones, jawline, hairline, age impression, skin tone, asymmetry, and distinctive facial features.",
-        "Preserve hair color, hair length, and hairstyle from the first reference only when the user did not ask to change hair.",
+        "Preserve hair color, hair length, and hairstyle from the first reference unless the user explicitly asks to change them.",
         "Follow the user's prompt for clothing, outfit, body styling, scene, pose, lighting, framing, and style, and apply those edits to that same person.",
         "Do not preserve or copy clothing, outfit, accessories, pose, body shape, background, lighting, camera angle, or visual coverage from the reference unless the user explicitly asks for those details.",
     ]

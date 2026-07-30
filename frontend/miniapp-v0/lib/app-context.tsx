@@ -169,6 +169,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const applyBootstrap = useCallback((data: BootstrapResponse) => {
+    setSelectedTask((current) => {
+      if (!current) return current
+      const fresh = data.recent_tasks.find((task) => task.task_id === current.task_id)
+      return fresh ? { ...current, ...fresh } : current
+    })
+    setTaskDetail((current) => {
+      if (!current) return current
+      const fresh = data.recent_tasks.find((task) => task.task_id === current.task_id)
+      return fresh ? { ...current, ...fresh } : current
+    })
     setState({
       mode: 'live',
       isLoading: false,
@@ -515,6 +525,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refreshTasks()
   }, [refreshTasks])
+
+  useEffect(() => {
+    if (state.mode !== 'live') return
+    let syncing = false
+
+    const syncResults = async () => {
+      if (syncing || document.visibilityState !== 'visible' || !getInitData()) return
+      syncing = true
+      try {
+        const data = await bootstrapApp()
+        applyBootstrap(data)
+      } catch {
+        // Keep the last confirmed state; the next tick or focus event retries.
+      } finally {
+        syncing = false
+      }
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void syncResults()
+    }
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = window.setInterval(() => void syncResults(), 5_000)
+    return () => {
+      window.removeEventListener('focus', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(timer)
+    }
+  }, [applyBootstrap, state.mode])
 
   useEffect(() => {
     if (pollRef.current) {

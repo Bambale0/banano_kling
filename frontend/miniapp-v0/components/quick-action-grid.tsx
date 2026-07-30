@@ -12,10 +12,10 @@ interface QuickActionGridProps {
 }
 
 const actionStyles = [
-  'from-gold/[0.18] to-gold/[0.04] border-gold/25',
-  'from-cyan/[0.18] to-cyan/[0.04] border-cyan/25',
-  'from-purple-500/[0.18] to-gold/[0.04] border-gold/20',
-  'from-card/80 to-muted/30 border-border/60',
+  'text-gold border-gold/30 bg-gold/10',
+  'text-cyan border-cyan/30 bg-cyan/10',
+  'text-purple-300 border-purple-400/25 bg-purple-500/10',
+  'text-emerald-300 border-emerald-400/25 bg-emerald-500/10',
 ]
 
 export function QuickActionGrid({
@@ -27,32 +27,32 @@ export function QuickActionGrid({
   const items = [
     {
       label: 'Создать фото',
-      description: 'Изображения по описанию или референсам',
+      shortLabel: 'Фото',
       icon: Image,
       onClick: onPhotoClick,
     },
     {
       label: 'Создать видео',
-      description: 'Ролики из текста, фото или видео-референса',
+      shortLabel: 'Видео',
       icon: Video,
       onClick: onVideoClick,
     },
     {
       label: 'Оживить фото',
-      description: 'Перенести движение на персонажа или объект',
+      shortLabel: 'Оживить',
       icon: Sparkles,
       onClick: onMotionClick || onVideoClick,
     },
     {
       label: 'Помощник',
-      description: 'Подскажет модель и поможет с запросом',
+      shortLabel: 'Помощник',
       icon: Bot,
       onClick: onAssistantClick,
     },
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-4 gap-2 sm:gap-3">
       {items.map((item, index) => {
         const Icon = item.icon
 
@@ -62,25 +62,17 @@ export function QuickActionGrid({
             type="button"
             onClick={item.onClick}
             className={cn(
-              'group relative overflow-hidden rounded-3xl border p-4 text-left',
-              'bg-gradient-to-br transition-all duration-300',
-              'hover:scale-[1.015] active:scale-[0.99]',
+              'group flex min-w-0 flex-col items-center gap-2 rounded-2xl py-3 text-center',
+              'transition-all duration-200 active:scale-95',
               actionStyles[index]
             )}
           >
-            <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-white/10 blur-2xl opacity-40 transition-opacity group-hover:opacity-100" />
-
-            <div className="relative">
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-background/55">
-                <Icon className="h-5 w-5 text-gold" />
-              </div>
-
-              <p className="font-serif text-base text-foreground">{item.label}</p>
-
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {item.description}
-              </p>
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-current/20 bg-background/45 shadow-sm">
+              <Icon className="h-5 w-5" />
             </div>
+            <span className="w-full truncate px-1 text-[11px] font-medium text-foreground sm:text-xs">
+              {item.shortLabel}
+            </span>
           </button>
         )
       })}

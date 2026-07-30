@@ -12,6 +12,10 @@
 
 Система использует единый слой доменных данных (`bot/database.py` + `bot/db.py`), а поверх него построены Telegram handlers, Mini App handlers и provider/payment services.
 
+Production frontend размещён отдельно на `tanyapp.chillcreative.ru`; `/mini-app/api/` проксируется на `tanyapi.chillcreative.ru`. Состояние, авторизация и права остаются на backend. Bootstrap — источник истины для истории генераций и синхронно обновляет список, выбранную задачу и открытую карточку. Временные media URL провайдеров проходят через авторизованный same-origin gateway с allowlist и локальным кешем.
+
+Публикация в боте и Mini App использует одну модель: генерация имеет один scope `private`, `profile` или `feed`. `feed` включает общую ленту и профиль, `profile` показывает работу только владельцу профиля и его посетителям. Повторный вызов обновляет настройки той же записи; backend возвращает deep link для открытия и копирования.
+
 ## 2. Основные подсистемы
 
 ### 2.1 Bot runtime

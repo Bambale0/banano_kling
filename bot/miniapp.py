@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import html
 import hmac
@@ -13,6 +14,7 @@ from urllib.parse import parse_qsl, urlparse
 
 from aiogram.types import BufferedInputFile, LabeledPrice
 from bot import db as db_backend
+import aiohttp
 from aiohttp import web
 
 from bot.config import config
@@ -121,6 +123,7 @@ from bot.payment_utils import (
     package_stars_amount,
     total_package_credits,
 )
+
 from bot.quality_pricing import QUALITY_COSTS
 from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
@@ -146,6 +149,10 @@ from bot.video_reference_policy import (
     normalize_reference_urls,
     video_model_supports_reference_videos,
 )
+
+MINIAPP_MEDIA_CACHE_DIR = Path("static/uploads/miniapp-media-cache")
+MINIAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024
+_miniapp_media_locks: dict[str, asyncio.Lock] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -3256,6 +3263,14 @@ async def miniapp_generation_share(request: web.Request) -> web.Response:
             _invalidate_feed_and_profile_caches()
         except Exception:
             logger.exception("Failed to invalidate feed caches after Mini App publish")
+        me = await request.app["bot"].get_me()
+        author_referral_code = str(card.get("author_referral_code") or "").strip().upper()
+        publication_link = (
+            build_feed_link(me.username, card["id"], author_referral_code)
+            if me.username
+            else config.mini_app_url
+        )
+        card["publication_link"] = publication_link
         return web.json_response({"ok": True, "feed_item": card})
     except Exception as e:
         return _miniapp_error_response(e, log_message="Mini App share generation failed")
@@ -4497,6 +4512,103 @@ async def miniapp_partner_overview(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App partner overview failed")
 
 
+def _miniapp_media_extension(content_type: str, url: str) -> str:
+    mime = str(content_type or "").split(";", 1)[0].strip().lower()
+    extensions = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+    }
+    if mime in extensions:
+        return extensions[mime]
+    suffix = Path(urlparse(url).path).suffix.lower()
+    return suffix if suffix in set(extensions.values()) else ".bin"
+
+
+async def miniapp_media(request: web.Request) -> web.StreamResponse:
+    task_id = str(request.match_info.get("task_id") or "").strip()
+    try:
+        index = max(0, int(request.match_info.get("index") or 0))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="Invalid media index")
+    if not task_id or len(task_id) > 200:
+        raise web.HTTPBadRequest(text="Invalid task id")
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT result_url, result_urls FROM generation_tasks WHERE task_id = ? LIMIT 1",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        raise web.HTTPNotFound(text="Media not found")
+
+    urls = _public_result_urls(dict(row))
+    if index >= len(urls):
+        raise web.HTTPNotFound(text="Media not found")
+    source_url = urls[index]
+
+    from bot.services.media_input_utils import resolve_local_upload_path
+
+    local_path = resolve_local_upload_path(source_url)
+    if local_path:
+        response = web.FileResponse(local_path)
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+    from bot.database import FEED_EPHEMERAL_RESULT_HOSTS, _feed_result_host
+
+    host = _feed_result_host(source_url)
+    if not any(host == allowed or host.endswith(f".{allowed}") for allowed in FEED_EPHEMERAL_RESULT_HOSTS):
+        raise web.HTTPForbidden(text="Media host is not allowed")
+
+    cache_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()
+    MINIAPP_MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached = next(MINIAPP_MEDIA_CACHE_DIR.glob(f"{cache_key}.*"), None)
+    if cached and cached.is_file():
+        response = web.FileResponse(cached)
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+    lock = _miniapp_media_locks.setdefault(cache_key, asyncio.Lock())
+    async with lock:
+        cached = next(MINIAPP_MEDIA_CACHE_DIR.glob(f"{cache_key}.*"), None)
+        if not cached:
+            timeout = aiohttp.ClientTimeout(total=60)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(source_url, allow_redirects=True) as upstream:
+                    if upstream.status != 200:
+                        raise web.HTTPBadGateway(text="Media source is unavailable")
+                    content_length = int(upstream.headers.get("Content-Length") or 0)
+                    if content_length > MINIAPP_MEDIA_MAX_BYTES:
+                        raise web.HTTPRequestEntityTooLarge(
+                            max_size=MINIAPP_MEDIA_MAX_BYTES,
+                            actual_size=content_length,
+                        )
+                    content = await upstream.read()
+                    if len(content) > MINIAPP_MEDIA_MAX_BYTES:
+                        raise web.HTTPRequestEntityTooLarge(
+                            max_size=MINIAPP_MEDIA_MAX_BYTES,
+                            actual_size=len(content),
+                        )
+                    extension = _miniapp_media_extension(
+                        upstream.headers.get("Content-Type", ""), source_url
+                    )
+            cached = MINIAPP_MEDIA_CACHE_DIR / f"{cache_key}{extension}"
+            temporary = cached.with_suffix(f"{cached.suffix}.tmp")
+            await asyncio.to_thread(temporary.write_bytes, content)
+            await asyncio.to_thread(temporary.replace, cached)
+    _miniapp_media_locks.pop(cache_key, None)
+    response = web.FileResponse(cached)
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
 async def miniapp_task_detail(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -4760,6 +4872,9 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/create-payment", miniapp_create_payment)
     app.router.add_post(miniapp_root + "/api/task-detail", miniapp_task_detail)
     app.router.add_post(miniapp_root + "/api/ai-assistant", miniapp_ai_assistant)
+    app.router.add_get(
+        miniapp_root + "/api/media/{task_id}/{index}", miniapp_media
+    )
     app.router.add_route("*", miniapp_root + "/api/{tail:.*}", miniapp_api_not_found)
 
     api_v1_root = "/api/v1"

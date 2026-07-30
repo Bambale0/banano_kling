@@ -56,6 +56,7 @@ export function TrendsTab() {
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [previewTrend, setPreviewTrend] = useState<PromptItem | null>(null)
+  const [videoAspectRatios, setVideoAspectRatios] = useState<Record<number, string>>({})
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
@@ -235,6 +236,16 @@ export function TrendsTab() {
     }
   }
 
+  const rememberVideoAspectRatio = (trendId: number, video: HTMLVideoElement) => {
+    const width = Number(video.videoWidth || 0)
+    const height = Number(video.videoHeight || 0)
+    if (!width || !height) return
+    setVideoAspectRatios((current) => {
+      const ratio = `${width} / ${height}`
+      return current[trendId] === ratio ? current : { ...current, [trendId]: ratio }
+    })
+  }
+
   const renderTrendGrid = (trends: PromptItem[], title: string, videoSection: boolean) => {
     if (!trends.length) return null
     return (
@@ -253,7 +264,15 @@ export function TrendsTab() {
                 <div className="relative bg-secondary/40">
                   {trend.preview_url ? videoSection ? (
                     <button type="button" className="block w-full" onClick={() => setPreviewTrend(trend)} aria-label={`Открыть видео ${trend.title}`}>
-                      <video src={trend.preview_url} muted playsInline preload="metadata" className="aspect-video w-full bg-black object-cover" />
+                      <video
+                        src={trend.preview_url}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
+                        style={{ aspectRatio: videoAspectRatios[trend.id] || '16 / 9' }}
+                        className="w-full bg-black object-contain"
+                      />
                       <span className="absolute inset-0 grid place-items-center bg-black/10"><Film className="h-8 w-8 rounded-full bg-black/55 p-1.5 text-white" /></span>
                     </button>
                   ) : (
@@ -420,7 +439,7 @@ export function TrendsTab() {
                     muted
                     playsInline
                     preload="metadata"
-                    className="aspect-video w-full bg-black object-contain"
+                    className="h-auto max-h-[70vh] w-full bg-black object-contain"
                   />
                 ) : (
                   <img
@@ -509,7 +528,17 @@ export function TrendsTab() {
       <Dialog open={Boolean(previewTrend)} onOpenChange={(open) => { if (!open) setPreviewTrend(null) }}>
         <DialogContent className="max-w-3xl border-border/60 bg-background p-3">
           <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Видео-тренд'}</DialogTitle>
-          {previewTrend?.preview_url ? <video src={previewTrend.preview_url} controls autoPlay playsInline className="aspect-video w-full rounded-xl bg-black object-contain" /> : null}
+          {previewTrend?.preview_url ? (
+            <video
+              src={previewTrend.preview_url}
+              controls
+              autoPlay
+              playsInline
+              onLoadedMetadata={(event) => rememberVideoAspectRatio(previewTrend.id, event.currentTarget)}
+              style={{ aspectRatio: videoAspectRatios[previewTrend.id] || '16 / 9' }}
+              className="max-h-[78vh] w-full rounded-xl bg-black object-contain"
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

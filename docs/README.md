@@ -12,7 +12,7 @@
 - [roadmap.md](roadmap.md) — статус системы и ближайшие приоритеты
 - [tracemap.md](tracemap.md) — индекс трассировки пользовательских потоков
 - [runbook.md](runbook.md) — эксплуатация, логи, инциденты, restart policy
-- [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) — отдельный frontend host, TLS, proxy, cutover и rollback
+- [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) — отдельный frontend host, TLS, proxy, media gateway, синхронизация, публикация, cutover и rollback
 - [run_guide.md](run_guide.md) — локальный запуск и базовые проверки
 - [migration.md](migration.md) — миграции, backfill, repair scripts
 - [postgres-migration.md](postgres-migration.md) — PostgreSQL cutover/runtime path

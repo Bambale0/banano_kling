@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import pytest
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT_DIR / ".env")
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.smoke, pytest.mark.live_smoke]
 
@@ -78,6 +77,9 @@ def kie_api_key() -> ApiKey:
     if not _live_smoke_enabled():
         pytest.skip("set BANANO_LIVE_SMOKE=1 to run real provider smoke tests")
 
+    # Loading production credentials during collection contaminates the normal
+    # unit-test process. Only an explicitly enabled paid smoke test may read it.
+    load_dotenv(ROOT_DIR / ".env")
     key = os.getenv("KIE_AI_API_KEY") or os.getenv("NANOBANANA_API_KEY")
     if not key:
         pytest.skip("KIE_AI_API_KEY or NANOBANANA_API_KEY is required")

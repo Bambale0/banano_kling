@@ -3,8 +3,44 @@ import os
 # This must be set while pytest loads conftest, before test modules import
 # bot.config. Unit and integration tests must never read production .env files.
 os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
+
+# A developer may run pytest from a production-like shell where values from
+# `.env` are already exported. Skipping dotenv loading alone is insufficient in
+# that case, so remove every application setting present in the production env
+# contract before bot modules are imported.
+for _name in (
+    "ALLOW_NSFW", "CRYPTOBOT_API_TOKEN", "DATABASE_URL", "DEBUG",
+    "DOWNLOAD_EXTERNAL_IMAGES", "FREEKASSA_API_KEY", "FREEKASSA_CURRENCY",
+    "FREEKASSA_MERCHANT_ID", "FREEKASSA_SECRET_WORD", "FREEKASSA_SECRET_WORD_2",
+    "FREEKASSA_VERIFY_IP", "FREEKASSA_WEBHOOK_PATH", "INTERNAL_API_ALLOWED_NETWORKS",
+    "INTERNAL_API_MAX_CLOCK_SKEW_SECONDS", "INTERNAL_API_SECRET",
+    "INTERNAL_API_SERVICE_VERSION", "KIE_AI_API_KEY", "KIE_AI_WEBHOOK_SECRET",
+    "LAVA_API_BASE_URL", "LAVA_API_KEY", "LAVA_DEFAULT_EMAIL",
+    "LAVA_OFFER_ID_BUSINESS", "LAVA_OFFER_ID_MINI", "LAVA_OFFER_ID_OPTIMAL",
+    "LAVA_OFFER_ID_PRO", "LAVA_OFFER_ID_START", "LAVA_OFFER_ID_STUDIO",
+    "LAVA_WEBHOOK_PATH", "LAVA_WEBHOOK_SECRET", "MINI_APP_URL",
+    "NANOBANANA2_FALLBACK_API_KEY", "NANOBANANA2_FALLBACK_BASE_URL",
+    "NANO_BANANA_PRO_FALLBACK_API_KEY", "NANO_BANANA_PRO_FALLBACK_BASE_URL",
+    "PARTNER_MIN_WITHDRAWAL_RUB", "PAYMENT_PROVIDER", "REDIS_PREFIX", "REDIS_URL",
+    "REFERRAL_ANTIFRAUD_BLOCK_CODES", "REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS",
+    "REFERRAL_ANTIFRAUD_MAX_PER_DAY", "REFERRAL_ANTIFRAUD_MAX_PER_HOUR",
+    "STATIC_BASE_URL", "TELEGRAM_STARS_FLAT_FEE", "TELEGRAM_STARS_PER_RUB",
+    "WEBHOOK_HOST", "WEBHOOK_PATH", "WEBHOOK_PORT", "YOOKASSA_RETURN_URL",
+    "YOOKASSA_SECRET_KEY", "YOOKASSA_SHOP_ID", "YOOKASSA_WEBHOOK_URL",
+):
+    os.environ.pop(_name, None)
+
 os.environ["BOT_TOKEN"] = "test:fake-bot-token"
 os.environ["ADMIN_IDS"] = "999999999"
+
+# Paid live tests are a separate, explicitly enabled suite. Excluding the
+# directory during normal collection also prevents module-level provider setup
+# from affecting the isolated unit-test process.
+collect_ignore_glob = (
+    []
+    if str(os.getenv("BANANO_LIVE_SMOKE", "")).strip().lower() in {"1", "true", "yes", "on"}
+    else ["live/test_*.py"]
+)
 
 import pytest
 

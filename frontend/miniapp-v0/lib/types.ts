@@ -196,6 +196,7 @@ export interface FeedItem {
   result_url: string
   preview_url?: string | null
   result_urls: string[]
+  publication_link?: string | null
   media_unavailable?: boolean
   prompt?: string | null
   likes_count: number

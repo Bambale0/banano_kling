@@ -11,7 +11,7 @@ import { ClientErrorBoundary } from './client-error-boundary'
 import { TelegramOpenGate } from './telegram-open-gate'
 
 const TaskDetailPanel = dynamic(() =>
-  import('./task-detail-publication-scope').then((module) => module.TaskDetailPanel),
+  import('./task-detail-panel').then((module) => module.TaskDetailPanel),
 )
 const BalanceSheet = dynamic(() =>
   import('./balance-sheet').then((module) => module.BalanceSheet),

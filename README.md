@@ -38,6 +38,9 @@
   - анализ видео в отдельный credit-based flow
 - `Mini App`
   - bootstrap профиля и задач
+  - автоматическая синхронизация результата между Telegram-чатом и открытой карточкой
+  - единая публикация в общую ленту и профиль либо только в профиль без дублей
+  - same-origin media gateway для временных provider URL
   - генерация
   - upload
   - feed/prompt actions

@@ -435,16 +435,18 @@ def _replace_publication_button(
         for button in row:
             callback_data = str(button.callback_data or "")
             if callback_data.startswith(("feedpub_", "feedrm_")):
-                next_row.append(
-                    InlineKeyboardButton(
-                        text=label,
-                        callback_data=f"pubscope_{task_id}",
+                if not replaced:
+                    next_row.append(
+                        InlineKeyboardButton(
+                            text=label,
+                            callback_data=f"pubscope_{task_id}",
+                        )
                     )
-                )
-                replaced = True
+                    replaced = True
             else:
                 next_row.append(button)
-        rows.append(next_row)
+        if next_row:
+            rows.append(next_row)
 
     if not replaced:
         rows.insert(
@@ -646,10 +648,28 @@ async def publish_only_to_profile_with_blur(callback: types.CallbackQuery):
     task["is_public_feed"] = False
     task["is_profile_visible"] = True
     await _refresh_result_markup(callback, task, "profile")
+    from bot.handlers.generation import (
+        _published_feed_bot_link,
+        _published_feed_link,
+        _published_feed_link_keyboard,
+    )
+
+    me = await callback.bot.get_me()
+    publication_url = _published_feed_link(me.username, card)
+    publication_bot_url = _published_feed_bot_link(me.username, card)
+    await callback.message.answer(
+        "✅ Работа добавлена в ваш профиль.\n\n"
+        f"🔗 Ссылка на работу:\n{publication_url}",
+        reply_markup=_published_feed_link_keyboard(
+            publication_url,
+            publication_bot_url,
+        ),
+        disable_web_page_preview=True,
+    )
     await callback.answer(
-        "Добавлено в профиль с blur"
+        "Добавлено в профиль с blur — ссылка отправлена"
         if blurred
-        else "Добавлено в профиль без blur"
+        else "Добавлено в профиль — ссылка отправлена"
     )
 
 
@@ -764,6 +784,16 @@ async def _miniapp_generation_share_scoped(module, request):
         )
         user_id = ctx["user"].id
 
+        async def with_publication_link(card):
+            me = await request.app["bot"].get_me()
+            referral_code = str(card.get("author_referral_code") or "").strip().upper()
+            card["publication_link"] = (
+                module.build_feed_link(me.username, card["id"], referral_code)
+                if me.username
+                else module.config.mini_app_url
+            )
+            return card
+
         if scope == "profile":
             card = await share_to_profile(
                 gen_id,
@@ -777,6 +807,7 @@ async def _miniapp_generation_share_scoped(module, request):
                     {"ok": False, "error": "Нельзя добавить эту генерацию в профиль"},
                     status=403,
                 )
+            card = await with_publication_link(card)
             _invalidate_publication_caches()
             return module.web.json_response(
                 {"ok": True, "feed_item": card, "publication_scope": "profile"}
@@ -801,6 +832,7 @@ async def _miniapp_generation_share_scoped(module, request):
                 {"ok": False, "error": "Нельзя опубликовать эту генерацию в ленту"},
                 status=403,
             )
+        card = await with_publication_link(card)
         _invalidate_publication_caches()
         return module.web.json_response(
             {"ok": True, "feed_item": card, "publication_scope": "feed"}
