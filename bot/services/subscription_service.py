@@ -1,5 +1,6 @@
 """Required Telegram channel subscription helpers."""
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -11,7 +12,8 @@ REQUIRED_CHANNEL_USERNAME = "neuromix_prompt"
 REQUIRED_CHANNEL_CHAT_ID = f"@{REQUIRED_CHANNEL_USERNAME}"
 REQUIRED_CHANNEL_URL = f"https://t.me/{REQUIRED_CHANNEL_USERNAME}"
 SUBSCRIPTION_CHECK_CALLBACK = "check_required_channel_subscription"
-SUBSCRIPTION_CACHE_TTL_SECONDS = 120
+SUBSCRIPTION_CACHE_TTL_SECONDS = 15 * 60
+SUBSCRIPTION_CHECK_TIMEOUT_SECONDS = 2.0
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,16 @@ async def check_required_channel_subscription(
         return SubscriptionCheckResult(ok=True, status="cached")
 
     try:
-        member = await bot.get_chat_member(REQUIRED_CHANNEL_CHAT_ID, normalized_id)
+        member = await asyncio.wait_for(
+            bot.get_chat_member(REQUIRED_CHANNEL_CHAT_ID, normalized_id),
+            timeout=SUBSCRIPTION_CHECK_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Required channel subscription check timed out for user=%s",
+            normalized_id,
+        )
+        return SubscriptionCheckResult(ok=False, error="timeout")
     except (TelegramBadRequest, TelegramForbiddenError) as exc:
         message = str(exc)
         logger.info(

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
+from bot.handlers import feed_model_filter_compat
 from bot.handlers.feed_model_filter_compat import (
     DEFAULT_FEED_MODEL,
     _build_model_picker_markup,
@@ -59,12 +62,17 @@ async def test_filter_feed_cards_filters_before_pagination() -> None:
 
     async def getter(**kwargs):
         calls.append(kwargs)
-        return [
+        cards = [
             {"id": 1, "model": "banana_2"},
             {"id": 2, "model": "banana_pro"},
             {"id": 3, "model": "nano-banana-pro"},
             {"id": 4, "model": "flux_pro"},
         ]
+        accepted = set(kwargs.get("models") or ())
+        filtered = [card for card in cards if card["model"] in accepted]
+        offset = kwargs.get("offset", 0)
+        limit = kwargs.get("limit", 0)
+        return filtered[offset : offset + limit] if limit else filtered[offset:]
 
     cards = await filter_feed_cards(
         getter,
@@ -76,14 +84,19 @@ async def test_filter_feed_cards_filters_before_pagination() -> None:
     )
 
     assert [card["id"] for card in cards] == [3]
-    assert calls == [
-        {
-            "limit": 0,
-            "offset": 0,
-            "source": "recent",
-            "viewer_user_id": 10,
-        }
-    ]
+    assert calls[0]["limit"] == 1
+    assert calls[0]["offset"] == 1
+    assert calls[0]["source"] == "recent"
+    assert calls[0]["viewer_user_id"] == 10
+    assert "banana_pro" in calls[0]["models"]
+    assert "nano-banana-pro" in calls[0]["models"]
+
+
+def test_miniapp_feed_response_disables_caching() -> None:
+    source = inspect.getsource(feed_model_filter_compat.install_feed_model_filter_compat)
+
+    assert 'response.headers["Cache-Control"]' in source
+    assert 'response.headers["Pragma"] = "no-cache"' in source
 
 
 @pytest.mark.asyncio

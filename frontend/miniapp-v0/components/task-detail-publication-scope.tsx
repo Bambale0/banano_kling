@@ -5,6 +5,8 @@ import { Globe2, Loader2, Lock, UserRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { useApp } from '@/lib/app-context'
+import { notifyFeedChanged } from '@/lib/feed-events'
+import type { FeedItem } from '@/lib/types'
 import {
   getApiBasePath,
   getInitData,
@@ -35,7 +37,7 @@ function getScope(task: ScopedTask | null | undefined): PublicationScope {
 async function setPublicationScope(
   task: ScopedTask,
   scope: PublicationScope,
-): Promise<void> {
+): Promise<FeedItem> {
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
@@ -61,11 +63,13 @@ async function setPublicationScope(
   })
 
   const payload = await response.json().catch(() => null) as
-    | { ok?: boolean; error?: string }
+    | { ok?: boolean; error?: string; feed_item?: FeedItem }
     | null
   if (!response.ok || payload?.ok === false) {
     throw new Error(payload?.error || 'Не удалось изменить публикацию')
   }
+  if (!payload?.feed_item) throw new Error('Сервер не вернул публикацию')
+  return payload.feed_item
 }
 
 export function TaskDetailPanel() {
@@ -114,11 +118,6 @@ export function TaskDetailPanel() {
     interceptedButton.current = null
   }, [taskDetail?.task_id])
 
-  const notifyChanged = () => {
-    if (typeof window === 'undefined') return
-    window.dispatchEvent(new CustomEvent('banano:feed-changed'))
-  }
-
   const publishToFeed = () => {
     const button = interceptedButton.current
     setChooserOpen(false)
@@ -145,7 +144,7 @@ export function TaskDetailPanel() {
 
     setBusy(true)
     try {
-      await setPublicationScope(scopedTask, scope)
+      const published = await setPublicationScope(scopedTask, scope)
       updateTask(
         scopedTask.task_id,
         {
@@ -154,7 +153,7 @@ export function TaskDetailPanel() {
           publication_scope: scope,
         } as never,
       )
-      notifyChanged()
+      notifyFeedChanged(scope === 'profile' ? published : undefined)
       setChooserOpen(false)
       toast.success(
         scope === 'profile'

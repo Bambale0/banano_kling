@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 from urllib.parse import urlparse
 
 from bot import db as db_backend
@@ -5853,6 +5853,7 @@ async def get_feed_generations(
     source: str = "recent",
     viewer_user_id: Optional[int] = None,
     include_unavailable: bool = False,
+    models: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return public feed items for the requested source."""
     source = source if source in {"recent", "top_day", "top"} else "recent"
@@ -5867,10 +5868,16 @@ async def get_feed_generations(
     ]
     if source == "top_day":
         where.append("gt.created_at >= datetime('now', '-1 day')")
+    model_values = [str(model).strip() for model in (models or ()) if str(model).strip()]
+    if model_values:
+        placeholders = ",".join("?" for _ in model_values)
+        where.append(
+            f"COALESCE(NULLIF(gt.model, ''), gt.preset_id) IN ({placeholders})"
+        )
 
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        query = f"""
+        base_query = f"""
             SELECT gt.*, u.telegram_id AS author_telegram_id,
                    u.username AS author_username,
                    u.first_name AS author_first_name,
@@ -5891,10 +5898,31 @@ async def get_feed_generations(
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
             WHERE {' AND '.join(where)}
-            ORDER BY COALESCE(gt.feed_published_at, gt.created_at) DESC, gt.created_at DESC
-            {"LIMIT ? OFFSET ?" if limit and source == "recent" else ""}
         """
-        params: list[Any] = [limit, offset] if limit and source == "recent" else []
+        if source == "recent":
+            query = f"""
+                {base_query}
+                ORDER BY COALESCE(gt.feed_published_at, gt.created_at) DESC, gt.created_at DESC
+                {"LIMIT ? OFFSET ?" if limit else ""}
+            """
+        else:
+            query = f"""
+                SELECT ranked.*
+                FROM ({base_query}) AS ranked
+                ORDER BY (
+                    COALESCE(ranked.likes_count, 0)
+                    + COALESCE(ranked.shares_count, 0) * 5
+                    + COALESCE(ranked.remix_count, 0) * 7
+                    + 4
+                ) * CASE
+                    WHEN ranked.created_at >= datetime('now', '-2 hours')
+                      OR ranked.updated_at >= datetime('now', '-2 hours')
+                    THEN 1.5 ELSE 1
+                END DESC,
+                COALESCE(ranked.feed_published_at, ranked.created_at) DESC
+                {"LIMIT ? OFFSET ?" if limit else ""}
+            """
+        params: list[Any] = [*model_values, *([limit, offset] if limit else [])]
         cursor = await db.execute(query, params)
         rows = await cursor.fetchall()
 
@@ -5903,11 +5931,7 @@ async def get_feed_generations(
         for row in rows
         if (card := _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable))
     ]
-    if source in {"top", "top_day"}:
-        cards.sort(key=lambda item: item["score"], reverse=True)
-    if offset and source in {"top", "top_day"}:
-        cards = cards[offset:]
-    return cards[:limit] if limit else cards
+    return cards
 
 
 async def get_user_feed_generations(

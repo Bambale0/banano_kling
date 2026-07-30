@@ -4,7 +4,7 @@ import { join } from 'node:path'
 const outDir = join(process.cwd(), 'out')
 const localTelegramJs = 'telegram-web-app.js'
 const localTelegramSrc = `/mini-app/${localTelegramJs}`
-const telegramScript = `<script src="${localTelegramSrc}"></script>`
+const telegramScript = `<script defer src="${localTelegramSrc}"></script>`
 const inlineMiniappCss = process.env.MINIAPP_INLINE_CSS === '1'
 
 const telegramEarlyScriptPattern =

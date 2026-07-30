@@ -12,6 +12,14 @@
 - internal APIs
 - background reconcile/cleanup loops
 
+Production Mini App развёрнут раздельно:
+
+- frontend: `https://tanyapp.chillcreative.ru/mini-app/`, host `2.27.160.11`
+- backend: `https://tanyapi.chillcreative.ru`, local aiohttp `127.0.0.1:1888`
+- backend service: `banano-kling.service`
+
+Полный frontend runbook: [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md).
+
 ## 2. Перед запуском проверить
 
 - `.env` загружен и содержит `BOT_TOKEN`
@@ -39,7 +47,7 @@ python -m py_compile $(find bot tests scripts -name "*.py")
 ### Проверка health
 
 ```bash
-curl http://127.0.0.1:8443/health
+curl http://127.0.0.1:1888/health
 ```
 
 Если установлен `HEALTH_CHECK_SECRET`, нужен header:
@@ -103,6 +111,24 @@ Authorization: Bearer <secret>
 - время жизни Telegram session
 - корректность Bot token
 
+Прямой API smoke без `initData` обязан отвечать `401`. Это нормальная проверка proxy/auth boundary, а не признак поломки.
+
+### Mini App долго загружается
+
+Сначала разделить frontend и backend:
+
+- document/JS/CSS: проверить DNS, TLS, HTTP/2, gzip и cache headers на `tanyapp.chillcreative.ru`
+- лента Mini App обновляется при возврате в окно/приложение и каждые 15 секунд в видимом состоянии; API `/mini-app/api/feed` должен отдавать `Cache-Control: no-store`
+- в remix-режиме кнопки «Причёска», «Одежда», «Фон», «Стиль» и «Детали» должны вставлять явную инструкцию в prompt, а не только менять подсветку
+- видео-тренд хранит в tags выбранные автором `trend-scenario:<mode>` и `trend-duration:<seconds>`; повтор в Mini App обязан их подставить и не очищать опубликованные референсы
+- видео-карточки ленты показывают первый кадр и сохраняют исходный aspect ratio ролика (9:16, 1:1, 16:9 и т. д.) как в сетке, так и в полном просмотре
+- фото-карточка ленты всегда содержит `<img>`; не возвращать отложенную вставку DOM через `IntersectionObserver`, так как Telegram iOS может оставить видимые masonry-карточки пустыми
+- в image remix запрошенная правка имеет приоритет над preservation: указанный атрибут обязан видимо измениться, а возврат неизменённого исходника считается некорректным результатом
+- `bootstrap` и другие API: проверить proxy и время ответа `tanyapi.chillcreative.ru`
+- hashed `/_next/static/` assets должны иметь `immutable`, HTML — `no-store`
+
+Команды замера и подробная диагностика: [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md#10-если-mini-app-долго-грузится).
+
 ## 6. Incident checklist
 
 ### Если сломались генерации
@@ -122,9 +148,19 @@ Authorization: Bearer <secret>
 
 ### Если сломался Mini App
 
-1. Проверить `MINI_APP_URL` и `MINI_APP_PATH`
-2. Проверить, какой static frontend реально отдаётся
-3. Проверить `bootstrap` и `task-detail` ответы
+1. Проверить `MINI_APP_URL=https://tanyapp.chillcreative.ru/mini-app/` и `MINI_APP_PATH`
+2. Проверить TLS, frontend document и реальный hashed asset
+3. Проверить `banano-miniapp`, `artflow-nginx-1` и `nginx -t` на frontend host
+4. Проверить ожидаемый `401` от `bootstrap` без Telegram `initData`
+5. Проверить авторизованные `bootstrap` и `task-detail` внутри Telegram
+6. Если быстро исправить нельзя, выполнить rollback из frontend runbook
+
+### Проверка TLS renewal frontend
+
+```bash
+ssh root@2.27.160.11 \
+  'certbot renew --dry-run --cert-name tanyapp.chillcreative.ru --no-random-sleep-on-renew'
+```
 
 ## 7. Scripts, которые полезны оператору
 

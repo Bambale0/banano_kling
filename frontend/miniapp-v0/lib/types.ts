@@ -30,6 +30,9 @@ export interface VideoPromptPreset {
   duration?: number | null
   sourceFeedGenId?: number | null
   promptHidden?: boolean
+  initialStartImage?: UploadedFile[]
+  initialPhotoReferences?: UploadedFile[]
+  initialVideoReferences?: UploadedFile[]
 }
 
 export interface ImageModel {

@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
-import type { FeedComment, FeedItem, ProfileSummary, ScenarioType } from '@/lib/types'
+import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -54,6 +56,10 @@ function formatRub(value?: number) {
 }
 
 const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
+
+function feedReferenceToUploadedFile(url: string, index: number, type: 'image' | 'video' = 'image'): UploadedFile {
+  return { id: `profile-ref-${index}-${url}`, name: `reference-${index + 1}`, url, type, size: 0 }
+}
 
 function normalizeVideoScenario(value?: string | null): ScenarioType {
   return videoScenarios.has(value as ScenarioType) ? (value as ScenarioType) : 'text'
@@ -213,7 +219,10 @@ export function ProfileTab() {
   }, [isLive, profile, profileItems])
 
   useEffect(() => {
-    const refreshProfileFeed = () => setFeedRefreshToken((value) => value + 1)
+    const refreshProfileFeed = () => {
+      setItems((current) => mergePendingPublication(current, 'profile'))
+      setFeedRefreshToken((value) => value + 1)
+    }
     window.addEventListener('banano:feed-changed', refreshProfileFeed)
     return () => window.removeEventListener('banano:feed-changed', refreshProfileFeed)
   }, [])
@@ -249,7 +258,7 @@ export function ProfileTab() {
           if (ownReferralCode) {
             const result = await fetchProfileFeed(ownReferralCode, 120)
             if (!ignore) {
-              setItems(result.feed)
+              setItems(mergePendingPublication(result.feed, 'profile'))
               setBrokenMediaIds(new Set())
               setProfile(result.profile)
             }
@@ -257,7 +266,7 @@ export function ProfileTab() {
           }
           const feed = await fetchMyFeed(120)
           if (!ignore) {
-            setItems(feed)
+            setItems(mergePendingPublication(feed, 'profile'))
             setBrokenMediaIds(new Set())
             setProfile(null)
           }
@@ -266,7 +275,7 @@ export function ProfileTab() {
 
         const result = await fetchProfileFeed(targetReferralCode, 120)
         if (!ignore) {
-          setItems(result.feed)
+          setItems(mergePendingPublication(result.feed, 'profile'))
           setBrokenMediaIds(new Set())
           setProfile(result.profile)
         }
@@ -344,8 +353,8 @@ export function ProfileTab() {
   }, [commentsItem, isLive])
 
   async function copyText(text: string, marker: string | number) {
-    if (!text || typeof navigator === 'undefined' || !navigator.clipboard) return
-    await navigator.clipboard.writeText(text)
+    if (!text) return
+    await copyTextToClipboard(text)
     setCopied(marker)
     window.setTimeout(() => setCopied(null), 1500)
   }
@@ -465,15 +474,21 @@ export function ProfileTab() {
     if (!profileInteractionsEnabled(item)) return
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
+      const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
+      const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
+      const scenario = imageReferences.length ? 'imgtxt' : videoReferences.length ? 'video' : normalizeVideoScenario(item.scenario)
       setVideoPromptPreset({
         title: 'Повторить видео из ленты',
         prompt: item.prompt || '',
         model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
-        scenario: normalizeVideoScenario(item.scenario),
+        scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
         sourceFeedGenId: isLive ? item.id : null,
         promptHidden: item.prompt_hidden,
+        initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
+        initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
+        initialVideoReferences: videoReferences,
       })
       setActiveTab(2)
       return

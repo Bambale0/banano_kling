@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useApp } from '@/lib/app-context'
+import { notifyFeedChanged } from '@/lib/feed-events'
 import { cn } from '@/lib/utils'
 import { 
   X, Image, Video, Clock, CheckCircle2, XCircle, 
@@ -54,11 +55,6 @@ export function TaskDetailPanel() {
         'Ответственность за опубликованный пользовательский контент несёт пользователь. Администрация бота не проводит предварительную модерацию и не отвечает за материалы, которые пользователи выкладывают самостоятельно.\n\n' +
         'Спорный материал может быть удалён по жалобе правообладателя или другого заинтересованного лица.'
     )
-  }
-
-  const notifyFeedChanged = () => {
-    if (typeof window === 'undefined') return
-    window.dispatchEvent(new CustomEvent('banano:feed-changed'))
   }
 
   const handleCopyTaskId = async () => {
@@ -115,7 +111,7 @@ export function TaskDetailPanel() {
           feed_references_visible: feedReferencesVisible,
           feed_blurred: Boolean(published.feed_blurred),
         })
-        notifyFeedChanged()
+        notifyFeedChanged(published)
         toast.success(
           published.publication_scope === 'profile'
             ? 'Опубликовано только в профиле'
@@ -150,7 +146,7 @@ export function TaskDetailPanel() {
         feed_references_visible: feedReferencesVisible,
         feed_blurred: Boolean(published.feed_blurred),
       })
-      notifyFeedChanged()
+      notifyFeedChanged(published)
       toast.success('Настройки публикации обновлены')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось обновить ленту')

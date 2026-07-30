@@ -2,7 +2,7 @@
 
 `Banano Kling` — production-oriented Telegram bot + Telegram Mini App для генерации изображений и видео, prompt-assist сценариев, платежей, feed/prompt-library и внутреннего админского API.
 
-Документация в этом репозитории переписана по фактическому состоянию кода на `2026-07-12`. Если описание ниже конфликтует с кодом, источником истины считаются `bot/`, `frontend/miniapp-v0/`, `tests/` и `data/price.json`.
+Документация актуализирована по production-схеме на `2026-07-30`. Если описание ниже конфликтует с кодом, источником истины считаются `bot/`, `frontend/miniapp-v0/`, `tests/` и `data/price.json`.
 
 ## Что есть в проекте сейчас
 
@@ -56,8 +56,9 @@
   - PostgreSQL path через `DATABASE_URL`
   - Redis для FSM/cache
 - Frontend:
-  - встроенный Mini App backend + static serving
+  - Mini App backend в Python runtime
   - `frontend/miniapp-v0` на `Next.js 16`, React 19, Tailwind 4
+  - production static frontend отдельно на `tanyapp.chillcreative.ru`, API на `tanyapi.chillcreative.ru`
 - Integrations:
   - Kie / Kie Market
   - Kling / Replicate-style callbacks
@@ -146,7 +147,7 @@ Base path: `config.MINI_APP_PATH` (`/mini-app` по умолчанию)
 - prompt/feed/profile endpoints under `/mini-app/api/*`
 - public API mirror under `/mini-app/api/v1/*` for selected feed/prompt routes
 
-Подробности: [docs/architecture.md](docs/architecture.md), [docs/tracemap.md](docs/tracemap.md).
+Подробности: [docs/architecture.md](docs/architecture.md), [docs/tracemap.md](docs/tracemap.md). Production deploy и rollback frontend: [docs/miniapp-frontend-deployment.md](docs/miniapp-frontend-deployment.md).
 
 ## Структура репозитория
 

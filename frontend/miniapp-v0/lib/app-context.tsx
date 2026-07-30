@@ -135,7 +135,7 @@ function toUploadedReference(reference: SavedReference): UploadedFile {
   }
 }
 
-function feedReferenceToUploadedFile(url: string, index: number): UploadedFile {
+function feedReferenceToUploadedFile(url: string, index: number, type: 'image' | 'video' = 'image'): UploadedFile {
   const cleanUrl = String(url || '').trim()
   const urlParts = cleanUrl.split('/')
   const rawName = urlParts[urlParts.length - 1] || `reference_${index + 1}.jpg`
@@ -143,7 +143,7 @@ function feedReferenceToUploadedFile(url: string, index: number): UploadedFile {
     id: `feed_ref_${index}_${rawName}`,
     name: `Реф ${index + 1}`,
     url: cleanUrl,
-    type: 'image',
+    type,
     size: 0,
     source: 'feed-remix',
   }
@@ -314,15 +314,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const applyFeedRemix = useCallback((item: FeedItem) => {
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
+      const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
+      const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
+      const scenario = imageReferences.length
+        ? 'imgtxt'
+        : videoReferences.length
+          ? 'video'
+          : normalizeVideoScenario(item.scenario)
       setVideoPromptPreset({
         title: 'Повторить видео из ссылки',
         prompt: item.prompt || '',
         model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
-        scenario: normalizeVideoScenario(item.scenario),
+        scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
         sourceFeedGenId: item.id,
         promptHidden: item.prompt_hidden,
+        initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
+        initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
+        initialVideoReferences: videoReferences,
       })
       setActiveTabState(2)
       return
@@ -339,7 +349,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       promptHidden: item.prompt_hidden,
       initialReferences: item.references_hidden
         ? []
-        : (item.reference_images || []).map(feedReferenceToUploadedFile),
+        : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index)),
     })
     setActiveTabState(1)
   }, [state.imageModels, state.videoModels])
@@ -397,13 +407,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
           if (isVideoTrend) {
             const videoModel = state.videoModels.find((model) => model.id === prompt.model)
+            const scenarioTag = (prompt.tags || []).find((tag) => String(tag).startsWith('trend-scenario:'))
+            const durationTag = (prompt.tags || []).find((tag) => String(tag).startsWith('trend-duration:'))
+            const configuredScenario = scenarioTag
+              ? normalizeVideoScenario(String(scenarioTag).split(':')[1])
+              : (videoModel?.supports.includes('imgtxt') ? 'imgtxt' : videoModel?.supports[0] || 'text')
+            const configuredDuration = Number(String(durationTag || '').split(':')[1]) || undefined
             setVideoPromptPreset({
               title: prompt.title,
               prompt: prompt.prompt_text,
               model: videoModel?.id || state.videoModels[0]?.id || 'v3_pro',
-              scenario: videoModel?.supports.includes('text')
-                ? 'text'
+              scenario: videoModel?.supports.includes(configuredScenario)
+                ? configuredScenario
                 : videoModel?.supports[0] || 'text',
+              duration: configuredDuration,
             })
             setActiveTabState(2)
             return

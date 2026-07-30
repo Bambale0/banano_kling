@@ -64,7 +64,7 @@
 - feed/prompt/profile APIs
 - payment creation
 - AI assistant entrypoint
-- static asset serving для Mini App frontend
+- fallback static asset serving для локальной разработки и быстрого rollback
 
 Mini App использует те же бизнес-таблицы и большую часть тех же сервисов, что и Telegram bot.
 
@@ -215,9 +215,12 @@ Mini App использует те же бизнес-таблицы и боль�
 
 - использует backend APIs из `bot/miniapp.py`
 - может быть собран в static export
-- обслуживается тем же Python runtime после сборки
+- в production обслуживается отдельным nginx host на `tanyapp.chillcreative.ru`
+- проксирует API и uploads на backend `tanyapi.chillcreative.ru`
 
-Сейчас это не отдельный Node backend. Источник истины по маршрутам и контрактам остаётся в Python backend.
+Сейчас это не отдельный Node backend: Node нужен для сборки, а production отдаёт статические файлы. Python runtime сохраняет local/fallback static serving, поэтому rollback не требует переноса backend. Источник истины по маршрутам и контрактам остаётся в Python backend.
+
+Production topology и процедуры эксплуатации описаны в [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md).
 
 ## 7. Безопасность и операционные ограничения
 

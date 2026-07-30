@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next'
-import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 const telegramBootstrapScript = `
@@ -106,7 +105,7 @@ export default function RootLayout({
   return (
     <html lang="ru" className="bg-background">
       <head>
-        <script src="/mini-app/telegram-web-app.js" />
+        <script defer src="/mini-app/telegram-web-app.js" />
         <script
           id="telegram-early-ready"
           dangerouslySetInnerHTML={{ __html: telegramBootstrapScript }}
@@ -114,7 +113,6 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )

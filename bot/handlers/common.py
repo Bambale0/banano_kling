@@ -64,6 +64,7 @@ from bot.miniapp_links import (
     referral_bot_link as build_referral_bot_link,
     referral_link as build_referral_link,
     remix_link as build_remix_link,
+    remix_start_param as build_remix_start_param,
 )
 from bot.keyboards import (
     _mini_app_url_with_start_param,
@@ -1334,7 +1335,7 @@ def _build_motion_control_step_text(title: str, cost: int) -> str:
     )
 
 
-FEED_PAGE_LIMIT = 999999
+FEED_PAGE_LIMIT = 200
 PROMPT_PAGE_LIMIT = 24
 FEED_PREVIEW_MAX_BYTES = 9 * 1024 * 1024
 FEED_PREVIEW_MAX_SIDE = 1800
@@ -2515,7 +2516,11 @@ async def _build_feed_keyboard(
                 [
                     types.InlineKeyboardButton(
                         text="🚀 Повторить в Mini App",
-                        url=_feed_remix_link(username, gen_id, author_referral_code),
+                        web_app=WebAppInfo(
+                            url=_mini_app_url_with_start_param(
+                                build_remix_start_param(gen_id, author_referral_code)
+                            )
+                        ),
                     )
                 ]
             )

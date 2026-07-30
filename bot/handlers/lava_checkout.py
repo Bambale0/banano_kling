@@ -157,29 +157,29 @@ def _payment_options_keyboard(
     stars: bool,
     direct_rub: bool,
     crypto: bool,
-    hosted_fallback: bool,
+    freekassa: bool,
 ) -> types.InlineKeyboardMarkup:
-    """Show payment methods, not internal provider brands."""
+    """Show every enabled payment method as an independent option."""
 
     builder = InlineKeyboardBuilder()
-    if stars:
+    if freekassa:
         builder.button(
-            text="⭐ Stars",
-            callback_data=f"buy_stars_{package_id}",
+            text="🇷🇺 РФ — KASSA (резерв)",
+            callback_data=f"buy_freekassa_{package_id}",
         )
     if direct_rub:
-        builder.button(
-            text="⚡ СБП",
-            callback_data=f"buy_lava_sbp_{package_id}",
-        )
         builder.button(
             text="💳 Картой",
             callback_data=f"buy_lava_card_{package_id}",
         )
-    elif hosted_fallback:
         builder.button(
-            text="💳 Карта / СБП",
-            callback_data=f"buy_freekassa_{package_id}",
+            text="⚡ СБП",
+            callback_data=f"buy_lava_sbp_{package_id}",
+        )
+    if stars:
+        builder.button(
+            text="⭐ Stars",
+            callback_data=f"buy_stars_{package_id}",
         )
     if crypto:
         builder.button(
@@ -250,11 +250,11 @@ async def show_direct_payment_methods(
         and lava_offer_id
         and str(lava_currency or "").upper() == "RUB"
     )
-    has_hosted_fallback = bool(freekassa_service.enabled and not has_direct_rub)
+    has_freekassa = bool(freekassa_service.enabled)
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
-    if not any((has_direct_rub, has_hosted_fallback, has_stars, has_crypto)):
+    if not any((has_direct_rub, has_freekassa, has_stars, has_crypto)):
         await callback.message.edit_text(
             "❌ Способы оплаты временно недоступны. Обратитесь в поддержку.",
             reply_markup=get_back_keyboard("menu_topup"),
@@ -291,7 +291,7 @@ async def show_direct_payment_methods(
             stars=has_stars,
             direct_rub=has_direct_rub,
             crypto=has_crypto,
-            hosted_fallback=has_hosted_fallback,
+            freekassa=has_freekassa,
         ),
         parse_mode="HTML",
     )

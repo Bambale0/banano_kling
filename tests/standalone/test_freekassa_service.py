@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import json
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
 
 from bot import config as config_module
 from bot import internal_api
@@ -18,6 +17,7 @@ def _configured_service(monkeypatch) -> freekassa_module.FreeKassaService:
     monkeypatch.setenv("FREEKASSA_MERCHANT_ID", "7012")
     monkeypatch.setenv("FREEKASSA_SECRET_WORD", "secret")
     monkeypatch.setenv("FREEKASSA_SECRET_WORD_2", "secret2")
+    monkeypatch.setenv("FREEKASSA_API_KEY", "api-key")
     monkeypatch.setenv("FREEKASSA_CURRENCY", "RUB")
     monkeypatch.setenv("FREEKASSA_VERIFY_IP", "1")
     return freekassa_module.FreeKassaService()
@@ -113,21 +113,39 @@ def test_api_signature_sorts_fields_before_hmac():
     assert actual == expected
 
 
-def test_checkout_url_contains_signed_required_fields(monkeypatch):
+def test_api_checkout_sends_required_card_fields(monkeypatch):
     service = _configured_service(monkeypatch)
-    url = service.create_payment_url(amount_rub=100, order_id="order-1")
-    query = parse_qs(urlsplit(url).query)
+    captured = {}
 
-    assert query["m"] == ["7012"]
-    assert query["oa"] == ["100.00"]
-    assert query["currency"] == ["RUB"]
-    assert query["o"] == ["order-1"]
-    assert query["lang"] == ["ru"]
-    assert query["s"] == [
-        freekassa_module.build_sci_signature(
-            "7012", "100.00", "secret", "RUB", "order-1"
-        )
-    ]
+    async def fake_api_post(endpoint, payload):
+        captured.update(endpoint=endpoint, payload=payload)
+        return {"type": "success", "orderId": 123, "location": "https://pay.example/order"}
+
+    monkeypatch.setattr(service, "_api_post", fake_api_post)
+    result = asyncio.run(service.create_payment(
+        amount_rub=100,
+        order_id="order-1",
+        email="buyer@example.com",
+        customer_ip="203.0.113.7",
+        payment_system_id=freekassa_module.FREEKASSA_CARD_RUB_METHOD_ID,
+    ))
+
+    assert result["ok"] is True
+    assert result["mode"] == "api"
+    assert result["payment_url"] == "https://pay.example/order"
+    assert captured == {"endpoint": "orders/create", "payload": {
+        "paymentId": "order-1", "i": 36, "email": "buyer@example.com",
+        "ip": "203.0.113.7", "amount": "100.00", "currency": "RUB",
+    }}
+
+
+def test_api_checkout_requires_real_email_and_ip(monkeypatch):
+    service = _configured_service(monkeypatch)
+    result = asyncio.run(service.create_payment(
+        amount_rub=100, order_id="order-1",
+        payment_system_id=freekassa_module.FREEKASSA_SBP_METHOD_ID,
+    ))
+    assert result == {"ok": False, "error": "Customer email and IP are required"}
 
 
 def test_notification_verification_checks_shop_and_signature(monkeypatch):

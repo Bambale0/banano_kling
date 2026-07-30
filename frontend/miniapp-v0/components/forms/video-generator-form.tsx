@@ -286,9 +286,9 @@ export function VideoGeneratorForm({
     if (promptPreset.duration) {
       setSelectedDuration(promptPreset.duration)
     }
-    setStartImage([])
-    setPhotoReferences([])
-    setVideoReferences([])
+    setStartImage(promptPreset.initialStartImage || [])
+    setPhotoReferences(promptPreset.initialPhotoReferences || [])
+    setVideoReferences(promptPreset.initialVideoReferences || [])
     setAudioReference([])
     onPromptPresetConsumed?.()
   }, [models, onPromptPresetConsumed, promptPreset])

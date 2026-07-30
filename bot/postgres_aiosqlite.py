@@ -14,8 +14,6 @@ import psycopg
 
 _HELPERS_READY = False
 _HELPERS_LOCK: asyncio.Lock | None = None
-_CONNECTION_SEMAPHORE: asyncio.Semaphore | None = None
-POSTGRES_CONNECTION_LIMIT = int(os.getenv("POSTGRES_CONNECTION_LIMIT", "12"))
 _LASTROWID_TABLES = {
     "batch_jobs",
     "feed_comments",
@@ -55,13 +53,6 @@ _BOOL_COLUMNS = (
     "referral_purchase_notifications_enabled",
 )
 
-
-
-def _get_connection_semaphore() -> asyncio.Semaphore:
-    global _CONNECTION_SEMAPHORE
-    if _CONNECTION_SEMAPHORE is None:
-        _CONNECTION_SEMAPHORE = asyncio.Semaphore(max(1, POSTGRES_CONNECTION_LIMIT))
-    return _CONNECTION_SEMAPHORE
 
 
 def _get_helpers_lock() -> asyncio.Lock:
@@ -707,6 +698,7 @@ async def _ensure_postgres_helpers(conn: psycopg.AsyncConnection) -> None:
 class PostgresConnection:
     def __init__(self, conn: psycopg.AsyncConnection):
         self._conn = conn
+        self._closed = False
         self.row_factory = None
         self.total_changes = 0
 
@@ -789,6 +781,9 @@ class PostgresConnection:
         await self._conn.rollback()
 
     async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         await self._conn.close()
 
     async def __aenter__(self):
@@ -807,23 +802,14 @@ class PostgresConnection:
 class PostgresConnect:
     def __init__(self, *args, **kwargs):
         self._conn: PostgresConnection | None = None
-        self._semaphore_acquired = False
 
     async def _ensure(self) -> PostgresConnection:
         if self._conn is None:
-            semaphore = _get_connection_semaphore()
-            await semaphore.acquire()
-            self._semaphore_acquired = True
-            try:
-                dsn = _normalize_postgres_dsn()
-                raw_conn = await psycopg.AsyncConnection.connect(dsn)
-                await _ensure_postgres_helpers(raw_conn)
-                self._conn = PostgresConnection(raw_conn)
-            except Exception:
-                if self._semaphore_acquired:
-                    self._semaphore_acquired = False
-                    semaphore.release()
-                raise
+            raw_conn = await psycopg.AsyncConnection.connect(
+                _normalize_postgres_dsn()
+            )
+            await _ensure_postgres_helpers(raw_conn)
+            self._conn = PostgresConnection(raw_conn)
         return self._conn
 
     def __await__(self):
@@ -834,12 +820,7 @@ class PostgresConnect:
 
     async def __aexit__(self, exc_type, exc, tb):
         conn = await self._ensure()
-        try:
-            return await conn.__aexit__(exc_type, exc, tb)
-        finally:
-            if self._semaphore_acquired:
-                self._semaphore_acquired = False
-                _get_connection_semaphore().release()
+        return await conn.__aexit__(exc_type, exc, tb)
 
 
 def connect(*args, **kwargs) -> PostgresConnect:

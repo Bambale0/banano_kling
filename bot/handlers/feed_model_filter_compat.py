@@ -167,29 +167,27 @@ async def filter_feed_cards(
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     selected = normalize_feed_model(model)
-    source = str(kwargs.get("source") or "recent")
-    viewer_user_id = kwargs.get("viewer_user_id")
-    include_unavailable = bool(kwargs.get("include_unavailable", False))
-    cached = _cache_get(source, selected, viewer_user_id, include_unavailable)
-    if cached is None:
-        cards = await getter(limit=0, offset=0, **kwargs)
-        cached = [
-            card
-            for card in cards
-            if feed_model_matches(card.get("model"), selected)
-        ]
-        _cache_put(
-            source,
+    accepted_models = sorted(
+        {
             selected,
-            viewer_user_id,
-            include_unavailable,
-            cached,
-        )
-
-    safe_offset = max(0, int(offset or 0))
-    safe_limit = max(0, int(limit or 0))
-    sliced = cached[safe_offset:]
-    return sliced[:safe_limit] if safe_limit else sliced
+            *(
+                alias
+                for alias, target in _MODEL_ALIASES.items()
+                if normalize_feed_model(target) == selected
+            ),
+        }
+    )
+    cards = await getter(
+        limit=max(0, int(limit or 0)),
+        offset=max(0, int(offset or 0)),
+        models=accepted_models,
+        **kwargs,
+    )
+    return [
+        card
+        for card in cards
+        if feed_model_matches(card.get("model"), selected)
+    ]
 
 
 async def _published_model_ids() -> list[str]:
@@ -413,7 +411,7 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                     item["can_remove"] = True
                 if is_admin or is_mine:
                     item["can_blur"] = True
-            return miniapp_module.web.json_response(
+            response = miniapp_module.web.json_response(
                 {
                     "ok": True,
                     "feed": feed,
@@ -424,6 +422,11 @@ def install_feed_model_filter_compat(common_module: Any) -> None:
                     ],
                 }
             )
+            response.headers["Cache-Control"] = (
+                "no-store, no-cache, must-revalidate, max-age=0"
+            )
+            response.headers["Pragma"] = "no-cache"
+            return response
         except Exception as error:  # noqa: BLE001 - API boundary converts failures to JSON
             return miniapp_module._miniapp_error_response(
                 error,

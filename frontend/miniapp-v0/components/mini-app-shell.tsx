@@ -1,16 +1,24 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { type ReactNode, useEffect } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
 import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
-import { TaskDetailPanel } from './task-detail-publication-scope'
-import { BalanceSheet } from './balance-sheet'
-import { WorkspaceSheet } from './workspace-sheet'
 import { Toaster } from '@/components/ui/sonner'
 import { ClientErrorBoundary } from './client-error-boundary'
 import { TelegramOpenGate } from './telegram-open-gate'
+
+const TaskDetailPanel = dynamic(() =>
+  import('./task-detail-publication-scope').then((module) => module.TaskDetailPanel),
+)
+const BalanceSheet = dynamic(() =>
+  import('./balance-sheet').then((module) => module.BalanceSheet),
+)
+const WorkspaceSheet = dynamic(() =>
+  import('./workspace-sheet').then((module) => module.WorkspaceSheet),
+)
 
 interface MiniAppShellProps {
   children: ReactNode

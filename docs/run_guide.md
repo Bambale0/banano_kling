@@ -36,8 +36,10 @@ python -m bot.main
 ### HTTP
 
 ```bash
-curl http://127.0.0.1:8443/health
+curl "http://127.0.0.1:${WEBHOOK_PORT:-8443}/health"
 ```
+
+В текущем production `WEBHOOK_PORT=1888`; локальное значение по умолчанию в `bot/config.py` — `8443`.
 
 ### Imports / syntax
 
@@ -68,7 +70,9 @@ cd frontend/miniapp-v0
 npm run build
 ```
 
-После сборки backend может начать отдавать export build через `bot/miniapp.py`.
+Локально backend может отдавать export build через `bot/miniapp.py`. В production static export размещён отдельно на `tanyapp.chillcreative.ru`, а API проксируется на `tanyapi.chillcreative.ru`.
+
+Production deploy, TLS, проверки перед переключением и rollback описаны в [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md).
 
 ## 6. Что проверять вручную
 

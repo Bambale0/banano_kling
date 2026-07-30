@@ -67,13 +67,13 @@ def test_lava_callbacks_support_direct_methods_and_legacy_buttons():
     )
 
 
-def test_payment_menu_lists_methods_without_provider_brands():
+def test_payment_menu_lists_lava_methods_without_provider_brands():
     keyboard = _payment_options_keyboard(
         "studio",
         stars=True,
         direct_rub=True,
         crypto=True,
-        hosted_fallback=False,
+        freekassa=False,
     )
     buttons = [
         button
@@ -84,9 +84,9 @@ def test_payment_menu_lists_methods_without_provider_brands():
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
-        "⭐ Stars",
-        "⚡ СБП",
         "💳 Картой",
+        "⚡ СБП",
+        "⭐ Stars",
         "₿ Криптовалюта",
         "◀️ Назад",
     ]
@@ -99,13 +99,13 @@ def test_payment_menu_lists_methods_without_provider_brands():
     )
 
 
-def test_payment_menu_uses_provider_neutral_hosted_fallback():
+def test_payment_menu_lists_freekassa_as_separate_option():
     keyboard = _payment_options_keyboard(
         "start",
         stars=True,
-        direct_rub=False,
+        direct_rub=True,
         crypto=False,
-        hosted_fallback=True,
+        freekassa=True,
     )
     labels = [
         button.text
@@ -119,9 +119,14 @@ def test_payment_menu_uses_provider_neutral_hosted_fallback():
         if button.callback_data
     ]
 
-    assert "💳 Карта / СБП" in labels
+    assert labels == [
+        "🇷🇺 РФ — KASSA (резерв)",
+        "💳 Картой",
+        "⚡ СБП",
+        "⭐ Stars",
+        "◀️ Назад",
+    ]
     assert "buy_freekassa_start" in callbacks
-    assert not any("freekassa" in label.lower() for label in labels)
 
 
 @pytest.mark.asyncio

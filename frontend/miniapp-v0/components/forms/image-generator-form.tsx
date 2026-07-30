@@ -74,9 +74,9 @@ export function ImageGeneratorForm({
     {
       id: 'hair',
       icon: Palette,
-      label: 'Цвет волос',
-      hint: 'замени цвет волос на...',
-      insert: 'Замени цвет волос на ',
+      label: 'Причёску',
+      hint: 'измени причёску, длину или цвет...',
+      insert: 'Измени только причёску: ',
     },
     {
       id: 'clothes',
@@ -148,14 +148,17 @@ export function ImageGeneratorForm({
   }, [model, selectedQuality, selectedRatio])
 
   const toggleChange = (chipId: string, insert: string) => {
+    const isActive = activeChanges.has(chipId)
     setActiveChanges((prev) => {
       const next = new Set(prev)
-      if (next.has(chipId)) {
-        next.delete(chipId)
-        return next
-      }
-      next.add(chipId)
+      if (isActive) next.delete(chipId)
+      else next.add(chipId)
       return next
+    })
+    setPrompt((current) => {
+      if (isActive) return current.replace(insert, '').trimStart()
+      if (current.includes(insert)) return current
+      return current.trim() ? `${insert}${current}` : insert
     })
   }
 
@@ -343,6 +346,11 @@ export function ImageGeneratorForm({
                 ? 'Для этой модели нужен хотя бы один исходник или референс.'
                 : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
           </p>
+          {isFeedRemix && references.length === 0 ? (
+            <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Фото в блоке «Сохранённые фото-референсы» ещё не выбрано. Нажмите «+» — в сводке должно стать «Файлы 1/8».
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -389,7 +397,9 @@ export function ImageGeneratorForm({
                 setSelectedPromptId(null)
               }
             }}
-            placeholder="Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат..."
+            placeholder={isFeedRemix
+              ? 'Выберите, что изменить, и допишите детали. Остальное будет сохранено.'
+              : 'Опишите сцену, стиль, свет, камеру, детали персонажей и желаемый результат...'}
             className={cn(
               "min-h-[140px] resize-none",
               "bg-secondary/50 border-border/50",

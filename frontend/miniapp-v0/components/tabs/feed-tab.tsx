@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
-import type { FeedComment, FeedItem, ScenarioType } from '@/lib/types'
+import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import {
   addFeedComment,
@@ -36,9 +38,14 @@ const sources = [
   { id: 'top_day', label: 'Топ дня' },
   { id: 'top', label: 'Лучшие' },
 ] as const
-const FEED_PAGE_SIZE = 80
+const FEED_PAGE_SIZE = 24
+const PRIORITY_IMAGE_COUNT = 4
 
 const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
+
+function feedReferenceToUploadedFile(url: string, index: number, type: 'image' | 'video' = 'image'): UploadedFile {
+  return { id: `feed-ref-${index}-${url}`, name: `reference-${index + 1}`, url, type, size: 0 }
+}
 
 function normalizeVideoScenario(value?: string | null): ScenarioType {
   return videoScenarios.has(value as ScenarioType) ? (value as ScenarioType) : 'text'
@@ -77,7 +84,6 @@ function getPublicReferences(item: FeedItem | null) {
   ].filter((item) => isHttpUrl(item.url))
 }
 
-/** Eager-loading image with IntersectionObserver — loads earlier than native lazy by 400px margin */
 function FeedImage({ src, alt, priority, onError, style, className }: {
   src: string
   alt: string
@@ -86,43 +92,57 @@ function FeedImage({ src, alt, priority, onError, style, className }: {
   style?: CSSProperties
   className?: string
 }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(!!priority)
-
-  useEffect(() => {
-    if (priority) return
-    const el = containerRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin: '400px', threshold: 0.01 }
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [priority])
-
   return (
     <div
-      ref={containerRef}
       className={cn('relative overflow-hidden bg-secondary/50', className)}
       style={style}
     >
-      {visible && (
-        <img
-          src={src}
-          alt={alt}
-          fetchPriority={priority ? 'high' : undefined}
-          decoding="async"
-          onError={onError}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-        />
-      )}
+      <img
+        src={src}
+        alt={alt}
+        fetchPriority={priority ? 'high' : undefined}
+        loading={priority ? 'eager' : 'lazy'}
+        decoding="async"
+        onError={onError}
+        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+      />
     </div>
+  )
+}
+
+function FeedVideoPreview({ src, aspectRatio, blurred, onError }: {
+  src: string
+  aspectRatio?: string | null
+  blurred?: boolean
+  onError?: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const revealFirstFrame = () => {
+    const video = videoRef.current
+    if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return
+    try {
+      video.currentTime = Math.min(0.1, video.duration / 2)
+    } catch {
+      // Some WebViews reject seeking until enough metadata is buffered.
+    }
+  }
+
+  return (
+    <video
+      ref={videoRef}
+      src={`${src}#t=0.1`}
+      muted
+      playsInline
+      preload="metadata"
+      onLoadedMetadata={revealFirstFrame}
+      onError={onError}
+      style={{ aspectRatio: getPinAspectRatio(aspectRatio, 'video') }}
+      className={cn(
+        'w-full bg-black object-cover transition-transform duration-500 group-hover:scale-[1.03]',
+        blurred && 'scale-[1.04] blur-xl'
+      )}
+    />
   )
 }
 
@@ -172,6 +192,15 @@ export function FeedTab() {
     () => items,
     [items]
   )
+  const priorityImageIds = useMemo(
+    () => new Set(
+      visibleItems
+        .filter((item) => item.gen_type === 'image')
+        .slice(0, PRIORITY_IMAGE_COUNT)
+        .map((item) => item.id)
+    ),
+    [visibleItems]
+  )
   const feedColumns = useMemo(() => {
     const columns: [FeedItem[], FeedItem[]] = [[], []]
     const heights = [0, 0.45]
@@ -190,17 +219,21 @@ export function FeedTab() {
 
   useEffect(() => {
     let ignore = false
-    async function load() {
+    let requestInFlight = false
+
+    async function load(showSpinner = true) {
       if (!isLive) {
         setItems([])
         return
       }
-      setLoading(true)
+      if (requestInFlight) return
+      requestInFlight = true
+      if (showSpinner) setLoading(true)
       setError(null)
       try {
         const response = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: 0 })
         if (!ignore) {
-          setItems(response.feed)
+          setItems(mergePendingPublication(response.feed, 'feed'))
           setAvailableModels(response.models)
           setHasMore(response.feed.length === FEED_PAGE_SIZE)
           setBrokenMediaIds(new Set())
@@ -208,12 +241,24 @@ export function FeedTab() {
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить ленту'))
       } finally {
-        if (!ignore) setLoading(false)
+        requestInFlight = false
+        if (!ignore && showSpinner) setLoading(false)
       }
     }
-    load()
+
+    void load()
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void load(false)
+    }
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    window.addEventListener('focus', refreshIfVisible)
+    const refreshTimer = window.setInterval(refreshIfVisible, 15_000)
+
     return () => {
       ignore = true
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      window.removeEventListener('focus', refreshIfVisible)
+      window.clearInterval(refreshTimer)
     }
   }, [isLive, source, model])
 
@@ -292,7 +337,7 @@ export function FeedTab() {
     try {
       const { item: updated, link } = await shareFeedItem(item.id)
       setItems((prev) => prev.map((feedItem) => (feedItem.id === updated.id ? updated : feedItem)))
-      await navigator.clipboard.writeText(link)
+      await copyTextToClipboard(link)
     } catch (e) {
       setError(getErrorMessage(e, 'Не удалось создать ссылку'))
     } finally {
@@ -304,15 +349,21 @@ export function FeedTab() {
     if (!isLive) return
     if (item.gen_type === 'video') {
       const modelExists = state.videoModels.some((model) => model.id === item.model)
+      const imageReferences = item.references_hidden ? [] : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
+      const videoReferences = item.references_hidden ? [] : (item.reference_videos || []).map((url, index) => feedReferenceToUploadedFile(url, index, 'video'))
+      const scenario = imageReferences.length ? 'imgtxt' : videoReferences.length ? 'video' : normalizeVideoScenario(item.scenario)
       setVideoPromptPreset({
         title: 'Повторить видео из ленты',
         prompt: item.prompt || '',
         model: modelExists ? item.model : state.videoModels[0]?.id || 'v3_pro',
-        scenario: normalizeVideoScenario(item.scenario),
+        scenario,
         ratio: item.aspect_ratio || '16:9',
         duration: item.duration || 5,
         sourceFeedGenId: item.id,
         promptHidden: item.prompt_hidden,
+        initialStartImage: scenario === 'imgtxt' ? imageReferences.slice(0, 1) : [],
+        initialPhotoReferences: scenario === 'imgtxt' ? imageReferences.slice(1) : imageReferences,
+        initialVideoReferences: videoReferences,
       })
       setActiveTab(2)
       return
@@ -491,23 +542,17 @@ export function FeedTab() {
                         </div>
                       ) : isHttpUrl(item.result_url) ? (
                         item.gen_type === 'video' ? (
-                          <video
+                          <FeedVideoPreview
                             src={item.result_url}
-                            muted
-                            playsInline
-                            preload="none"
+                            aspectRatio={item.aspect_ratio}
+                            blurred={item.feed_blurred}
                             onError={() => handleMediaError(item)}
-                            style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
-                            className={cn(
-                              'w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]',
-                              item.feed_blurred && 'scale-[1.04] blur-xl'
-                            )}
                           />
                         ) : (
                           <FeedImage
                             src={item.preview_url || item.result_url}
                             alt=""
-                            priority={column.indexOf(item) < 6}
+                            priority={priorityImageIds.has(item.id)}
                             onError={() => handleMediaError(item)}
                             style={{ aspectRatio: getPinAspectRatio(item.aspect_ratio, item.gen_type) }}
                             className={cn('w-full', item.feed_blurred && '[&_img]:scale-[1.04] [&_img]:blur-xl')}

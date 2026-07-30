@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 FREEKASSA_PAID_STATUS = 1
 FREEKASSA_FAILED_STATUSES = {6, 8, 9}
+FREEKASSA_CARD_RUB_METHOD_ID = 36
+FREEKASSA_SBP_METHOD_ID = 44
+FREEKASSA_CHECKOUT_METHOD_IDS = {
+    FREEKASSA_CARD_RUB_METHOD_ID,
+    FREEKASSA_SBP_METHOD_ID,
+}
 DEFAULT_ALLOWED_WEBHOOK_IPS = {
     "168.119.157.136",
     "168.119.60.227",
@@ -198,8 +204,11 @@ class FreeKassaService:
             params["em"] = str(email).strip()
         if phone:
             params["phone"] = str(phone).strip()
-        if payment_system_id:
-            params["i"] = str(int(payment_system_id))
+        if payment_system_id is not None:
+            normalized_method_id = int(payment_system_id)
+            if normalized_method_id not in FREEKASSA_CHECKOUT_METHOD_IDS:
+                raise ValueError("Unsupported FreeKassa payment method")
+            params["i"] = str(normalized_method_id)
 
         for key, value in (custom_params or {}).items():
             key_text = str(key).strip()
@@ -220,33 +229,50 @@ class FreeKassaService:
         notification_url: str | None = None,
         email: str | None = None,
         phone: str | None = None,
+        customer_ip: str | None = None,
         payment_system_id: int | None = None,
     ) -> dict[str, Any]:
-        """Build hosted SCI checkout.
+        """Create an API-only Card RUB or SBP order and return its checkout URL."""
+        _ = description
+        if not self.api_enabled:
+            return {"ok": False, "error": "FreeKassa API is not configured"}
 
-        Return and notification URLs are configured in the merchant cabinet.
-        They stay in the signature-compatible method contract for callers.
-        """
-        _ = description, return_url, notification_url
-        try:
-            payment_url = self.create_payment_url(
-                amount_rub=amount_rub,
-                order_id=order_id,
-                email=email,
-                phone=phone,
-                payment_system_id=payment_system_id,
-                custom_params={"us_provider": "freekassa"},
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.exception("FreeKassa SCI payment creation failed")
-            return {"ok": False, "error": str(exc)}
+        method_id = int(payment_system_id or 0)
+        if method_id not in FREEKASSA_CHECKOUT_METHOD_IDS:
+            return {"ok": False, "error": "Unsupported FreeKassa payment method"}
+        email_text = str(email or "").strip()
+        ip_text = str(customer_ip or "").strip()
+        if not email_text or not ip_text:
+            return {"ok": False, "error": "Customer email and IP are required"}
+
+        payload: dict[str, Any] = {
+            "paymentId": str(order_id),
+            "i": method_id,
+            "email": email_text,
+            "ip": ip_text,
+            "amount": normalize_amount(amount_rub),
+            "currency": self.currency,
+        }
+        if phone:
+            payload["tel"] = str(phone).strip()
+        if return_url:
+            payload["success_url"] = return_url
+        if notification_url:
+            payload["notification_url"] = notification_url
+
+        response = await self._api_post("orders/create", payload)
+        payment_url = str((response or {}).get("location") or "").strip()
+        provider_order_id = str((response or {}).get("orderId") or "").strip()
+        if (response or {}).get("type") != "success" or not payment_url:
+            logger.warning("FreeKassa API did not create order: payment_id=%s", order_id)
+            return {"ok": False, "error": "FreeKassa rejected payment creation"}
 
         return {
             "ok": True,
-            "payment_id": str(order_id),
+            "payment_id": provider_order_id or str(order_id),
             "payment_url": payment_url,
             "provider": "freekassa",
-            "mode": "sci",
+            "mode": "api",
         }
 
     def verify_notification(self, payload: dict[str, Any]) -> tuple[bool, str]:

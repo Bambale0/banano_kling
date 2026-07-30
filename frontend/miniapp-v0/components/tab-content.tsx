@@ -1,21 +1,31 @@
 'use client'
 
+import dynamic from 'next/dynamic'
+import { useEffect } from 'react'
 import { useApp } from '@/lib/app-context'
-import { StudioTab } from './tabs/studio-tab'
-import { PhotoTab } from './tabs/photo-tab'
-import { VideoTab } from './tabs/video-tab'
-import { MotionTab } from './tabs/motion-tab'
-import { FeedTab } from './tabs/feed-tab'
-import { TrendsTab } from './tabs/trends-tab'
-import { ServicesTab } from './tabs/services-tab'
-import { ProfileTab } from './tabs/profile-tab'
 import { AnimatePresence, motion } from 'framer-motion'
+
+const StudioTab = dynamic(() => import('./tabs/studio-tab').then((module) => module.StudioTab))
+const PhotoTab = dynamic(() => import('./tabs/photo-tab').then((module) => module.PhotoTab))
+const VideoTab = dynamic(() => import('./tabs/video-tab').then((module) => module.VideoTab))
+const MotionTab = dynamic(() => import('./tabs/motion-tab').then((module) => module.MotionTab))
+const FeedTab = dynamic(() => import('./tabs/feed-tab').then((module) => module.FeedTab))
+const TrendsTab = dynamic(() => import('./tabs/trends-tab').then((module) => module.TrendsTab))
+const ServicesTab = dynamic(() => import('./tabs/services-tab').then((module) => module.ServicesTab))
+const ProfileTab = dynamic(() => import('./tabs/profile-tab').then((module) => module.ProfileTab))
 
 const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
 
 export function TabContent() {
   const { activeTab } = useApp()
   const ActiveComponent = tabComponents[activeTab] || StudioTab
+
+  useEffect(() => {
+    const prefetchTimer = window.setTimeout(() => {
+      void import('./tabs/feed-tab')
+    }, 800)
+    return () => window.clearTimeout(prefetchTimer)
+  }, [])
 
   return (
     <div className="relative">

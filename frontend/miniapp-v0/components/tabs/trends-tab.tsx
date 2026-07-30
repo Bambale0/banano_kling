@@ -2,13 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import type { PromptItem, ScenarioType } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { deactivatePrompt, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   Film,
   Flame,
+  Check,
+  Copy,
   ImagePlus,
   Loader2,
   Plus,
@@ -44,10 +48,14 @@ export function TrendsTab() {
   const [description, setDescription] = useState('')
   const [promptText, setPromptText] = useState('')
   const [model, setModel] = useState('banana_pro')
+  const [videoScenario, setVideoScenario] = useState<ScenarioType>('imgtxt')
+  const [videoDuration, setVideoDuration] = useState(5)
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
+  const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [previewTrend, setPreviewTrend] = useState<PromptItem | null>(null)
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
@@ -62,6 +70,9 @@ export function TrendsTab() {
     trend.category === 'video' ||
     hasVideoTag(trend) ||
     videoModelIds.has(String(trend.model || ''))
+
+  const photoTrends = useMemo(() => items.filter((item) => !isVideoTrend(item)), [items, videoModelIds])
+  const videoTrends = useMemo(() => items.filter((item) => isVideoTrend(item)), [items, videoModelIds])
 
   async function loadTrends() {
     if (!isLive) {
@@ -89,9 +100,18 @@ export function TrendsTab() {
     if (!models.some((item) => item.id === model)) {
       setModel(models[0]?.id || (trendKind === 'video' ? 'v3_pro' : 'banana_pro'))
     }
+    if (trendKind === 'video') {
+      const selectedVideoModel = state.videoModels.find((item) => item.id === model)
+      if (selectedVideoModel && !selectedVideoModel.supports.includes(videoScenario)) {
+        setVideoScenario(selectedVideoModel.supports.includes('imgtxt') ? 'imgtxt' : selectedVideoModel.supports[0] || 'text')
+      }
+      if (selectedVideoModel && !selectedVideoModel.durations.includes(videoDuration)) {
+        setVideoDuration(selectedVideoModel.durations[0] || 5)
+      }
+    }
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [model, state.imageModels, state.videoModels, trendKind])
+  }, [model, state.imageModels, state.videoModels, trendKind, videoDuration, videoScenario])
 
   const resetForm = () => {
     setTrendKind('image')
@@ -99,6 +119,8 @@ export function TrendsTab() {
     setDescription('')
     setPromptText('')
     setModel(state.imageModels[0]?.id || 'banana_pro')
+    setVideoScenario('imgtxt')
+    setVideoDuration(5)
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -106,16 +128,18 @@ export function TrendsTab() {
   const applyTrend = (trend: PromptItem) => {
     if (isVideoTrend(trend)) {
       const videoModel = state.videoModels.find((item) => item.id === trend.model)
-      const scenario = (
-        videoModel?.supports.includes('text')
-          ? 'text'
-          : videoModel?.supports[0] || 'text'
-      ) as ScenarioType
+      const scenarioTag = (trend.tags || []).find((tag) => String(tag).startsWith('trend-scenario:'))
+      const durationTag = (trend.tags || []).find((tag) => String(tag).startsWith('trend-duration:'))
+      const configuredScenario = String(scenarioTag || '').split(':')[1] as ScenarioType
+      const scenario = videoModel?.supports.includes(configuredScenario)
+        ? configuredScenario
+        : videoModel?.supports.includes('imgtxt') ? 'imgtxt' : videoModel?.supports[0] || 'text'
       setVideoPromptPreset({
         title: trend.title,
         prompt: trend.prompt_text,
         model: videoModel?.id || state.videoModels[0]?.id || 'v3_pro',
         scenario,
+        duration: Number(String(durationTag || '').split(':')[1]) || videoModel?.durations[0] || 5,
       })
       setActiveTab(2)
       return
@@ -172,7 +196,9 @@ export function TrendsTab() {
         promptText: promptText.trim(),
         previewUrl,
         model,
-        tags: trendKind === 'video' ? ['trend', VIDEO_TREND_TAG] : ['trend'],
+        tags: trendKind === 'video'
+          ? ['trend', VIDEO_TREND_TAG, `trend-scenario:${videoScenario}`, `trend-duration:${videoDuration}`]
+          : ['trend'],
       })
       setItems((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
       resetForm()
@@ -196,6 +222,61 @@ export function TrendsTab() {
     } finally {
       setRemovingId(null)
     }
+  }
+
+  const handleCopyLink = async (trend: PromptItem) => {
+    try {
+      const link = await fetchPromptLink(trend.id)
+      await copyTextToClipboard(link)
+      setCopiedId(trend.id)
+      window.setTimeout(() => setCopiedId((current) => current === trend.id ? null : current), 1800)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось скопировать ссылку')
+    }
+  }
+
+  const renderTrendGrid = (trends: PromptItem[], title: string, videoSection: boolean) => {
+    if (!trends.length) return null
+    return (
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-serif text-lg font-semibold text-foreground">{title}</h3>
+          <span className="rounded-full bg-secondary/60 px-2.5 py-1 text-xs text-muted-foreground">{trends.length}</span>
+        </div>
+        <div className="grid grid-cols-2 items-start gap-3 md:grid-cols-3">
+          {trends.map((trend) => {
+            const modelLabel = videoSection
+              ? state.videoModels.find((item) => item.id === trend.model)?.label
+              : state.imageModels.find((item) => item.id === trend.model)?.label
+            return (
+              <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
+                <div className="relative bg-secondary/40">
+                  {trend.preview_url ? videoSection ? (
+                    <button type="button" className="block w-full" onClick={() => setPreviewTrend(trend)} aria-label={`Открыть видео ${trend.title}`}>
+                      <video src={trend.preview_url} muted playsInline preload="metadata" className="aspect-video w-full bg-black object-cover" />
+                      <span className="absolute inset-0 grid place-items-center bg-black/10"><Film className="h-8 w-8 rounded-full bg-black/55 p-1.5 text-white" /></span>
+                    </button>
+                  ) : (
+                    <img src={trend.preview_url} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />
+                  ) : (
+                    <div className={videoSection ? 'flex aspect-video items-center justify-center' : 'flex aspect-square items-center justify-center'}><Sparkles className="h-8 w-8 text-gold" /></div>
+                  )}
+                </div>
+                <div className="space-y-2.5 p-3">
+                  <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
+                  <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
+                  <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />Повторить</Button>
+                  <div className={isAdmin ? 'grid grid-cols-[1fr_auto] gap-2' : 'grid'}>
+                    <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
+                    {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
+                  </div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      </section>
+    )
   }
 
   return (
@@ -293,6 +374,27 @@ export function TrendsTab() {
               ))}
             </select>
           </label>
+
+          {trendKind === 'video' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">Режим повтора</span>
+                <select value={videoScenario} onChange={(event) => setVideoScenario(event.target.value as ScenarioType)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
+                  {(state.videoModels.find((item) => item.id === model)?.supports || ['text']).map((scenario) => (
+                    <option key={scenario} value={scenario}>{scenario === 'imgtxt' ? 'Фото + текст' : scenario === 'text' ? 'Текст → видео' : scenario}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">Длительность</span>
+                <select value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
+                  {(state.videoModels.find((item) => item.id === model)?.durations || [5]).map((duration) => (
+                    <option key={duration} value={duration}>{duration} сек</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <span className="text-xs font-medium text-muted-foreground">
@@ -392,95 +494,24 @@ export function TrendsTab() {
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : items.length ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {items.map((trend) => {
-            const videoTrend = isVideoTrend(trend)
-            const modelLabel = videoTrend
-              ? state.videoModels.find((item) => item.id === trend.model)?.label
-              : state.imageModels.find((item) => item.id === trend.model)?.label
-
-            return (
-              <article key={trend.id} className="glass overflow-hidden rounded-2xl border border-border/50">
-                <div className="relative bg-secondary/40">
-                  {trend.preview_url ? (
-                    videoTrend ? (
-                      <video
-                        src={trend.preview_url}
-                        controls
-                        muted
-                        playsInline
-                        preload="metadata"
-                        className="aspect-video w-full bg-black object-contain"
-                      />
-                    ) : (
-                      <img src={trend.preview_url} alt="" className="aspect-square w-full object-cover" />
-                    )
-                  ) : (
-                    <div className="flex aspect-square items-center justify-center">
-                      <Sparkles className="h-10 w-10 text-gold" />
-                    </div>
-                  )}
-                  <span className="absolute left-3 top-3 rounded-full bg-background/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gold backdrop-blur">
-                    {videoTrend ? 'Видео-тренд' : 'Фото-тренд'}
-                  </span>
-                </div>
-
-                <div className="space-y-3 p-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">{trend.title}</h3>
-                    {trend.description ? (
-                      <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
-                        {trend.description}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="rounded-lg bg-secondary/55 px-2.5 py-2 text-[11px] text-muted-foreground">
-                    {modelLabel || trend.model || (videoTrend ? 'Видео-модель' : 'Nano Banana Pro')}
-                  </div>
-
-                  <div className={isAdmin ? 'grid grid-cols-[1fr_auto] gap-2' : 'grid'}>
-                    <Button
-                      type="button"
-                      className="bg-gold text-primary-foreground hover:bg-gold/90"
-                      onClick={() => applyTrend(trend)}
-                    >
-                      <Repeat2 className="h-4 w-4" />
-                      {videoTrend ? 'Повторить видео' : 'Повторить шаблон'}
-                    </Button>
-                    {isAdmin ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="icon"
-                        onClick={() => void handleRemove(trend)}
-                        disabled={removingId === trend.id}
-                        aria-label="Убрать тренд"
-                      >
-                        {removingId === trend.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              </article>
-            )
-          })}
+        <div className="space-y-7">
+          {renderTrendGrid(photoTrends, '🖼 Фото-тренды', false)}
+          {renderTrendGrid(videoTrends, '🎬 Видео-тренды', true)}
         </div>
       ) : (
         <div className="glass rounded-2xl border border-border/50 p-8 text-center">
           <Flame className="mx-auto h-9 w-9 text-gold/70" />
           <p className="mt-3 text-sm font-medium text-foreground">Трендов пока нет</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {isAdmin
-              ? 'Нажмите «Добавить», чтобы опубликовать первый шаблон.'
-              : 'Команда NEUROMIX скоро добавит новые шаблоны.'}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{isAdmin ? 'Нажмите «Добавить», чтобы опубликовать первый шаблон.' : 'Команда NEUROMIX скоро добавит новые шаблоны.'}</p>
         </div>
       )}
+
+      <Dialog open={Boolean(previewTrend)} onOpenChange={(open) => { if (!open) setPreviewTrend(null) }}>
+        <DialogContent className="max-w-3xl border-border/60 bg-background p-3">
+          <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Видео-тренд'}</DialogTitle>
+          {previewTrend?.preview_url ? <video src={previewTrend.preview_url} controls autoPlay playsInline className="aspect-video w-full rounded-xl bg-black object-contain" /> : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

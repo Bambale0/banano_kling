@@ -862,10 +862,14 @@ def _build_banana_reference_guidance(prompt: str, reference_images: list[str]) -
     """Banana-specific reference guidance: preserve only identity from the first reference."""
     prompt = (prompt or "").strip()
     guidance_lines = [
-        "Same-person preservation is the highest priority: the output must depict the same person from the first uploaded image, not a lookalike and not a newly invented face.",
+        "The requested edit is mandatory and must be clearly visible in the output. Returning the input image unchanged is an invalid result.",
+        "Any attribute explicitly named in the edit request is excluded from preservation and must be replaced exactly as requested.",
+        "For a hair edit, visibly replace the original hair length, hairstyle, texture, or color specified by the user while keeping the face and person identity unchanged.",
+        "Preserve the same person while applying the mandatory edit: the output must depict the person from the first uploaded image, not a lookalike and not a newly invented face.",
+        "This is an edit of the first uploaded image, not a request to invent a new composition: change only the details explicitly requested by the user and keep all other visible details unchanged.",
         "Use the first uploaded image only as the primary person identity reference.",
         "Preserve only the person's identity, but preserve facial identity exactly: face shape, facial geometry, eyes, eyebrows, nose, lips, cheekbones, jawline, hairline, age impression, skin tone, asymmetry, and distinctive facial features.",
-        "Preserve hair color, hair length, and hairstyle from the first reference unless the user explicitly asks to change them.",
+        "Preserve hair color, hair length, and hairstyle from the first reference only when the user did not ask to change hair.",
         "Follow the user's prompt for clothing, outfit, body styling, scene, pose, lighting, framing, and style, and apply those edits to that same person.",
         "Do not preserve or copy clothing, outfit, accessories, pose, body shape, background, lighting, camera angle, or visual coverage from the reference unless the user explicitly asks for those details.",
     ]

@@ -1,5 +1,7 @@
 # Zero-downtime migration runbook
 
+> Этот документ относится к переносу всего backend runtime и данных. Текущая production-схема переносит только static frontend на отдельный host; для неё используйте [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md). Адрес и blocker ниже сохранены как контекст незавершённой backend-миграции и не являются адресом текущего frontend host.
+
 Target host: `root@144.76.188.75 -p 22`
 
 Target path: `/root/tanya/banano_kling`

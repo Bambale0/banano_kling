@@ -447,6 +447,16 @@ export async function fetchPromptDetail(promptId: number): Promise<PromptItem> {
   return response.prompt
 }
 
+export async function fetchPromptLink(promptId: number): Promise<string> {
+  const initData = getInitData()
+  if (!initData) throw new Error('Откройте Mini App из Telegram и попробуйте снова.')
+  const response = await postJson<{ ok: true; link: string }>('prompts/link', {
+    init_data: initData,
+    prompt_id: promptId,
+  })
+  return response.link
+}
+
 export async function likePrompt(promptId: number): Promise<PromptItem> {
   const initData = getInitData()
   if (!initData) {
