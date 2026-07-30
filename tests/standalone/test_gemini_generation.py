@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for Gemini image generation.
 
@@ -44,7 +43,7 @@ def _api_key_check():
     except ValueError:
         print("✅ API key check passed")
         return True
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - standalone diagnostic reports provider failures
         print(f"❌ Unexpected error: {error}")
         return False
     finally:
@@ -81,7 +80,7 @@ def _image_generation():
                     with Image.open("test_output.png") as image:
                         print(f"✅ Generated image is valid: {image.size}, {image.format}")
                         return True
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - validates arbitrary image decoder failures
                     print(f"❌ Generated file is not a valid image: {error}")
                     return False
             print("❌ Image file was not created")
@@ -89,7 +88,7 @@ def _image_generation():
 
         print("❌ Image generation returned None")
         return False
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - standalone diagnostic reports provider failures
         print(f"❌ Image generation failed: {error}")
         return False
 
@@ -117,7 +116,7 @@ def _different_models():
                 print(f"✅ {model} works")
             else:
                 print(f"❌ {model} returned None")
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - continue checking remaining providers
             print(f"❌ {model} failed: {error}")
 
     return True
@@ -132,7 +131,7 @@ def main():
     for test in tests:
         try:
             results.append(test())
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - keep standalone suite running after one failure
             print(f"❌ Test {test.__name__} crashed: {error}")
             results.append(False)
 
