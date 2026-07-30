@@ -85,7 +85,9 @@ jobs:
           npm run build
 
       - name: Run focused contract test
-        run: python -m pytest -q tests/test_profile_immediate_publication_contract.py
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q tests/test_profile_immediate_publication_contract.py
 
       - name: Commit fix
         run: |
