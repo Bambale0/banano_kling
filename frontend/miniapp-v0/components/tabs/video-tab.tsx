@@ -45,8 +45,9 @@ export function VideoTab() {
     audioReference: string | null
   }) => {
     if (state.mode !== 'live') {
-      setError('Откройте Mini App через Telegram, чтобы запустить генерацию.')
-      return
+      const modeError = new Error('Откройте Mini App через Telegram, чтобы запустить генерацию.')
+      setError(modeError.message)
+      throw modeError
     }
     setIsSubmitting(true)
     setError(null)
@@ -61,6 +62,9 @@ export function VideoTab() {
       selectTask(result.task)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
+      // The form clears uploaded media only after onSubmit resolves.
+      // Re-throw so failed generation attempts preserve all selected references.
+      throw e
     } finally {
       setIsSubmitting(false)
     }
