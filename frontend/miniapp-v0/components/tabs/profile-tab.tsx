@@ -5,7 +5,7 @@ import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { mergePendingPublication } from '@/lib/feed-events'
+import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -201,7 +201,7 @@ export function ProfileTab() {
   const totals = useMemo(() => {
     if (isLive && profile) {
       return {
-        posts: Number(profile.posts_count || 0),
+        posts: Math.max(Number(profile.posts_count || 0), profileItems.length),
         likes: Number(profile.likes_count || 0),
         shares: Number(profile.shares_count || 0),
         remixes: Number(profile.remixes_count || 0),
@@ -219,13 +219,24 @@ export function ProfileTab() {
   }, [isLive, profile, profileItems])
 
   useEffect(() => {
-    const refreshProfileFeed = () => {
-      setItems((current) => mergePendingPublication(current, 'profile'))
+    if (!isOwnProfile) return
+    setItems((current) => mergePendingPublication(current, 'profile'))
+  }, [isOwnProfile])
+
+  useEffect(() => {
+    const refreshProfileFeed = (event: Event) => {
+      const published = (event as CustomEvent<FeedItem | undefined>).detail
+      if (published) {
+        if (isOwnProfile) {
+          setItems((current) => mergePublication(current, published, 'profile'))
+        }
+        return
+      }
       setFeedRefreshToken((value) => value + 1)
     }
     window.addEventListener('banano:feed-changed', refreshProfileFeed)
     return () => window.removeEventListener('banano:feed-changed', refreshProfileFeed)
-  }, [])
+  }, [isOwnProfile])
 
   useEffect(() => {
     if (!isLive || !feedDeepLink || feedDeepLink.action !== 'preview') return
@@ -275,7 +286,7 @@ export function ProfileTab() {
 
         const result = await fetchProfileFeed(targetReferralCode, 120)
         if (!ignore) {
-          setItems(mergePendingPublication(result.feed, 'profile'))
+          setItems(result.feed)
           setBrokenMediaIds(new Set())
           setProfile(result.profile)
         }
@@ -661,7 +672,7 @@ export function ProfileTab() {
         </div>
       ) : null}
 
-      {loading ? (
+      {loading && !profileItems.length ? (
         <div className="flex justify-center py-10 text-muted-foreground">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
