@@ -108,6 +108,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/miniapp-v0/components/tabs/profile-tab.tsx frontend/miniapp-v0/lib/feed-events.ts tests/test_profile_immediate_publication_contract.py .github/workflows/apply-profile-immediate-v2.yml
+          git add frontend/miniapp-v0/components/tabs/profile-tab.tsx frontend/miniapp-v0/lib/feed-events.ts .github/workflows/apply-profile-immediate-v2.yml
+          git add -f tests/test_profile_immediate_publication_contract.py
           git commit -m "Fix immediate profile publication refresh"
           git push origin HEAD:fix/profile-immediate-publication-v2
