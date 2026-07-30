@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -53,6 +55,65 @@ def test_publication_result_uses_one_stable_publish_action(scope):
     assert len(publication_buttons) == 1
     assert publication_buttons[0].text == "📤 Опубликовать"
     assert publication_buttons[0].callback_data == "pubscope_task-1"
+
+
+def test_publication_result_deduplicates_legacy_and_normalized_actions():
+    publication_scope = _load_publication_scope_module()
+    original = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="first", callback_data="pubscope_task-1")],
+            [InlineKeyboardButton(text="legacy", callback_data="feedpub_task-1")],
+            [InlineKeyboardButton(text="keep", callback_data="repeat_task-1")],
+        ]
+    )
+
+    markup = publication_scope._replace_publication_button(
+        original,
+        "task-1",
+        scope="private",
+    )
+
+    publication_buttons = [
+        button
+        for row in markup.inline_keyboard
+        for button in row
+        if str(button.callback_data or "").startswith("pubscope_")
+    ]
+    assert len(publication_buttons) == 1
+    assert publication_buttons[0].text == "📤 Опубликовать"
+
+
+@pytest.mark.asyncio
+async def test_bot_feed_link_falls_back_to_profile_only_post(monkeypatch):
+    from bot.handlers import common
+
+    profile_card = {"id": 42, "author_referral_code": "AUTHOR"}
+    message = SimpleNamespace(answer=AsyncMock())
+    viewer = SimpleNamespace(id=7)
+    render = AsyncMock()
+
+    monkeypatch.setattr(common, "get_feed_generation_card", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        common,
+        "get_profile_generation_card",
+        AsyncMock(return_value=profile_card),
+    )
+    monkeypatch.setattr(
+        common,
+        "_fetch_profile_feed_cards",
+        AsyncMock(return_value=(SimpleNamespace(id=8), [profile_card])),
+    )
+    monkeypatch.setattr(common, "_render_feed_carousel", render)
+
+    assert await common._render_feed_deeplink(message, viewer, "42") is True
+    render.assert_awaited_once_with(
+        message,
+        [profile_card],
+        index=0,
+        source_code="m",
+        profile_code="AUTHOR",
+    )
+    message.answer.assert_not_awaited()
 
 
 def test_profile_publication_requires_explicit_blur_choice():

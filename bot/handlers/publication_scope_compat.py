@@ -434,7 +434,7 @@ def _replace_publication_button(
         next_row: list[InlineKeyboardButton] = []
         for button in row:
             callback_data = str(button.callback_data or "")
-            if callback_data.startswith(("feedpub_", "feedrm_")):
+            if callback_data.startswith(("feedpub_", "feedrm_", "pubscope_")):
                 if not replaced:
                     next_row.append(
                         InlineKeyboardButton(
@@ -443,6 +443,9 @@ def _replace_publication_button(
                         )
                     )
                     replaced = True
+                # Drop every later legacy or already-normalized publication
+                # action. The result markup may pass through this adapter more
+                # than once while a message is refreshed.
             else:
                 next_row.append(button)
         if next_row:

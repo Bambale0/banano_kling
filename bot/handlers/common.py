@@ -39,6 +39,7 @@ from bot.database import (
     get_prompt_by_id,
     get_referral_stats,
     get_partner_withdrawal_request,
+    get_profile_generation_card,
     get_task_by_id,
     get_top_prompts,
     get_user_by_referral_code,
@@ -2954,6 +2955,36 @@ async def _render_feed_deeplink(
 ) -> bool:
     card = await get_feed_generation_card(gen_id, viewer_user_id=user.id)
     if not card:
+        profile_card = await get_profile_generation_card(
+            gen_id,
+            viewer_user_id=user.id,
+        )
+        if profile_card:
+            referral_code = str(profile_card.get("author_referral_code") or "").strip().upper()
+            author, profile_cards = await _fetch_profile_feed_cards(
+                referral_code,
+                viewer_user_id=user.id,
+            )
+            if author and profile_cards:
+                profile_index = next(
+                    (
+                        index
+                        for index, item in enumerate(profile_cards)
+                        if item.get("id") == profile_card.get("id")
+                    ),
+                    -1,
+                )
+                if profile_index < 0:
+                    profile_cards.insert(0, profile_card)
+                    profile_index = 0
+                await _render_feed_carousel(
+                    message,
+                    profile_cards,
+                    index=profile_index,
+                    source_code="m",
+                    profile_code=referral_code,
+                )
+                return True
         await message.answer(
             "🖼 <b>Лента</b>\n\nПост не найден или больше не опубликован.",
             reply_markup=get_back_keyboard(),
