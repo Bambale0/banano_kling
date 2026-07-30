@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PROFILE_PATH = Path('frontend/miniapp-v0/components/tabs/profile-tab.tsx')
 EVENTS_PATH = Path('frontend/miniapp-v0/lib/feed-events.ts')
 
