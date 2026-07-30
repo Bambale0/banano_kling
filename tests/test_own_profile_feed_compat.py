@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 COMPAT_SOURCE = Path("bot/handlers/own_profile_feed_compat.py").read_text(
     encoding="utf-8"
 )
