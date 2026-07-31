@@ -1,6 +1,6 @@
 """
-Скачивание результатов генерации с временных хостов (tempfile.aiquickdraw.com)
-на сервер, чтобы они не удалялись по TTL.
+Скачивание результатов генерации с временных хостов
+на backend в static/uploads/feed, чтобы они не удалялись по TTL.
 
 Вызывается из share_to_feed() при публикации в ленту.
 """
@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import uuid
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -23,14 +24,17 @@ logger = logging.getLogger(__name__)
 FEED_STORAGE_DIR = Path("static/uploads/feed")
 FEED_THUMB_STORAGE_DIR = FEED_STORAGE_DIR / "thumbs"
 FEED_THUMB_MAX_SIDE = 768
-FEED_THUMB_QUALITY = 84
+FEED_THUMB_MIN_BYTES = 50 * 1024
+FEED_THUMB_MAX_BYTES = 200 * 1024
+FEED_THUMB_MIN_QUALITY = 35
+FEED_THUMB_MAX_QUALITY = 90
 
 
 async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) -> str | None:
     """
     Скачивает файл по URL в static/uploads/feed/<uuid>.<ext>.
     Возвращает локальный URL (STATIC_BASE_URL/uploads/feed/<filename>),
-    который будет обслуживаться nginx/aiohttp.
+    который обслуживается Nginx/aiohttp.
     """
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
@@ -40,8 +44,6 @@ async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) ->
                     return None
 
                 content_type = resp.headers.get("Content-Type", "")
-
-                # Определяем расширение
                 ext = _content_type_to_ext(content_type, url)
                 filename = f"{uuid.uuid4().hex}{ext}"
 
@@ -83,19 +85,17 @@ def _content_type_to_ext(content_type: str, fallback_url: str) -> str:
         "video/quicktime": ".mov",
     }
 
-    # По Content-Type
     for ct, ext in ext_map.items():
         if ct in content_type:
             return ext
 
-    # По URL
     parsed = urlparse(fallback_url)
     path = parsed.path.lower()
     for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm", ".mov"):
         if path.endswith(ext):
             return ext
 
-    return ".jpg"  # fallback
+    return ".jpg"
 
 
 def _detect_file_ext_by_magic(path: Path) -> str | None:
@@ -143,23 +143,92 @@ def _local_feed_upload_path(url: str) -> Path | None:
     return candidate
 
 
+def _thumbnail_paths(source: Path) -> tuple[Path, Path]:
+    return (
+        FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp",
+        FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg",
+    )
+
+
 def feed_thumbnail_url_for(url: str) -> str | None:
     """Return an existing lightweight thumbnail URL for a local feed image."""
     source = _local_feed_upload_path(url)
     if not source or source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
-    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg"
-    if not thumb.exists():
-        return None
-    return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+
+    webp_thumb, legacy_jpg_thumb = _thumbnail_paths(source)
+    for thumb in (webp_thumb, legacy_jpg_thumb):
+        if thumb.exists():
+            return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+    return None
+
+
+def _encode_webp(image: Image.Image, quality: int) -> bytes:
+    buffer = BytesIO()
+    image.save(
+        buffer,
+        "WEBP",
+        quality=quality,
+        method=6,
+        optimize=True,
+        exact=image.mode == "RGBA",
+    )
+    return buffer.getvalue()
+
+
+def _best_webp_under_limit(image: Image.Image) -> tuple[bytes, int]:
+    low = FEED_THUMB_MIN_QUALITY
+    high = FEED_THUMB_MAX_QUALITY
+    best: tuple[bytes, int] | None = None
+
+    while low <= high:
+        quality = (low + high) // 2
+        encoded = _encode_webp(image, quality)
+        if len(encoded) <= FEED_THUMB_MAX_BYTES:
+            best = (encoded, quality)
+            low = quality + 1
+        else:
+            high = quality - 1
+
+    if best is not None:
+        return best
+    return _encode_webp(image, FEED_THUMB_MIN_QUALITY), FEED_THUMB_MIN_QUALITY
+
+
+def _build_webp_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
+    with Image.open(source) as opened:
+        image = ImageOps.exif_transpose(opened)
+        image.load()
+
+    if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+        image = image.convert("RGBA")
+    else:
+        image = image.convert("RGB")
+
+    image.thumbnail(
+        (FEED_THUMB_MAX_SIDE, FEED_THUMB_MAX_SIDE),
+        Image.Resampling.LANCZOS,
+    )
+
+    try:
+        while True:
+            encoded, quality = _best_webp_under_limit(image)
+            if len(encoded) <= FEED_THUMB_MAX_BYTES or max(image.size) <= 320:
+                return encoded, quality, image.size
+
+            next_size = (
+                max(1, round(image.width * 0.85)),
+                max(1, round(image.height * 0.85)),
+            )
+            resized = image.resize(next_size, Image.Resampling.LANCZOS)
+            image.close()
+            image = resized
+    finally:
+        image.close()
 
 
 def ensure_feed_thumbnail(url: str) -> str | None:
-    """Create a WebP thumbnail for a local feed image and return its public URL."""
-    existing = feed_thumbnail_url_for(url)
-    if existing:
-        return existing
-
+    """Create a bounded WebP thumbnail for a local feed image."""
     source = _local_feed_upload_path(url)
     if not source or not source.exists() or not source.is_file():
         return None
@@ -169,18 +238,32 @@ def ensure_feed_thumbnail(url: str) -> str | None:
         logger.warning("Feed thumbnail: skipped non-image feed file %s", source)
         return None
 
-    thumb = FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg"
-    tmp = thumb.with_suffix(".tmp.jpg")
+    webp_thumb, _legacy_jpg_thumb = _thumbnail_paths(source)
+    if webp_thumb.exists():
+        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{webp_thumb.name}"
+
+    tmp = webp_thumb.with_suffix(".tmp.webp")
     try:
         FEED_THUMB_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-        with Image.open(source) as image:
-            image = ImageOps.exif_transpose(image)
-            image.thumbnail((FEED_THUMB_MAX_SIDE, FEED_THUMB_MAX_SIDE), Image.Resampling.LANCZOS)
-            if image.mode != "RGB":
-                image = image.convert("RGB")
-            image.save(tmp, "JPEG", quality=FEED_THUMB_QUALITY, optimize=True)
-        os.replace(tmp, thumb)
-        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+        encoded, quality, size = _build_webp_thumbnail(source)
+        tmp.write_bytes(encoded)
+        os.replace(tmp, webp_thumb)
+        os.chmod(webp_thumb, 0o644)
+        logger.info(
+            "Feed thumbnail: built %s (%dx%d, q=%d, %.1f KB)",
+            webp_thumb,
+            size[0],
+            size[1],
+            quality,
+            len(encoded) / 1024,
+        )
+        if len(encoded) < FEED_THUMB_MIN_BYTES:
+            logger.debug(
+                "Feed thumbnail smaller than preferred minimum: %s (%.1f KB)",
+                webp_thumb,
+                len(encoded) / 1024,
+            )
+        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{webp_thumb.name}"
     except Exception:
         try:
             tmp.unlink(missing_ok=True)
@@ -237,7 +320,9 @@ def _remove_new_feed_files(urls: list[str]) -> None:
             continue
         try:
             path.unlink(missing_ok=True)
-            (FEED_THUMB_STORAGE_DIR / f"{path.stem}.jpg").unlink(missing_ok=True)
+            webp_thumb, legacy_jpg_thumb = _thumbnail_paths(path)
+            webp_thumb.unlink(missing_ok=True)
+            legacy_jpg_thumb.unlink(missing_ok=True)
         except OSError:
             logger.exception("Feed persist: failed to remove orphaned file %s", path)
 
@@ -282,7 +367,6 @@ async def persist_feed_result_urls(
                 if require_local:
                     _remove_new_feed_files(created_urls)
                     return []
-                # Для legacy-видео сохраняем прежнее fallback-поведение.
                 persisted.append(url)
         else:
             persisted.append(url)
