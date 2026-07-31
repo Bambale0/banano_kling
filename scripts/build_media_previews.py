@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Generate bounded-size WebP previews for public media delivery.
+"""Generate bounded-size WebP previews for existing feed uploads.
 
-The script mirrors the input directory structure into the output directory,
-changes the extension to .webp, applies EXIF orientation and writes files
-atomically. It targets a byte range by adjusting WebP quality and, when
-necessary, reducing dimensions further.
+By default the script reads static/uploads/feed and writes to
+static/uploads/feed/thumbs. The output tree is excluded from input scanning,
+so repeated backfill runs never create thumbs/thumbs recursively.
 """
 
 from __future__ import annotations
@@ -21,6 +20,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 LOGGER = logging.getLogger("media-previews")
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
+DEFAULT_INPUT = Path("static/uploads/feed")
+DEFAULT_OUTPUT = DEFAULT_INPUT / "thumbs"
 
 
 @dataclass(frozen=True)
@@ -34,14 +35,14 @@ class PreviewResult:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build 50–200 KB WebP previews")
-    parser.add_argument("--input", type=Path, required=True, help="Source image directory")
-    parser.add_argument("--output", type=Path, required=True, help="Preview output directory")
+    parser = argparse.ArgumentParser(description="Build 50–200 KB WebP feed previews")
+    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="Source image directory")
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Preview output directory")
     parser.add_argument("--max-edge", type=int, default=768, help="Maximum width or height")
     parser.add_argument("--min-kb", type=int, default=50, help="Preferred minimum output size")
     parser.add_argument("--max-kb", type=int, default=200, help="Hard maximum output size")
     parser.add_argument("--min-quality", type=int, default=35)
-    parser.add_argument("--max-quality", type=int, default=88)
+    parser.add_argument("--max-quality", type=int, default=90)
     parser.add_argument("--force", action="store_true", help="Rebuild current previews")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -51,6 +52,8 @@ def parse_args() -> argparse.Namespace:
 def validate_args(args: argparse.Namespace) -> None:
     if not args.input.is_dir():
         raise ValueError(f"Input directory does not exist: {args.input}")
+    if args.input.resolve() == args.output.resolve():
+        raise ValueError("--output must differ from --input")
     if args.max_edge < 128:
         raise ValueError("--max-edge must be at least 128")
     if args.min_kb < 1 or args.max_kb <= args.min_kb:
@@ -59,11 +62,21 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Expected 1 <= min-quality < max-quality <= 100")
 
 
-def iter_sources(root: Path) -> list[Path]:
+def _is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def iter_sources(root: Path, output_root: Path) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+        if path.is_file()
+        and path.suffix.lower() in SUPPORTED_SUFFIXES
+        and not _is_under(path, output_root)
     )
 
 
@@ -121,7 +134,6 @@ def encode_webp(image: Image.Image, quality: int) -> bytes:
 def choose_quality(
     image: Image.Image,
     *,
-    min_bytes: int,
     max_bytes: int,
     min_quality: int,
     max_quality: int,
@@ -140,12 +152,8 @@ def choose_quality(
             smallest = candidate
 
         if len(encoded) <= max_bytes:
-            if best_under is None or quality > best_under[1]:
-                best_under = candidate
-            if len(encoded) < min_bytes:
-                low = quality + 1
-            else:
-                low = quality + 1
+            best_under = candidate
+            low = quality + 1
         else:
             high = quality - 1
 
@@ -157,7 +165,6 @@ def build_preview(
     target: Path,
     *,
     max_edge: int,
-    min_bytes: int,
     max_bytes: int,
     min_quality: int,
     max_quality: int,
@@ -171,11 +178,12 @@ def build_preview(
             resized = resize_to_edge(original, current_edge)
             encoded, quality = choose_quality(
                 resized,
-                min_bytes=min_bytes,
                 max_bytes=max_bytes,
                 min_quality=min_quality,
                 max_quality=max_quality,
             )
+            if chosen is not None:
+                chosen[2].close()
             chosen = (encoded, quality, resized)
             if len(encoded) <= max_bytes:
                 break
@@ -234,7 +242,7 @@ def main() -> int:
 
     min_bytes = args.min_kb * 1024
     max_bytes = args.max_kb * 1024
-    sources = iter_sources(args.input)
+    sources = iter_sources(args.input, args.output)
     LOGGER.info("Found %d source images", len(sources))
 
     built = 0
@@ -257,7 +265,6 @@ def main() -> int:
                 source,
                 target,
                 max_edge=args.max_edge,
-                min_bytes=min_bytes,
                 max_bytes=max_bytes,
                 min_quality=args.min_quality,
                 max_quality=args.max_quality,
@@ -268,13 +275,17 @@ def main() -> int:
             continue
 
         built += 1
+        size_note = ""
+        if result.size_bytes < min_bytes:
+            size_note = " (below preferred minimum)"
         LOGGER.info(
-            "Built %s (%dx%d, q=%d, %.1f KB)",
+            "Built %s (%dx%d, q=%d, %.1f KB)%s",
             result.target,
             result.width,
             result.height,
             result.quality,
             result.size_bytes / 1024,
+            size_note,
         )
 
     LOGGER.info("Done: built=%d skipped=%d failed=%d", built, skipped, failed)
