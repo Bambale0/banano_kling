@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle, Send } from 'lucide-react'
 import {
-  buildTelegramMiniAppUrl,
   getApiBasePath,
   getRuntimeBotUsername,
   getStartParamFallback,
