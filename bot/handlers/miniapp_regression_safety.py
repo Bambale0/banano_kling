@@ -208,11 +208,11 @@ async def _secure_create_payment(
             )
 
     miniapp_module = _get_miniapp_module()
-    telegram_id, _ctx = await miniapp_module._get_user_context(
-        request.app,
+    payload = miniapp_module._validate_init_data(
         body.get("init_data", ""),
-        body.get("start_param_fallback"),
+        config.BOT_TOKEN,
     )
+    telegram_id = int(payload["user"]["id"])
 
     customer_email = submitted_email or await _get_saved_payment_email(telegram_id)
     if not customer_email:
