@@ -28,20 +28,22 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
-      - name: Install locked application and test dependencies
+      - name: Install locked application dependencies
         run: npm ci
 
       - name: Block high-severity dependency vulnerabilities
         run: npm audit --audit-level=high
-
-      - name: Install Chromium runtime
-        run: npx playwright install --with-deps chromium
 
       - name: Lint Mini App
         run: npm run lint
 
       - name: Build production Mini App
         run: npm run build
+
+      - name: Install isolated Chromium test runtime
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
 
       - name: Prepare mounted static export
         run: |
@@ -52,7 +54,7 @@ jobs:
       - name: Run critical browser flows
         run: node e2e/critical-flows.mjs
 
-      - name: Capture complete npm audit report
+      - name: Capture locked dependency audit report
         if: always()
         run: npm audit --json > npm-audit.json || true
 
