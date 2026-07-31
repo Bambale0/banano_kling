@@ -148,6 +148,16 @@ try {
     }
   })
 
+  // The production export ships a local Telegram SDK copy. Prevent that file
+  // from replacing the deterministic WebApp bridge injected above.
+  await page.route('**/telegram-web-app.js', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: '// Telegram WebApp is provided by the E2E init script.\n',
+    })
+  })
+
   await page.route('**/mini-app/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
