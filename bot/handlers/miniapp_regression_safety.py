@@ -50,12 +50,27 @@ async def _ensure_payment_email_schema() -> None:
         if _PAYMENT_EMAIL_SCHEMA_READY:
             return
         async with db_backend.connect() as db:
-            try:
-                await db.execute("ALTER TABLE users ADD COLUMN payment_email TEXT")
-            except db_backend.OperationalError:
-                # The column already exists. This form works for the project's
-                # SQLite-compatible adapter and the native PostgreSQL backend.
-                pass
+            if db_backend.is_postgres():
+                # The project's PostgreSQL compatibility adapter intentionally
+                # skips top-level ALTER TABLE statements. Wrap the migration in
+                # a DO block so it executes on existing production databases.
+                await db.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        ALTER TABLE users ADD COLUMN payment_email TEXT;
+                    EXCEPTION
+                        WHEN duplicate_column THEN NULL;
+                    END
+                    $$;
+                    """
+                )
+            else:
+                try:
+                    await db.execute("ALTER TABLE users ADD COLUMN payment_email TEXT")
+                except db_backend.OperationalError:
+                    # SQLite reports a duplicate-column error after the first run.
+                    pass
             await db.commit()
         _PAYMENT_EMAIL_SCHEMA_READY = True
 
