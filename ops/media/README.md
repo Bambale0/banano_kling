@@ -1,114 +1,144 @@
-# Media delivery через Cloudflare Free + Nginx
+# Media delivery через Cloudflare Free + существующий `static/uploads`
 
-Цель: не покупать отдельный CDN/объектное хранилище, а отдавать публичные изображения через отдельный домен `media.chillcreative.ru`, Cloudflare Free и Nginx.
+Цель: не покупать отдельный CDN или объектное хранилище. Backend уже сохраняет публичные результаты в `static/uploads`, формирует URL `/uploads/...` и создаёт thumbnails для ленты. Нужно оставить файлы на месте, отдать их напрямую через Nginx и поставить перед Nginx Cloudflare Free.
 
-## Архитектура
+## Фактическая схема
 
 ```text
-AI provider / backend upload
+Backend / AI provider
         ↓
-/srv/banano-media/public/originals
-        ↓ build_media_previews.py
-/srv/banano-media/public/previews/*.webp
+/root/tanya/banano_kling/static/uploads
+        ├── feed/<original>
+        └── feed/thumbs/<preview>.webp
         ↓
-Nginx на origin
+Nginx на backend 144.76.188.75
         ↓
-Cloudflare Free (orange cloud)
+media.chillcreative.ru через Cloudflare Free
         ↓
-Mini App / Telegram WebView
+Mini App на cdn.chillcreative.ru
 ```
 
-Для ленты используется `previews/*.webp` размером примерно 50–200 КБ. Оригинал загружается только при открытии карточки.
+`cdn.chillcreative.ru` остаётся frontend-доменом на сервере `91.200.84.187`. Медиа-домен направляется на backend `144.76.188.75`, потому что каталог `static/uploads` находится там.
 
-## 1. DNS и Cloudflare Proxy
+## 1. DNS
 
-В Cloudflare DNS создать запись:
+В Cloudflare создать запись:
 
 ```text
 Type: A
 Name: media
-Content: <IPv4 origin-сервера>
-Proxy status: Proxied
+IPv4: 144.76.188.75
+Proxy status: Proxied (оранжевое облако)
 TTL: Auto
 ```
 
-AAAA добавлять только если origin действительно принимает HTTPS по IPv6. Полурабочий AAAA хуже полного отсутствия IPv6.
+AAAA добавлять только при полностью рабочем IPv6 на backend. Если IPv6 не настроен или не проверен, AAAA не создавать.
+
+## 2. Файлы не переносить
+
+Используется существующий каталог:
+
+```text
+/root/tanya/banano_kling/static/uploads
+```
+
+Если production checkout находится в другом месте, поменять только путь `alias` в `ops/media/nginx-media.conf`. Структуру URL и содержимое базы менять не требуется.
 
 Проверка:
 
 ```bash
-dig +short A media.chillcreative.ru
-dig +short AAAA media.chillcreative.ru
+cd /root/tanya/banano_kling
+find static/uploads -maxdepth 3 -type f | head
 ```
-
-При включённом proxy публичные A/AAAA должны указывать на адреса Cloudflare, а не напрямую на origin.
-
-## 2. Каталоги и права
-
-```bash
-install -d -m 0755 /srv/banano-media/public/originals
-install -d -m 0755 /srv/banano-media/public/previews
-chown -R www-data:www-data /srv/banano-media
-```
-
-Backend должен записывать оригиналы атомарно: сначала временный файл, затем `rename` в итоговое имя. URL должен быть immutable, например:
-
-```text
-https://media.chillcreative.ru/previews/ab/cd/<sha256>.webp
-https://media.chillcreative.ru/originals/ab/cd/<sha256>.jpg
-```
-
-При изменении содержимого меняется имя файла. Нельзя заменять байты по старому immutable URL.
 
 ## 3. Nginx
 
-Установить `ops/media/nginx-media.conf` как отдельный server block, проверить и перезагрузить:
+Установить server block на backend:
 
 ```bash
 cp ops/media/nginx-media.conf /etc/nginx/sites-available/media.chillcreative.ru.conf
-ln -sfn /etc/nginx/sites-available/media.chillcreative.ru.conf /etc/nginx/sites-enabled/media.chillcreative.ru.conf
+ln -sfn /etc/nginx/sites-available/media.chillcreative.ru.conf \
+  /etc/nginx/sites-enabled/media.chillcreative.ru.conf
 nginx -t
 systemctl reload nginx
 ```
 
-Конфиг отдаёт файлы непосредственно через Nginx, включает `sendfile`, range requests и долгий immutable cache. Python не участвует в передаче тела файла.
+Конфиг сопоставляет:
 
-## 4. Генерация WebP-превью
+```text
+https://media.chillcreative.ru/uploads/<path>
+→ /root/tanya/banano_kling/static/uploads/<path>
+```
 
-Пример ручного запуска:
+Файл передаёт Nginx через `sendfile`; Python больше не участвует в передаче тела запроса на media-домене.
+
+## 4. STATIC_BASE_URL
+
+Для новых URL:
+
+```dotenv
+STATIC_BASE_URL=https://media.chillcreative.ru
+```
+
+После изменения:
+
+```bash
+systemctl restart banano-kling.service
+systemctl is-active banano-kling.service
+```
+
+Backend уже строит ссылки через `STATIC_BASE_URL`, поэтому новые публикации будут иметь вид:
+
+```text
+https://media.chillcreative.ru/uploads/feed/<file>
+https://media.chillcreative.ru/uploads/feed/thumbs/<file>.webp
+```
+
+Старые абсолютные URL в базе автоматически не меняются. Их можно оставить рабочими на `tanyapi` или отдельно переписать домен после проверки media-домена.
+
+## 5. WebP-превью
+
+При публикации изображения backend создаёт WebP-preview в:
+
+```text
+static/uploads/feed/thumbs/<source-stem>.webp
+```
+
+Параметры:
+
+```text
+максимальная сторона: 768 px
+предпочтительный размер: 50–200 КБ
+жёсткий верхний предел: 200 КБ
+формат: WebP
+```
+
+API ленты уже предпочитает thumbnail оригиналу. Legacy `.jpg` thumbnails продолжают читаться как fallback, новые создаются в WebP.
+
+Для backfill уже лежащих файлов можно использовать:
 
 ```bash
 python scripts/build_media_previews.py \
-  --input /srv/banano-media/public/originals \
-  --output /srv/banano-media/public/previews \
+  --input static/uploads/feed \
+  --output static/uploads/feed/thumbs \
   --max-edge 768 \
   --min-kb 50 \
   --max-kb 200
 ```
 
-Скрипт:
+## 6. Cache-Control
 
-- сохраняет структуру каталогов;
-- применяет EXIF rotation;
-- уменьшает изображение до `max-edge` без апскейла;
-- подбирает WebP quality бинарным поиском;
-- пропускает актуальные превью;
-- пишет файл атомарно.
-
-Для регулярной обработки можно запускать после сохранения результата backend-ом либо через systemd timer. Предпочтителен вызов из backend job сразу после скачивания оригинала.
-
-## 5. Cache-Control на origin
-
-Nginx отвечает для медиа:
+Nginx отвечает для `/uploads/*`:
 
 ```text
 Cache-Control: public, max-age=31536000, s-maxage=31536000, immutable
-Vary: Accept-Encoding
+Access-Control-Allow-Origin: *
+Cross-Origin-Resource-Policy: cross-origin
 ```
 
-Не добавлять `Set-Cookie`, `private`, `no-store` или `no-cache` на публичные файлы.
+Важно: immutable безопасен, потому что имена сохранённых feed-файлов уникальны. Нельзя заменять содержимое файла, сохраняя тот же URL.
 
-## 6. Cloudflare Cache Rule
+## 7. Cloudflare Cache Rule
 
 Cloudflare Dashboard → Caching → Cache Rules → Create rule.
 
@@ -116,8 +146,7 @@ Expression:
 
 ```text
 (http.host eq "media.chillcreative.ru" and
- (starts_with(http.request.uri.path, "/previews/") or
-  starts_with(http.request.uri.path, "/originals/")))
+ starts_with(http.request.uri.path, "/uploads/"))
 ```
 
 Actions:
@@ -128,11 +157,11 @@ Edge TTL: Respect origin TTL
 Browser TTL: Respect origin TTL
 ```
 
-На Free-плане этого достаточно. Не включать `Cache Everything` для API, webhook и HTML-доменов.
+Не применять `Cache Everything` к `tanyapi`, webhook, API или frontend HTML.
 
-Первый запрос обычно `MISS`, второй из той же edge-локации должен стать `HIT` и получить `Age`.
+Первый запрос из edge-локации обычно даст `MISS`; повторный должен дать `HIT` и заголовок `Age`.
 
-## 7. Временно отключить HTTP/3
+## 8. Временно отключить HTTP/3
 
 На время проверки проблемных VPN:
 
@@ -145,24 +174,18 @@ Cloudflare Dashboard
 → Off
 ```
 
-После изменения проверить через проблемные VPN-локации. HTTP/2 остаётся включённым. Если зависания исчезли, HTTP/3 оставить выключенным до отдельного разбора QUIC/UDP-маршрута.
+HTTP/2 останется включённым. Если зависания исчезнут, проблема находится в QUIC/UDP-маршруте конкретных VPN.
 
-## 8. Диагностика IPv4, IPv6 и Cloudflare cache
+## 9. Проверка IPv4, IPv6 и кеша
+
+Использовать реальный файл:
 
 ```bash
 bash scripts/check_media_delivery.sh \
-  https://media.chillcreative.ru/previews/example.webp
+  https://media.chillcreative.ru/uploads/feed/thumbs/<real-file>.webp
 ```
 
-Скрипт выполняет:
-
-- DNS A/AAAA;
-- два последовательных HEAD-запроса;
-- IPv4 и IPv6 замеры;
-- HTTP/2 проверку;
-- вывод `CF-Cache-Status`, `Age`, `CF-Ray`, `Content-Type`, `Content-Length`, `Cache-Control`, `Alt-Svc`.
-
-Ожидаемо после прогрева:
+Ожидаемо после второго запроса:
 
 ```text
 HTTP/2 200
@@ -175,45 +198,22 @@ cache-control: public, max-age=31536000, s-maxage=31536000, immutable
 
 Интерпретация:
 
-- `curl -4` работает, `curl -6` зависает: проверить AAAA/origin IPv6; временно убрать AAAA.
-- HTTP/2 работает, а проблема была только при HTTP/3: конфликт QUIC/UDP с VPN.
-- постоянный `MISS`: проверить уникальность query string, Cache Rule и origin headers.
-- `BYPASS`: убрать cookies/auth/private cache directives.
-- `DYNAMIC`: правило не совпало либо тип ответа не кешируется.
-- второй запрос `HIT`, но первый медленный: origin или маршрут до origin; Cloudflare после прогрева проблему сглаживает.
+- IPv4 работает, IPv6 нет — убрать/исправить AAAA.
+- HTTP/2 работает, после отключения HTTP/3 проблемный VPN ожил — конфликт QUIC/UDP.
+- постоянный `MISS` — проверить Cache Rule, query string и origin headers.
+- `BYPASS` — проверить cookies, auth и private/no-store.
+- `DYNAMIC` — правило Cloudflare не совпало.
+- есть `301/302` на другой домен — файл фактически выдаётся не через media origin.
 
-## 9. Интеграция с Mini App
-
-API ленты должен возвращать отдельные URL:
-
-```json
-{
-  "thumbnail_url": "https://media.chillcreative.ru/previews/ab/cd/hash.webp",
-  "original_url": "https://media.chillcreative.ru/originals/ab/cd/hash.jpg"
-}
-```
-
-В карточке ленты:
-
-```html
-<img
-  src="https://media.chillcreative.ru/previews/ab/cd/hash.webp"
-  loading="lazy"
-  decoding="async"
-  width="768"
-  height="768"
-/>
-```
-
-Не загружать оригиналы в списке и не запускать десятки загрузок одновременно.
-
-## 10. Проверка после деплоя
+## 10. Smoke-проверка после деплоя
 
 ```bash
 nginx -t
 systemctl reload nginx
 curl -fsSI --http2 https://media.chillcreative.ru/healthz
-bash scripts/check_media_delivery.sh https://media.chillcreative.ru/previews/<real-file>.webp
+curl -fsSI --http2 https://media.chillcreative.ru/uploads/feed/<real-file>
+bash scripts/check_media_delivery.sh \
+  https://media.chillcreative.ru/uploads/feed/thumbs/<real-file>.webp
 ```
 
-Проверить минимум с обычного подключения и двух проблемных VPN-локаций. Для каждого теста сохранить `CF-Ray`: по нему видно edge-локацию Cloudflare.
+Проверить обычное подключение и минимум две проблемные VPN-локации. Сохранять `CF-Ray`: он показывает, через какой edge Cloudflare прошёл запрос.
