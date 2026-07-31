@@ -8,6 +8,7 @@ import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
 import { Toaster } from '@/components/ui/sonner'
 import { ClientErrorBoundary } from './client-error-boundary'
+import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
 
 const TaskDetailPanel = dynamic(() =>
@@ -26,6 +27,7 @@ interface MiniAppShellProps {
 
 function MiniAppBody({ children }: MiniAppShellProps) {
   const { state } = useApp()
+  const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
   return (
@@ -35,7 +37,9 @@ function MiniAppBody({ children }: MiniAppShellProps) {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-gold/[0.05] blur-[120px] rounded-full" />
       </div>
 
-      {isLocked ? (
+      {isBootstrapping ? (
+        <MiniAppLoader />
+      ) : isLocked ? (
         <TelegramOpenGate />
       ) : (
         <>
