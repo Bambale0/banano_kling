@@ -69,6 +69,7 @@
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.6.0",
+    "playwright": "1.55.0",
     "postcss": "^8.5.25",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.2.0",
