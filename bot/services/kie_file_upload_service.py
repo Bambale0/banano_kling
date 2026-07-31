@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import logging
 import mimetypes
 import os
 import time
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 import aiohttp
 
@@ -88,38 +90,40 @@ class KieFileUploadService:
         filename = f"{stem}_{digest}{ext or '.png'}"
         mime_type = mimetypes.guess_type(local_path)[0] or "image/png"
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        form = aiohttp.FormData()
 
         try:
-            with open(local_path, "rb") as file_obj:
-                form.add_field(
-                    "file",
-                    file_obj,
-                    filename=filename,
-                    content_type=mime_type,
-                )
-                form.add_field("uploadPath", "image-references")
-                form.add_field("fileName", filename)
+            file_bytes = await asyncio.to_thread(Path(local_path).read_bytes)
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                file_bytes,
+                filename=filename,
+                content_type=mime_type,
+            )
+            form.add_field("uploadPath", "image-references")
+            form.add_field("fileName", filename)
 
-                timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(
-                        f"{self.base_url}/api/file-stream-upload",
-                        headers=headers,
-                        data=form,
-                    ) as resp:
-                        data = await resp.json(content_type=None)
-                        if resp.status >= 400:
-                            logger.warning(
-                                "KIE file upload HTTP %s for %s: %s",
-                                resp.status,
-                                local_path,
-                                data,
-                            )
-                            return self._fallback_value(
-                                source,
-                                fallback_to_source=fallback_to_source,
-                            )
+            timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.post(
+                    f"{self.base_url}/api/file-stream-upload",
+                    headers=headers,
+                    data=form,
+                ) as resp,
+            ):
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    logger.warning(
+                        "KIE file upload HTTP %s for %s: %s",
+                        resp.status,
+                        local_path,
+                        data,
+                    )
+                    return self._fallback_value(
+                        source,
+                        fallback_to_source=fallback_to_source,
+                    )
         except Exception:
             logger.exception("KIE file upload failed for %s", local_path)
             return self._fallback_value(source, fallback_to_source=fallback_to_source)
