@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-from bot.services import kie_file_upload_service as upload_module
-from bot.services import seedream_service as seedream_module
+upload_module = importlib.import_module("bot.services.kie_file_upload_service")
+seedream_module = importlib.import_module("bot.services.seedream_service")
 
 
 @pytest.mark.asyncio
