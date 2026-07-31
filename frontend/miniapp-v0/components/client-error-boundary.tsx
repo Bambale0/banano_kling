@@ -2,6 +2,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertCircle } from 'lucide-react'
+import { BRAND_NAME } from '@/lib/brand'
 import { Button } from '@/components/ui/button'
 
 interface ClientErrorBoundaryProps {
@@ -59,9 +60,9 @@ export class ClientErrorBoundary extends Component<
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/15">
             <AlertCircle className="h-6 w-6 text-destructive" />
           </div>
-          <h1 className="mt-4 text-lg font-semibold">Не удалось открыть Mini App</h1>
+          <h1 className="mt-4 text-lg font-semibold tracking-[0.12em]">{BRAND_NAME}</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Обновите окно или откройте приложение заново из Telegram.
+            Не удалось открыть Mini App. Обновите окно или откройте приложение заново из Telegram.
           </p>
           <Button
             className="mt-5 w-full bg-gold text-primary-foreground hover:bg-gold/90"
