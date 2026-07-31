@@ -31,16 +31,17 @@ export async function createPayment(payload: {
   })
 
   const text = await response.text()
-  let data: CreatePaymentResponse & { ok?: boolean; error?: string }
+  let data: unknown
   try {
-    data = JSON.parse(text) as CreatePaymentResponse & { ok?: boolean; error?: string }
+    data = JSON.parse(text)
   } catch {
     throw new Error('Платёжный сервис вернул некорректный ответ')
   }
 
-  if (!response.ok || data.ok === false) {
-    throw new Error(data.error || 'Не удалось создать платёж')
+  const statusPayload = data as { ok?: boolean; error?: string }
+  if (!response.ok || statusPayload.ok === false) {
+    throw new Error(statusPayload.error || 'Не удалось создать платёж')
   }
 
-  return data
+  return data as CreatePaymentResponse
 }
