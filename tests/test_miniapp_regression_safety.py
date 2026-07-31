@@ -144,8 +144,8 @@ async def test_lava_payment_uses_and_saves_request_local_email(monkeypatch):
             }
         )
 
-    async def fake_context(_app, _init_data, _fallback):
-        return 42, {"user": SimpleNamespace(id=1)}
+    def fake_validate(_init_data, _bot_token):
+        return {"user": {"id": 42}}
 
     async def fake_save(telegram_id, email):
         saved.append((telegram_id, email))
@@ -154,7 +154,7 @@ async def test_lava_payment_uses_and_saves_request_local_email(monkeypatch):
     monkeypatch.setattr(
         safety,
         "_get_miniapp_module",
-        lambda: SimpleNamespace(_get_user_context=fake_context),
+        lambda: SimpleNamespace(_validate_init_data=fake_validate),
     )
     monkeypatch.setattr(safety, "_save_payment_email", fake_save)
 
@@ -186,8 +186,8 @@ async def test_lava_payment_reuses_saved_account_email(monkeypatch):
             }
         )
 
-    async def fake_context(_app, _init_data, _fallback):
-        return 77, {"user": SimpleNamespace(id=2)}
+    def fake_validate(_init_data, _bot_token):
+        return {"user": {"id": 77}}
 
     async def fake_saved_email(telegram_id):
         assert telegram_id == 77
@@ -196,7 +196,7 @@ async def test_lava_payment_reuses_saved_account_email(monkeypatch):
     monkeypatch.setattr(
         safety,
         "_get_miniapp_module",
-        lambda: SimpleNamespace(_get_user_context=fake_context),
+        lambda: SimpleNamespace(_validate_init_data=fake_validate),
     )
     monkeypatch.setattr(safety, "_get_saved_payment_email", fake_saved_email)
 
@@ -225,8 +225,8 @@ async def test_lava_payment_without_submitted_or_saved_email_is_rejected(monkeyp
         original_called = True
         return web.json_response({"ok": True})
 
-    async def fake_context(_app, _init_data, _fallback):
-        return 77, {"user": SimpleNamespace(id=2)}
+    def fake_validate(_init_data, _bot_token):
+        return {"user": {"id": 77}}
 
     async def fake_saved_email(_telegram_id):
         return None
@@ -234,7 +234,7 @@ async def test_lava_payment_without_submitted_or_saved_email_is_rejected(monkeyp
     monkeypatch.setattr(
         safety,
         "_get_miniapp_module",
-        lambda: SimpleNamespace(_get_user_context=fake_context),
+        lambda: SimpleNamespace(_validate_init_data=fake_validate),
     )
     monkeypatch.setattr(safety, "_get_saved_payment_email", fake_saved_email)
 
