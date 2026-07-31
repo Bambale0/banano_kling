@@ -100,8 +100,10 @@ load_and_validate_config() {
 
   BACKEND_HOST_HEADER="${BACKEND_HOST_HEADER:-$host}"
   BACKEND_TLS_NAME="${BACKEND_TLS_NAME:-$host}"
+  BACKEND_HEALTH_PATH="${BACKEND_HEALTH_PATH:-/health}"
   validate_domain "$BACKEND_HOST_HEADER"
   validate_domain "$BACKEND_TLS_NAME"
+  [[ "$BACKEND_HEALTH_PATH" == /* ]] || die "BACKEND_HEALTH_PATH must start with /"
 
   BACKEND_SSH_HOST="${BACKEND_SSH_HOST:-}"
   BACKEND_PROJECT_DIR="${BACKEND_PROJECT_DIR:-/root/tanya/banano_kling}"
@@ -122,6 +124,7 @@ make_sanitized_config() {
     printf 'BACKEND_ORIGIN=%q\n' "$BACKEND_ORIGIN"
     printf 'BACKEND_HOST_HEADER=%q\n' "$BACKEND_HOST_HEADER"
     printf 'BACKEND_TLS_NAME=%q\n' "$BACKEND_TLS_NAME"
+    printf 'BACKEND_HEALTH_PATH=%q\n' "$BACKEND_HEALTH_PATH"
     printf 'BACKEND_SSH_HOST=\n'
     printf 'CONFIGURE_BACKEND_UFW=0\n'
   } > "$TEMP_CONFIG"
@@ -219,7 +222,7 @@ final_smoke() {
   [[ "$SKIP_TLS" == "1" ]] && scheme="http"
   local frontend="${scheme}://${FRONTEND_DOMAIN}"
 
-  curl -fsS --max-time 20 "${BACKEND_ORIGIN}/health" >/dev/null
+  curl -fsS --max-time 20 "${BACKEND_ORIGIN}${BACKEND_HEALTH_PATH}" >/dev/null
   curl -fsS --max-time 20 "${frontend}/frontend-health" | grep -q '"ok":true'
 
   local status
