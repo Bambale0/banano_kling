@@ -28,7 +28,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
-      - name: Install locked application dependencies
+      - name: Install locked application and E2E dependencies
         run: npm ci
 
       - name: Block high-severity dependency vulnerabilities
@@ -40,10 +40,8 @@ jobs:
       - name: Build production Mini App
         run: npm run build
 
-      - name: Install isolated Chromium test runtime
-        run: |
-          npm install --no-save --no-package-lock playwright@1.55.0
-          npx playwright install --with-deps chromium
+      - name: Install locked Chromium runtime
+        run: npx playwright install --with-deps chromium
 
       - name: Prepare mounted static export
         run: |
