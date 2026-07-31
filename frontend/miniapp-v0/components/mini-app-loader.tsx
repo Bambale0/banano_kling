@@ -1,6 +1,7 @@
 'use client'
 
 import { LoaderCircle, Send } from 'lucide-react'
+import { BRAND_NAME } from '@/lib/brand'
 
 export function MiniAppLoader() {
   return (
@@ -27,11 +28,11 @@ export function MiniAppLoader() {
             </div>
           </div>
 
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            Загружаем Mini App
+          <h1 className="text-2xl font-semibold tracking-[0.12em] text-foreground">
+            {BRAND_NAME}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Получаем данные Telegram
+            Загружаем Mini App
           </p>
 
           <div className="mt-7 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
@@ -40,7 +41,7 @@ export function MiniAppLoader() {
 
           <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground/80">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin text-gold" />
-            Не закрывайте окно
+            Получаем данные Telegram
           </div>
         </div>
       </section>
