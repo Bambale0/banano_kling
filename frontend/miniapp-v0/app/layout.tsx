@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { BRAND_DESCRIPTION, BRAND_NAME } from '@/lib/brand'
 import './globals.css'
 
 const telegramBootstrapScript = `
@@ -67,9 +68,10 @@ const telegramBootstrapScript = `
 `
 
 export const metadata: Metadata = {
-  title: 'Banano AI Studio',
-  description: 'Премиальная студия для генерации фото и видео с помощью AI',
-  generator: 'v0.app',
+  title: BRAND_NAME,
+  description: BRAND_DESCRIPTION,
+  applicationName: BRAND_NAME,
+  generator: BRAND_NAME,
   icons: {
     icon: [
       {
