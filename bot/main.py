@@ -1,3 +1,4 @@
+# ruff: noqa  # Legacy monolith; new modules are linted separately.
 import asyncio
 import hmac
 import html
