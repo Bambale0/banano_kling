@@ -1,0 +1,41 @@
+name: Apply remote CDN manager
+
+on:
+  push:
+    branches:
+      - feat/browser-telegram-auth-loader
+    paths:
+      - scripts/apply_cdn_remote_manager.py
+      - .github/workflows/apply-cdn-remote-manager.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/browser-telegram-auth-loader
+          fetch-depth: 0
+
+      - name: Apply cdn.sh extension
+        run: python3 scripts/apply_cdn_remote_manager.py
+
+      - name: Validate shell syntax
+        run: bash -n cdn.sh
+
+      - name: Commit generated script
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cdn.sh
+          git commit -m "feat: manage remote frontend deployments from cdn.sh"
+          git push origin HEAD:feat/browser-telegram-auth-loader
