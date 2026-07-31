@@ -65,6 +65,7 @@ from bot.handlers.payments import (
     handle_yookassa_webhook,
     reconcile_lava_pending_transactions,
 )
+from bot.browser_auth import setup_browser_auth_routes
 from bot.miniapp import setup_miniapp_routes
 from bot.keyboards import (
     get_main_menu_button_keyboard,
@@ -4091,6 +4092,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     app.router.add_static(
         "/uploads/", path="static/uploads", show_index=False, name="uploads"
     )
+    setup_browser_auth_routes(app)
     setup_miniapp_routes(app)
 
     # Вебхук Telegram
