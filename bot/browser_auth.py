@@ -11,7 +11,7 @@ from aiohttp import web
 from bot.config import config
 
 _LOGIN_MAX_AGE_SECONDS = 10 * 60
-_BROWSER_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60
+_BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
 _ALLOWED_LOGIN_FIELDS = {
     "id",
     "first_name",
@@ -24,7 +24,7 @@ _ALLOWED_LOGIN_FIELDS = {
 
 def _normalized_login_payload(raw: Any) -> dict[str, str]:
     if not isinstance(raw, dict):
-        raise ValueError("Invalid Telegram login payload")
+        raise TypeError("Invalid Telegram login payload")
 
     payload: dict[str, str] = {}
     for key in _ALLOWED_LOGIN_FIELDS | {"hash"}:
@@ -106,7 +106,7 @@ async def browser_telegram_auth_config(request: web.Request) -> web.Response:
         )
         response.headers["Cache-Control"] = "public, max-age=300"
         return response
-    except Exception:
+    except Exception:  # noqa: BLE001 - transport failures must become a stable 503 response
         return web.json_response(
             {"ok": False, "error": "Telegram login is unavailable"},
             status=503,
@@ -130,13 +130,13 @@ async def browser_telegram_auth(request: web.Request) -> web.Response:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         return response
-    except (json.JSONDecodeError, ValueError) as error:
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
         return web.json_response(
             {"ok": False, "error": str(error)},
             status=401,
             headers={"Cache-Control": "no-store"},
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - unexpected auth failures must not leak internals
         return web.json_response(
             {"ok": False, "error": "Telegram login failed"},
             status=500,
