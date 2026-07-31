@@ -7,6 +7,7 @@ import {
   getRuntimeBotUsername,
   getStartParamFallback,
 } from '@/lib/api'
+import { BRAND_NAME } from '@/lib/brand'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 
@@ -162,18 +163,22 @@ export function TelegramOpenGate() {
             </div>
           </div>
 
+          <h1 className="text-2xl font-semibold tracking-[0.12em] text-foreground">
+            {BRAND_NAME}
+          </h1>
+
           {isConnecting ? (
             <>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Загружаем</h1>
-              <p className="mt-2 text-sm text-muted-foreground">Ещё мгновение</p>
+              <p className="mt-2 text-sm text-muted-foreground">Загружаем Mini App</p>
               <div className="mt-7 h-1.5 w-full overflow-hidden rounded-full bg-white/5">
                 <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-gold/60 via-gold to-gold/60" />
               </div>
             </>
           ) : (
             <>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Продолжить в браузере</h1>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">Войдите через Telegram — без пароля</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Продолжите через Telegram — без пароля
+              </p>
 
               <div className="mt-7 flex min-h-12 w-full items-center justify-center">
                 {loginStatus === 'loading' ? (
@@ -197,7 +202,7 @@ export function TelegramOpenGate() {
                     <Button asChild variant="secondary" className="h-11 w-full rounded-xl">
                       <a href={telegramUrl} target="_blank" rel="noreferrer">
                         <ExternalLink className="h-4 w-4" />
-                        Открыть в Telegram
+                        Открыть NEUROMIX в Telegram
                       </a>
                     </Button>
                   ) : null}
