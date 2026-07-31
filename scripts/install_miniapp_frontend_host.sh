@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Fully automated installer/deployer for the Banano Kling Mini App frontend host.
 # Ubuntu 22.04/24.04, root privileges required.
+#
+# Production deployments should use install_miniapp_frontend_https_host.sh,
+# which enforces backend HTTPS/443 and disables direct aiohttp exposure.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -16,10 +19,12 @@ usage() {
 Usage:
   sudo bash ${SCRIPT_NAME} --config /path/to/frontend.env [--install|--deploy-only]
 
+Recommended production entrypoint:
+  sudo bash install_miniapp_frontend_https_host.sh --config /path/to/frontend.env --install
+
 Required configuration variables:
   FRONTEND_DOMAIN       Public domain, e.g. app.example.ru
-  BACKEND_ORIGIN        Backend origin without a trailing slash,
-                        e.g. https://api.example.ru or http://10.0.0.5:1888
+  BACKEND_ORIGIN        Backend origin without a trailing slash
   CERTBOT_EMAIL         Email for Let's Encrypt, unless SKIP_TLS=1
 
 Main optional variables:
