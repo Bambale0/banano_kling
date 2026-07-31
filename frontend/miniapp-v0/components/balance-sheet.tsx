@@ -1,13 +1,14 @@
 'use client'
 
 import type { ComponentType } from 'react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Banana, CreditCard, Gift, Loader2, Mail, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { bootstrapApp } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import type { PaymentProvider } from '@/lib/types'
 
@@ -34,6 +35,7 @@ function isValidCustomerEmail(value: string) {
 export function BalanceSheet() {
   const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
+  const emailInputRef = useRef<HTMLInputElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
 
@@ -42,6 +44,35 @@ export function BalanceSheet() {
   const totalSpent = recentTasks.reduce((sum, task) => sum + task.cost, 0)
   const imageTasks = recentTasks.filter((task) => task.type === 'image').length
   const videoTasks = recentTasks.filter((task) => task.type === 'video').length
+
+  useEffect(() => {
+    if (!isBalanceOpen) return
+
+    let cancelled = false
+    void bootstrapApp()
+      .then((data) => {
+        const savedEmail = normalizeCustomerEmail(
+          String((data as typeof data & { payment_email?: string }).payment_email || ''),
+        )
+        if (!cancelled && isValidCustomerEmail(savedEmail)) {
+          setCustomerEmail((current) => current.trim() ? current : savedEmail)
+        }
+      })
+      .catch(() => {
+        // Payment can still proceed: the backend also falls back to the saved account email.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isBalanceOpen])
+
+  const focusCustomerEmail = () => {
+    window.setTimeout(() => {
+      emailInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      emailInputRef.current?.focus()
+    }, 50)
+  }
 
   const openExternalPayment = (url: string) => {
     const webApp = getTelegramPaymentBridge()
@@ -83,20 +114,15 @@ export function BalanceSheet() {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
 
-    if (provider === 'lava' && !customerEmailValid) {
-      toast.error('Укажите действующую почту', {
-        description: 'Она нужна платёжному сервису для создания счёта и электронного чека.',
-      })
-      return
-    }
-
     const loadingKey = `${packageId}:${provider}`
     setLoadingPayment(loadingKey)
     try {
       const payment = await createPayment({
         packageId,
         provider,
-        customerEmail: provider === 'lava' ? normalizedCustomerEmail : undefined,
+        customerEmail: provider === 'lava' && customerEmailValid
+          ? normalizedCustomerEmail
+          : undefined,
       })
       if (payment.provider === 'telegram_stars' && payment.invoice_url) {
         const status = await openTelegramInvoice(payment.invoice_url)
@@ -127,6 +153,9 @@ export function BalanceSheet() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось создать платёж'
       toast.error(message)
+      if (provider === 'lava' && message.toLowerCase().includes('почт')) {
+        focusCustomerEmail()
+      }
     } finally {
       setLoadingPayment(null)
     }
@@ -199,6 +228,7 @@ export function BalanceSheet() {
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
+                    ref={emailInputRef}
                     id="payment-customer-email"
                     type="email"
                     value={customerEmail}
@@ -215,7 +245,7 @@ export function BalanceSheet() {
                   />
                 </div>
                 <span className="block text-xs text-muted-foreground">
-                  Адрес передаётся только платёжному сервису для создания счёта и чека.
+                  Сохраним адрес в вашем аккаунте и автоматически подставим при следующих оплатах.
                 </span>
                 {customerEmail && !customerEmailValid ? (
                   <span className="block text-xs text-destructive">Проверьте формат почты.</span>
