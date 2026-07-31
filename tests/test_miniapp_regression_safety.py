@@ -177,6 +177,22 @@ async def test_lava_payment_uses_and_saves_request_local_email(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_payment_email_delegates_to_server_local_store(monkeypatch):
+    captured = []
+
+    async def fake_store(telegram_id, email):
+        captured.append((telegram_id, email))
+        return email
+
+    monkeypatch.setattr(safety, "save_payment_email", fake_store)
+
+    result = await safety._save_payment_email(42, "USER2026@GMAIL.COM")
+
+    assert result == "user2026@gmail.com"
+    assert captured == [(42, "user2026@gmail.com")]
+
+
+@pytest.mark.asyncio
 async def test_lava_payment_reuses_saved_account_email(monkeypatch):
     async def fake_original(_request):
         return web.json_response(
@@ -254,61 +270,30 @@ async def test_lava_payment_without_submitted_or_saved_email_is_rejected(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_returns_saved_payment_email(monkeypatch):
+async def test_bootstrap_returns_only_saved_payment_email_flag(monkeypatch):
     async def fake_original(_request):
         return web.json_response(
             {
                 "ok": True,
                 "telegram_id": 88,
                 "credits": 25,
+                "payment_email": "must-not-leak@mail.ru",
             }
         )
 
-    async def fake_saved_email(telegram_id):
+    async def fake_has_email(telegram_id):
         assert telegram_id == 88
-        return "account@mail.ru"
+        return True
 
-    monkeypatch.setattr(safety, "_get_saved_payment_email", fake_saved_email)
+    monkeypatch.setattr(safety, "has_payment_email", fake_has_email)
 
     response = await safety._secure_bootstrap(fake_original, DummyRequest({}))
     payload = json.loads(response.text)
 
     assert response.status == 200
     assert payload["credits"] == 25
-    assert payload["payment_email"] == "account@mail.ru"
-
-
-@pytest.mark.asyncio
-async def test_payment_email_schema_executes_postgres_do_block(monkeypatch):
-    statements: list[str] = []
-
-    class FakeDatabase:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, _exc_type, _exc, _traceback):
-            return False
-
-        async def execute(self, statement, _parameters=None):
-            statements.append(statement)
-            return SimpleNamespace(rowcount=0)
-
-        async def commit(self):
-            return None
-
-    monkeypatch.setattr(safety, "_PAYMENT_EMAIL_SCHEMA_READY", False)
-    monkeypatch.setattr(safety, "_PAYMENT_EMAIL_SCHEMA_LOCK", None)
-    monkeypatch.setattr(safety.db_backend, "is_postgres", lambda: True)
-    monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDatabase())
-
-    await safety._ensure_payment_email_schema()
-
-    assert len(statements) == 1
-    normalized_statement = " ".join(statements[0].split())
-    assert normalized_statement.startswith("DO $$")
-    assert "ALTER TABLE users ADD COLUMN payment_email TEXT" in normalized_statement
-    assert "WHEN duplicate_column THEN NULL" in normalized_statement
-    assert safety._PAYMENT_EMAIL_SCHEMA_READY is True
+    assert payload["payment_email_saved"] is True
+    assert "payment_email" not in payload
 
 
 @pytest.mark.asyncio
