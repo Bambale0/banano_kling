@@ -17,6 +17,7 @@ from bot.services.publication_scope_postgres_compat import (
 from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
+from .miniapp_regression_safety import install_miniapp_regression_safety
 from .own_profile_feed_compat import install_own_profile_feed_compat
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 
@@ -106,6 +107,7 @@ install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 install_own_profile_feed_compat()
+install_miniapp_regression_safety()
 common_router = Router()
 common_router.include_router(trend_video_compat_router)
 common_router.include_router(trend_text_upload_router)
