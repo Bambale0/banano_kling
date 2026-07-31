@@ -1,0 +1,51 @@
+name: Refresh Mini App Lockfile
+
+on:
+  push:
+    branches:
+      - agent/fix-tanyapi-regression-audit
+    paths:
+      - "frontend/miniapp-v0/package.json"
+      - ".github/workflows/refresh-miniapp-lock.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-miniapp-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-tanyapi-regression-audit
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Refresh package lock
+        working-directory: frontend/miniapp-v0
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Verify complete dependency tree
+        working-directory: frontend/miniapp-v0
+        run: npm audit --audit-level=high
+
+      - name: Commit refreshed lockfile
+        run: |
+          if git diff --quiet -- frontend/miniapp-v0/package-lock.json; then
+            echo "Lockfile is already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/miniapp-v0/package-lock.json
+          git commit -m "chore: lock secure Playwright E2E runtime"
+          git push origin HEAD:agent/fix-tanyapi-regression-audit
