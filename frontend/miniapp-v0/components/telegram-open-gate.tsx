@@ -36,22 +36,63 @@ function setBrowserInitData(initData: string) {
 export function TelegramOpenGate() {
   const { state } = useApp()
   const widgetRef = useRef<HTMLDivElement | null>(null)
+  const [botUsername, setBotUsername] = useState('')
   const [telegramUrl, setTelegramUrl] = useState('')
   const [loginStatus, setLoginStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [widgetReady, setWidgetReady] = useState(false)
 
   const isConnecting = state.isLoading
-  const botUsername = getRuntimeBotUsername()
 
   useEffect(() => {
-    setTelegramUrl(buildTelegramMiniAppUrl(getStartParamFallback()))
+    let cancelled = false
+
+    async function loadBotUsername() {
+      const runtimeUsername = getRuntimeBotUsername()
+      if (runtimeUsername) {
+        if (!cancelled) setBotUsername(runtimeUsername)
+        return
+      }
+
+      try {
+        const response = await fetch(`${getApiBasePath()}/browser-auth/config`, {
+          headers: { Accept: 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+        })
+        const payload = await response.json() as {
+          ok?: boolean
+          bot_username?: string
+        }
+        if (!cancelled && response.ok && payload.ok && payload.bot_username) {
+          setBotUsername(payload.bot_username.replace(/^@/, ''))
+        }
+      } catch {
+        if (!cancelled) setLoginStatus('error')
+      }
+    }
+
+    void loadBotUsername()
+    return () => {
+      cancelled = true
+    }
   }, [])
+
+  useEffect(() => {
+    if (!botUsername) return
+    const startParam = getStartParamFallback()
+    setTelegramUrl(
+      startParam
+        ? `https://t.me/${botUsername}?startapp=${encodeURIComponent(startParam)}`
+        : `https://t.me/${botUsername}?startapp`,
+    )
+  }, [botUsername])
 
   useEffect(() => {
     if (isConnecting || !botUsername || !widgetRef.current) return
 
     const container = widgetRef.current
     container.replaceChildren()
+    setWidgetReady(false)
 
     window.onBananoTelegramAuth = async (user: TelegramLoginUser) => {
       setLoginStatus('loading')
@@ -110,7 +151,13 @@ export function TelegramOpenGate() {
           <div className="relative mb-7 flex h-24 w-24 items-center justify-center">
             <div className="absolute inset-0 rounded-full border border-gold/15" />
             <div className="absolute inset-2 rounded-full border border-dashed border-gold/25" />
-            <div className={isConnecting ? 'absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-gold border-r-gold/40' : 'absolute inset-0 rounded-full border border-gold/25'} />
+            <div
+              className={
+                isConnecting
+                  ? 'absolute inset-0 animate-spin rounded-full border-2 border-transparent border-r-gold/40 border-t-gold'
+                  : 'absolute inset-0 rounded-full border border-gold/25'
+              }
+            />
             <div className="flex h-16 w-16 items-center justify-center rounded-full border border-gold/30 bg-gold/10 text-gold shadow-lg shadow-gold/10">
               <Send className="h-7 w-7" />
             </div>
