@@ -68,22 +68,39 @@ class SeedreamService(KlingService):
     ) -> Optional[List[str]]:
         limited_image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
         supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
+
+        # KIE Market models download image_urls on their own infrastructure.
+        # References stored under our /uploads path must therefore be copied to
+        # KIE's file store first instead of relying on our public host being
+        # reachable within the provider's 30-second remote-download timeout.
         uploaded_urls = await kie_file_upload_service.upload_local_image_sources(
             supported_urls,
-            prefer_stable_public_url=True,
+            prefer_stable_public_url=False,
+            fallback_to_source=False,
         )
-        effective_image_urls = [u for u in uploaded_urls if isinstance(u, str) and u]
-        if effective_image_urls:
-            transport = (
-                "kie_file_upload_urls"
-                if uploaded_urls != supported_urls
-                else "public_urls"
+
+        effective_image_urls: list[str] = []
+        failed_sources: list[str] = []
+        for source, uploaded_url in zip(supported_urls, uploaded_urls):
+            if isinstance(uploaded_url, str) and uploaded_url.strip():
+                effective_image_urls.append(uploaded_url.strip())
+            else:
+                failed_sources.append(str(source))
+
+        if failed_sources:
+            logger.error(
+                "Seedream aborted: failed to copy %d/%d references to KIE storage: %s",
+                len(failed_sources),
+                len(supported_urls),
+                failed_sources,
             )
+            return None
+
+        if effective_image_urls:
             logger.info(
-                "Seedream image refs: original=%d effective=%d transport=%s",
+                "Seedream image refs: original=%d effective=%d transport=kie_file_stream_upload",
                 len(image_urls),
                 len(effective_image_urls),
-                transport,
             )
             return effective_image_urls
 
@@ -211,11 +228,15 @@ class SeedreamService(KlingService):
             )
             normalized_image_urls = await kie_file_upload_service.upload_local_image_sources(
                 normalized_image_urls,
-                prefer_stable_public_url=True,
+                prefer_stable_public_url=False,
+                fallback_to_source=False,
             )
-            if normalized_image_urls != effective_image_urls:
+            normalized_image_urls = [
+                url for url in normalized_image_urls if isinstance(url, str) and url.strip()
+            ]
+            if normalized_image_urls and normalized_image_urls != effective_image_urls:
                 logger.warning(
-                    "Seedream retry with normalized PNG references after file type error"
+                    "Seedream retry with KIE-hosted normalized PNG references after file type error"
                 )
                 retry_payload = {
                     "model": model,
