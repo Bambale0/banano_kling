@@ -1,265 +1,179 @@
-# Banano Kling
+# NEUROMIX
 
-`Banano Kling` — production-oriented Telegram bot + Telegram Mini App для генерации изображений и видео, prompt-assist сценариев, платежей, feed/prompt-library и внутреннего админского API.
+`NEUROMIX` — Telegram-бот и Telegram Mini App для генерации изображений и видео, работы с референсами, публикации контента, платежей, партнёрской программы и внутренних административных инструментов.
 
-Документация актуализирована по production-схеме на `2026-07-30`. Если описание ниже конфликтует с кодом, источником истины считаются `bot/`, `frontend/miniapp-v0/`, `tests/` и `data/price.json`.
+> Репозиторий исторически называется `banano_kling`, а в коде встречаются технические идентификаторы `banano-*`, `banana_*` и названия моделей семейства Nano Banana. Это внутренние и provider-идентификаторы. Пользовательский бренд продукта — **NEUROMIX**.
 
-## Что есть в проекте сейчас
+Документация в этой ветке относится только к `tanyapi` и актуальной production-схеме.
 
-- Telegram bot на `aiogram 3` с webhook runtime через `aiohttp`
-- Telegram Mini App с backend в `bot/miniapp.py`
-- Генерация изображений, видео, motion control, talking avatar, photo-to-prompt, video-to-prompt
-- Feed, prompt library, remix/repeat/share сценарии
-- Баланс в кредитах (`бананы`), promo codes, partner/referral flows
-- Платёжные провайдеры: `CryptoBot`, `Lava`, `YooKassa`, `Telegram Stars`, legacy `T-Bank`
-- Internal API:
-  - `/internal/v1/*` для health/stats
-  - `/internal/admin/*` для read-only admin aggregation
-- SQLite-first слой с PostgreSQL runtime path через совместимый DB facade
-- Redis для FSM/cache с fallback на in-memory storage
-- Набор regression tests по webhook, платежам, Mini App, routing и DB helpers
+## Production-схема
 
-## Ключевые пользовательские сценарии
+| Компонент | Адрес | Сервер | Назначение |
+| --- | --- | --- | --- |
+| Telegram Mini App | `https://cdn.chillcreative.ru/mini-app/` | `91.200.84.187` | Статический Next.js export и reverse proxy к API |
+| Backend API | `https://tanyapi.chillcreative.ru` | `144.76.188.75` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
+| Media origin/CDN | `https://media.chillcreative.ru/uploads/...` | `144.76.188.75` через Cloudflare | Nginx-раздача существующей папки `static/uploads` |
+| Backend checkout | — | `144.76.188.75` | `/root/tanya/banano_kling`, строго ветка `tanyapi` |
+| Backend service | — | `144.76.188.75` | `banano-kling.service` |
 
-- `Создать фото`
-  - text-to-image
-  - image edit / reference-based generation
-  - batch presets
-- `Создать видео`
-  - text-to-video
-  - image-to-video
-  - video-reference generation
-  - Veo / Grok / Seedance / Gemini Omni / Kling family
-- `Motion Control`
-  - фото персонажа + motion video
-- `Prompt по фото`
-  - анализ изображения и подготовка текстового описания
-- `Prompt по видео`
-  - анализ видео в отдельный credit-based flow
-- `Mini App`
-  - bootstrap профиля и задач
-  - автоматическая синхронизация результата между Telegram-чатом и открытой карточкой
-  - единая публикация в общую ленту и профиль либо только в профиль без дублей
-  - same-origin media gateway для временных provider URL
-  - генерация
-  - upload
-  - feed/prompt actions
-  - profile/referral/share links
-- `Баланс и партнёрка`
-  - пополнение
-  - promo code
-  - реферальные начисления
-  - partner balance / withdrawals / exchange
+Поток запросов:
 
-## Актуальный стек
+```text
+Telegram WebView
+    ├── HTML / CSS / JS ──> cdn.chillcreative.ru ──> Nginx static export
+    ├── /mini-app/api/* ──> cdn.chillcreative.ru ──HTTPS─> tanyapi.chillcreative.ru
+    └── /uploads/feed/* ──> media.chillcreative.ru ──Cloudflare─> Nginx ──> static/uploads
+```
 
-- Backend: Python 3, `aiogram`, `aiohttp`
-- Storage:
-  - SQLite для local-first / legacy compatibility
-  - PostgreSQL path через `DATABASE_URL`
-  - Redis для FSM/cache
-- Frontend:
-  - Mini App backend в Python runtime
-  - `frontend/miniapp-v0` на `Next.js 16`, React 19, Tailwind 4
-  - production static frontend отдельно на `tanyapp.chillcreative.ru`, API на `tanyapi.chillcreative.ru`
-- Integrations:
-  - Kie / Kie Market
-  - Kling / Replicate-style callbacks
-  - Grok, Veo, Seedream, Seedance, Wan 2.7, Nano Banana family
-  - CryptoBot, Lava, YooKassa, Telegram Stars
+Публичный backend проходит через HTTPS-домен. Открывать внешний доступ к `aiohttp :1888` для frontend-сервера не требуется.
 
-## Актуальные модели и семейства
+## Основные возможности
 
-### Изображения
+### Telegram-бот
 
-- `banana_pro` / `nano-banana-pro`
-- `banana_2`
-- `nano-banana-2-lite`
-- `seedream_edit`
-- `seedream_5_pro`
-- `flux_pro`
-- `grok_imagine_i2i`
-- `wan_27`
-
-### Видео
-
-- `v3_pro`
-- `v3_std`
-- `v26_pro`
-- `motion_control_v26`
-- `grok_imagine`
-- `grok_imagine_v15`
-- `seedance_2`
-- `veo3`
-- `veo3_fast`
-- `veo3_lite`
-- `gemini_omni_video`
-- `gemini_omni_audio`
-- `gemini_omni_character`
-- `glow`
-- `avatar_std`
-- `avatar_pro`
-
-Источники истины по labels/costs/options:
-
-- `bot/keyboards.py`
-- `bot/services/preset_manager.py`
-- `data/price.json`
-
-## Runtime surface
-
-### Основные HTTP endpoints
-
-- Telegram webhook: `config.WEBHOOK_PATH` (`/webhook` по умолчанию)
-- CryptoBot webhook: `config.CRYPTOBOT_WEBHOOK_PATH`
-- Lava webhook: `config.LAVA_WEBHOOK_PATH`
-- YooKassa webhook:
-  - `/yookassa/webhook`
-  - `/webhook/yookassa`
-- Kling/Replicate-style webhook: `/webhook/kling`
-- Kie AI webhook: `config.KIE_AI_WEBHOOK_PATH`
-- Kie Market webhook relay: `config.KIE_MARKET_WEBHOOK_PATH`
-- Health: `/health`
-
-### Internal API
-
-- `/internal/v1/health`
-- `/internal/v1/stats`
-- `/internal/admin/health`
-- `/internal/admin/summary`
-- `/internal/admin/users`
-- `/internal/admin/generations`
-- `/internal/admin/finance`
+- webhook runtime на `aiogram 3` + `aiohttp`;
+- FSM-сценарии генерации фото, видео и motion control;
+- отправка фото/видео/референса в любой момент поддерживаемого сценария;
+- история задач и повтор генерации;
+- публикация в общую ленту и профиль либо только в профиль;
+- платежи, баланс, промокоды, партнёрские начисления;
+- административные и диагностические маршруты.
 
 ### Mini App
 
-Base path: `config.MINI_APP_PATH` (`/mini-app` по умолчанию)
+- единый бренд **NEUROMIX** в заголовках, metadata, загрузчике и основных экранах;
+- отдельный полноэкранный загрузчик во время получения Telegram `initData` и bootstrap;
+- браузерный вход через Telegram Login Widget как fallback вне WebView;
+- создание фото, видео и motion generation;
+- загрузка пользовательских файлов и сохранённых референсов;
+- лента, тренды, профили, remix/repeat/share;
+- синхронизация статуса задач с backend;
+- статическая production-сборка без Node.js runtime на frontend-сервере.
 
-Основные endpoints:
+### Media delivery
 
-- `POST /mini-app/api/bootstrap`
-- `POST /mini-app/api/action`
-- `POST /mini-app/api/upload`
-- `POST /mini-app/api/generate-image`
-- `POST /mini-app/api/generate-video`
-- `POST /mini-app/api/generate-motion`
-- `POST /mini-app/api/photo-to-prompt`
-- `POST /mini-app/api/task-detail`
-- `POST /mini-app/api/create-payment`
-- `POST /mini-app/api/ai-assistant`
-- prompt/feed/profile endpoints under `/mini-app/api/*`
-- public API mirror under `/mini-app/api/v1/*` for selected feed/prompt routes
+- файлы продолжают храниться в `/root/tanya/banano_kling/static/uploads`;
+- Nginx получает к ним доступ через постоянный bind mount;
+- публичная лента и WebP-превью кешируются Cloudflare;
+- приватные и временные uploads не получают годовой публичный кеш;
+- отдельное объектное хранилище или платный CDN сейчас не требуются.
 
-Подробности: [docs/architecture.md](docs/architecture.md), [docs/tracemap.md](docs/tracemap.md). Production deploy и rollback frontend: [docs/miniapp-frontend-deployment.md](docs/miniapp-frontend-deployment.md).
+## Стек
+
+- Python 3;
+- `aiogram 3`, `aiohttp`;
+- SQLite/PostgreSQL compatibility layer;
+- Redis для FSM/cache с fallback;
+- Next.js 16, React 19, Tailwind CSS 4;
+- Nginx, systemd, Certbot;
+- Cloudflare Free для media proxy/cache;
+- provider integrations для генерации изображений и видео.
 
 ## Структура репозитория
 
 ```text
 .
-├── bot/
-│   ├── main.py
-│   ├── miniapp.py
-│   ├── config.py
-│   ├── database.py
-│   ├── db.py
-│   ├── handlers/
-│   ├── services/
-│   ├── utils/
-│   └── internal_*.py
-├── data/
-│   └── price.json
-├── docs/
-├── frontend/miniapp-v0/
-├── scripts/
-├── tests/
-├── tracemap_*.md
-└── schema_postgres.sql
+├── bot/                         # Backend, Telegram handlers, Mini App API
+├── data/                        # Цены и runtime data
+├── docs/                        # Основная документация
+├── frontend/miniapp-v0/         # Next.js Mini App frontend
+├── ops/media/                   # Nginx/media-конфигурация и инструкция
+├── scripts/                     # Deploy, migration, diagnostics, repair
+├── static/uploads/              # Фактическое локальное media-хранилище
+├── tests/                       # Regression и integration tests
+├── cdn.sh                       # Менеджер frontend-host и удалённого deploy
+└── requirements.txt
 ```
 
-## Конфигурация
-
-Основные группы env-переменных задаются в `bot/config.py`:
-
-- Telegram:
-  - `BOT_TOKEN`
-  - `WEBHOOK_HOST`
-  - `WEBHOOK_PATH`
-  - `WEBHOOK_BIND_HOST`
-  - `WEBHOOK_PORT`
-- Mini App:
-  - `MINI_APP_PATH`
-  - `MINI_APP_URL`
-  - `STATIC_BASE_URL`
-- DB/Cache:
-  - `DATABASE_URL`
-  - `REDIS_URL`
-  - `REDIS_PREFIX`
-- Internal/security:
-  - `INTERNAL_API_SECRET`
-  - `HEALTH_CHECK_SECRET`
-  - `KIE_AI_WEBHOOK_SECRET`
-  - `KIE_WEBHOOK_HMAC_KEY`
-  - `YOOKASSA_WEBHOOK_SECRET`
-  - `LAVA_WEBHOOK_SECRET`
-- Payments:
-  - `PAYMENT_PROVIDER`
-  - `CRYPTOBOT_*`
-  - `LAVA_*`
-  - `YOOKASSA_*`
-  - `TBANK_*`
-- Providers:
-  - `KIE_AI_API_KEY`
-  - `KLING_API_KEY`
-  - `PIAPI_API_KEY`
-  - `GEMINI_API_KEY`
-  - `NANOBANANA_API_KEY`
-  - fallback API keys for Nano Banana families
-
-## Быстрый запуск
+## Быстрые команды
 
 ### Backend
 
 ```bash
-python -m venv venv
-. venv/bin/activate
-pip install -r requirements.txt
-python -m bot.main
+cd /root/tanya/banano_kling
+git switch tanyapi
+git pull --ff-only origin tanyapi
+sudo systemctl restart banano-kling.service
+sudo systemctl status banano-kling.service --no-pager
+curl -fsS http://127.0.0.1:1888/health
 ```
 
-### Тесты
+### Frontend deploy на удалённый сервер
 
 ```bash
-python -m pytest
-python -m py_compile $(find bot tests scripts -name "*.py")
+cd /root/tanya/banano_kling
+git switch tanyapi
+git pull --ff-only origin tanyapi
+
+sudo bash cdn.sh --remote-deploy tanyafrontend
+sudo bash cdn.sh --remote-status tanyafrontend
 ```
 
-### Mini App frontend
+Команды нужно запускать последовательно: сначала дождаться полного завершения deploy, затем отдельно проверять status.
+
+### Media origin
+
+```bash
+cd /root/tanya/banano_kling
+git switch tanyapi
+git pull --ff-only origin tanyapi
+
+LETSENCRYPT_EMAIL='admin@example.com' \
+ORIGIN_IPV4='144.76.188.75' \
+sudo -E bash scripts/deploy_media_origin.sh
+```
+
+### Тесты backend
+
+```bash
+cd /root/tanya/banano_kling
+. venv/bin/activate
+python -m pytest
+python -m py_compile $(find bot tests scripts -name '*.py')
+```
+
+### Локальная проверка frontend
 
 ```bash
 cd frontend/miniapp-v0
-npm install
+npm ci
+npm run lint
+npm test
 npm run build
+test -f out/index.html
 ```
 
-`bot/miniapp.py` умеет отдавать:
+## Источники истины
 
-1. static export из `frontend/miniapp-v0/out`
-2. alternative build dir
-3. fallback assets, если export не собран
+При расхождении документации и реализации использовать следующий приоритет:
+
+1. `bot/main.py` — runtime wiring и HTTP server;
+2. `bot/miniapp.py` — Mini App API и auth contracts;
+3. `bot/config.py` — env surface;
+4. `frontend/miniapp-v0/lib/api.ts` и `lib/app-context.tsx` — frontend runtime contract;
+5. `data/price.json` и `bot/services/preset_manager.py` — модели и цены;
+6. `tests/` — ожидаемое поведение;
+7. документация.
 
 ## Документация
 
-- [docs/README.md](docs/README.md) — карта документации
-- [docs/architecture.md](docs/architecture.md) — актуальная архитектура
-- [docs/roadmap.md](docs/roadmap.md) — статус и ближайшие приоритеты
-- [docs/tracemap.md](docs/tracemap.md) — индексы по основным потокам
-- [docs/runbook.md](docs/runbook.md) — эксплуатация и инциденты
-- [docs/run_guide.md](docs/run_guide.md) — локальный запуск и dev-проверки
-- [docs/postgres-migration.md](docs/postgres-migration.md) — Postgres runtime path
-- [docs/migration.md](docs/migration.md) — миграции, backfill и data repair scripts
+- [docs/README.md](docs/README.md) — карта документации;
+- [docs/architecture.md](docs/architecture.md) — архитектура и потоки данных;
+- [docs/production-deployment.md](docs/production-deployment.md) — полный production deploy от DNS до smoke tests;
+- [docs/miniapp-frontend-deployment.md](docs/miniapp-frontend-deployment.md) — frontend/CDN и `cdn.sh`;
+- [ops/media/README.md](ops/media/README.md) — media-домен, Nginx, SSL и Cloudflare;
+- [docs/environment.md](docs/environment.md) — переменные окружения;
+- [docs/runbook.md](docs/runbook.md) — ежедневная эксплуатация;
+- [docs/troubleshooting.md](docs/troubleshooting.md) — диагностика и аварийные сценарии;
+- [docs/branding.md](docs/branding.md) — правила бренда NEUROMIX;
+- [frontend/miniapp-v0/README.md](frontend/miniapp-v0/README.md) — frontend development и build.
 
-## Ограничения и фактический статус
+## Безопасность
 
-- Документация по provider APIs в `docs/*.md` частично хранится как reference snapshots; для интеграционной правды важнее сервисы и тесты.
-- В репозитории есть legacy/backup файлы (`*.bak`, старые DB dumps, старые docs). Они не считаются источником истины для текущего runtime.
-- Некоторые сценарии описывают и Telegram bot, и Mini App одновременно; точная привязка по экрану/route расписана в tracemap.
+- не коммитить `.env`, токены, private keys и Cloudflare credentials;
+- не передавать секреты в аргументах команд, если они попадут в shell history;
+- хранить Cloudflare token в root-only файле;
+- не публиковать порт backend runtime наружу без необходимости;
+- перед deploy создавать backup и проверять `nginx -t`;
+- HTML не кешировать надолго, hashed assets кешировать как immutable;
+- не использовать `rsync --delete` при обычном frontend deploy из-за кеша Telegram WebView.
