@@ -19,6 +19,8 @@ from typing import Any
 
 from aiohttp import web
 
+from bot.services.telegram_browser_auth_service import dispatch_telegram_browser_auth
+
 logger = logging.getLogger(__name__)
 
 _INTERNAL_PREFIX = "/internal/v1"
@@ -63,7 +65,11 @@ def _verify_hmac(request: web.Request, secret: str) -> bool:
 
 @web.middleware
 async def internal_auth_middleware(request: web.Request, handler: Any) -> web.Response:
-    """Protect internal API and permanently retire old payment endpoints."""
+    """Protect internal API, handle browser login and retire old payment endpoints."""
+    browser_auth_response = await dispatch_telegram_browser_auth(request)
+    if browser_auth_response is not None:
+        return browser_auth_response
+
     if request.path in _DISABLED_LEGACY_PAYMENT_PATHS:
         return web.json_response(
             {
@@ -122,7 +128,7 @@ async def handle_internal_stats(request: web.Request) -> web.Response:
 
 
 def setup_internal_api(app: web.Application, secret: str, version: str = "") -> None:
-    """Регистрирует internal API, а также автономные payment routes."""
+    """Регистрирует internal API, browser login middleware и payment routes."""
     app["internal_api_secret"] = secret
     app["bot_version"] = version
 
