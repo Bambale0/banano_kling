@@ -228,3 +228,28 @@ Backend всё ещё умеет отдавать локальный static expo
 5. Проверить CPU/memory, restart count и логи обоих контейнеров; на backend — `journalctl` и `NRestarts` сервиса.
 
 Первый cold load зависит от сети и географии пользователя. Это не повод отключать cache: HTML должен оставаться no-cache, а hashed assets — immutable.
+
+## 11. РФ сервер / CDN frontend
+
+Публичный frontend может размещаться на отдельном РФ сервере:
+
+| Компонент | Адрес / размещение |
+| --- | --- |
+| Публичный frontend | `https://cdn.chillcreative.ru/mini-app/` |
+| Frontend host | `91.200.84.187`, static files в `/var/www/cdn.chillcreative.ru` |
+| Backend runtime | `banano-kling.service`, aiohttp на `0.0.0.0:1888` |
+
+На фронт-сервере nginx проксирует `/mini-app/api/` на `http://144.76.188.75:1888/`.
+Backend firewall должен разрешать 1888/tcp. В `.env` бэкенда:
+```dotenv
+WEBHOOK_BIND_HOST=0.0.0.0
+MINI_APP_URL=https://cdn.chillcreative.ru/mini-app/
+```
+
+После деплоя фронта и обновления nginx проверьте:
+```bash
+curl -fsSI https://cdn.chillcreative.ru/mini-app/
+curl -i -X POST https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  -H 'Content-Type: application/json' --data '{}'
+```
+Ожидаемо: HTML 200, bootstrap 401 (без Telegram initData).
