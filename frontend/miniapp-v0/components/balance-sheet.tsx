@@ -11,6 +11,18 @@ import { cn } from '@/lib/utils'
 import { createPayment } from '@/lib/api'
 import type { PaymentProvider } from '@/lib/types'
 
+type TelegramPaymentBridge = {
+  openInvoice?: (url: string, callback?: (status: string) => void) => void
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void
+}
+
+function getTelegramPaymentBridge(): TelegramPaymentBridge | null {
+  if (typeof window === 'undefined') return null
+  return ((window as Window & {
+    Telegram?: { WebApp?: TelegramPaymentBridge }
+  }).Telegram?.WebApp || null)
+}
+
 export function BalanceSheet() {
   const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
@@ -21,22 +33,34 @@ export function BalanceSheet() {
   const videoTasks = recentTasks.filter((task) => task.type === 'video').length
 
   const openExternalPayment = (url: string) => {
+    const webApp = getTelegramPaymentBridge()
+
+    if (webApp?.openLink) {
+      try {
+        webApp.openLink(url)
+        return
+      } catch {
+        // Continue to browser fallbacks for old or partially supported clients.
+      }
+    }
+
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      window.location.href = url
+      window.location.assign(url)
     }
   }
 
   const openTelegramInvoice = (url: string) => {
-    const openInvoice = window.Telegram?.WebApp?.openInvoice
-    if (!openInvoice) {
+    const webApp = getTelegramPaymentBridge()
+    if (!webApp?.openInvoice) {
       openExternalPayment(url)
       return Promise.resolve('opened')
     }
 
     return new Promise<string>((resolve) => {
       try {
-        openInvoice(url, (status) => resolve(status || 'unknown'))
+        // Call through the WebApp object so Telegram keeps the native method context.
+        webApp.openInvoice?.(url, (status) => resolve(status || 'unknown'))
       } catch {
         openExternalPayment(url)
         resolve('opened')
