@@ -94,6 +94,26 @@ def _build_browser_init_data(user: dict[str, Any], bot_token: str) -> str:
     return urlencode(fields)
 
 
+async def browser_telegram_auth_config(request: web.Request) -> web.Response:
+    try:
+        bot = request.app["bot"]
+        me = await bot.get_me()
+        response = web.json_response(
+            {
+                "ok": True,
+                "bot_username": str(me.username or "").lstrip("@"),
+            }
+        )
+        response.headers["Cache-Control"] = "public, max-age=300"
+        return response
+    except Exception:
+        return web.json_response(
+            {"ok": False, "error": "Telegram login is unavailable"},
+            status=503,
+            headers={"Cache-Control": "no-store"},
+        )
+
+
 async def browser_telegram_auth(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -129,4 +149,8 @@ def setup_browser_auth_routes(app: web.Application) -> None:
     if not miniapp_path.startswith("/"):
         miniapp_path = f"/{miniapp_path}"
     miniapp_root = miniapp_path.rstrip("/")
+    app.router.add_get(
+        miniapp_root + "/api/browser-auth/config",
+        browser_telegram_auth_config,
+    )
     app.router.add_post(miniapp_root + "/api/browser-auth", browser_telegram_auth)
