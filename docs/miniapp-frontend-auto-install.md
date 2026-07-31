@@ -14,6 +14,14 @@ backend-domain:443 (Nginx)
 
 Frontend-сервер не подключается к порту aiohttp напрямую. Порт `1888` не открывается в интернет, а `WEBHOOK_BIND_HOST` не требуется менять на `0.0.0.0`.
 
+Для production используется защищённая точка входа:
+
+```text
+scripts/install_miniapp_frontend_https_host.sh
+```
+
+Она запускает основной инсталлятор в ограниченном режиме и не позволяет случайно переключиться на прямой `http://IP:1888`.
+
 Скрипт устанавливает на чистый Ubuntu-сервер:
 
 - Nginx;
@@ -64,7 +72,7 @@ REPO_URL=git@github.com:Bambale0/banano_kling.git
 ## 3. Первая установка
 
 ```bash
-sudo bash scripts/install_miniapp_frontend_host.sh \
+sudo bash scripts/install_miniapp_frontend_https_host.sh \
   --config /root/miniapp-frontend.env \
   --install
 ```
@@ -72,7 +80,7 @@ sudo bash scripts/install_miniapp_frontend_host.sh \
 ## 4. Последующие обновления
 
 ```bash
-sudo bash /opt/banano-kling-src/scripts/install_miniapp_frontend_host.sh \
+sudo bash /opt/banano-kling-src/scripts/install_miniapp_frontend_https_host.sh \
   --config /root/miniapp-frontend.env \
   --deploy-only
 ```
@@ -124,7 +132,7 @@ BACKEND_ENV_FILE=/root/tanya/banano_kling/.env
 BACKEND_SERVICE=banano-kling.service
 ```
 
-Скрипт только:
+Защищённый entrypoint только:
 
 - сохранит backup `.env`;
 - установит `MINI_APP_URL=https://FRONTEND_DOMAIN/mini-app/`;
