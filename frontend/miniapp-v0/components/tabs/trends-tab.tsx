@@ -25,10 +25,19 @@ import {
 
 type TrendKind = 'image' | 'video'
 
+const TREND_TAG = 'trend'
 const VIDEO_TREND_TAG = 'trend-video'
 
+function normalizedTags(trend: PromptItem) {
+  return new Set((trend.tags || []).map((tag) => String(tag).trim().toLowerCase()))
+}
+
+function hasTrendTag(trend: PromptItem) {
+  return normalizedTags(trend).has(TREND_TAG)
+}
+
 function hasVideoTag(trend: PromptItem) {
-  return (trend.tags || []).some((tag) => String(tag).toLowerCase() === VIDEO_TREND_TAG)
+  return normalizedTags(trend).has(VIDEO_TREND_TAG)
 }
 
 export function TrendsTab() {
@@ -83,8 +92,10 @@ export function TrendsTab() {
     setLoading(true)
     setError(null)
     try {
-      const trends = await fetchPrompts({ source: 'catalog', limit: 80 })
-      setItems(trends)
+      const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
+      // Keep a client-side guard as well, so a backend/cache regression cannot
+      // leak ordinary public prompts into the curated trends section.
+      setItems(trends.filter(hasTrendTag))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
     } finally {
@@ -101,18 +112,33 @@ export function TrendsTab() {
     if (!models.some((item) => item.id === model)) {
       setModel(models[0]?.id || (trendKind === 'video' ? 'v3_pro' : 'banana_pro'))
     }
-    if (trendKind === 'video') {
-      const selectedVideoModel = state.videoModels.find((item) => item.id === model)
-      if (selectedVideoModel && !selectedVideoModel.supports.includes(videoScenario)) {
-        setVideoScenario(selectedVideoModel.supports.includes('imgtxt') ? 'imgtxt' : selectedVideoModel.supports[0] || 'text')
-      }
-      if (selectedVideoModel && !selectedVideoModel.durations.includes(videoDuration)) {
-        setVideoDuration(selectedVideoModel.durations[0] || 5)
-      }
-    }
+  }, [model, state.imageModels, state.videoModels, trendKind])
+
+  useEffect(() => {
+    if (trendKind !== 'video') return
+    const selectedVideoModel = state.videoModels.find((item) => item.id === model)
+    if (!selectedVideoModel) return
+
+    setVideoScenario((current) => (
+      selectedVideoModel.supports.includes(current)
+        ? current
+        : selectedVideoModel.supports.includes('imgtxt')
+          ? 'imgtxt'
+          : selectedVideoModel.supports[0] || 'text'
+    ))
+    setVideoDuration((current) => (
+      selectedVideoModel.durations.includes(current)
+        ? current
+        : selectedVideoModel.durations[0] || 5
+    ))
+  }, [model, state.videoModels, trendKind])
+
+  const changeTrendKind = (nextKind: TrendKind) => {
+    if (nextKind === trendKind) return
+    setTrendKind(nextKind)
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [model, state.imageModels, state.videoModels, trendKind, videoDuration, videoScenario])
+  }
 
   const resetForm = () => {
     setTrendKind('image')
@@ -198,8 +224,8 @@ export function TrendsTab() {
         previewUrl,
         model,
         tags: trendKind === 'video'
-          ? ['trend', VIDEO_TREND_TAG, `trend-scenario:${videoScenario}`, `trend-duration:${videoDuration}`]
-          : ['trend'],
+          ? [TREND_TAG, VIDEO_TREND_TAG, `trend-scenario:${videoScenario}`, `trend-duration:${videoDuration}`]
+          : [TREND_TAG],
       })
       setItems((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
       resetForm()
@@ -246,16 +272,16 @@ export function TrendsTab() {
     })
   }
 
-  const renderTrendGrid = (trends: PromptItem[], title: string, videoSection: boolean) => {
-    if (!trends.length) return null
+  const renderTrendGrid = (trendItems: PromptItem[], sectionTitle: string, videoSection: boolean) => {
+    if (!trendItems.length) return null
     return (
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-serif text-lg font-semibold text-foreground">{title}</h3>
-          <span className="rounded-full bg-secondary/60 px-2.5 py-1 text-xs text-muted-foreground">{trends.length}</span>
+          <h3 className="font-serif text-lg font-semibold text-foreground">{sectionTitle}</h3>
+          <span className="rounded-full bg-secondary/60 px-2.5 py-1 text-xs text-muted-foreground">{trendItems.length}</span>
         </div>
         <div className="grid grid-cols-2 items-start gap-3 md:grid-cols-3">
-          {trends.map((trend) => {
+          {trendItems.map((trend) => {
             const modelLabel = videoSection
               ? state.videoModels.find((item) => item.id === trend.model)?.label
               : state.imageModels.find((item) => item.id === trend.model)?.label
@@ -335,7 +361,7 @@ export function TrendsTab() {
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => setTrendKind('image')}
+              onClick={() => changeTrendKind('image')}
               className={`rounded-xl border px-3 py-3 text-sm font-medium transition ${
                 trendKind === 'image'
                   ? 'border-gold/50 bg-gold/15 text-gold'
@@ -346,7 +372,7 @@ export function TrendsTab() {
             </button>
             <button
               type="button"
-              onClick={() => setTrendKind('video')}
+              onClick={() => changeTrendKind('video')}
               className={`rounded-xl border px-3 py-3 text-sm font-medium transition ${
                 trendKind === 'video'
                   ? 'border-gold/50 bg-gold/15 text-gold'

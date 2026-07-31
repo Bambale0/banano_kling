@@ -3,40 +3,75 @@
 import type { ComponentType } from 'react'
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Banana, CreditCard, Gift, Loader2, Receipt, Sparkles, Star, X } from 'lucide-react'
+import { Banana, CreditCard, Gift, Loader2, Mail, Receipt, Sparkles, Star, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { createPayment } from '@/lib/api'
+import { createPayment } from '@/lib/payment-api'
 import type { PaymentProvider } from '@/lib/types'
+
+type TelegramPaymentBridge = {
+  openInvoice?: (url: string, callback?: (status: string) => void) => void
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void
+}
+
+function getTelegramPaymentBridge(): TelegramPaymentBridge | null {
+  if (typeof window === 'undefined') return null
+  return ((window as Window & {
+    Telegram?: { WebApp?: TelegramPaymentBridge }
+  }).Telegram?.WebApp || null)
+}
+
+function normalizeCustomerEmail(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function isValidCustomerEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)
+}
 
 export function BalanceSheet() {
   const { state, isBalanceOpen, closeBalance, refreshTasks } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
+  const [customerEmail, setCustomerEmail] = useState('')
 
+  const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
+  const customerEmailValid = isValidCustomerEmail(normalizedCustomerEmail)
   const totalSpent = recentTasks.reduce((sum, task) => sum + task.cost, 0)
   const imageTasks = recentTasks.filter((task) => task.type === 'image').length
   const videoTasks = recentTasks.filter((task) => task.type === 'video').length
 
   const openExternalPayment = (url: string) => {
+    const webApp = getTelegramPaymentBridge()
+
+    if (webApp?.openLink) {
+      try {
+        webApp.openLink(url)
+        return
+      } catch {
+        // Continue to browser fallbacks for old or partially supported clients.
+      }
+    }
+
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (!opened) {
-      window.location.href = url
+      window.location.assign(url)
     }
   }
 
   const openTelegramInvoice = (url: string) => {
-    const openInvoice = window.Telegram?.WebApp?.openInvoice
-    if (!openInvoice) {
+    const webApp = getTelegramPaymentBridge()
+    if (!webApp?.openInvoice) {
       openExternalPayment(url)
       return Promise.resolve('opened')
     }
 
     return new Promise<string>((resolve) => {
       try {
-        openInvoice(url, (status) => resolve(status || 'unknown'))
+        // Call through the WebApp object so Telegram keeps the native method context.
+        webApp.openInvoice?.(url, (status) => resolve(status || 'unknown'))
       } catch {
         openExternalPayment(url)
         resolve('opened')
@@ -47,10 +82,22 @@ export function BalanceSheet() {
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
+
+    if (provider === 'lava' && !customerEmailValid) {
+      toast.error('Укажите действующую почту', {
+        description: 'Она нужна платёжному сервису для создания счёта и электронного чека.',
+      })
+      return
+    }
+
     const loadingKey = `${packageId}:${provider}`
     setLoadingPayment(loadingKey)
     try {
-      const payment = await createPayment({ packageId, provider })
+      const payment = await createPayment({
+        packageId,
+        provider,
+        customerEmail: provider === 'lava' ? normalizedCustomerEmail : undefined,
+      })
       if (payment.provider === 'telegram_stars' && payment.invoice_url) {
         const status = await openTelegramInvoice(payment.invoice_url)
         if (status === 'paid') {
@@ -72,11 +119,7 @@ export function BalanceSheet() {
 
       if (payment.payment_url) {
         openExternalPayment(payment.payment_url)
-        toast.message(
-          provider === 'lava'
-            ? 'Открыта страница Lava'
-            : 'Открыта страница оплаты'
-        )
+        toast.message('Открыта страница оплаты')
         return
       }
 
@@ -119,6 +162,7 @@ export function BalanceSheet() {
                 <button
                   onClick={closeBalance}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary/80 transition-colors hover:bg-secondary"
+                  aria-label="Закрыть пополнение"
                 >
                   <X className="h-4 w-4 text-muted-foreground" />
                 </button>
@@ -149,6 +193,34 @@ export function BalanceSheet() {
                 <StatCard icon={Gift} label="Фото" value={`${imageTasks}`} />
                 <StatCard icon={CreditCard} label="Видео" value={`${videoTasks}`} />
               </div>
+
+              <label className="block space-y-2" htmlFor="payment-customer-email">
+                <span className="text-sm font-medium text-foreground">Почта для карты и СБП</span>
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    id="payment-customer-email"
+                    type="email"
+                    value={customerEmail}
+                    onChange={(event) => setCustomerEmail(event.target.value)}
+                    placeholder="name@example.com"
+                    autoComplete="email"
+                    inputMode="email"
+                    className={cn(
+                      'h-11 w-full rounded-xl border bg-secondary/40 pl-10 pr-3 text-sm text-foreground outline-none',
+                      customerEmail && !customerEmailValid
+                        ? 'border-destructive/60 focus:border-destructive'
+                        : 'border-border/50 focus:border-gold/50',
+                    )}
+                  />
+                </div>
+                <span className="block text-xs text-muted-foreground">
+                  Адрес передаётся только платёжному сервису для создания счёта и чека.
+                </span>
+                {customerEmail && !customerEmailValid ? (
+                  <span className="block text-xs text-destructive">Проверьте формат почты.</span>
+                ) : null}
+              </label>
 
               <div>
                 <div className="mb-3 flex items-center justify-between">
@@ -208,7 +280,7 @@ export function BalanceSheet() {
                             ) : (
                               <CreditCard className="mr-2 h-4 w-4" />
                             )}
-                            Карта / СБП · Lava
+                            Карта / СБП
                           </Button>
                           <Button
                             onClick={() => handleTopup(pkg.id, 'telegram_stars')}
@@ -224,7 +296,7 @@ export function BalanceSheet() {
                           </Button>
                           {lavaConfigured ? (
                             <p className="col-span-2 px-1 text-center text-[11px] text-muted-foreground">
-                              Оплата картой идёт через Lava.
+                              Доступна оплата банковской картой и через СБП.
                             </p>
                           ) : null}
                         </div>
@@ -246,7 +318,7 @@ export function BalanceSheet() {
                   onClick={() => handleTopup(paymentPackages[0]?.id || 'mini', 'lava')}
                   className="bg-gold hover:bg-gold/90 text-primary-foreground"
                 >
-                  Пополнить через Lava
+                  Пополнить картой / СБП
                 </Button>
               </div>
             </div>
