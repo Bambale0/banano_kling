@@ -1,197 +1,359 @@
-# Runbook
+# Runbook NEUROMIX
 
-## 1. Что именно запускается
+## 1. Production inventory
 
-Основной runtime — `python -m bot.main`.
+| Компонент | Значение |
+| --- | --- |
+| Backend host | `144.76.188.75` |
+| Backend domain | `tanyapi.chillcreative.ru` |
+| Backend project | `/root/tanya/banano_kling` |
+| Backend branch | `tanyapi` |
+| Backend service | `banano-kling.service` |
+| Backend local health | `http://127.0.0.1:1888/health` |
+| Frontend host | `91.200.84.187` |
+| Frontend domain | `cdn.chillcreative.ru` |
+| Frontend public URL | `https://cdn.chillcreative.ru/mini-app/` |
+| Frontend remote profile | `tanyafrontend` |
+| Media domain | `media.chillcreative.ru` |
+| Media source | `/root/tanya/banano_kling/static/uploads` |
 
-Он поднимает:
+## 2. Ежедневная проверка backend
 
-- Telegram webhook server
-- Mini App routes
-- payment/provider webhooks
-- internal APIs
-- background reconcile/cleanup loops
+```bash
+sudo systemctl is-active banano-kling.service
+sudo systemctl status banano-kling.service --no-pager
+curl -fsS http://127.0.0.1:1888/health
+curl -fsS https://tanyapi.chillcreative.ru/health
+```
 
-Production Mini App развёрнут раздельно:
+Проверка restart count:
 
-- frontend: `https://tanyapp.chillcreative.ru/mini-app/`, host `2.27.160.11`
-- backend: `https://tanyapi.chillcreative.ru`, local aiohttp `127.0.0.1:1888`
-- backend service: `banano-kling.service`
+```bash
+systemctl show banano-kling.service \
+  -p ActiveState \
+  -p SubState \
+  -p MainPID \
+  -p NRestarts \
+  -p MemoryCurrent
+```
 
-Полный frontend runbook: [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md).
+## 3. Логи backend
 
-## 2. Перед запуском проверить
+Последние сообщения:
 
-- `.env` загружен и содержит `BOT_TOKEN`
-- `DATABASE_URL` указывает на корректный runtime backend
-- Redis доступен, если ожидается FSM persistence
-- `WEBHOOK_HOST` и `WEBHOOK_PATH` согласованы с внешним reverse proxy
-- директория `logs/` доступна на запись
+```bash
+journalctl -u banano-kling.service -n 200 --no-pager
+```
 
-## 3. Базовые команды
+Live tail:
 
-### Локальный запуск
+```bash
+journalctl -u banano-kling.service -f
+```
+
+Если file logging включён:
+
+```bash
+tail -n 200 /root/tanya/banano_kling/logs/bot.log
+tail -f /root/tanya/banano_kling/logs/bot.log
+```
+
+Не отправлять логи целиком без очистки tokens, URLs с signatures, user data и payment payloads.
+
+## 4. Безопасное обновление backend
+
+```bash
+cd /root/tanya/banano_kling
+
+git fetch --prune origin tanyapi
+git switch tanyapi
+
+git status --short
+```
+
+Если working tree чистый:
+
+```bash
+git reset --hard origin/tanyapi
+git log -1 --oneline
+```
+
+Проверки:
 
 ```bash
 . venv/bin/activate
-python -m bot.main
-```
-
-### Тесты
-
-```bash
 python -m pytest
-python -m py_compile $(find bot tests scripts -name "*.py")
+python -m py_compile $(find bot tests scripts -name '*.py')
 ```
 
-### Проверка health
+Перезапуск:
 
 ```bash
-curl http://127.0.0.1:1888/health
+sudo systemctl restart banano-kling.service
+sudo systemctl is-active banano-kling.service
+curl -fsS http://127.0.0.1:1888/health
+journalctl -u banano-kling.service -n 100 --no-pager
 ```
 
-Если установлен `HEALTH_CHECK_SECRET`, нужен header:
+## 5. Frontend deploy
+
+### Deploy
 
 ```bash
-Authorization: Bearer <secret>
+cd /root/tanya/banano_kling
+
+git fetch --prune origin tanyapi
+git switch tanyapi
+git reset --hard origin/tanyapi
+
+git log -1 --oneline
+sudo bash cdn.sh --remote-deploy tanyafrontend
 ```
 
-## 4. Логи
+Дождаться полного завершения. Только затем:
 
-По умолчанию runtime пишет в:
+```bash
+sudo bash cdn.sh --remote-status tanyafrontend
+```
 
-- `logs/bot.log`
+### Frontend smoke
 
-Поведение логирования:
+```bash
+curl -fsSI https://cdn.chillcreative.ru/mini-app/
+curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+  | grep -o '<title>[^<]*</title>'
+```
 
-- file logging можно отключить через `BANANO_DISABLE_FILE_LOGGING=1`
-- stdout logging можно включить через `BANANO_LOG_TO_STDOUT=1`
+Ожидаемый title:
 
-## 5. Частые проблемы
+```html
+<title>NEUROMIX</title>
+```
 
-### Бот стартует, но FSM ведёт себя как будто без Redis
+### API proxy smoke
 
-Причина:
+```bash
+curl -i -X POST \
+  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  -H 'Content-Type: application/json' \
+  --data '{}'
+```
 
-- Redis storage недоступен, runtime переключился на in-memory fallback
+Нормально: auth error `400/401/403`.
 
-Что проверить:
+Ненормально:
 
-- `REDIS_URL`
-- доступность Redis
-- логи на тему `switching to in-memory FSM storage`
+- `502` — frontend Nginx не достучался до backend;
+- `504` — timeout upstream;
+- HTML вместо JSON — неверный route;
+- redirect loop — ошибка Nginx/base path.
 
-### Webhook приходит, но задача не закрывается
+## 6. Frontend deploy logs
 
-Что проверить:
+На операторском/backend host:
 
-- правильный route path из `bot/config.py`
-- секреты/HMAC/signature headers
-- наличие task в `generation_tasks`
-- нет ли orphan webhook warnings
+```bash
+tail -n 200 /var/log/banano-miniapp-cdn.log
+```
 
-### Платёж застрял в pending
+На frontend host:
 
-Что проверить:
+```bash
+ssh root@91.200.84.187 '
+  tail -n 200 /var/log/banano-miniapp-cdn.log 2>/dev/null || true
+  LAST=$(ls -t /root/.npm/_logs/*.log 2>/dev/null | head -n1)
+  [ -n "$LAST" ] && tail -n 200 "$LAST" || true
+'
+```
 
-- webhook logs
-- reconcile loop logs
-- provider-specific secret
-- row в `transactions`
+## 7. Media checks
 
-### Mini App открывается, но API отвечает 401
+Найти реальный публичный файл в `static/uploads/feed` и проверить:
 
-Причина:
+```bash
+bash scripts/check_media_delivery.sh \
+  https://media.chillcreative.ru/uploads/feed/<real-file.webp>
+```
 
-- invalid/missing Telegram `initData`
+Либо вручную:
+
+```bash
+curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
+curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
+```
 
 Проверить:
 
-- Mini App открыт из Telegram, а не прямой ссылкой в браузере
-- время жизни Telegram session
-- корректность Bot token
+- status 200;
+- `content-type` соответствует файлу;
+- `cache-control` публичный только для feed;
+- `cf-cache-status` становится HIT после прогрева, если rule применима;
+- `age` растёт;
+- `cf-ray` присутствует;
+- `alt-svc` не рекламирует h3, если HTTP/3 временно отключён.
 
-Прямой API smoke без `initData` обязан отвечать `401`. Это нормальная проверка proxy/auth boundary, а не признак поломки.
-
-### Mini App долго загружается
-
-Сначала разделить frontend и backend:
-
-- document/JS/CSS: проверить DNS, TLS, HTTP/2, gzip и cache headers на `tanyapp.chillcreative.ru`
-- лента Mini App обновляется при возврате в окно/приложение и каждые 15 секунд в видимом состоянии; API `/mini-app/api/feed` должен отдавать `Cache-Control: no-store`
-- в remix-режиме кнопки «Причёска», «Одежда», «Фон», «Стиль» и «Детали» должны вставлять явную инструкцию в prompt, а не только менять подсветку
-- видео-тренд хранит в tags выбранные автором `trend-scenario:<mode>` и `trend-duration:<seconds>`; повтор в Mini App обязан их подставить и не очищать опубликованные референсы
-- видео-карточки ленты показывают первый кадр и сохраняют исходный aspect ratio ролика (9:16, 1:1, 16:9 и т. д.) как в сетке, так и в полном просмотре
-- фото-карточка ленты всегда содержит `<img>`; не возвращать отложенную вставку DOM через `IntersectionObserver`, так как Telegram iOS может оставить видимые masonry-карточки пустыми
-- в image remix запрошенная правка имеет приоритет над preservation: указанный атрибут обязан видимо измениться, а возврат неизменённого исходника считается некорректным результатом
-- `bootstrap` и другие API: проверить proxy и время ответа `tanyapi.chillcreative.ru`
-- hashed `/_next/static/` assets должны иметь `immutable`, HTML — `no-store`
-- при бесконечном стартовом spinner проверить `404` на старые hashed chunks в nginx access log; frontend выкладывать без `rsync --delete`, сохраняя минимум две сборки на время Telegram WebView cache-overlap
-- стартовая `Студия` должна входить в основной bundle; lazy-вкладки обязаны показывать skeleton fallback, а не оставлять пустой центр между header и нижней навигацией
-
-### Результат пришёл в чат, но карточка всё ещё «В обработке»
-
-- проверить, что bootstrap возвращает тот же `task_id` со статусом `completed` и `result_url`
-- проверить 5-секундный bootstrap sync в видимой вкладке и повторный sync при возврате в приложение
-- проверить Telegram `initData`; при `401` локальное состояние намеренно не подменяется
-- убедиться, что свежая задача обновляет `recentTasks`, `selectedTask` и `taskDetail`
-
-### В ленте или профиле чёрные карточки
-
-- адрес результата должен быть переписан на `/mini-app/api/media/{task_id}/{index}`
-- upstream host должен входить в allowlist media gateway
-- backend должен иметь доступ к provider URL и право записи в `static/uploads/miniapp-media-cache`
-- proxy `/mini-app/api/` на frontend host должен вести на `tanyapi.chillcreative.ru`
-
-### Публикация из Mini App
-
-Нормальный поток: одна кнопка в деталях → `Лента и профиль` либо `Только профиль` → настройки приватности → сохранение. `POST /mini-app/api/generations/share` возвращает `feed_item` с `publication_link`; повторный вызов обновляет существующую публикацию. Удаление должно убрать работу и из общей ленты, и из профиля.
-
-В результате генерации бот всегда оставляет ровно одну кнопку `📤 Опубликовать`, даже если клавиатура повторно прошла через compatibility adapter при обновлении сообщения. Ссылка `Открыть работу в боте` сначала ищет пост в общей ленте, затем безопасно открывает ту же работу в профиле автора, если scope равен `profile`.
-
-Команды замера и подробная диагностика: [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md#10-если-mini-app-долго-грузится).
-
-## 6. Incident checklist
-
-### Если сломались генерации
-
-1. Проверить `/health`
-2. Проверить provider webhook paths
-3. Проверить последние ошибки в `logs/bot.log`
-4. Проверить, создаются ли новые rows в `generation_tasks`
-5. Проверить, что provider keys доступны в env
-
-### Если сломались платежи
-
-1. Проверить текущий `PAYMENT_PROVIDER`
-2. Проверить webhook signature logs
-3. Проверить pending transactions
-4. Проверить, идут ли reconcile ticks
-
-### Если сломался Mini App
-
-1. Проверить `MINI_APP_URL=https://tanyapp.chillcreative.ru/mini-app/` и `MINI_APP_PATH`
-2. Проверить TLS, frontend document и реальный hashed asset
-3. Проверить `banano-miniapp`, `artflow-nginx-1` и `nginx -t` на frontend host
-4. Проверить ожидаемый `401` от `bootstrap` без Telegram `initData`
-5. Проверить авторизованные `bootstrap` и `task-detail` внутри Telegram
-6. Если быстро исправить нельзя, выполнить rollback из frontend runbook
-
-### Проверка TLS renewal frontend
+## 8. Проверка bind mount media
 
 ```bash
-ssh root@2.27.160.11 \
-  'certbot renew --dry-run --cert-name tanyapp.chillcreative.ru --no-random-sleep-on-renew'
+findmnt /var/www/media.chillcreative.ru/uploads
+mountpoint /var/www/media.chillcreative.ru/uploads
+ls -la /var/www/media.chillcreative.ru/uploads | head
 ```
 
-## 7. Scripts, которые полезны оператору
+Проверка записи backend и чтения Nginx:
 
-- `scripts/backup_db.sh`
-- `scripts/check_postgres_runtime.py`
-- `scripts/migrate_sqlite_to_postgres.py`
-- `scripts/verify_postgres_migration.py`
-- `scripts/poll_yookassa_pending.py`
-- `scripts/redeliver_tasks.py`
-- `scripts/watcher.py`
+```bash
+test -d /root/tanya/banano_kling/static/uploads
+sudo -u www-data test -r /var/www/media.chillcreative.ru/uploads
+```
 
-Перед запуском любого repair/migration script сначала читать [migration.md](migration.md).
+Не менять права `/root` ради Nginx. Использовать bind mount.
+
+## 9. Nginx checks
+
+### Backend/media host
+
+```bash
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+sudo journalctl -u nginx -n 100 --no-pager
+```
+
+### Frontend host
+
+```bash
+ssh root@91.200.84.187 '
+  nginx -t
+  systemctl is-active nginx
+  systemctl status nginx --no-pager
+'
+```
+
+## 10. TLS checks
+
+```bash
+openssl s_client \
+  -connect cdn.chillcreative.ru:443 \
+  -servername cdn.chillcreative.ru \
+  -verify_return_error </dev/null
+
+openssl s_client \
+  -connect media.chillcreative.ru:443 \
+  -servername media.chillcreative.ru \
+  -verify_return_error </dev/null
+```
+
+Certbot renewal dry-run на нужном host:
+
+```bash
+sudo certbot renew --dry-run --no-random-sleep-on-renew
+```
+
+## 11. Telegram smoke checklist
+
+После frontend/backend deploy полностью закрыть Mini App и открыть заново.
+
+Проверить:
+
+- loader NEUROMIX отображается сразу;
+- Telegram gate не мигает при нормальном входе;
+- приложение открывается без пустого экрана;
+- bootstrap загружает пользователя и баланс;
+- история задач видна;
+- фото/видео/референс загружаются;
+- тестовая генерация создаёт task;
+- pending обновляется до completed/failed;
+- публикация предлагает корректный scope;
+- feed/profile открывают media;
+- превью загружается быстро, оригинал открывается отдельно.
+
+## 12. Backup routines
+
+### `.env`
+
+```bash
+install -d -m 700 /root/backups/neuromix
+cp -a /root/tanya/banano_kling/.env \
+  "/root/backups/neuromix/env-$(date +%Y%m%d-%H%M%S)"
+chmod 600 /root/backups/neuromix/env-*
+```
+
+### Database
+
+Использовать проектные backup scripts после чтения `docs/migration.md`. Проверить, что backup не пустой и может быть прочитан.
+
+### Frontend
+
+`cdn.sh`/installer создаёт release backup перед заменой файлов. Не удалять backup до post-deploy Telegram smoke.
+
+### Nginx media
+
+`deploy_media_origin.sh` сохраняет предыдущую конфигурацию в root-only backup directory.
+
+## 13. Restart policy
+
+### Backend
+
+```bash
+sudo systemctl restart banano-kling.service
+```
+
+Не использовать restart loop. Если сервис сразу падает:
+
+```bash
+sudo systemctl stop banano-kling.service
+journalctl -u banano-kling.service -n 300 --no-pager
+```
+
+Сначала исправить config/code, затем start.
+
+### Nginx
+
+Предпочтительно reload после успешного test:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+## 14. Incident priorities
+
+### P1
+
+- бот и backend полностью недоступны;
+- платежи подтверждаются провайдером, но не зачисляются массово;
+- data corruption;
+- публичный секрет раскрыт;
+- Mini App недоступен всем пользователям.
+
+### P2
+
+- отдельный provider не работает;
+- media недоступны части сетей;
+- frontend deploy не проходит, но старая версия работает;
+- отдельный пользовательский flow сломан.
+
+### P3
+
+- некритичная UI-ошибка;
+- неверный текст;
+- отдельный preview не создан;
+- deprecated dependency warning без runtime impact.
+
+## 15. Что не делать во время инцидента
+
+- не удалять `static/uploads`;
+- не запускать `rsync --delete` на frontend без rollback plan;
+- не открывать `1888/tcp` всему интернету;
+- не отключать TLS verification между frontend и backend;
+- не публиковать `.env`;
+- не очищать npm cache и все backups одновременно;
+- не перезапускать сервис бесконечно без чтения логов;
+- не считать `401` bootstrap без initData поломкой.
+
+## 16. Связанные документы
+
+- [production-deployment.md](production-deployment.md);
+- [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md);
+- [troubleshooting.md](troubleshooting.md);
+- [environment.md](environment.md);
+- [../ops/media/README.md](../ops/media/README.md).
