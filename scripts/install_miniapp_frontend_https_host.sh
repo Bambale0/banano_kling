@@ -117,8 +117,6 @@ make_sanitized_config() {
   TEMP_CONFIG="$(mktemp /root/banano-miniapp-secure.XXXXXX.env)"
   chmod 0600 "$TEMP_CONFIG"
 
-  # Source the original config, then forcibly disable the legacy direct-port
-  # backend automation before invoking the lower-level installer.
   {
     printf 'source %q\n' "$CONFIG_FILE"
     printf 'BACKEND_ORIGIN=%q\n' "$BACKEND_ORIGIN"
@@ -146,21 +144,19 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 if "proxy_ssl_verify on;" not in text:
-    marker_lines = []
+    lines = []
     for line in text.splitlines():
-        marker_lines.append(line)
+        lines.append(line)
         if line.strip().startswith("proxy_ssl_name "):
             indent = line[: len(line) - len(line.lstrip())]
-            marker_lines.extend(
-                [
-                    f"{indent}proxy_ssl_protocols TLSv1.2 TLSv1.3;",
-                    f"{indent}proxy_ssl_verify on;",
-                    f"{indent}proxy_ssl_verify_depth 4;",
-                    f"{indent}proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;",
-                    f"{indent}proxy_ssl_session_reuse on;",
-                ]
-            )
-    text = "\n".join(marker_lines) + "\n"
+            lines.extend([
+                f"{indent}proxy_ssl_protocols TLSv1.2 TLSv1.3;",
+                f"{indent}proxy_ssl_verify on;",
+                f"{indent}proxy_ssl_verify_depth 4;",
+                f"{indent}proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;",
+                f"{indent}proxy_ssl_session_reuse on;",
+            ])
+    text = "\n".join(lines) + "\n"
 path.write_text(text, encoding="utf-8")
 PY
 
