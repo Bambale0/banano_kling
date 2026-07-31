@@ -1,5 +1,19 @@
 # Автоматическая установка отдельного Mini App frontend
 
+Схема развёртывания:
+
+```text
+Telegram WebView
+      ↓ HTTPS
+frontend-domain:443 (Nginx + static export)
+      ↓ HTTPS
+backend-domain:443 (Nginx)
+      ↓ HTTP localhost
+127.0.0.1:1888 (aiohttp / banano-kling.service)
+```
+
+Frontend-сервер не подключается к порту aiohttp напрямую. Порт `1888` не открывается в интернет, а `WEBHOOK_BIND_HOST` не требуется менять на `0.0.0.0`.
+
 Скрипт устанавливает на чистый Ubuntu-сервер:
 
 - Nginx;
@@ -8,14 +22,16 @@
 - UFW;
 - исходники ветки `tanyapi`;
 - production static export Mini App;
-- проксирование `/mini-app/api/`, `/api/v1/`, `/uploads/` на отдельный backend;
+- HTTPS-проксирование `/mini-app/api/`, `/api/v1/`, `/uploads/` на публичный Nginx backend-сервера;
+- обязательную проверку TLS-сертификата backend;
+- SNI и `Host`, соответствующие backend-домену;
 - immutable cache для hashed chunks и no-store для HTML;
 - резервное копирование текущей сборки;
-- smoke-проверки HTML, assets, TLS и backend auth boundary.
+- smoke-проверки frontend, assets, TLS, backend `/health` и auth boundary.
 
 ## 1. DNS
 
-Создайте A-запись нового домена на IPv4 frontend-сервера. Скрипт не выпустит сертификат, пока DNS не указывает на этот сервер.
+Создайте A-запись нового frontend-домена на IPv4 frontend-сервера. Backend-домен уже должен вести на backend Nginx и иметь действующий публичный TLS-сертификат.
 
 ## 2. Конфигурация
 
@@ -25,28 +41,25 @@ nano /root/miniapp-frontend.env
 chmod 600 /root/miniapp-frontend.env
 ```
 
-Минимум:
+Минимальная конфигурация:
 
 ```dotenv
 FRONTEND_DOMAIN=app.example.ru
 BACKEND_ORIGIN=https://api.example.ru
+BACKEND_HOST_HEADER=api.example.ru
+BACKEND_TLS_NAME=api.example.ru
 CERTBOT_EMAIL=admin@example.ru
 ```
 
-Если репозиторий закрытый, заранее добавьте на сервер read-only GitHub deploy key и задайте:
+`BACKEND_ORIGIN` принимает только публичный HTTPS-домен на порту `443`. Значения вида `http://IP:1888` намеренно отклоняются.
+
+Если репозиторий закрытый, заранее добавьте на сервер read-only GitHub deploy key:
 
 ```dotenv
 REPO_URL=git@github.com:Bambale0/banano_kling.git
 ```
 
 Пароль или GitHub token в конфигурационный файл не помещается.
-
-Для backend на открытом aiohttp-порту:
-
-```dotenv
-BACKEND_ORIGIN=http://203.0.113.10:1888
-BACKEND_HOST_HEADER=api.example.ru
-```
 
 ## 3. Первая установка
 
@@ -64,46 +77,76 @@ sudo bash /opt/banano-kling-src/scripts/install_miniapp_frontend_host.sh \
   --deploy-only
 ```
 
-Обновление выполняет `git fetch`, жёстко синхронизирует checkout с `origin/tanyapi`, выполняет `npm ci`, lint, production build и копирует `out/` без `--delete`. Старые hashed chunks остаются доступны закешированным Telegram WebView.
+Обновление выполняет `git fetch`, синхронизирует checkout с `origin/tanyapi`, запускает `npm ci`, lint и production build, затем копирует `out/` без `--delete`. Старые hashed chunks остаются доступны закешированным Telegram WebView.
 
-## 5. Автонастройка backend
+## 5. Backend Nginx
 
-Если frontend-сервер имеет SSH-ключ для backend, добавьте:
+На backend-сервере публичный домен должен принимать запросы на `443` и проксировать Mini App API внутрь:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name api.example.ru;
+
+    ssl_certificate /etc/letsencrypt/live/api.example.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.ru/privkey.pem;
+
+    client_max_body_size 60M;
+
+    location / {
+        proxy_pass http://127.0.0.1:1888;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+```
+
+Aiohttp остаётся на:
+
+```dotenv
+WEBHOOK_BIND_HOST=127.0.0.1
+```
+
+или на текущем локальном bind-адресе. Открывать `1888/tcp` во внешнем firewall не нужно.
+
+## 6. Автонастройка backend
+
+При наличии SSH-ключа можно добавить:
 
 ```dotenv
 BACKEND_SSH_HOST=root@203.0.113.10
 BACKEND_ENV_FILE=/root/tanya/banano_kling/.env
 BACKEND_SERVICE=banano-kling.service
-BACKEND_PORT=1888
 ```
 
-Тогда скрипт:
+Скрипт только:
 
 - сохранит backup `.env`;
 - установит `MINI_APP_URL=https://FRONTEND_DOMAIN/mini-app/`;
-- установит `WEBHOOK_BIND_HOST=0.0.0.0`;
-- при наличии UFW разрешит backend-порт только с IP frontend-сервера;
-- перезапустит `banano-kling.service`;
-- проверит backend `/health`.
+- перезапустит `banano-kling.service`.
 
-SSH-пароль в config не записывается. Используется заранее установленный ключ.
+Он не меняет `WEBHOOK_BIND_HOST`, не открывает порт `1888` и не редактирует firewall backend-сервера.
 
-## 6. Проверки
-
-После успешной установки:
+## 7. Проверки
 
 ```bash
+curl -fsS https://api.example.ru/health
 curl -fsSI https://app.example.ru/mini-app/
 curl -fsS https://app.example.ru/frontend-health
 curl -i -X POST https://app.example.ru/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' --data '{}'
 ```
 
-Последний запрос должен вернуть отказ авторизации `400`, `401` или `403`, а не `404`/`502`.
+Последний запрос должен вернуть отказ авторизации `400`, `401` или `403`, а не `404` или `502`.
 
-## 7. Откат
+## 8. Откат
 
-Перед каждым обновлением создаётся hard-link backup в:
+Перед каждым обновлением создаётся hard-link backup:
 
 ```text
 /var/backups/banano-miniapp/DOMAIN/YYYYMMDD-HHMMSS
@@ -118,4 +161,4 @@ sudo rsync -a --delete \
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-`--delete` допустим именно при осознанном rollback на целостную сохранённую сборку. В обычном deploy скрипт его не применяет.
+`--delete` допустим при осознанном rollback на целостную сохранённую сборку. В обычном deploy скрипт его не применяет.
