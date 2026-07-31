@@ -28,16 +28,17 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
-      - name: Install application dependencies
+      - name: Install locked application and test dependencies
         run: npm ci
 
-      - name: Block high-severity production dependency vulnerabilities
-        run: npm audit --omit=dev --audit-level=high
+      - name: Block high-severity dependency vulnerabilities
+        run: npm audit --audit-level=high
 
-      - name: Install browser test runtime
-        run: |
-          npm install --no-save --no-package-lock playwright@1.55.0
-          npx playwright install --with-deps chromium
+      - name: Install Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint Mini App
+        run: npm run lint
 
       - name: Build production Mini App
         run: npm run build
