@@ -240,7 +240,13 @@ async def test_lava_payment_without_submitted_or_saved_email_is_rejected(monkeyp
 
     response = await safety._secure_create_payment(
         fake_original,
-        DummyRequest({"provider": "lava", "customer_email": "", "init_data": "signed"}),
+        DummyRequest(
+            {
+                "provider": "lava",
+                "customer_email": "",
+                "init_data": "signed",
+            }
+        ),
     )
 
     assert response.status == 400
@@ -270,6 +276,39 @@ async def test_bootstrap_returns_saved_payment_email(monkeypatch):
     assert response.status == 200
     assert payload["credits"] == 25
     assert payload["payment_email"] == "account@mail.ru"
+
+
+@pytest.mark.asyncio
+async def test_payment_email_schema_executes_postgres_do_block(monkeypatch):
+    statements: list[str] = []
+
+    class FakeDatabase:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _traceback):
+            return False
+
+        async def execute(self, statement, _parameters=None):
+            statements.append(statement)
+            return SimpleNamespace(rowcount=0)
+
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(safety, "_PAYMENT_EMAIL_SCHEMA_READY", False)
+    monkeypatch.setattr(safety, "_PAYMENT_EMAIL_SCHEMA_LOCK", None)
+    monkeypatch.setattr(safety.db_backend, "is_postgres", lambda: True)
+    monkeypatch.setattr(safety.db_backend, "connect", lambda: FakeDatabase())
+
+    await safety._ensure_payment_email_schema()
+
+    assert len(statements) == 1
+    normalized_statement = " ".join(statements[0].split())
+    assert normalized_statement.startswith("DO $$")
+    assert "ALTER TABLE users ADD COLUMN payment_email TEXT" in normalized_statement
+    assert "WHEN duplicate_column THEN NULL" in normalized_statement
+    assert safety._PAYMENT_EMAIL_SCHEMA_READY is True
 
 
 @pytest.mark.asyncio
