@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -70,11 +71,11 @@ def _decode_signed_payload(value: str) -> dict[str, Any]:
         ):
             raise ValueError("Invalid browser auth state signature")
         payload = json.loads(_b64url_decode(encoded))
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
         raise ValueError("Invalid browser auth state") from exc
 
     if not isinstance(payload, dict):
-        raise ValueError("Invalid browser auth state")
+        raise TypeError("Invalid browser auth state")
     if int(payload.get("exp") or 0) < int(time.time()):
         raise ValueError("Browser auth state expired")
     return payload
@@ -217,10 +218,11 @@ async def _exchange_code(
     client_id: str,
     client_secret: str,
 ) -> str:
-    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode("ascii")
     timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as session,
+        session.post(
             _TELEGRAM_TOKEN_URL,
             headers={
                 "Accept": "application/json",
@@ -233,11 +235,12 @@ async def _exchange_code(
                 "client_id": client_id,
                 "code_verifier": verifier,
             },
-        ) as response:
-            payload = await response.json(content_type=None)
-            if response.status >= 400 or not isinstance(payload, dict):
-                logger.warning("Telegram token exchange failed: status=%s", response.status)
-                raise ValueError("Telegram authorization failed")
+        ) as response,
+    ):
+        payload = await response.json(content_type=None)
+        if response.status >= 400 or not isinstance(payload, dict):
+            logger.warning("Telegram token exchange failed: status=%s", response.status)
+            raise ValueError("Telegram authorization failed")
 
     id_token = str(payload.get("id_token") or "").strip()
     if not id_token:
@@ -342,7 +345,16 @@ async def telegram_browser_auth_callback(request: web.Request) -> web.Response:
         response = web.HTTPFound(target)
         response.del_cookie(_AUTH_COOKIE, path=f"{_AUTH_PREFIX}/")
         return response
-    except Exception as exc:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        RuntimeError,
+        aiohttp.ClientError,
+        asyncio.TimeoutError,
+        jwt.PyJWTError,
+        web.HTTPException,
+    ) as exc:
         logger.warning("Telegram browser login failed: %s", exc)
         safe_return_to = fallback_return_to if fallback_return_to.startswith("https://") else "/mini-app/"
         return _redirect_with_error(safe_return_to)
