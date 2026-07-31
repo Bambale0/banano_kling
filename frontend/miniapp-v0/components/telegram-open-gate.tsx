@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { Send } from 'lucide-react'
-import { buildTelegramMiniAppUrl, getStartParamFallback } from '@/lib/api'
+import {
+  buildTelegramMiniAppUrl,
+  getStartParamFallback,
+  hasTelegramInitData,
+} from '@/lib/api'
 import { useApp } from '@/lib/app-context'
 import {
   buildTelegramBrowserLoginUrl,
@@ -34,20 +38,24 @@ function ConnectionLoader() {
 export function TelegramOpenGate() {
   const { state } = useApp()
   const [browserLoginEnabled, setBrowserLoginEnabled] = useState(false)
+  const [browserAuthChecked, setBrowserAuthChecked] = useState(false)
+  const [telegramInitDataPresent, setTelegramInitDataPresent] = useState(true)
   const [browserLoginUrl, setBrowserLoginUrl] = useState('')
   const [telegramUrl, setTelegramUrl] = useState('')
   const [authError, setAuthError] = useState('')
 
   useEffect(() => {
+    setTelegramInitDataPresent(hasTelegramInitData())
     setTelegramUrl(buildTelegramMiniAppUrl(getStartParamFallback()))
     setBrowserLoginUrl(buildTelegramBrowserLoginUrl())
     setAuthError(getTelegramBrowserAuthError())
     getTelegramBrowserAuthConfig()
       .then((authConfig) => setBrowserLoginEnabled(Boolean(authConfig.enabled)))
       .catch(() => setBrowserLoginEnabled(false))
+      .finally(() => setBrowserAuthChecked(true))
   }, [])
 
-  if (state.isLoading) {
+  if (state.isLoading && (telegramInitDataPresent || !browserAuthChecked)) {
     return <ConnectionLoader />
   }
 
