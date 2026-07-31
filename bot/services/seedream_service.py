@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import ClassVar
 
 from bot.config import config
 from bot.services.kie_file_upload_service import kie_file_upload_service
@@ -16,13 +16,17 @@ logger = logging.getLogger(__name__)
 class SeedreamService(KlingService):
     """Seedream image generation/editing via Kie.ai Market API."""
 
-    SUPPORTED_TEXT_TO_IMAGE_MODELS = {"seedream/5-pro-text-to-image"}
-    SUPPORTED_IMAGE_TO_IMAGE_MODELS = {
+    SUPPORTED_TEXT_TO_IMAGE_MODELS: ClassVar[set[str]] = {
+        "seedream/5-pro-text-to-image"
+    }
+    SUPPORTED_IMAGE_TO_IMAGE_MODELS: ClassVar[set[str]] = {
         "seedream/4.5-edit",
         "seedream/5-pro-image-to-image",
     }
-    SUPPORTED_MODELS = SUPPORTED_TEXT_TO_IMAGE_MODELS | SUPPORTED_IMAGE_TO_IMAGE_MODELS
-    SUPPORTED_ASPECT_RATIOS = {
+    SUPPORTED_MODELS: ClassVar[set[str]] = (
+        SUPPORTED_TEXT_TO_IMAGE_MODELS | SUPPORTED_IMAGE_TO_IMAGE_MODELS
+    )
+    SUPPORTED_ASPECT_RATIOS: ClassVar[set[str]] = {
         "1:1",
         "4:3",
         "3:4",
@@ -32,9 +36,9 @@ class SeedreamService(KlingService):
         "3:2",
         "21:9",
     }
-    SUPPORTED_QUALITIES = {"basic", "high"}
+    SUPPORTED_QUALITIES: ClassVar[set[str]] = {"basic", "high"}
     MAX_PROMPT_CHARS = 6000
-    QUALITY_ALIASES = {
+    QUALITY_ALIASES: ClassVar[dict[str, str]] = {
         "2K": "basic",
         "4K": "high",
         "BASIC": "basic",
@@ -64,8 +68,8 @@ class SeedreamService(KlingService):
 
     async def _prepare_effective_image_urls(
         self,
-        image_urls: List[str],
-    ) -> Optional[List[str]]:
+        image_urls: list[str],
+    ) -> list[str] | None:
         limited_image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
         supported_urls = image_sources_to_supported_image_urls(limited_image_urls)
 
@@ -107,7 +111,9 @@ class SeedreamService(KlingService):
         fallback_image_urls = [
             url
             for url in limited_image_urls
-            if not (isinstance(url, str) and is_local_upload_source(url))
+            if isinstance(url, str)
+            and url.strip()
+            and not is_local_upload_source(url)
         ]
         if not fallback_image_urls:
             logger.error("Seedream aborted: all local reference files are missing")
@@ -126,9 +132,9 @@ class SeedreamService(KlingService):
         *,
         aspect_ratio: str = "1:1",
         quality: str = "basic",
-        callBackUrl: Optional[str] = None,
+        callBackUrl: str | None = None,
         model: str = "seedream/5-pro-text-to-image",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Create Seedream text-to-image task."""
         if model not in self.SUPPORTED_TEXT_TO_IMAGE_MODELS:
             logger.error("Unsupported Seedream model: %s", model)
@@ -166,14 +172,14 @@ class SeedreamService(KlingService):
     async def generate_image(
         self,
         prompt: str,
-        image_urls: List[str],
+        image_urls: list[str],
         *,
         aspect_ratio: str = "1:1",
         quality: str = "basic",
         nsfw_checker: bool = False,
-        callBackUrl: Optional[str] = None,
+        callBackUrl: str | None = None,
         model: str = "seedream/4.5-edit",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Create Seedream image-to-image/edit task."""
         if model not in self.SUPPORTED_IMAGE_TO_IMAGE_MODELS:
             logger.error("Unsupported Seedream image-to-image model: %s", model)
