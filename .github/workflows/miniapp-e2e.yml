@@ -1,0 +1,64 @@
+name: Mini App Browser E2E
+
+on:
+  pull_request:
+    branches:
+      - tanyapi
+    paths:
+      - "bot/handlers/miniapp_regression_safety.py"
+      - "bot/handlers/__init__.py"
+      - "frontend/miniapp-v0/**"
+      - "tests/test_miniapp_regression_safety.py"
+      - ".github/workflows/miniapp-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  browser-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Block high-severity production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Install browser test runtime
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Build production Mini App
+        run: npm run build
+
+      - name: Prepare mounted static export
+        run: |
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+
+      - name: Run critical browser flows
+        run: node e2e/critical-flows.mjs
+
+      - name: Capture complete npm audit report
+        if: always()
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Upload npm audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniapp-npm-audit
+          path: frontend/miniapp-v0/npm-audit.json
+          if-no-files-found: error
