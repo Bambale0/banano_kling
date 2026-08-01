@@ -398,7 +398,7 @@ def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
 
 async def _deduct_miniapp_generation_cost(
     telegram_id: int,
-    amount: int | float,
+    amount: float,
 ) -> web.Response | None:
     """Atomically debit one launch and stop when the balance changed concurrently."""
     if config.is_admin(telegram_id):
