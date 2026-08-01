@@ -37,8 +37,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           python -m py_compile scripts/ruff_changed_lines.py tests/test_ruff_changed_lines.py
-          python -m pip install --quiet pytest pytest-asyncio
-          pytest -q tests/test_ruff_changed_lines.py
+          python -m pip install --quiet pytest
+          mkdir -p /tmp/ruff-gate-tests
+          cp tests/test_ruff_changed_lines.py /tmp/ruff-gate-tests/
+          PYTHONPATH="$GITHUB_WORKSPACE" pytest -q \
+            --confcutdir=/tmp/ruff-gate-tests \
+            /tmp/ruff-gate-tests/test_ruff_changed_lines.py
 
       - name: Commit refreshed gate
         env:
