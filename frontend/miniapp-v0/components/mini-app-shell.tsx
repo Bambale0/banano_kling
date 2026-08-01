@@ -46,7 +46,9 @@ function MiniAppBody({ children }: MiniAppShellProps) {
           <div className="relative flex flex-col min-h-screen safe-top min-w-0 overflow-x-hidden">
             <HeroHeader />
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))]">
-              {children}
+              <div className="mx-auto w-full max-w-[1180px]">
+                {children}
+              </div>
             </main>
             <TabNav />
           </div>

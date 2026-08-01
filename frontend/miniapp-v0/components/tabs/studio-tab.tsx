@@ -9,11 +9,11 @@ export function StudioTab() {
   const { setActiveTab, openBalance, openWorkspace } = useApp()
 
   return (
-    <div className="space-y-5 px-3 sm:px-4">
+    <div className="space-y-5 px-3 sm:px-4 lg:space-y-6 lg:px-6">
       <section>
         <div className="mb-3 flex items-end justify-between">
           <div>
-            <h1 className="font-serif text-2xl font-semibold tracking-[0.08em] text-foreground">
+            <h1 className="font-serif text-2xl font-semibold tracking-[0.08em] text-foreground lg:text-xl">
               {BRAND_NAME}
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
