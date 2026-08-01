@@ -1,0 +1,260 @@
+name: Deploy — Tanya production
+
+on:
+  push:
+    branches: [tanyapi]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: tanya-production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend to production host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+
+    env:
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+      PROD_PROJECT_PATH: ${{ secrets.PROD_PROJECT_PATH }}
+
+    steps:
+      - name: Check deployment configuration
+        id: gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "${PROD_SSH_HOST:-}" ] && [ -z "${PROD_SSH_PRIVATE_KEY:-}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Production deploy is disabled until PROD_SSH_* secrets are configured."
+            exit 0
+          fi
+
+          missing=()
+          [ -n "${PROD_SSH_HOST:-}" ] || missing+=(PROD_SSH_HOST)
+          [ -n "${PROD_SSH_PRIVATE_KEY:-}" ] || missing+=(PROD_SSH_PRIVATE_KEY)
+          [ -n "${PROD_SSH_KNOWN_HOSTS:-}" ] || missing+=(PROD_SSH_KNOWN_HOSTS)
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing production secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "Production SSH deployment is enabled"
+
+      - name: Wait for the matching CI run
+        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deadline=$((SECONDS + 2700))
+          run_id=""
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -f event=push \
+                -F per_page=10
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "CI run for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "Matching CI run passed"
+                exit 0
+              fi
+              echo "::error::Matching CI run finished with conclusion=$conclusion"
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for CI run for $GITHUB_SHA"
+          exit 1
+
+      - name: Configure SSH
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/production_key"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/production_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/production_key" >/dev/null
+
+      - name: Check SSH connection
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deploy_user="${PROD_SSH_USER:-root}"
+          deploy_port="${PROD_SSH_PORT:-22}"
+
+          ssh \
+            -i "$HOME/.ssh/production_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$PROD_SSH_HOST" \
+            'printf "connected host=%s user=%s\n" "$(hostname)" "$(id -un)"'
+
+      - name: Deploy exact tanyapi commit
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deploy_user="${PROD_SSH_USER:-root}"
+          deploy_port="${PROD_SSH_PORT:-22}"
+          deploy_path="${PROD_PROJECT_PATH:-/root/tanya/banano_kling}"
+          printf -v quoted_path '%q' "$deploy_path"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+
+          ssh \
+            -i "$HOME/.ssh/production_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$PROD_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha" <<'REMOTE'
+          set -Eeuo pipefail
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+
+          command -v git >/dev/null
+          command -v docker >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/banano-kling-production-deploy.lock
+          flock -n 9 || {
+            echo "Another production deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Git repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block automatic deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
+            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+            exit 1
+          fi
+
+          run_root() {
+            if [ "$(id -u)" -eq 0 ]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          run_root bash scripts/deploy_backend_docker.sh deploy
+          run_root bash scripts/deploy_backend_docker.sh status
+
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+
+          echo "deployed_sha=$actual_sha"
+          echo "container_revision=$revision"
+          echo "container_health=$health"
+
+          [ "$health" = "healthy" ] || {
+            echo "Container is not healthy after deployment" >&2
+            exit 1
+          }
+          [ "$revision" = "$EXPECTED_SHA" ] || {
+            echo "Container revision does not match deployed commit" >&2
+            exit 1
+          }
+          REMOTE
+
+      - name: Collect remote diagnostics on failure
+        if: failure() && steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          deploy_user="${PROD_SSH_USER:-root}"
+          deploy_port="${PROD_SSH_PORT:-22}"
+          deploy_path="${PROD_PROJECT_PATH:-/root/tanya/banano_kling}"
+          printf -v quoted_path '%q' "$deploy_path"
+
+          ssh \
+            -i "$HOME/.ssh/production_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$PROD_SSH_HOST" \
+            "bash -s -- $quoted_path" <<'REMOTE'
+          set +e
+          PROJECT_DIR="$1"
+          cd "$PROJECT_DIR" || exit 0
+          echo '=== git ==='
+          git status --short
+          git log -1 --oneline
+          echo '=== compose ==='
+          docker compose -f compose.backend.yml ps
+          docker compose -f compose.backend.yml logs --tail=200 bot
+          echo '=== container ==='
+          docker inspect banano-kling-bot --format '{{json .State}}'
+          echo '=== systemd ==='
+          systemctl is-active banano-kling
+          systemctl is-enabled banano-kling
+          journalctl -u banano-kling -n 100 --no-pager
+          REMOTE
+
+      - name: Remove SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/production_key"
