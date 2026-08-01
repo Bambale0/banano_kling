@@ -1,6 +1,9 @@
 name: Apply idempotent Mini App refunds
 
 on:
+  push:
+    branches:
+      - agent/tanyapi-idempotent-generation-refunds
   pull_request:
     branches:
       - agent/tanyapi-atomic-generation-debit
@@ -10,7 +13,9 @@ permissions:
 
 jobs:
   codemod:
-    if: github.head_ref == 'agent/tanyapi-idempotent-generation-refunds'
+    if: >-
+      github.ref == 'refs/heads/agent/tanyapi-idempotent-generation-refunds' ||
+      github.head_ref == 'agent/tanyapi-idempotent-generation-refunds'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
