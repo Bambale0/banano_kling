@@ -83,9 +83,10 @@ jobs:
 
           printf 'Linting changed files:\n%s\n' "${changed_files[*]}"
           set +e
-          ruff check "${changed_files[@]}" \
-            --ignore=E402,F403,F405,E501 \
-            --output-format=concise 2>&1 | tee ruff-output.txt
+          python scripts/ruff_changed_lines.py \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            "${changed_files[@]}" 2>&1 | tee ruff-output.txt
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
@@ -407,9 +408,10 @@ jobs:
 
           printf 'Linting changed files on nuromix:\n%s\n' "${changed_files[*]}"
           set +e
-          ruff check "${changed_files[@]}" \
-            --ignore=E402,F403,F405,E501 \
-            --output-format=concise 2>&1 | tee ruff-output-nuromix.txt
+          python scripts/ruff_changed_lines.py \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            "${changed_files[@]}" 2>&1 | tee ruff-output-nuromix.txt
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
