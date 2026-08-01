@@ -1,0 +1,126 @@
+name: Apply strict production deploy CI gate
+
+on:
+  pull_request:
+    branches:
+      - tanyapi
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: github.head_ref == 'fix/tanyapi-production-autodeploy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/tanyapi-production-autodeploy
+          fetch-depth: 0
+
+      - name: Replace overall-conclusion gate with verified job gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/deploy-production.yml')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Matching CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              echo "Matching CI passed for $GITHUB_SHA"
+              exit 0
+            fi
+
+            sleep 15
+'''
+          new = '''            if [ "$status" != completed ]; then
+              sleep 15
+              continue
+            fi
+
+            jobs_payload="$(
+              gh api --method GET \\
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \\
+                -F per_page=100
+            )"
+
+            github_image_ok=false
+            if jq -e '\
+              [.jobs[] | select(.name == "GitHub runner — Production Docker image")]\
+              | last as $job\
+              | $job != null\
+                and any($job.steps[]?; .name == "Build image with GitHub Actions cache" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Verify image filesystem and Python imports" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Validate production Compose configuration" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Publish verified image" and .conclusion == "success")\
+            ' <<< "$jobs_payload" >/dev/null; then
+              github_image_ok=true
+            fi
+
+            nuromix_image_ok=false
+            if jq -e '\
+              [.jobs[] | select(.name == "nuromix fallback — Full CI validation")]\
+              | last as $job\
+              | $job != null\
+                and any($job.steps[]?; .name == "Run full safe regression suite" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Build image on nuromix" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Verify nuromix image" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Validate production Compose on nuromix" and .conclusion == "success")\
+                and any($job.steps[]?; .name == "Publish nuromix-verified image" and .conclusion == "success")\
+            ' <<< "$jobs_payload" >/dev/null; then
+              nuromix_image_ok=true
+            fi
+
+            echo "verified_github_image=$github_image_ok"
+            echo "verified_nuromix_image=$nuromix_image_ok"
+
+            if [ "$github_image_ok" = true ] || [ "$nuromix_image_ok" = true ]; then
+              echo "Exact commit $GITHUB_SHA passed a complete CI image path"
+              exit 0
+            fi
+
+            echo "::error::CI completed without a fully verified image path for $GITHUB_SHA"
+            jq -r '.jobs[] | "job=\\(.name) status=\\(.status) conclusion=\\(.conclusion)"' \\
+              <<< "$jobs_payload"
+            exit 1
+'''
+
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f'Expected one legacy CI conclusion gate, found {text.count(old)}'
+              )
+
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              'name: Wait for verified CI\n',
+              'name: Require verified CI for exact commit\n',
+              1,
+          )
+          text = text.replace(
+              '- name: Wait for the matching CI run\n',
+              '- name: Wait for matching CI and require a verified image path\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          rm -f .github/workflows/apply-autodeploy-ci-gate.yml
+
+      - name: Commit workflow hardening
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            .github/workflows/deploy-production.yml \
+            .github/workflows/apply-autodeploy-ci-gate.yml
+          git commit -m 'Require verified CI jobs before production deploy'
+          git push origin HEAD:fix/tanyapi-production-autodeploy
