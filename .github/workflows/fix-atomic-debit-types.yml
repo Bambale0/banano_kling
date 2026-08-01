@@ -1,0 +1,54 @@
+name: Apply atomic debit type fix
+
+on:
+  pull_request:
+    branches:
+      - ci/tanyapi-ruff-changed-lines
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: github.head_ref == 'agent/tanyapi-atomic-generation-debit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/tanyapi-atomic-generation-debit
+          fetch-depth: 0
+
+      - name: Apply focused annotation fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/miniapp.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''async def _deduct_miniapp_generation_cost(
+              telegram_id: int,
+              amount: int | float,
+          ) -> web.Response | None:'''.replace('          ', '')
+          new = '''async def _deduct_miniapp_generation_cost(
+              telegram_id: int,
+              amount: float,
+          ) -> web.Response | None:'''.replace('          ', '')
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one debit helper annotation, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          python -m py_compile bot/miniapp.py
+          rm -f .github/workflows/fix-atomic-debit-types.yml
+
+      - name: Commit focused fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/miniapp.py .github/workflows/fix-atomic-debit-types.yml
+          git commit -m 'Normalize atomic debit amount type'
+          git push origin HEAD:agent/tanyapi-atomic-generation-debit
