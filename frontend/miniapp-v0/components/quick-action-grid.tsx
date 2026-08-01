@@ -52,7 +52,7 @@ export function QuickActionGrid({
   ]
 
   return (
-    <div className="grid grid-cols-4 gap-2 sm:gap-3">
+    <div className="grid grid-cols-4 gap-2 sm:gap-3 lg:mx-auto lg:max-w-[920px]">
       {items.map((item, index) => {
         const Icon = item.icon
 
@@ -62,15 +62,15 @@ export function QuickActionGrid({
             type="button"
             onClick={item.onClick}
             className={cn(
-              'group flex min-w-0 flex-col items-center gap-2 rounded-2xl py-3 text-center',
+              'group flex min-w-0 flex-col items-center gap-2 rounded-2xl py-3 text-center lg:py-2.5',
               'transition-all duration-200 active:scale-95',
               actionStyles[index]
             )}
           >
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-current/20 bg-background/45 shadow-sm">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-current/20 bg-background/45 shadow-sm lg:h-10 lg:w-10">
               <Icon className="h-5 w-5" />
             </div>
-            <span className="w-full truncate px-1 text-[11px] font-medium text-foreground sm:text-xs">
+            <span className="w-full truncate px-1 text-[11px] font-medium text-foreground sm:text-xs lg:text-[11px]">
               {item.shortLabel}
             </span>
           </button>
