@@ -85,7 +85,6 @@ async def _refund_miniapp_generation_cost_once(
               )
           miniapp = miniapp.replace(nested, combined, 1)
 
-          # The nested body lost one indentation level after combining the guard.
           old_body = '''                try:
                       await _refund_miniapp_generation_cost_once(
                           telegram_id,
