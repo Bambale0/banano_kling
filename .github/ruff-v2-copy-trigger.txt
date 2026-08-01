@@ -1,1 +1,1 @@
-Refresh the validated changed-line Ruff gate on current tanyapi with async test support.
+Refresh the validated changed-line Ruff gate with isolated unit tests.
