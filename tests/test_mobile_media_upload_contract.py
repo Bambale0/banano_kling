@@ -22,6 +22,7 @@ def test_mobile_media_upload_contract() -> None:
     assert "application/octet-stream" in miniapp
     assert "MEDIA_UPLOAD_TIMEOUT_MS = 60_000" in api
     assert "normalizedMediaUploadFile" in api
+    assert "globalThis.clearTimeout(timeoutId)" in api
     assert "filesRef.current" in upload_area
     assert "photoUploadAttemptRef" in workspace
     assert "setPreviewUrl(uploaded.url)" in workspace
