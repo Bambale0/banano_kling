@@ -1,29 +1,26 @@
-name: Prepare idempotent refund fix artifact
+name: Fix and validate idempotent refunds
 
 on:
   pull_request:
     branches:
-      - agent/tanyapi-atomic-generation-debit
+      - tanyapi
 
 permissions:
-  contents: read
-
-concurrency:
-  group: idempotent-refund-artifact-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  prepare:
-    if: github.head_ref == 'agent/tanyapi-idempotent-generation-refunds'
+  fix:
+    if: github.head_ref == 'ci/validate-idempotent-refund-fix'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ci/validate-idempotent-refund-fix
           fetch-depth: 0
 
-      - name: Apply focused source changes in workspace
+      - name: Apply focused source changes
         shell: bash
         run: |
           python - <<'PY'
@@ -136,6 +133,13 @@ async def _refund_miniapp_generation_cost_once(
               test_text.replace(old_imports, 'import ast\nimport asyncio\n', 1),
               encoding='utf-8',
           )
+
+          for temporary in (
+              Path('.github/refund-fix-trigger.txt'),
+              Path('.github/workflows/apply-refund-final-pr.yml'),
+              Path('.github/workflows/validate-idempotent-refunds.yml'),
+          ):
+              temporary.unlink(missing_ok=True)
           PY
 
           python -m py_compile \
@@ -143,15 +147,12 @@ async def _refund_miniapp_generation_cost_once(
             bot/services/generation_refund_service.py \
             tests/test_generation_refund_service.py
 
-          mkdir -p prepared/bot prepared/tests
-          cp bot/miniapp.py prepared/bot/miniapp.py
-          cp tests/test_generation_refund_service.py \
-            prepared/tests/test_generation_refund_service.py
-
-      - name: Upload prepared files
-        uses: actions/upload-artifact@v7
-        with:
-          name: idempotent-refund-fix
-          path: prepared/
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit clean application diff
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Finalize idempotent generation refunds'
+          git push origin HEAD:ci/validate-idempotent-refund-fix
