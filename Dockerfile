@@ -70,7 +70,7 @@ RUN install -d -o app -g app -m 0755 \
         /app/backups \
         /app/outputs \
         /app/tmp \
-    && chmod +x /app/scripts/*.sh 2>/dev/null || true
+    && find /app/scripts -maxdepth 1 -type f -name '*.sh' -exec chmod 0755 {} +
 
 USER app
 
