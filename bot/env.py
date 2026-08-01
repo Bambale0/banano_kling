@@ -5,7 +5,6 @@ from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SKIP_PROJECT_ENV_VAR = "BANANO_SKIP_PROJECT_ENV"
 DEFAULT_MINI_APP_URL = "https://cdn.chillcreative.ru/mini-app/"
