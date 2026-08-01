@@ -1,4 +1,4 @@
-"""Contract tests for the Tanya production autodeploy workflow."""
+"""Contract tests for Tanya's production autodeploy workflow."""
 
 from pathlib import Path
 
