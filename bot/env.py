@@ -10,42 +10,20 @@ SKIP_PROJECT_ENV_VAR = "BANANO_SKIP_PROJECT_ENV"
 DEFAULT_MINI_APP_URL = "https://cdn.chillcreative.ru/mini-app/"
 
 
-def _normalized_url(value: str) -> str:
-    value = str(value or "").strip()
-    return f"{value.rstrip('/')}/" if value else ""
-
-
-def _legacy_backend_mini_app_url() -> str:
-    host = str(os.getenv("WEBHOOK_HOST", "") or "").strip().rstrip("/")
-    if not host:
-        return ""
-
-    path = str(os.getenv("MINI_APP_PATH", "/mini-app") or "/mini-app").strip()
-    if not path.startswith("/"):
-        path = f"/{path}"
-    return f"{host}{path.rstrip('/')}/"
-
-
 def _apply_runtime_defaults() -> None:
-    """Keep Telegram WebApp buttons on the public frontend, not the API host."""
+    """Force Telegram WebApp buttons to the deployed public frontend."""
 
-    configured = _normalized_url(os.getenv("MINI_APP_URL", ""))
-    legacy_backend_url = _normalized_url(_legacy_backend_mini_app_url())
-
-    # Older deployments derived MINI_APP_URL from WEBHOOK_HOST. That opens the
-    # backend HTML fallback instead of the separately deployed Mini App frontend.
-    if not configured or (legacy_backend_url and configured == legacy_backend_url):
-        os.environ["MINI_APP_URL"] = DEFAULT_MINI_APP_URL
-        return
-
-    os.environ["MINI_APP_URL"] = configured
+    # This repository/branch has one production Mini App frontend. Do not trust
+    # stale MINI_APP_URL values from systemd, Docker Compose or old .env files:
+    # they previously pointed users to the backend HTML fallback.
+    os.environ["MINI_APP_URL"] = DEFAULT_MINI_APP_URL
 
 
 def load_project_env(project_root: Path | None = None) -> None:
     """Load project env files with Postgres overriding local SQLite defaults.
 
-    Real process environment variables keep highest priority. This lets tests or
-    one-off maintenance commands force a different database explicitly.
+    Real process environment variables keep highest priority, except for the
+    public Mini App URL which is pinned to the production CDN above.
     """
 
     if os.getenv(SKIP_PROJECT_ENV_VAR, "").strip().lower() in {

@@ -29,12 +29,10 @@ def test_legacy_backend_mini_app_url_is_replaced(monkeypatch, tmp_path):
     assert os.environ["MINI_APP_URL"] == DEFAULT_MINI_APP_URL
 
 
-def test_explicit_frontend_url_is_preserved(monkeypatch, tmp_path):
-    custom_url = "https://frontend.example.test/mini-app/"
+def test_any_stale_override_is_replaced_by_production_cdn(monkeypatch, tmp_path):
     monkeypatch.setenv("BANANO_SKIP_PROJECT_ENV", "1")
-    monkeypatch.setenv("WEBHOOK_HOST", "https://tanyapi.chillcreative.ru")
-    monkeypatch.setenv("MINI_APP_URL", custom_url)
+    monkeypatch.setenv("MINI_APP_URL", "https://old.example.test/mini-app/")
 
     load_project_env(tmp_path)
 
-    assert os.environ["MINI_APP_URL"] == custom_url
+    assert os.environ["MINI_APP_URL"] == DEFAULT_MINI_APP_URL
