@@ -221,7 +221,7 @@ def _build_gpt_user_content(
     return content
 
 
-def _build_claude_image_source(image_url: str) -> Dict[str, str]:
+def _build_claude_image_source(image_url: str) -> dict[str, str]:
     if image_url.startswith("data:image/") and "," in image_url:
         header, encoded = image_url.split(",", 1)
         media_type = header.removeprefix("data:").split(";", 1)[0]

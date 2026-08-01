@@ -129,7 +129,6 @@ from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
-    image_source_to_provider_safe_png_url,
     missing_local_upload_sources,
     resolve_local_upload_path,
 )
@@ -230,6 +229,8 @@ def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int) ->
 def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
     file_url = reference.file_url
     if reference.kind == "image":
+        from bot.services.media_input_utils import image_source_to_provider_safe_png_url
+
         file_url = image_source_to_provider_safe_png_url(file_url)
 
     return {
@@ -720,12 +721,12 @@ def _normalize_miniapp_upload_content_type(
         return ""
 
     try:
-        import io  # noqa: PLC0415
+        import io
 
-        from PIL import Image, UnidentifiedImageError  # noqa: PLC0415
+        from PIL import Image, UnidentifiedImageError
 
         try:
-            from pillow_heif import register_heif_opener  # noqa: PLC0415
+            from pillow_heif import register_heif_opener
         except ImportError:
             register_heif_opener = None
         if register_heif_opener is not None:
