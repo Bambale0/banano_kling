@@ -1,0 +1,141 @@
+name: Apply final focused refund fixes v2
+
+on:
+  push:
+    branches:
+      - agent/tanyapi-idempotent-generation-refunds
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/tanyapi-idempotent-generation-refunds
+          fetch-depth: 0
+
+      - name: Apply focused source changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          miniapp_path = Path("bot/miniapp.py")
+          miniapp = miniapp_path.read_text(encoding="utf-8")
+
+          top_import = (
+              "from bot.services.generation_refund_service import "
+              "refund_generation_credits_once\n"
+          )
+          if miniapp.count(top_import) != 1:
+              raise SystemExit(f"Expected one top-level refund import, got {miniapp.count(top_import)}")
+          miniapp = miniapp.replace(top_import, "", 1)
+
+          direct_calls = miniapp.count("await refund_generation_credits_once(")
+          if direct_calls != 5:
+              raise SystemExit(f"Expected five direct refund calls, got {direct_calls}")
+          miniapp = miniapp.replace(
+              "await refund_generation_credits_once(",
+              "await _refund_miniapp_generation_cost_once(",
+          )
+
+          helper = '''
+
+async def _refund_miniapp_generation_cost_once(
+    telegram_id: int,
+    amount: float,
+    *,
+    refund_key: str,
+    reason: str,
+) -> bool:
+    from bot.services.generation_refund_service import (  # noqa: PLC0415
+        refund_generation_credits_once,
+    )
+
+    return await refund_generation_credits_once(
+        telegram_id,
+        amount,
+        refund_key=refund_key,
+        reason=reason,
+    )
+'''
+          marker = "\nVIDEO_MODELS = ("
+          if miniapp.count(marker) != 1:
+              raise SystemExit("VIDEO_MODELS marker not found exactly once")
+          if "async def _refund_miniapp_generation_cost_once(" in miniapp:
+              raise SystemExit("Mini App refund helper already exists")
+          miniapp = miniapp.replace(marker, helper + marker, 1)
+
+          old_exception = '''    except Exception as e:
+        logger.exception(f"Mini App Motion Control failed: {e}")
+        if motion_debit_succeeded:
+            if not motion_launch_accepted:
+                try:
+                    await _refund_miniapp_generation_cost_once(
+                        telegram_id,
+                        cost,
+                        refund_key=motion_refund_key,
+                        reason="motion_exception_before_provider_acceptance",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Mini App Motion Control refund failed: key=%s",
+                        motion_refund_key,
+                    )
+        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
+'''
+          new_exception = '''    except Exception as e:
+        logger.exception(f"Mini App Motion Control failed: {e}")
+        if motion_debit_succeeded and not motion_launch_accepted:
+            try:
+                await _refund_miniapp_generation_cost_once(
+                    telegram_id,
+                    cost,
+                    refund_key=motion_refund_key,
+                    reason="motion_exception_before_provider_acceptance",
+                )
+            except Exception:
+                logger.exception(
+                    "Mini App Motion Control refund failed: key=%s",
+                    motion_refund_key,
+                )
+        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
+'''
+          if miniapp.count(old_exception) != 1:
+              raise SystemExit(f"Expected one Motion exception block, got {miniapp.count(old_exception)}")
+          miniapp = miniapp.replace(old_exception, new_exception, 1)
+          miniapp_path.write_text(miniapp, encoding="utf-8")
+
+          test_path = Path("tests/test_generation_refund_service.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          old_imports = "import asyncio\nimport ast\n"
+          if test_text.count(old_imports) != 1:
+              raise SystemExit("Refund test imports not found exactly once")
+          test_path.write_text(
+              test_text.replace(old_imports, "import ast\nimport asyncio\n", 1),
+              encoding="utf-8",
+          )
+          PY
+
+          python -m py_compile \
+            bot/miniapp.py \
+            bot/services/generation_refund_service.py \
+            tests/test_generation_refund_service.py
+          rm -f .github/workflows/apply-refund-final-fixes-v2.yml
+
+      - name: Commit focused fixes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/miniapp.py \
+            tests/test_generation_refund_service.py \
+            .github/workflows/apply-refund-final-fixes-v2.yml
+          git commit -m 'Fix idempotent refund lint'
+          git push origin HEAD:agent/tanyapi-idempotent-generation-refunds
