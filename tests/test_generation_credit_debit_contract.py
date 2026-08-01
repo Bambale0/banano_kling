@@ -68,6 +68,26 @@ async def test_miniapp_debit_stops_request_when_balance_changed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_miniapp_debit_formats_fractional_cost(monkeypatch):
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _telegram_id: False)
+    monkeypatch.setattr(
+        miniapp,
+        "deduct_credits",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        miniapp,
+        "get_or_create_user",
+        AsyncMock(return_value=SimpleNamespace(credits=1)),
+    )
+
+    response = await miniapp._deduct_miniapp_generation_cost(123, 5.5)
+
+    assert response is not None
+    assert json.loads(response.text)["error"] == "Недостаточно бананов. Нужно 5.5🍌"
+
+
+@pytest.mark.asyncio
 async def test_miniapp_debit_allows_launch_only_after_success(monkeypatch):
     monkeypatch.setattr(miniapp.config, "is_admin", lambda _telegram_id: False)
     debit = AsyncMock(return_value=True)
