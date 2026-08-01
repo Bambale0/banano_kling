@@ -1,0 +1,55 @@
+name: Refresh changed-line Ruff gate
+
+on:
+  pull_request:
+    branches: [ci/ruff-v2-copy-base]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout target head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Copy validated gate from original branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch origin ci/tanyapi-ruff-changed-lines
+          mkdir -p .github/workflows scripts tests
+          git show origin/ci/tanyapi-ruff-changed-lines:.github/workflows/ci.yml > .github/workflows/ci.yml
+          git show origin/ci/tanyapi-ruff-changed-lines:scripts/ruff_changed_lines.py > scripts/ruff_changed_lines.py
+          git show origin/ci/tanyapi-ruff-changed-lines:tests/test_ruff_changed_lines.py > tests/test_ruff_changed_lines.py
+          rm -f .github/ruff-v2-copy-trigger.txt
+
+      - name: Validate copied gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile scripts/ruff_changed_lines.py tests/test_ruff_changed_lines.py
+          python -m pip install --quiet pytest
+          pytest -q tests/test_ruff_changed_lines.py
+
+      - name: Commit refreshed gate
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/ci.yml scripts/ruff_changed_lines.py
+          git add -f tests/test_ruff_changed_lines.py
+          git add -u .github/ruff-v2-copy-trigger.txt
+          git commit -m "CI: refresh changed-line Ruff gate on current tanyapi"
+          git push origin "HEAD:${HEAD_BRANCH}"
