@@ -1,0 +1,211 @@
+name: Apply idempotent Mini App refunds v2
+
+on:
+  push:
+    branches:
+      - agent/tanyapi-idempotent-generation-refunds
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/tanyapi-idempotent-generation-refunds
+          fetch-depth: 0
+
+      - name: Replace direct credit grants with refund ledger
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("bot/miniapp.py")
+          text = path.read_text(encoding="utf-8")
+
+          direct_import = "    add_credits,\n"
+          if text.count(direct_import) != 1:
+              raise SystemExit(
+                  f"Expected one add_credits import, found {text.count(direct_import)}"
+              )
+          text = text.replace(direct_import, "", 1)
+
+          import_marker = (
+              "from bot.services.reference_storage_service import save_reference_file\n"
+          )
+          refund_import = (
+              "from bot.services.generation_refund_service import "
+              "refund_generation_credits_once\n"
+          )
+          if text.count(import_marker) != 1:
+              raise SystemExit("Reference storage import marker not found exactly once")
+          text = text.replace(import_marker, refund_import + import_marker, 1)
+
+          failure_pattern = re.compile(
+              r'(?m)^(?P<indent>[ \t]*)if launch_result\["status"\] == "failed":\n'
+              r'(?P=indent)    if not is_admin:\n'
+              r'(?P=indent)        await add_credits\(telegram_id, (?P<amount>unit_cost|cost)\)$'
+          )
+
+          def replace_launch_refund(match: re.Match[str]) -> str:
+              indent = match.group("indent")
+              amount = match.group("amount")
+              return (
+                  f'{indent}if launch_result["status"] == "failed":\n'
+                  f"{indent}    if not is_admin:\n"
+                  f"{indent}        await refund_generation_credits_once(\n"
+                  f"{indent}            telegram_id,\n"
+                  f"{indent}            {amount},\n"
+                  f"{indent}            refund_key=f\"generation:{{launch_result['task_id']}}\",\n"
+                  f'{indent}            reason="provider_launch_failed",\n'
+                  f"{indent}        )"
+              )
+
+          text, launch_replacements = failure_pattern.subn(
+              replace_launch_refund,
+              text,
+          )
+          if launch_replacements != 3:
+              raise SystemExit(
+                  f"Expected 3 image/video launch refund replacements, got {launch_replacements}"
+              )
+
+          header_pattern = re.compile(
+              r'(async def miniapp_generate_motion\(request: web\.Request\) -> web\.Response:\n'
+              r'    """Mini App endpoint for Motion Control\."""\n)'
+              r'    try:\n'
+          )
+          header_replacement = (
+              r'\1'
+              '    motion_refund_key = f"miniapp-motion:{time.time_ns()}:{id(request)}"\n'
+              '    motion_debit_succeeded = False\n'
+              '    motion_launch_accepted = False\n'
+              '    try:\n'
+          )
+          text, header_count = header_pattern.subn(header_replacement, text, count=1)
+          if header_count != 1:
+              raise SystemExit(f"Expected one Motion header, got {header_count}")
+
+          motion_start = text.index("async def miniapp_generate_motion(")
+          motion_end = text.index("\ndef setup_miniapp_routes(", motion_start)
+          before = text[:motion_start]
+          motion = text[motion_start:motion_end]
+          after = text[motion_end:]
+
+          debit_pattern = re.compile(
+              r'(?m)^        debit_error = await _deduct_miniapp_generation_cost\(telegram_id, cost\)\n'
+              r'        if debit_error is not None:\n'
+              r'            return debit_error\n'
+          )
+          motion, debit_count = debit_pattern.subn(
+              lambda match: match.group(0)
+              + "        motion_debit_succeeded = not is_admin\n",
+              motion,
+              count=1,
+          )
+          if debit_count != 1:
+              raise SystemExit(f"Expected one Motion debit block, got {debit_count}")
+
+          classify_line = (
+              "        result_status, error_message = "
+              "_classify_video_generation_result(result)\n"
+          )
+          if motion.count(classify_line) != 1:
+              raise SystemExit(
+                  f"Expected one Motion classification, got {motion.count(classify_line)}"
+              )
+          motion = motion.replace(
+              classify_line,
+              classify_line
+              + '        motion_launch_accepted = result_status in {"queued", "done"}\n',
+              1,
+          )
+
+          explicit_pattern = re.compile(
+              r'(?m)^        await complete_video_task\(local_task_id, None\)\n'
+              r'        if not is_admin:\n'
+              r'            await add_credits\(telegram_id, cost\)\n'
+          )
+          explicit_replacement = (
+              "        await complete_video_task(local_task_id, None)\n"
+              "        if motion_debit_succeeded:\n"
+              "            await refund_generation_credits_once(\n"
+              "                telegram_id,\n"
+              "                cost,\n"
+              "                refund_key=motion_refund_key,\n"
+              '                reason="provider_launch_failed",\n'
+              "            )\n"
+          )
+          motion, explicit_count = explicit_pattern.subn(
+              explicit_replacement,
+              motion,
+              count=1,
+          )
+          if explicit_count != 1:
+              raise SystemExit(
+                  f"Expected one Motion explicit refund block, got {explicit_count}"
+              )
+
+          exception_pattern = re.compile(
+              r'(?ms)^    except Exception as e:\n'
+              r'        logger\.exception\(f"Mini App Motion Control failed: \{e\}"\)\n'
+              r"        if 'telegram_id' in locals\(\) and 'cost' in locals\(\):\n"
+              r'            try:\n'
+              r'                await add_credits\(telegram_id, cost\)\n'
+              r'            except Exception:\n'
+              r'                pass\n'
+              r'        return _miniapp_error_response\(e, log_message="Mini App Motion Control generation failed"\)\n'
+          )
+          exception_replacement = (
+              "    except Exception as e:\n"
+              '        logger.exception(f"Mini App Motion Control failed: {e}")\n'
+              "        if motion_debit_succeeded:\n"
+              "            if not motion_launch_accepted:\n"
+              "                try:\n"
+              "                    await refund_generation_credits_once(\n"
+              "                        telegram_id,\n"
+              "                        cost,\n"
+              "                        refund_key=motion_refund_key,\n"
+              '                        reason="motion_exception_before_provider_acceptance",\n'
+              "                    )\n"
+              "                except Exception:\n"
+              "                    logger.exception(\n"
+              '                        "Mini App Motion Control refund failed: key=%s",\n'
+              "                        motion_refund_key,\n"
+              "                    )\n"
+              '        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")\n'
+          )
+          motion, exception_count = exception_pattern.subn(
+              exception_replacement,
+              motion,
+              count=1,
+          )
+          if exception_count != 1:
+              raise SystemExit(
+                  f"Expected one Motion exception refund block, got {exception_count}"
+              )
+
+          text = before + motion + after
+          if "await add_credits(" in text:
+              raise SystemExit("Direct add_credits call remains in Mini App")
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          python -m py_compile bot/miniapp.py bot/services/generation_refund_service.py
+          rm -f .github/workflows/apply-idempotent-refunds-v2.yml
+
+      - name: Commit focused refund changes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bot/miniapp.py .github/workflows/apply-idempotent-refunds-v2.yml
+          git commit -m 'Use idempotent generation refunds'
+          git push origin HEAD:agent/tanyapi-idempotent-generation-refunds
