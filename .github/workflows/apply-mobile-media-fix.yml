@@ -1,0 +1,82 @@
+name: Apply mobile media upload fix
+
+on:
+  pull_request:
+    branches: [ci/mobile-media-fix-base]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply one-shot codemod
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -f scripts/apply_mobile_media_upload_fix.py ]; then
+            python scripts/apply_mobile_media_upload_fix.py
+          else
+            echo "Codemod already applied"
+          fi
+
+      - name: Commit generated source changes
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No generated changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix mobile media uploads and photo analysis"
+          git push origin "HEAD:${HEAD_BRANCH}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio ruff
+
+      - name: Run changed source checks
+        run: |
+          ruff check bot/services/reference_storage_service.py bot/services/photo_analysis_media.py tests/test_mobile_media_upload_contract.py
+          pytest -q tests/test_mobile_media_upload_contract.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend/miniapp-v0
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint frontend
+        working-directory: frontend/miniapp-v0
+        run: npm run lint
+
+      - name: Build frontend
+        working-directory: frontend/miniapp-v0
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://tanyapi.chillcreative.ru
+        run: npm run build
