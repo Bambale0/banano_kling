@@ -1,3 +1,5 @@
+"""Contract tests for the Tanya production autodeploy workflow."""
+
 from pathlib import Path
 
 WORKFLOW = Path(".github/workflows/deploy-production.yml")
