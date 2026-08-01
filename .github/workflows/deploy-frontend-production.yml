@@ -7,14 +7,14 @@ on:
       - "frontend/**"
       - "cdn.sh"
       - "scripts/install_miniapp_frontend_https_host.sh"
-      - ".github/workflows/deploy-frontend.yml"
+      - ".github/workflows/deploy-frontend-production.yml"
   push:
     branches: [tanyapi]
     paths:
       - "frontend/**"
       - "cdn.sh"
       - "scripts/install_miniapp_frontend_https_host.sh"
-      - ".github/workflows/deploy-frontend.yml"
+      - ".github/workflows/deploy-frontend-production.yml"
   workflow_dispatch:
 
 permissions:
@@ -310,6 +310,8 @@ jobs:
           PROJECT_DIR="$1"
           EXPECTED_SHA="$2"
           DOMAIN="$3"
+          PROFILE="/etc/banano-miniapp/profiles/${DOMAIN}.env"
+          INSTALLER="$PROJECT_DIR/scripts/install_miniapp_frontend_https_host.sh"
 
           command -v git >/dev/null
           command -v curl >/dev/null
@@ -327,13 +329,19 @@ jobs:
             echo "Frontend repository not found: $PROJECT_DIR" >&2
             exit 1
           }
-          [ -f "/etc/banano-miniapp/profiles/${DOMAIN}.env" ] || {
-            echo "Frontend profile is missing for $DOMAIN" >&2
+          [ -f "$PROFILE" ] || {
+            echo "Frontend profile is missing: $PROFILE" >&2
             exit 1
           }
 
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Local frontend checkout changes block automatic deployment:" >&2
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local frontend changes block automatic deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+          if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            echo "Untracked frontend files block automatic deployment:" >&2
             git status --short >&2
             exit 1
           fi
@@ -344,15 +352,36 @@ jobs:
 
           actual_sha="$(git rev-parse HEAD)"
           [ "$actual_sha" = "$EXPECTED_SHA" ] || {
-            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+            echo "Commit mismatch before deploy: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+            exit 1
+          }
+          [ -f "$INSTALLER" ] || {
+            echo "Frontend installer not found: $INSTALLER" >&2
             exit 1
           }
 
           if [ "$(id -u)" -eq 0 ]; then
-            bash cdn.sh --deploy-domain "$DOMAIN"
+            bash "$INSTALLER" --config "$PROFILE" --deploy-only
           else
-            sudo -n bash cdn.sh --deploy-domain "$DOMAIN"
+            sudo -n bash "$INSTALLER" --config "$PROFILE" --deploy-only
           fi
+
+          deployed_sha="$(git rev-parse HEAD)"
+          [ "$deployed_sha" = "$EXPECTED_SHA" ] || {
+            echo "Commit changed during deploy: expected=$EXPECTED_SHA actual=$deployed_sha" >&2
+            exit 1
+          }
+
+          # shellcheck disable=SC1090
+          source "$PROFILE"
+          source_index="$PROJECT_DIR/frontend/miniapp-v0/out/index.html"
+          deployed_index="${MINIAPP_ROOT:?MINIAPP_ROOT is missing in profile}/index.html"
+          [ -s "$source_index" ]
+          [ -s "$deployed_index" ]
+          cmp -s "$source_index" "$deployed_index" || {
+            echo "Deployed index.html does not match the tested checkout build" >&2
+            exit 1
+          }
 
           health="$(curl -fsS --max-time 20 "https://${DOMAIN}/frontend-health")"
           http_code="$(curl -fsS -o /tmp/neuromix-live-index.html -w '%{http_code}' --max-time 20 "https://${DOMAIN}/mini-app/?sha=${EXPECTED_SHA}")"
@@ -367,7 +396,7 @@ jobs:
           }
 
           printf 'frontend_host=%s\n' "$(hostname)"
-          printf 'frontend_sha=%s\n' "$actual_sha"
+          printf 'frontend_sha=%s\n' "$deployed_sha"
           printf 'frontend_health=%s\n' "$health"
           printf 'frontend_http=%s\n' "$http_code"
           REMOTE
