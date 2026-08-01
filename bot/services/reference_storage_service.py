@@ -1,8 +1,9 @@
+import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime
-from typing import Optional
+from datetime import UTC, datetime
+from pathlib import Path
 
 from bot.config import config
 from bot.database import (
@@ -46,10 +47,10 @@ async def save_reference_file(
     *,
     file_ext: str,
     kind: str = "image",
-    original_filename: Optional[str] = None,
-    content_type: Optional[str] = None,
+    original_filename: str | None = None,
+    content_type: str | None = None,
     source: str = "telegram",
-) -> tuple[Optional[str], Optional[SavedReference]]:
+) -> tuple[str | None, SavedReference | None]:
     """Persist reusable reference media outside the ephemeral uploads cleanup path."""
     try:
         if not isinstance(file_bytes, (bytes, bytearray)) or not file_bytes:
@@ -68,7 +69,7 @@ async def save_reference_file(
                 return public_url, existing
 
         safe_ext = (file_ext or "bin").lower().strip(".")
-        month = datetime.now().strftime("%Y%m")
+        month = datetime.now(UTC).strftime("%Y%m")
         relative_dir = os.path.join("refs", normalized_kind, str(telegram_id), month)
         full_dir = _local_path_for_relative_upload(relative_dir)
         os.makedirs(full_dir, exist_ok=True)
@@ -78,8 +79,7 @@ async def save_reference_file(
         full_path = _local_path_for_relative_upload(relative_path)
 
         if not os.path.exists(full_path):
-            with open(full_path, "wb") as file_handle:
-                file_handle.write(bytes(file_bytes))
+            await asyncio.to_thread(Path(full_path).write_bytes, bytes(file_bytes))
 
         original_public_url = _build_reference_public_url(relative_path)
         public_url = _provider_safe_reference_url(original_public_url, normalized_kind)
