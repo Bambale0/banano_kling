@@ -1,3 +1,5 @@
+"""Atomic one-time refunds for failed paid generation launches."""
+
 from __future__ import annotations
 
 import logging
