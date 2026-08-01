@@ -1,3 +1,5 @@
+"""Regression contract for generation balance debits."""
+
 import ast
 import json
 from pathlib import Path
