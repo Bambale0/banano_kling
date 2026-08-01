@@ -52,7 +52,6 @@ RUN apt-get update \
         gzip \
         postgresql-client \
         sqlite3 \
-        tini \
         util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${APP_GID}" app \
@@ -79,5 +78,4 @@ EXPOSE 1888
 HEALTHCHECK --interval=20s --timeout=7s --start-period=40s --retries=5 \
     CMD ["python", "scripts/docker_healthcheck.py"]
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "bot.main"]
