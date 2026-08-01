@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/tanyapi-secure-telegram-webhook
+  pull_request:
+    branches:
+      - tanyapi
 
 permissions:
   contents: read
