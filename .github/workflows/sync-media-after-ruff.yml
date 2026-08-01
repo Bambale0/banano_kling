@@ -1,0 +1,62 @@
+name: Sync media branch after Ruff merge
+
+on:
+  pull_request:
+    branches: [ci/sync-media-after-ruff-merge]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout media branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Merge current tanyapi into media branch
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin tanyapi
+
+          if git merge --no-edit origin/tanyapi; then
+            if git diff --quiet origin/${HEAD_BRANCH}..HEAD; then
+              echo "Media branch already contains current tanyapi"
+              exit 0
+            fi
+          else
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            allowed=(
+              ".github/workflows/ci.yml"
+              "scripts/ruff_changed_lines.py"
+              "tests/test_ruff_changed_lines.py"
+            )
+            for path in "${conflicts[@]}"; do
+              allowed_path=false
+              for candidate in "${allowed[@]}"; do
+                if [ "$path" = "$candidate" ]; then
+                  allowed_path=true
+                  break
+                fi
+              done
+              if [ "$allowed_path" != true ]; then
+                echo "Unexpected merge conflict: $path" >&2
+                exit 1
+              fi
+            done
+            git checkout --theirs -- "${allowed[@]}"
+            git add "${allowed[@]}"
+            git commit --no-edit
+          fi
+
+          git push origin "HEAD:${HEAD_BRANCH}"
