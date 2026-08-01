@@ -3,7 +3,7 @@
 import base64
 import io
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps
 
 try:
     from pillow_heif import register_heif_opener
@@ -33,5 +33,5 @@ def image_source_to_analysis_input(source: str, *, max_edge: int = 2048) -> str:
             normalized.save(buffer, format="JPEG", quality=90, optimize=True)
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return f"data:image/jpeg;base64,{encoded}"
-    except (OSError, ValueError, UnidentifiedImageError):
+    except (OSError, ValueError):
         return source
