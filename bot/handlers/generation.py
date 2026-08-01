@@ -7299,7 +7299,13 @@ async def run_no_preset_video_from_message(
             )
             await state.clear()
             return
-        await deduct_credits(message.from_user.id, cost)
+        if not await deduct_credits(message.from_user.id, cost):
+            await message.answer(
+                "❌ Баланс изменился во время запуска. "
+                "Пополните баланс и попробуйте снова.",
+                parse_mode="HTML",
+            )
+            return
 
     run_summary = _build_video_run_summary(v_model, v_type, v_ratio, v_duration, data)
 
@@ -8336,7 +8342,13 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         )
         return
 
-    await deduct_credits(message.from_user.id, total_cost)
+    if not await deduct_credits(message.from_user.id, total_cost):
+        await message.answer(
+            "❌ Баланс изменился во время запуска. "
+            "Пополните баланс и попробуйте снова.",
+            parse_mode="HTML",
+        )
+        return
 
     model_label = get_image_model_label(img_service)
     ratio_label = img_ratio.replace(":", "∶")
@@ -9073,7 +9085,13 @@ async def handle_veo_extend_prompt(message: types.Message, state: FSMContext):
         )
         return
 
-    await deduct_credits(message.from_user.id, cost)
+    if not await deduct_credits(message.from_user.id, cost):
+        await message.answer(
+            "❌ Баланс изменился во время запуска. "
+            "Пополните баланс и попробуйте снова.",
+            parse_mode="HTML",
+        )
+        return
     await message.answer("🎬 Продлеваю Veo-видео...")
 
     result = await veo_service.extend_video(
