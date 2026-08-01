@@ -10,6 +10,7 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 
 def main() -> None:
+    """Apply only the changed-line Ruff fixes reported by validation."""
     replace_once(
         "bot/miniapp.py",
         """from bot.services.media_input_utils import (
