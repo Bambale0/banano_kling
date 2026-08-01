@@ -13,9 +13,10 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 _HUNK_RE = re.compile(
     r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@"
