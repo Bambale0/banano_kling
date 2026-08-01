@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from bot import main as legacy_main
+import bot.main as legacy_main
 from bot.services.telegram_webhook_runtime import install_into
 
 
