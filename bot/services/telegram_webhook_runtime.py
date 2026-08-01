@@ -13,10 +13,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Update
+from aiohttp import web
 
 from bot.config import config
 from bot.services.redis_service import redis_service
