@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run Ruff on changed files but fail only for diagnostics touching new lines.
 
 Legacy modules in this repository contain historical lint debt. The normal
@@ -29,7 +28,7 @@ class LineRange:
     start: int
     end: int
 
-    def intersects(self, other: "LineRange") -> bool:
+    def intersects(self, other: LineRange) -> bool:
         return self.start <= other.end and other.start <= self.end
 
 
@@ -209,7 +208,7 @@ def run_ruff(
             f"{result.stderr.strip() or result.stdout[:500].strip()}"
         ) from exc
     if not isinstance(payload, list):
-        raise RuntimeError("Ruff JSON output must be a list")
+        raise TypeError("Ruff JSON output must be a list")
     if result.returncode not in {0, 1}:
         raise RuntimeError(
             f"Ruff execution failed: {result.stderr.strip() or result.stdout[:500].strip()}"
