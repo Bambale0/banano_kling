@@ -395,6 +395,28 @@ def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
         )
     return preset_manager.get_generation_cost(img_service)
 
+
+async def _deduct_miniapp_generation_cost(
+    telegram_id: int,
+    amount: float,
+) -> web.Response | None:
+    """Atomically debit one launch and stop when the balance changed concurrently."""
+    if config.is_admin(telegram_id):
+        return None
+    if await deduct_credits(telegram_id, amount):
+        return None
+
+    fresh_user = await get_or_create_user(telegram_id)
+    required = f"{float(amount):g}"
+    return web.json_response(
+        {
+            "ok": False,
+            "error": f"Недостаточно бананов. Нужно {required}🍌",
+            "credits": fresh_user.credits,
+        },
+        status=400,
+    )
+
 VIDEO_MODELS = (
     {
         "id": "v3_pro",
@@ -3567,8 +3589,9 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Недостаточно бананов. Нужно {unit_cost}🍌", "credits": user.credits},
                 status=400,
             )
-        if not is_admin:
-            await deduct_credits(telegram_id, unit_cost)
+        debit_error = await _deduct_miniapp_generation_cost(telegram_id, unit_cost)
+        if debit_error is not None:
+            return debit_error
 
         launch_result = await _start_image_generation_task(
             user=user,
@@ -3780,8 +3803,9 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if not is_admin:
-            await deduct_credits(telegram_id, unit_cost)
+        debit_error = await _deduct_miniapp_generation_cost(telegram_id, unit_cost)
+        if debit_error is not None:
+            return debit_error
 
         launch_result = await _start_image_generation_task(
             user=user,
@@ -4198,8 +4222,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-        if not is_admin:
-            await deduct_credits(telegram_id, cost)
+        debit_error = await _deduct_miniapp_generation_cost(telegram_id, cost)
+        if debit_error is not None:
+            return debit_error
 
         launch_result = await _launch_video_generation_task(
             telegram_id=telegram_id,
@@ -4348,8 +4373,9 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if not is_admin:
-            await deduct_credits(telegram_id, cost)
+        debit_error = await _deduct_miniapp_generation_cost(telegram_id, cost)
+        if debit_error is not None:
+            return debit_error
 
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
         api_motion_model = (
