@@ -162,6 +162,14 @@ class Config:
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
     REDIS_PREFIX: str = os.getenv("REDIS_PREFIX", "banano_kling")
 
+    # Cloudflare R2 Storage (S3-compatible)
+    R2_ACCOUNT_ID: str = os.getenv("R2_ACCOUNT_ID", "")
+    R2_API_TOKEN: str = os.getenv("R2_API_TOKEN", "")
+    R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
+    R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
+    R2_ENDPOINT: str = os.getenv("R2_ENDPOINT", "")
+    R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "")
+
     # Partner programme
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
