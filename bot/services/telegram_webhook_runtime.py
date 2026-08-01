@@ -9,8 +9,9 @@ import os
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -73,9 +74,6 @@ def _resolve_webhook_secret() -> str:
             "TELEGRAM_WEBHOOK_SECRET is not configured and BOT_TOKEN is unavailable"
         )
 
-    # A deterministic HMAC-derived fallback prevents an unsafe deployment when
-    # the new environment variable has not been provisioned yet. Operators can
-    # override it with TELEGRAM_WEBHOOK_SECRET and rotate independently later.
     derived = hmac.new(
         bot_token.encode("utf-8"),
         _DERIVATION_CONTEXT,
@@ -405,8 +403,6 @@ async def secure_on_startup(
     if dispatcher is not None:
         await ensure_runtime(bot, dispatcher)
 
-    # Prevent the legacy startup hook from briefly registering a webhook
-    # without secret_token. All other startup work remains unchanged.
     webhook_host = config.WEBHOOK_HOST
     if webhook_host:
         config.WEBHOOK_HOST = ""
