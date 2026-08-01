@@ -29,12 +29,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin tanyapi
 
-          if git merge --no-edit origin/tanyapi; then
-            if git diff --quiet origin/${HEAD_BRANCH}..HEAD; then
-              echo "Media branch already contains current tanyapi"
-              exit 0
-            fi
-          else
+          if ! git merge --no-edit origin/tanyapi; then
             mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
             allowed=(
               ".github/workflows/ci.yml"
@@ -59,4 +54,10 @@ jobs:
             git commit --no-edit
           fi
 
+          remote_sha="$(git rev-parse origin/${HEAD_BRANCH})"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$head_sha" = "$remote_sha" ]; then
+            echo "Media branch already contains current tanyapi"
+            exit 0
+          fi
           git push origin "HEAD:${HEAD_BRANCH}"
