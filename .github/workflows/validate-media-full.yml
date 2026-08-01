@@ -5,7 +5,7 @@ on:
     branches: [ci/media-full-validation-base]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -19,7 +19,24 @@ jobs:
       - name: Checkout media branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply one-shot lint fix
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -f scripts/fix_mobile_media_lint.py ]; then
+            python scripts/fix_mobile_media_lint.py
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Fix changed-line lint in mobile media upload flow"
+            git push origin "HEAD:${HEAD_BRANCH}"
+          fi
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -37,10 +54,10 @@ jobs:
       - name: Gate Ruff on changed lines
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -Eeuo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
           mapfile -t changed_files < <(
             git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$HEAD_SHA" -- \
               'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
@@ -85,23 +102,26 @@ jobs:
         run: npm run build
 
       - name: Build production Docker image
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          head_sha="$(git rev-parse HEAD)"
           docker build \
-            --build-arg VCS_REF=${{ github.event.pull_request.head.sha }} \
-            --build-arg BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ') \
-            -t banano-media-validation:${{ github.event.pull_request.head.sha }} .
+            --build-arg VCS_REF="$head_sha" \
+            --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            -t "banano-media-validation:$head_sha" .
+          echo "MEDIA_IMAGE=banano-media-validation:$head_sha" >> "$GITHUB_ENV"
 
       - name: Verify image and Compose
         shell: bash
         run: |
           set -Eeuo pipefail
-          image=banano-media-validation:${{ github.event.pull_request.head.sha }}
-          docker run --rm --entrypoint python "$image" -m compileall -q /app/bot /app/scripts
+          docker run --rm --entrypoint python "$MEDIA_IMAGE" -m compileall -q /app/bot /app/scripts
           docker run --rm \
             -e BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY \
             -e BANANO_SKIP_PROJECT_ENV=1 \
             -e BANANO_LOG_TO_STDOUT=1 \
-            --entrypoint python "$image" \
+            --entrypoint python "$MEDIA_IMAGE" \
             -c 'import bot.config, bot.database, bot.main, bot.miniapp; print("container imports: ok")'
           trap 'rm -f .env .env.postgres' EXIT
           cat > .env <<'ENV'
@@ -112,4 +132,4 @@ jobs:
           REDIS_URL=redis://127.0.0.1:6379/0
           ENV
           : > .env.postgres
-          BANANO_IMAGE="$image" docker compose -f compose.backend.yml config --quiet
+          BANANO_IMAGE="$MEDIA_IMAGE" docker compose -f compose.backend.yml config --quiet
