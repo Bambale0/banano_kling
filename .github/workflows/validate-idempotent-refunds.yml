@@ -1,0 +1,157 @@
+name: Prepare idempotent refund fix artifact
+
+on:
+  pull_request:
+    branches:
+      - agent/tanyapi-atomic-generation-debit
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idempotent-refund-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: github.head_ref == 'agent/tanyapi-idempotent-generation-refunds'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused source changes in workspace
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/miniapp.py')
+          text = path.read_text(encoding='utf-8')
+
+          top_import = (
+              'from bot.services.generation_refund_service import '
+              'refund_generation_credits_once\n'
+          )
+          if text.count(top_import) != 1:
+              raise SystemExit(
+                  f'Expected one top-level refund import, got {text.count(top_import)}'
+              )
+          text = text.replace(top_import, '', 1)
+
+          direct_call = 'await refund_generation_credits_once('
+          if text.count(direct_call) != 5:
+              raise SystemExit(
+                  f'Expected five direct refund calls, got {text.count(direct_call)}'
+              )
+          text = text.replace(
+              direct_call,
+              'await _refund_miniapp_generation_cost_once(',
+          )
+
+          helper = '''
+
+async def _refund_miniapp_generation_cost_once(
+    telegram_id: int,
+    amount: float,
+    *,
+    refund_key: str,
+    reason: str,
+) -> bool:
+    from bot.services.generation_refund_service import (  # noqa: PLC0415
+        refund_generation_credits_once,
+    )
+
+    return await refund_generation_credits_once(
+        telegram_id,
+        amount,
+        refund_key=refund_key,
+        reason=reason,
+    )
+'''
+          marker = '\nVIDEO_MODELS = ('
+          if text.count(marker) != 1:
+              raise SystemExit(
+                  f'Expected one VIDEO_MODELS marker, got {text.count(marker)}'
+              )
+          if 'async def _refund_miniapp_generation_cost_once(' in text:
+              raise SystemExit('Refund helper already exists')
+          text = text.replace(marker, helper + marker, 1)
+
+          old_exception = '''    except Exception as e:
+        logger.exception(f"Mini App Motion Control failed: {e}")
+        if motion_debit_succeeded:
+            if not motion_launch_accepted:
+                try:
+                    await _refund_miniapp_generation_cost_once(
+                        telegram_id,
+                        cost,
+                        refund_key=motion_refund_key,
+                        reason="motion_exception_before_provider_acceptance",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Mini App Motion Control refund failed: key=%s",
+                        motion_refund_key,
+                    )
+        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
+'''
+          new_exception = '''    except Exception as e:
+        logger.exception(f"Mini App Motion Control failed: {e}")
+        if motion_debit_succeeded and not motion_launch_accepted:
+            try:
+                await _refund_miniapp_generation_cost_once(
+                    telegram_id,
+                    cost,
+                    refund_key=motion_refund_key,
+                    reason="motion_exception_before_provider_acceptance",
+                )
+            except Exception:
+                logger.exception(
+                    "Mini App Motion Control refund failed: key=%s",
+                    motion_refund_key,
+                )
+        return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
+'''
+          if text.count(old_exception) != 1:
+              raise SystemExit(
+                  f'Expected one nested Motion exception, got {text.count(old_exception)}'
+              )
+          path.write_text(
+              text.replace(old_exception, new_exception, 1),
+              encoding='utf-8',
+          )
+
+          test_path = Path('tests/test_generation_refund_service.py')
+          test_text = test_path.read_text(encoding='utf-8')
+          old_imports = 'import asyncio\nimport ast\n'
+          if test_text.count(old_imports) != 1:
+              raise SystemExit(
+                  f'Expected one test import block, got {test_text.count(old_imports)}'
+              )
+          test_path.write_text(
+              test_text.replace(old_imports, 'import ast\nimport asyncio\n', 1),
+              encoding='utf-8',
+          )
+          PY
+
+          python -m py_compile \
+            bot/miniapp.py \
+            bot/services/generation_refund_service.py \
+            tests/test_generation_refund_service.py
+
+          mkdir -p prepared/bot prepared/tests
+          cp bot/miniapp.py prepared/bot/miniapp.py
+          cp tests/test_generation_refund_service.py \
+            prepared/tests/test_generation_refund_service.py
+
+      - name: Upload prepared files
+        uses: actions/upload-artifact@v7
+        with:
+          name: idempotent-refund-fix
+          path: prepared/
+          if-no-files-found: error
+          retention-days: 1
