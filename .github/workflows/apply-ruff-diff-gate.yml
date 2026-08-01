@@ -1,6 +1,9 @@
 name: Apply changed-line Ruff gate
 
 on:
+  push:
+    branches:
+      - ci/tanyapi-ruff-changed-lines
   pull_request:
     branches:
       - tanyapi
@@ -10,7 +13,9 @@ permissions:
 
 jobs:
   codemod:
-    if: github.head_ref == 'ci/tanyapi-ruff-changed-lines'
+    if: >-
+      github.ref == 'refs/heads/ci/tanyapi-ruff-changed-lines' ||
+      github.head_ref == 'ci/tanyapi-ruff-changed-lines'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
