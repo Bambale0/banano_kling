@@ -56,6 +56,7 @@ function formatRub(value?: number) {
 }
 
 const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
+const PROFILE_FEED_PAGE_SIZE = 24
 
 function feedReferenceToUploadedFile(url: string, index: number, type: 'image' | 'video' = 'image'): UploadedFile {
   return { id: `profile-ref-${index}-${url}`, name: `reference-${index + 1}`, url, type, size: 0 }
@@ -118,6 +119,8 @@ export function ProfileTab() {
   const [error, setError] = useState<string | null>(null)
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
   const [revealedIds, setRevealedIds] = useState<Set<number>>(() => new Set())
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const isLive = state.mode === 'live'
   const ownReferralCode = String(user.referralCode || '').trim().toUpperCase()
@@ -267,28 +270,31 @@ export function ProfileTab() {
       try {
         if (isOwnProfile) {
           if (ownReferralCode) {
-            const result = await fetchProfileFeed(ownReferralCode, 120)
+            const result = await fetchProfileFeed(ownReferralCode, PROFILE_FEED_PAGE_SIZE)
             if (!ignore) {
               setItems(mergePendingPublication(result.feed, 'profile'))
               setBrokenMediaIds(new Set())
               setProfile(result.profile)
+              setHasMore(result.feed.length === PROFILE_FEED_PAGE_SIZE)
             }
             return
           }
-          const feed = await fetchMyFeed(120)
+          const feed = await fetchMyFeed(PROFILE_FEED_PAGE_SIZE)
           if (!ignore) {
             setItems(mergePendingPublication(feed, 'profile'))
             setBrokenMediaIds(new Set())
             setProfile(null)
+            setHasMore(feed.length === PROFILE_FEED_PAGE_SIZE)
           }
           return
         }
 
-        const result = await fetchProfileFeed(targetReferralCode, 120)
+        const result = await fetchProfileFeed(targetReferralCode, PROFILE_FEED_PAGE_SIZE)
         if (!ignore) {
           setItems(result.feed)
           setBrokenMediaIds(new Set())
           setProfile(result.profile)
+          setHasMore(result.feed.length === PROFILE_FEED_PAGE_SIZE)
         }
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить профиль'))
@@ -479,6 +485,30 @@ export function ProfileTab() {
       next.add(item.id)
       return next
     })
+  }
+
+  async function loadMoreProfileItems() {
+    if (!isLive || loadingMore || !hasMore) return
+    setLoadingMore(true)
+    setError(null)
+    try {
+      const offset = items.length
+      const nextItems = isOwnProfile
+        ? ownReferralCode
+          ? (await fetchProfileFeed(ownReferralCode, PROFILE_FEED_PAGE_SIZE, offset)).feed
+          : await fetchMyFeed(PROFILE_FEED_PAGE_SIZE, offset)
+        : (await fetchProfileFeed(targetReferralCode, PROFILE_FEED_PAGE_SIZE, offset)).feed
+      setItems((current) => {
+        const existingIds = new Set(current.map((item) => item.id))
+        const unique = nextItems.filter((item) => !existingIds.has(item.id))
+        return [...current, ...unique]
+      })
+      setHasMore(nextItems.length === PROFILE_FEED_PAGE_SIZE)
+    } catch (e) {
+      setError(getErrorMessage(e, 'Не удалось загрузить ещё публикации'))
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   function handleRemix(item: FeedItem) {
@@ -692,17 +722,23 @@ export function ProfileTab() {
                   </span>
                 ) : isHttpUrl(item.result_url) ? (
                   item.gen_type === 'video' ? (
-                    <video
-                      src={item.result_url}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      onError={() => handleMediaError(item)}
-                      className={cn(
-                        'h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
-                        item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
-                      )}
-                    />
+                    isHttpUrl(item.preview_url) ? (
+                      <img
+                        src={item.preview_url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        onError={() => handleMediaError(item)}
+                        className={cn(
+                          'h-full w-full object-cover opacity-80 transition-all duration-500 group-hover:scale-[1.04]',
+                          item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
+                        )}
+                      />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                        <Play className="h-6 w-6 fill-current" />
+                      </span>
+                    )
                   ) : (
                     <img
                       src={item.preview_url || item.result_url}
@@ -790,6 +826,20 @@ export function ProfileTab() {
               </button>
             </article>
           ))}
+          {hasMore ? (
+            <div className="col-span-4 py-4 sm:col-span-5">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 w-full rounded-lg"
+                disabled={loadingMore}
+                onClick={loadMoreProfileItems}
+              >
+                {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : <Grid3X3 className="h-4 w-4" />}
+                <span>{loadingMore ? 'Загружаю...' : 'Загрузить ещё'}</span>
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="rounded-lg border border-border/50 bg-card/45 p-6 text-center">
@@ -875,7 +925,7 @@ export function ProfileTab() {
                     className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
                   >
                     {reference.type === 'video' ? (
-                      <video src={reference.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                      <video src={reference.url} muted playsInline preload="none" className="h-full w-full object-cover" />
                     ) : (
                       <img src={reference.url} alt="" className="h-full w-full object-cover" />
                     )}

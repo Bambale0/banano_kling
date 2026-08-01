@@ -3116,7 +3116,7 @@ async def miniapp_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         source = str(body.get("source", "recent") or "recent")
-        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=24, maximum=48)
         offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_feed_generations(
@@ -3173,7 +3173,7 @@ async def miniapp_my_feed(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
-        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=24, maximum=48)
         offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
         feed = await get_user_feed_generations(
@@ -3242,7 +3242,7 @@ async def miniapp_profile_feed(request: web.Request) -> web.Response:
         body = await _miniapp_payload(request)
         init_data = body.get("init_data", "")
         referral_code = str(body.get("referral_code", "") or "").strip().upper()
-        limit = _bounded_int(body.get("limit"), default=80, maximum=999999)
+        limit = _bounded_int(body.get("limit"), default=24, maximum=48)
         offset = _bounded_int(body.get("offset"), default=0, maximum=999999)
         if not referral_code:
             return web.json_response({"ok": False, "error": "Не указан профиль"}, status=400)
@@ -4798,6 +4798,18 @@ def setup_miniapp_routes(app: web.Application):
     if not miniapp_path.startswith("/"):
         miniapp_path = f"/{miniapp_path}"
     miniapp_root = miniapp_path.rstrip("/")
+    miniapp_frontend_host = urlparse(config.mini_app_url or "").netloc.lower()
+
+    def _should_redirect_to_frontend(request: web.Request) -> bool:
+        if not miniapp_frontend_host:
+            return False
+        request_host = request.host.split(":", 1)[0].lower()
+        return request_host != miniapp_frontend_host
+
+    def _frontend_miniapp_url(suffix: str = "") -> str:
+        base = (config.mini_app_url or "").rstrip("/")
+        suffix = suffix.lstrip("/")
+        return f"{base}/{suffix}" if suffix else f"{base}/"
 
     @web.middleware
     async def _miniapp_cors_middleware(
@@ -4897,6 +4909,17 @@ def setup_miniapp_routes(app: web.Application):
             headers={"Cache-Control": "public, max-age=3600"},
         )
 
+    async def _miniapp_frontend_redirect(request: web.Request) -> web.Response:
+        if _should_redirect_to_frontend(request):
+            return web.HTTPFound(_frontend_miniapp_url())
+        return await miniapp_index(request)
+
+    async def _miniapp_asset_or_redirect(request: web.Request) -> web.Response:
+        if _should_redirect_to_frontend(request):
+            tail = request.match_info.get("tail", "")
+            return web.HTTPFound(_frontend_miniapp_url(tail))
+        return await miniapp_asset(request)
+
     # Do not mount the full `out/` directory as a static resource here.
     # Serving of `index.html` and other files is handled explicitly by
     # `miniapp_index` and `miniapp_asset` so we avoid conflicts where the
@@ -4910,8 +4933,8 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_get("/apple-icon.png", _miniapp_root_file)
     app.router.add_get("/_vercel/insights/script.js", _empty_vercel_insights)
     app.router.add_get("/telegram-web-app.js", _miniapp_root_file)
-    app.router.add_get(miniapp_root, miniapp_index)
-    app.router.add_get(f"{miniapp_root}/", miniapp_index)
+    app.router.add_get(miniapp_root, _miniapp_frontend_redirect)
+    app.router.add_get(f"{miniapp_root}/", _miniapp_frontend_redirect)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
     app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
     app.router.add_post(miniapp_root + "/api/action", miniapp_action)
@@ -5002,4 +5025,4 @@ def setup_miniapp_routes(app: web.Application):
     )
     app.router.add_post(api_v1_root + "/generate/image", miniapp_generate_image)
     app.router.add_route("*", api_v1_root + "/{tail:.*}", miniapp_api_not_found)
-    app.router.add_get(miniapp_root + "/{tail:.*}", miniapp_asset)
+    app.router.add_get(miniapp_root + "/{tail:.*}", _miniapp_asset_or_redirect)

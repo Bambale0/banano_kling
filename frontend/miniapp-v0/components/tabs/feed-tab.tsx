@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useRef, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
@@ -38,8 +38,8 @@ const sources = [
   { id: 'top_day', label: 'Топ дня' },
   { id: 'top', label: 'Лучшие' },
 ] as const
-const FEED_PAGE_SIZE = 24
-const PRIORITY_IMAGE_COUNT = 4
+const FEED_PAGE_SIZE = 12
+const PRIORITY_IMAGE_COUNT = 2
 
 const videoScenarios = new Set<ScenarioType>(['text', 'imgtxt', 'video', 'avatar', 'audio', 'character'])
 
@@ -110,39 +110,35 @@ function FeedImage({ src, alt, priority, onError, style, className }: {
   )
 }
 
-function FeedVideoPreview({ src, aspectRatio, blurred, onError }: {
-  src: string
+function FeedVideoPreview({ poster, aspectRatio, blurred, onError }: {
+  poster?: string | null
   aspectRatio?: string | null
   blurred?: boolean
   onError?: () => void
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-
-  const revealFirstFrame = () => {
-    const video = videoRef.current
-    if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return
-    try {
-      video.currentTime = Math.min(0.1, video.duration / 2)
-    } catch {
-      // Some WebViews reject seeking until enough metadata is buffered.
-    }
-  }
-
   return (
-    <video
-      ref={videoRef}
-      src={`${src}#t=0.1`}
-      muted
-      playsInline
-      preload="metadata"
-      onLoadedMetadata={revealFirstFrame}
-      onError={onError}
+    <div
       style={{ aspectRatio: getPinAspectRatio(aspectRatio, 'video') }}
       className={cn(
-        'w-full bg-black object-cover transition-transform duration-500 group-hover:scale-[1.03]',
+        'relative w-full overflow-hidden bg-black transition-transform duration-500 group-hover:scale-[1.03]',
         blurred && 'scale-[1.04] blur-xl'
       )}
-    />
+    >
+      {poster ? (
+        <img
+          src={poster}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={onError}
+          className="h-full w-full object-cover opacity-80"
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-secondary/70 text-muted-foreground">
+          <Video className="h-8 w-8" />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -543,7 +539,7 @@ export function FeedTab() {
                       ) : isHttpUrl(item.result_url) ? (
                         item.gen_type === 'video' ? (
                           <FeedVideoPreview
-                            src={item.result_url}
+                            poster={item.preview_url}
                             aspectRatio={item.aspect_ratio}
                             blurred={item.feed_blurred}
                             onError={() => handleMediaError(item)}

@@ -6008,17 +6008,35 @@ async def get_user_feed_generations(
 
 
 async def get_user_feed_summary(user_id: int) -> dict[str, int]:
-    cards = await get_user_feed_generations(
-        user_id,
-        limit=0,
-        profile_visible_only=True,
-        include_unavailable=True,
-    )
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS posts_count,
+                COALESCE(SUM(COALESCE(gt.likes_count, 0)), 0) AS likes_count,
+                COALESCE(SUM(COALESCE(gt.shares_count, 0)), 0) AS shares_count,
+                COALESCE(SUM((
+                    SELECT COUNT(*)
+                    FROM generation_tasks child
+                    WHERE child.parent_generation_id = gt.id
+                      AND child.status = 'completed'
+                )), 0) AS remixes_count
+            FROM generation_tasks gt
+            WHERE gt.user_id = ?
+              AND gt.type IN ('image', 'video')
+              AND gt.status = 'completed'
+              AND gt.result_url IS NOT NULL
+              AND (COALESCE(gt.is_profile_visible, 0) = 1 OR gt.is_public_feed = 1)
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
     return {
-        "posts_count": len(cards),
-        "likes_count": sum(int(card.get("likes_count") or 0) for card in cards),
-        "shares_count": sum(int(card.get("shares_count") or 0) for card in cards),
-        "remixes_count": sum(int(card.get("remixes") or 0) for card in cards),
+        "posts_count": int(row["posts_count"] or 0) if row else 0,
+        "likes_count": int(row["likes_count"] or 0) if row else 0,
+        "shares_count": int(row["shares_count"] or 0) if row else 0,
+        "remixes_count": int(row["remixes_count"] or 0) if row else 0,
     }
 
 

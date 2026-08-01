@@ -117,7 +117,7 @@ USER_BOT_COMMAND_SCOPES = (
 USER_BOT_COMMAND_LANGUAGES = (None, "ru")
 
 async def _set_commands_chat_menu_button() -> None:
-    """Keep Telegram's system menu button on commands; Mini App is opened via inline buttons."""
+    """Keep Telegram's system menu button on quick commands."""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/setChatMenuButton"
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
