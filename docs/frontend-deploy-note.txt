@@ -1,1 +1,0 @@
-Production frontend deploy is pinned to the exact CI-tested commit and verifies the published static index.
