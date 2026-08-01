@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
@@ -22,7 +21,7 @@ def main() -> int:
                 print(f"healthcheck: unexpected HTTP {response.status}", file=sys.stderr)
                 return 1
             payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
         print(f"healthcheck: {error}", file=sys.stderr)
         return 1
 
