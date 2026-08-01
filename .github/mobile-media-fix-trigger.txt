@@ -1,1 +1,0 @@
-Apply the one-shot mobile media upload codemod from the trusted validation base.
