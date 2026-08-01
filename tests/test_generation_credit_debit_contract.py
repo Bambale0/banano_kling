@@ -10,7 +10,6 @@ import pytest
 
 from bot import miniapp
 
-
 PRODUCTION_GENERATION_FILES = (
     Path("bot/miniapp.py"),
     Path("bot/handlers/generation.py"),
