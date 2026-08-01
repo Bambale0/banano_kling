@@ -14,47 +14,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy backend to production host
+  ci_gate:
+    name: Wait for verified CI
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
-
-    env:
-      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
-      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
-      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
-      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
-      PROD_PROJECT_PATH: ${{ secrets.PROD_PROJECT_PATH }}
+    timeout-minutes: 50
 
     steps:
-      - name: Check deployment configuration
-        id: gate
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          if [ -z "${PROD_SSH_HOST:-}" ] && [ -z "${PROD_SSH_PRIVATE_KEY:-}" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Production deploy is disabled until PROD_SSH_* secrets are configured."
-            exit 0
-          fi
-
-          missing=()
-          [ -n "${PROD_SSH_HOST:-}" ] || missing+=(PROD_SSH_HOST)
-          [ -n "${PROD_SSH_PRIVATE_KEY:-}" ] || missing+=(PROD_SSH_PRIVATE_KEY)
-          [ -n "${PROD_SSH_KNOWN_HOSTS:-}" ] || missing+=(PROD_SSH_KNOWN_HOSTS)
-
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '::error::Missing production secrets: %s\n' "${missing[*]}"
-            exit 1
-          fi
-
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "Production SSH deployment is enabled"
-
       - name: Wait for the matching CI run
-        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'push'
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -62,7 +29,6 @@ jobs:
           set -Eeuo pipefail
 
           deadline=$((SECONDS + 2700))
-          run_id=""
 
           while [ "$SECONDS" -lt "$deadline" ]; do
             payload="$(
@@ -84,13 +50,13 @@ jobs:
             conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
             echo "CI run $run_id: status=$status conclusion=${conclusion:-pending}"
 
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                echo "Matching CI run passed"
-                exit 0
-              fi
-              echo "::error::Matching CI run finished with conclusion=$conclusion"
-              exit 1
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Matching CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              echo "Matching CI passed for $GITHUB_SHA"
+              exit 0
             fi
 
             sleep 15
@@ -99,7 +65,42 @@ jobs:
           echo "::error::Timed out waiting for CI run for $GITHUB_SHA"
           exit 1
 
-      - name: Configure SSH
+  github_ssh_deploy:
+    name: GitHub runner — SSH production deploy
+    needs: ci_gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    continue-on-error: true
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+      attempted: ${{ steps.result.outputs.attempted }}
+
+    env:
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+      PROD_PROJECT_PATH: ${{ secrets.PROD_PROJECT_PATH }}
+
+    steps:
+      - name: Check SSH deployment configuration
+        id: gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ -n "${PROD_SSH_HOST:-}" ] \
+            && [ -n "${PROD_SSH_PRIVATE_KEY:-}" ] \
+            && [ -n "${PROD_SSH_KNOWN_HOSTS:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "GitHub-hosted SSH deployment is enabled"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SSH deploy is not fully configured; falling back to self-hosted nuromix."
+          fi
+
+      - name: Configure pinned SSH
         if: steps.gate.outputs.enabled == 'true'
         shell: bash
         run: |
@@ -110,25 +111,8 @@ jobs:
           chmod 0600 "$HOME/.ssh/production_key" "$HOME/.ssh/known_hosts"
           ssh-keygen -y -f "$HOME/.ssh/production_key" >/dev/null
 
-      - name: Check SSH connection
-        if: steps.gate.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          deploy_user="${PROD_SSH_USER:-root}"
-          deploy_port="${PROD_SSH_PORT:-22}"
-
-          ssh \
-            -i "$HOME/.ssh/production_key" \
-            -p "$deploy_port" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=15 \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$deploy_user@$PROD_SSH_HOST" \
-            'printf "connected host=%s user=%s\n" "$(hostname)" "$(id -un)"'
-
-      - name: Deploy exact tanyapi commit
+      - name: Deploy exact commit over SSH
+        id: deploy
         if: steps.gate.outputs.enabled == 'true'
         shell: bash
         run: |
@@ -182,12 +166,7 @@ jobs:
           git fetch --prune origin tanyapi
           git switch tanyapi
           git reset --hard "$EXPECTED_SHA"
-
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
-            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
-            exit 1
-          fi
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
 
           run_root() {
             if [ "$(id -u)" -eq 0 ]; then
@@ -203,21 +182,15 @@ jobs:
           health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
           revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
 
-          echo "deployed_sha=$actual_sha"
+          echo "deployed_sha=$(git rev-parse HEAD)"
           echo "container_revision=$revision"
           echo "container_health=$health"
 
-          [ "$health" = "healthy" ] || {
-            echo "Container is not healthy after deployment" >&2
-            exit 1
-          }
-          [ "$revision" = "$EXPECTED_SHA" ] || {
-            echo "Container revision does not match deployed commit" >&2
-            exit 1
-          }
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
           REMOTE
 
-      - name: Collect remote diagnostics on failure
+      - name: Collect SSH deployment diagnostics
         if: failure() && steps.gate.outputs.enabled == 'true'
         continue-on-error: true
         shell: bash
@@ -238,23 +211,178 @@ jobs:
             "$deploy_user@$PROD_SSH_HOST" \
             "bash -s -- $quoted_path" <<'REMOTE'
           set +e
-          PROJECT_DIR="$1"
-          cd "$PROJECT_DIR" || exit 0
+          cd "$1" || exit 0
           echo '=== git ==='
           git status --short
           git log -1 --oneline
           echo '=== compose ==='
           docker compose -f compose.backend.yml ps
           docker compose -f compose.backend.yml logs --tail=200 bot
-          echo '=== container ==='
-          docker inspect banano-kling-bot --format '{{json .State}}'
           echo '=== systemd ==='
           systemctl is-active banano-kling
-          systemctl is-enabled banano-kling
           journalctl -u banano-kling -n 100 --no-pager
           REMOTE
+
+      - name: Record GitHub SSH result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          ENABLED: ${{ steps.gate.outputs.enabled }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          if [ "$ENABLED" = true ] && [ "$DEPLOY_OUTCOME" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo "attempted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            echo "attempted=${ENABLED:-false}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Remove SSH key
         if: always()
         shell: bash
         run: rm -f "$HOME/.ssh/production_key"
+
+  nuromix_deploy:
+    name: nuromix fallback — local production deploy
+    needs: [ci_gate, github_ssh_deploy]
+    if: >-
+      ${{
+        always() &&
+        needs.ci_gate.result == 'success' &&
+        needs.github_ssh_deploy.outputs.passed != 'true'
+      }}
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 55
+    env:
+      NUROMIX_PROJECT_PATH: ${{ vars.NUROMIX_BACKEND_PROJECT_PATH }}
+
+    steps:
+      - name: Deploy exact commit locally on nuromix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          project_dir="${NUROMIX_PROJECT_PATH:-/root/tanya/banano_kling}"
+          deploy_script="/tmp/neuromix-backend-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+
+          cat > "$deploy_script" <<'LOCAL'
+          set -Eeuo pipefail
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+
+          command -v git >/dev/null
+          command -v docker >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/banano-kling-production-deploy.lock
+          flock -n 9 || {
+            echo "Another production deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Git repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block automatic deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+
+          actual_sha="$(git rev-parse HEAD)"
+          [ "$actual_sha" = "$EXPECTED_SHA" ] || {
+            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+            exit 1
+          }
+
+          bash scripts/deploy_backend_docker.sh deploy
+          bash scripts/deploy_backend_docker.sh status
+
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+
+          echo "nuromix_host=$(hostname)"
+          echo "deployed_sha=$actual_sha"
+          echo "container_revision=$revision"
+          echo "container_health=$health"
+
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
+          LOCAL
+
+          chmod 0700 "$deploy_script"
+          cleanup() { rm -f "$deploy_script"; }
+          trap cleanup EXIT
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash "$deploy_script" "$project_dir" "$GITHUB_SHA"
+          else
+            sudo -n bash "$deploy_script" "$project_dir" "$GITHUB_SHA"
+          fi
+
+      - name: Collect local diagnostics on failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          project_dir="${NUROMIX_PROJECT_PATH:-/root/tanya/banano_kling}"
+          diagnostic='cd "$1" || exit 0
+          echo "=== host ==="
+          hostname
+          id
+          echo "=== git ==="
+          git status --short
+          git log -1 --oneline
+          echo "=== compose ==="
+          docker compose -f compose.backend.yml ps
+          docker compose -f compose.backend.yml logs --tail=200 bot
+          echo "=== systemd ==="
+          systemctl is-active banano-kling
+          journalctl -u banano-kling -n 100 --no-pager'
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash -c "$diagnostic" -- "$project_dir"
+          else
+            sudo -n bash -c "$diagnostic" -- "$project_dir"
+          fi
+
+  deployment_gate:
+    name: Production deployment gate
+    needs: [github_ssh_deploy, nuromix_deploy]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require one successful deployment path
+        env:
+          GITHUB_SSH_PASSED: ${{ needs.github_ssh_deploy.outputs.passed }}
+          NUROMIX_RESULT: ${{ needs.nuromix_deploy.result }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ "$GITHUB_SSH_PASSED" = true ]; then
+            echo "Production deployed through GitHub-hosted SSH runner"
+            exit 0
+          fi
+
+          if [ "$NUROMIX_RESULT" = success ]; then
+            echo "Production deployed through self-hosted nuromix runner"
+            exit 0
+          fi
+
+          echo "::error::Production was not deployed. github_ssh=$GITHUB_SSH_PASSED nuromix=$NUROMIX_RESULT"
+          exit 1
