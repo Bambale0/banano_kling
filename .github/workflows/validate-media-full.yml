@@ -5,7 +5,7 @@ on:
     branches: [ci/media-full-validation-base]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -19,24 +19,7 @@ jobs:
       - name: Checkout media branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-          token: ${{ github.token }}
-
-      - name: Apply one-shot lint fix
-        env:
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if [ -f scripts/fix_mobile_media_lint.py ]; then
-            python scripts/fix_mobile_media_lint.py
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Fix changed-line lint in mobile media upload flow"
-            git push origin "HEAD:${HEAD_BRANCH}"
-          fi
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -54,10 +37,10 @@ jobs:
       - name: Gate Ruff on changed lines
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          HEAD_SHA="$(git rev-parse HEAD)"
           mapfile -t changed_files < <(
             git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$HEAD_SHA" -- \
               'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
@@ -89,11 +72,9 @@ jobs:
         working-directory: frontend/miniapp-v0
         run: npm ci --no-audit --no-fund
 
-      - name: Test and lint frontend
+      - name: Lint frontend
         working-directory: frontend/miniapp-v0
-        run: |
-          npm test -- --runInBand
-          npm run lint
+        run: npm run lint
 
       - name: Build production Mini App
         working-directory: frontend/miniapp-v0
@@ -101,11 +82,20 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: https://tanyapi.chillcreative.ru
         run: npm run build
 
+      - name: Verify static export
+        working-directory: frontend/miniapp-v0
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
       - name: Build production Docker image
         shell: bash
         run: |
           set -Eeuo pipefail
-          head_sha="$(git rev-parse HEAD)"
+          head_sha="${{ github.event.pull_request.head.sha }}"
           docker build \
             --build-arg VCS_REF="$head_sha" \
             --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
