@@ -221,6 +221,18 @@ def _build_gpt_user_content(
     return content
 
 
+def _build_claude_image_source(image_url: str) -> Dict[str, str]:
+    if image_url.startswith("data:image/") and "," in image_url:
+        header, encoded = image_url.split(",", 1)
+        media_type = header.removeprefix("data:").split(";", 1)[0]
+        return {
+            "type": "base64",
+            "media_type": media_type,
+            "data": encoded,
+        }
+    return {"type": "url", "url": image_url}
+
+
 class PhotoPromptService:
     def __init__(
         self,
@@ -372,7 +384,7 @@ class PhotoPromptService:
                         },
                         {
                             "type": "image",
-                            "source": {"type": "url", "url": image_url},
+                            "source": _build_claude_image_source(image_url),
                         },
                     ],
                 }

@@ -436,6 +436,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
         name: uploaded.name,
         url: uploaded.url,
       })
+      setPreviewUrl(uploaded.url)
       toast.success('Фото загружено')
     } catch (error) {
       if (photoUploadAttemptRef.current !== attemptId) return

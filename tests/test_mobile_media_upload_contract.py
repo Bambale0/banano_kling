@@ -24,5 +24,7 @@ def test_mobile_media_upload_contract() -> None:
     assert "normalizedMediaUploadFile" in api
     assert "filesRef.current" in upload_area
     assert "photoUploadAttemptRef" in workspace
+    assert "setPreviewUrl(uploaded.url)" in workspace
     assert "previewUploadAttemptRef" in trends
     assert "image_source_to_analysis_input" in photo_service
+    assert "_build_claude_image_source" in photo_service
