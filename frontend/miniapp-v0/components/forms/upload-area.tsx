@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Upload, X, Loader2, Video, Music, Plus } from 'lucide-react'
@@ -16,10 +16,51 @@ interface UploadAreaProps {
   libraryLabel?: string
 }
 
-export function UploadArea({ 
-  files, 
-  onFilesChange, 
-  maxFiles, 
+const MEDIA_MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  avif: 'image/avif',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+}
+
+function normalizedBrowserFile(file: File): File {
+  const declaredType = String(file.type || '').toLowerCase()
+  if (declaredType && declaredType !== 'application/octet-stream') return file
+
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  const inferredType = MEDIA_MIME_BY_EXTENSION[extension]
+  if (!inferredType) return file
+
+  return new File([file], file.name, {
+    type: inferredType,
+    lastModified: file.lastModified,
+  })
+}
+
+function matchesAcceptedType(file: File, accept: string) {
+  const normalized = normalizedBrowserFile(file)
+  if (accept.startsWith('image/')) return normalized.type.startsWith('image/')
+  if (accept.startsWith('video/')) return normalized.type.startsWith('video/')
+  if (accept.startsWith('audio/')) return normalized.type.startsWith('audio/')
+  return true
+}
+
+export function UploadArea({
+  files,
+  onFilesChange,
+  maxFiles,
   accept,
   required,
   onUpload,
@@ -27,70 +68,84 @@ export function UploadArea({
   libraryLabel = 'Сохранённые референсы',
 }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const filesRef = useRef(files)
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
+  useEffect(() => {
+    filesRef.current = files
+  }, [files])
+
+  const publishFiles = useCallback((nextFiles: UploadedFile[]) => {
+    filesRef.current = nextFiles
+    onFilesChange(nextFiles)
+  }, [onFilesChange])
+
   const handleFiles = useCallback(async (fileList: FileList) => {
     setUploadError(null)
-    let currentFiles = [...files]
 
-    for (const file of Array.from(fileList)) {
+    for (const sourceFile of Array.from(fileList)) {
+      const file = normalizedBrowserFile(sourceFile)
+      const currentFiles = filesRef.current
       if (currentFiles.length >= maxFiles) break
-      if (accept.startsWith('image/') && !file.type.startsWith('image/')) {
-        setUploadError('Можно загружать только изображения')
-        continue
-      }
-      if (accept.startsWith('video/') && !file.type.startsWith('video/')) {
-        setUploadError('Можно загружать только видео')
-        continue
-      }
-      if (accept.startsWith('audio/') && !file.type.startsWith('audio/')) {
-        setUploadError('Можно загружать только аудио')
+      if (!matchesAcceptedType(file, accept)) {
+        setUploadError(
+          accept.startsWith('image/')
+            ? 'Можно загружать только изображения'
+            : accept.startsWith('video/')
+              ? 'Можно загружать только видео'
+              : 'Можно загружать только аудио'
+        )
         continue
       }
 
+      const localUrl = file.type.startsWith('image/') || file.type.startsWith('video/')
+        ? URL.createObjectURL(file)
+        : ''
       const pendingFile: UploadedFile = {
         id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         name: file.name,
-        url: file.type.startsWith('image') ? URL.createObjectURL(file) : '',
-        type: file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image',
+        url: localUrl,
+        type: file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image',
         size: file.size,
         uploading: true,
       }
 
-      currentFiles = [...currentFiles, pendingFile]
-      onFilesChange(currentFiles)
+      publishFiles([...filesRef.current, pendingFile])
 
       try {
         const uploadedFile = onUpload
           ? await onUpload(file)
           : {
               ...pendingFile,
-              url: pendingFile.url || URL.createObjectURL(file),
               uploading: false,
             }
-        currentFiles = currentFiles.map((item) =>
-          item.id === pendingFile.id ? { ...uploadedFile, id: pendingFile.id } : item
+        const latestFiles = filesRef.current
+        const nextFiles = latestFiles.map((item) =>
+          item.id === pendingFile.id ? { ...uploadedFile, id: pendingFile.id, uploading: false } : item
         )
-        onFilesChange(currentFiles)
+        publishFiles(nextFiles)
       } catch (error) {
-        currentFiles = currentFiles.filter((item) => item.id !== pendingFile.id)
-        onFilesChange(currentFiles)
+        publishFiles(filesRef.current.filter((item) => item.id !== pendingFile.id))
         setUploadError(
           error instanceof Error ? error.message : 'Не удалось загрузить файл'
         )
+      } finally {
+        if (localUrl) URL.revokeObjectURL(localUrl)
       }
     }
-  }, [accept, files, maxFiles, onFilesChange, onUpload])
+  }, [accept, maxFiles, onUpload, publishFiles])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
+  const handleDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault()
     setIsDragging(false)
-    handleFiles(e.dataTransfer.files)
+    void handleFiles(event.dataTransfer.files)
   }, [handleFiles])
 
   const handleRemove = (id: string) => {
-    onFilesChange(files.filter(f => f.id !== id))
+    const removed = filesRef.current.find((file) => file.id === id)
+    if (removed?.url.startsWith('blob:')) URL.revokeObjectURL(removed.url)
+    publishFiles(filesRef.current.filter((file) => file.id !== id))
   }
 
   const canUploadMore = files.length < maxFiles
@@ -98,31 +153,30 @@ export function UploadArea({
 
   const handleAddFromLibrary = (file: UploadedFile) => {
     if (!canUploadMore) return
-    onFilesChange([...files, { ...file, id: `${file.id}_${Date.now()}` }])
+    publishFiles([...filesRef.current, { ...file, id: `${file.id}_${Date.now()}` }])
     setUploadError(null)
   }
 
   return (
-    <div className="space-y-3">
-      {/* Dropzone */}
+    <div className="space-y-3" aria-busy={files.some((file) => file.uploading)}>
       {canUploadMore && (
         <div
-          onDragOver={(e) => {
-            e.preventDefault()
+          onDragOver={(event) => {
+            event.preventDefault()
             setIsDragging(true)
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
           className={cn(
-            "relative flex flex-col items-center justify-center",
-            "p-6 rounded-xl border-2 border-dashed cursor-pointer",
-            "transition-all duration-200",
-            isDragging 
-              ? "border-gold bg-gold/5" 
-              : required 
-                ? "border-gold/50 bg-gold/5 hover:border-gold hover:bg-gold/10"
-                : "border-border/50 bg-secondary/30 hover:border-border hover:bg-secondary/50"
+            'relative flex flex-col items-center justify-center',
+            'p-6 rounded-xl border-2 border-dashed cursor-pointer',
+            'transition-all duration-200',
+            isDragging
+              ? 'border-gold bg-gold/5'
+              : required
+                ? 'border-gold/50 bg-gold/5 hover:border-gold hover:bg-gold/10'
+                : 'border-border/50 bg-secondary/30 hover:border-border hover:bg-secondary/50'
           )}
         >
           <input
@@ -130,17 +184,21 @@ export function UploadArea({
             type="file"
             accept={accept}
             multiple={maxFiles > 1}
-            onChange={(e) => e.target.files && void handleFiles(e.target.files)}
+            onChange={(event) => {
+              const selectedFiles = event.target.files
+              event.target.value = ''
+              if (selectedFiles) void handleFiles(selectedFiles)
+            }}
             className="sr-only"
           />
-          
+
           <div className={cn(
-            "w-12 h-12 rounded-xl flex items-center justify-center mb-3",
-            required ? "bg-gold/20" : "bg-secondary/80"
+            'w-12 h-12 rounded-xl flex items-center justify-center mb-3',
+            required ? 'bg-gold/20' : 'bg-secondary/80'
           )}>
-            <Upload className={cn("w-6 h-6", required ? "text-gold" : "text-muted-foreground")} />
+            <Upload className={cn('w-6 h-6', required ? 'text-gold' : 'text-muted-foreground')} />
           </div>
-          
+
           <p className="text-sm text-foreground mb-1">
             {isDragging ? 'Отпустите файлы' : 'Нажмите или перетащите'}
           </p>
@@ -163,8 +221,8 @@ export function UploadArea({
                 type="button"
                 onClick={() => handleAddFromLibrary(file)}
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-all duration-200",
-                  "border-border/50 bg-secondary/40 text-foreground hover:border-gold/40 hover:bg-secondary/70"
+                  'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-all duration-200',
+                  'border-border/50 bg-secondary/40 text-foreground hover:border-gold/40 hover:bg-secondary/70'
                 )}
               >
                 {file.type === 'image' ? (
@@ -186,19 +244,17 @@ export function UploadArea({
         </div>
       )}
 
-      {/* File chips */}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {files.map((file) => (
             <div
               key={file.id}
               className={cn(
-                "group relative flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg",
-                "bg-secondary/80 border border-border/50",
-                "transition-all duration-200 hover:border-border"
+                'group relative flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg',
+                'bg-secondary/80 border border-border/50',
+                'transition-all duration-200 hover:border-border'
               )}
             >
-              {/* Preview */}
               <div className="w-8 h-8 rounded overflow-hidden bg-secondary flex-shrink-0">
                 {file.uploading ? (
                   <div className="w-full h-full flex items-center justify-center">
@@ -216,22 +272,21 @@ export function UploadArea({
                   </div>
                 )}
               </div>
-              
-              {/* Name */}
+
               <span className="text-xs text-foreground max-w-[100px] truncate">
                 {file.name}
               </span>
-              
-              {/* Remove button */}
+
               <button
-                onClick={(e) => {
-                  e.stopPropagation()
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
                   handleRemove(file.id)
                 }}
                 className={cn(
-                  "w-6 h-6 rounded flex items-center justify-center",
-                  "text-muted-foreground hover:text-foreground hover:bg-secondary",
-                  "transition-colors"
+                  'w-6 h-6 rounded flex items-center justify-center',
+                  'text-muted-foreground hover:text-foreground hover:bg-secondary',
+                  'transition-colors'
                 )}
               >
                 <X className="w-3.5 h-3.5" />
@@ -247,7 +302,7 @@ export function UploadArea({
 
       <p className="text-xs text-muted-foreground">
         {accept.startsWith('image/')
-          ? 'PNG, JPG, WEBP. Удаляйте лишние референсы прямо из списка.'
+          ? 'PNG, JPG, WEBP, HEIC. Удаляйте лишние референсы прямо из списка.'
           : 'MP3, WAV, M4A или MP4/MOV для видео-референсов. Держите референсы короткими и чистыми.'}
       </p>
     </div>

@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,18 @@ def _build_gpt_user_content(
     return content
 
 
+def _build_claude_image_source(image_url: str) -> dict[str, str]:
+    if image_url.startswith("data:image/") and "," in image_url:
+        header, encoded = image_url.split(",", 1)
+        media_type = header.removeprefix("data:").split(";", 1)[0]
+        return {
+            "type": "base64",
+            "media_type": media_type,
+            "data": encoded,
+        }
+    return {"type": "url", "url": image_url}
+
+
 class PhotoPromptService:
     def __init__(
         self,
@@ -371,7 +384,7 @@ class PhotoPromptService:
                         },
                         {
                             "type": "image",
-                            "source": {"type": "url", "url": image_url},
+                            "source": _build_claude_image_source(image_url),
                         },
                     ],
                 }
@@ -444,6 +457,8 @@ class PhotoPromptService:
             raise RuntimeError("KIE_AI_API_KEY is not configured")
 
         image_url = (image_url or "").strip()
+        if image_url:
+            image_url = image_source_to_analysis_input(image_url)
         has_image = bool(image_url)
         has_audio = bool(audio_bytes)
         if not has_image and not has_audio:

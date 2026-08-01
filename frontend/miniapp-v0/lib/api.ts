@@ -335,6 +335,41 @@ export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
   return response.task
 }
 
+const MEDIA_UPLOAD_TIMEOUT_MS = 60_000
+
+const MEDIA_MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  avif: 'image/avif',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+}
+
+function normalizedMediaUploadFile(file: File): File {
+  const declaredType = String(file.type || '').toLowerCase()
+  if (declaredType && declaredType !== 'application/octet-stream') return file
+
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  const inferredType = MEDIA_MIME_BY_EXTENSION[extension]
+  if (!inferredType) return file
+
+  return new File([file], file.name, {
+    type: inferredType,
+    lastModified: file.lastModified,
+  })
+}
+
 export async function uploadFile(
   fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio',
   file: File
@@ -343,18 +378,34 @@ export async function uploadFile(
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
+
+  const normalizedFile = normalizedMediaUploadFile(file)
   const formData = new FormData()
   formData.append('init_data', initData)
   formData.append('file_kind', fileKind)
-  formData.append('file', file)
+  formData.append('file', normalizedFile)
 
-  const response = await fetch(`${getApiBasePath()}/upload`, {
-    method: 'POST',
-    headers: { Accept: 'application/json' },
-    body: formData,
-    cache: 'no-store',
-    credentials: 'same-origin',
-  })
+  const controller = new AbortController()
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), MEDIA_UPLOAD_TIMEOUT_MS)
+  let response: Response
+  try {
+    response = await fetch(`${getApiBasePath()}/upload`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: formData,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Загрузка не завершилась за 60 секунд. Проверьте сеть и повторите.')
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeoutId)
+  }
+
   const data = await parseJson<{
     ok: true
     url: string
@@ -368,7 +419,7 @@ export async function uploadFile(
     name: data.filename,
     url: data.url,
     type: data.kind,
-    size: file.size,
+    size: normalizedFile.size,
     saved_reference_id: data.reference?.id || null,
     created_at: data.reference?.created_at || null,
     source: data.reference?.source,

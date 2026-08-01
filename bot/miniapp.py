@@ -177,6 +177,12 @@ def _miniapp_expected_error_response(error: Exception) -> web.Response | None:
                 status=401,
             )
 
+    if isinstance(error, TimeoutError):
+        return web.json_response(
+            {"ok": False, "error": "Загрузка не завершилась за 60 секунд. Попробуйте ещё раз."},
+            status=408,
+        )
+
     if isinstance(error, ConnectionResetError):
         return web.json_response(
             {"ok": False, "error": "Загрузка была прервана. Попробуйте ещё раз."},
@@ -221,10 +227,16 @@ def _bounded_int(value: Any, *, default: int, minimum: int = 1, maximum: int) ->
 
 
 def _saved_reference_payload(reference: SavedReference) -> dict[str, Any]:
+    file_url = reference.file_url
+    if reference.kind == "image":
+        from bot.services.media_input_utils import image_source_to_provider_safe_png_url
+
+        file_url = image_source_to_provider_safe_png_url(file_url)
+
     return {
         "id": str(reference.id),
         "kind": reference.kind,
-        "url": reference.file_url,
+        "url": file_url,
         "filename": reference.original_filename or Path(reference.file_url).name,
         "content_type": reference.content_type,
         "source": reference.source,
@@ -670,6 +682,71 @@ FILE_KIND_MAP = {
     "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
     "assistant_audio": {"prefix": "audio/", "fallback_ext": "webm", "group": "audio"},
 }
+
+
+def _normalize_miniapp_upload_content_type(
+    file_kind: str,
+    filename: str,
+    content_type: str,
+    raw: bytes,
+) -> str:
+    """Accept iOS WebView uploads with missing/octet-stream MIME after safe sniffing."""
+    declared = (content_type or "").split(";", 1)[0].strip().lower()
+    config_entry = FILE_KIND_MAP[file_kind]
+    expected_prefix = config_entry["prefix"]
+    if declared.startswith(expected_prefix):
+        return declared
+
+    if declared not in {"", "application/octet-stream", "binary/octet-stream"}:
+        return ""
+
+    filename_mime = (mimetypes.guess_type(filename or "")[0] or "").lower()
+    if filename_mime.startswith(expected_prefix):
+        return filename_mime
+
+    extension = Path(filename or "").suffix.lstrip(".").lower()
+    extension_mimes = {
+        "heic": "image/heic",
+        "heif": "image/heif",
+        "avif": "image/avif",
+        "mov": "video/quicktime",
+        "m4v": "video/x-m4v",
+        "m4a": "audio/mp4",
+    }
+    extension_mime = extension_mimes.get(extension, "")
+    if extension_mime.startswith(expected_prefix):
+        return extension_mime
+
+    if config_entry["group"] != "image":
+        return ""
+
+    try:
+        import io
+
+        from PIL import Image, UnidentifiedImageError
+
+        try:
+            from pillow_heif import register_heif_opener
+        except ImportError:
+            register_heif_opener = None
+        if register_heif_opener is not None:
+            register_heif_opener()
+
+        with Image.open(io.BytesIO(raw)) as image:
+            image_format = str(image.format or "").upper()
+        return {
+            "JPEG": "image/jpeg",
+            "JPG": "image/jpeg",
+            "PNG": "image/png",
+            "WEBP": "image/webp",
+            "GIF": "image/gif",
+            "TIFF": "image/tiff",
+            "AVIF": "image/avif",
+            "HEIF": "image/heif",
+            "HEIC": "image/heic",
+        }.get(image_format, "")
+    except (OSError, UnidentifiedImageError):
+        return ""
 
 MINIAPP_ASSISTANT_AUDIO_EXT_FORMATS = {
     "mp3": "mp3",
@@ -2486,7 +2563,7 @@ async def miniapp_action(request: web.Request) -> web.Response:
 
 async def miniapp_upload(request: web.Request) -> web.Response:
     try:
-        data = await request.post()
+        data = await asyncio.wait_for(request.post(), timeout=60)
         init_data = str(data.get("init_data", ""))
         file_kind = str(data.get("file_kind", "image_reference"))
         upload = data.get("file")
@@ -2505,20 +2582,29 @@ async def miniapp_upload(request: web.Request) -> web.Response:
             )
 
         config_entry = FILE_KIND_MAP[file_kind]
-        content_type = getattr(upload, "content_type", "") or ""
-        if not content_type.startswith(config_entry["prefix"]):
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": f"Ожидался тип {config_entry['prefix']}*, получен {content_type or 'unknown'}",
-                },
-                status=400,
-            )
-
         raw = upload.file.read()
         if not isinstance(raw, (bytes, bytearray)) or not raw:
             return web.json_response(
                 {"ok": False, "error": "Не удалось прочитать файл"}, status=400
+            )
+
+        content_type = _normalize_miniapp_upload_content_type(
+            file_kind,
+            getattr(upload, "filename", "") or "",
+            getattr(upload, "content_type", "") or "",
+            bytes(raw),
+        )
+        if not content_type:
+            declared_type = getattr(upload, "content_type", "") or "unknown"
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": (
+                        f"Формат файла не распознан: {declared_type}. "
+                        "Используйте JPG, PNG, WEBP, HEIC, MP4 или MOV."
+                    ),
+                },
+                status=400,
             )
 
         if len(raw) > 50 * 1024 * 1024:
