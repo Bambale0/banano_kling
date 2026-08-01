@@ -123,7 +123,8 @@ jobs:
     name: GitHub runner — Safe regression suite
     runs-on: ubuntu-24.04
     needs: lint
-    if: always()
+    if: >-
+      ${{ always() && needs.lint.outputs.passed == 'true' }}
     timeout-minutes: 45
     continue-on-error: ${{ github.event_name == 'push' }}
     outputs:
@@ -190,7 +191,12 @@ jobs:
     name: GitHub runner — Production Docker image
     runs-on: ubuntu-24.04
     needs: [lint, test]
-    if: always()
+    if: >-
+      ${{
+        always() &&
+        needs.lint.outputs.passed == 'true' &&
+        needs.test.outputs.passed == 'true'
+      }}
     timeout-minutes: 45
     continue-on-error: ${{ github.event_name == 'push' }}
     permissions:
