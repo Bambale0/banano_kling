@@ -19,22 +19,29 @@ env:
 
 jobs:
   lint:
-    name: Python and deployment validation
+    name: GitHub runner — Python and deployment validation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    continue-on-error: ${{ github.event_name == 'push' }}
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python 3.12
+        id: setup_python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
+        id: dependencies
         run: |
           python -m pip install --quiet --upgrade pip
           pip install --quiet ruff pytest
@@ -42,12 +49,14 @@ jobs:
           python -m pip check
 
       - name: Validate deployment shell scripts
+        id: shell_validation
         run: |
           bash -n scripts/deploy_backend_docker.sh
           bash -n scripts/backup_db.sh
           bash -n cdn.sh
 
       - name: Lint changed Python files with Ruff
+        id: ruff
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -82,29 +91,59 @@ jobs:
           exit "$status"
 
       - name: Upload Ruff diagnostics
-        if: failure()
+        if: steps.ruff.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
-          name: ruff-output
+          name: ruff-output-github
           path: ruff-output.txt
           if-no-files-found: ignore
 
+      - name: Record GitHub lint result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP: ${{ steps.setup_python.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          SHELL_VALIDATION: ${{ steps.shell_validation.outcome }}
+          RUFF: ${{ steps.ruff.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] \
+            && [ "$SETUP" = success ] \
+            && [ "$DEPENDENCIES" = success ] \
+            && [ "$SHELL_VALIDATION" = success ] \
+            && [ "$RUFF" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
-    name: Safe regression suite
+    name: GitHub runner — Safe regression suite
     runs-on: ubuntu-24.04
     needs: lint
+    if: >-
+      ${{ always() && needs.lint.outputs.passed == 'true' }}
     timeout-minutes: 45
+    continue-on-error: ${{ github.event_name == 'push' }}
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.12
+        id: setup_python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
+        id: dependencies
         run: |
           python -m pip install --quiet --upgrade pip
           pip install --quiet pytest pytest-asyncio pytest-mock
@@ -122,24 +161,54 @@ jobs:
             --tb=short | tee full-pytest-output.txt
 
       - name: Upload full pytest diagnostics
-        if: failure() && steps.full_suite.outcome == 'failure'
+        if: steps.full_suite.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
-          name: full-pytest-output
+          name: full-pytest-output-github
           path: full-pytest-output.txt
           if-no-files-found: ignore
 
-  docker-image:
-    name: Production Docker image
+      - name: Record GitHub test result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP: ${{ steps.setup_python.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          TESTS: ${{ steps.full_suite.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] \
+            && [ "$SETUP" = success ] \
+            && [ "$DEPENDENCIES" = success ] \
+            && [ "$TESTS" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docker_image:
+    name: GitHub runner — Production Docker image
     runs-on: ubuntu-24.04
     needs: [lint, test]
+    if: >-
+      ${{
+        always() &&
+        needs.lint.outputs.passed == 'true' &&
+        needs.test.outputs.passed == 'true'
+      }}
     timeout-minutes: 45
+    continue-on-error: ${{ github.event_name == 'push' }}
     permissions:
       contents: read
       packages: write
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
 
       - name: Prepare image names
         id: image
@@ -153,9 +222,11 @@ jobs:
           echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build image with GitHub Actions cache
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -170,6 +241,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Verify image filesystem and Python imports
+        id: verify
         env:
           LOCAL_IMAGE: ${{ steps.image.outputs.local }}
         run: |
@@ -188,9 +260,11 @@ jobs:
           docker run --rm --entrypoint sqlite3 "$LOCAL_IMAGE" --version >/dev/null
 
       - name: Validate production Compose configuration
+        id: compose
         env:
           LOCAL_IMAGE: ${{ steps.image.outputs.local }}
         run: |
+          trap 'rm -f .env .env.postgres' EXIT
           cat > .env <<'ENV'
           BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY
           WEBHOOK_HOST=https://example.invalid
@@ -200,9 +274,9 @@ jobs:
           ENV
           : > .env.postgres
           BANANO_IMAGE="$LOCAL_IMAGE" docker compose -f compose.backend.yml config --quiet
-          rm -f .env .env.postgres
 
       - name: Log in to GitHub Container Registry
+        id: registry_login
         if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
@@ -211,6 +285,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish verified image
+        id: publish
         if: github.event_name == 'push'
         env:
           LOCAL_IMAGE: ${{ steps.image.outputs.local }}
@@ -229,11 +304,246 @@ jobs:
             docker push "$IMAGE_REPOSITORY:latest"
           fi
 
-  test-live:
+      - name: Record GitHub Docker result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          IMAGE: ${{ steps.image.outcome }}
+          BUILDX: ${{ steps.buildx.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          VERIFY: ${{ steps.verify.outcome }}
+          COMPOSE: ${{ steps.compose.outcome }}
+          LOGIN: ${{ steps.registry_login.outcome }}
+          PUBLISH: ${{ steps.publish.outcome }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          publish_ok=true
+          if [ "$EVENT_NAME" = push ]; then
+            [ "$LOGIN" = success ] && [ "$PUBLISH" = success ] || publish_ok=false
+          fi
+
+          if [ "$CHECKOUT" = success ] \
+            && [ "$IMAGE" = success ] \
+            && [ "$BUILDX" = success ] \
+            && [ "$BUILD" = success ] \
+            && [ "$VERIFY" = success ] \
+            && [ "$COMPOSE" = success ] \
+            && [ "$publish_ok" = true ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  nuromix_fallback:
+    name: nuromix fallback — Full CI validation
+    needs: [lint, test, docker_image]
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        (github.ref == 'refs/heads/tanyapi' || github.ref == 'refs/heads/main') &&
+        (
+          needs.lint.outputs.passed != 'true' ||
+          needs.test.outputs.passed != 'true' ||
+          needs.docker_image.outputs.passed != 'true'
+        )
+      }}
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet ruff pytest pytest-asyncio pytest-mock
+          pip install --quiet -r requirements.txt
+          python -m pip check
+
+      - name: Validate deployment shell scripts
+        run: |
+          bash -n scripts/deploy_backend_docker.sh
+          bash -n scripts/backup_db.sh
+          bash -n cdn.sh
+
+      - name: Lint changed Python files with Ruff
+        id: ruff
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          BASE_SHA="$PUSH_BEFORE_SHA"
+          HEAD_SHA="$CURRENT_SHA"
+
+          if [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            BASE_SHA="${HEAD_SHA}^"
+          fi
+
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$HEAD_SHA" -- \
+              'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
+              'tests/*.py' 'tests/**/*.py'
+          )
+
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No changed Python files to lint"
+            exit 0
+          fi
+
+          printf 'Linting changed files on nuromix:\n%s\n' "${changed_files[*]}"
+          set +e
+          ruff check "${changed_files[@]}" \
+            --ignore=E402,F403,F405,E501 \
+            --output-format=concise 2>&1 | tee ruff-output-nuromix.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      - name: Upload nuromix Ruff diagnostics
+        if: failure() && steps.ruff.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ruff-output-nuromix
+          path: ruff-output-nuromix.txt
+          if-no-files-found: ignore
+
+      - name: Run full safe regression suite
+        id: full_suite
+        run: |
+          set -o pipefail
+          pytest tests/ \
+            --ignore=tests/live \
+            -m "not live_smoke" \
+            -v \
+            --tb=short | tee full-pytest-output-nuromix.txt
+
+      - name: Upload nuromix pytest diagnostics
+        if: failure() && steps.full_suite.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: full-pytest-output-nuromix
+          path: full-pytest-output-nuromix.txt
+          if-no-files-found: ignore
+
+      - name: Prepare image names
+        id: image
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA:0:12}"
+          echo "local=banano-kling-nuromix:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "repository=ghcr.io/${owner}/banano-kling-bot" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx on nuromix
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image on nuromix
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.local }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.image.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify nuromix image
+        env:
+          LOCAL_IMAGE: ${{ steps.image.outputs.local }}
+        run: |
+          docker run --rm --entrypoint python "$LOCAL_IMAGE" \
+            -m compileall -q /app/bot /app/scripts
+
+          docker run --rm \
+            -e BOT_TOKEN='123456:TEST_TOKEN_FOR_CI_ONLY' \
+            -e BANANO_SKIP_PROJECT_ENV=1 \
+            -e BANANO_LOG_TO_STDOUT=1 \
+            --entrypoint python "$LOCAL_IMAGE" \
+            -c 'import bot.config, bot.database, bot.main, bot.miniapp; print("nuromix container imports: ok")'
+
+          docker run --rm --entrypoint ffmpeg "$LOCAL_IMAGE" -version >/dev/null
+          docker run --rm --entrypoint pg_dump "$LOCAL_IMAGE" --version >/dev/null
+          docker run --rm --entrypoint sqlite3 "$LOCAL_IMAGE" --version >/dev/null
+
+      - name: Validate production Compose on nuromix
+        env:
+          LOCAL_IMAGE: ${{ steps.image.outputs.local }}
+        run: |
+          trap 'rm -f .env .env.postgres' EXIT
+          cat > .env <<'ENV'
+          BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY
+          WEBHOOK_HOST=https://example.invalid
+          WEBHOOK_PORT=1888
+          DATABASE_URL=sqlite:////app/data/ci.db
+          REDIS_URL=redis://127.0.0.1:6379/0
+          ENV
+          : > .env.postgres
+          BANANO_IMAGE="$LOCAL_IMAGE" docker compose -f compose.backend.yml config --quiet
+
+      - name: Log in to GitHub Container Registry from nuromix
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish nuromix-verified image
+        env:
+          LOCAL_IMAGE: ${{ steps.image.outputs.local }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          docker tag "$LOCAL_IMAGE" "$IMAGE_REPOSITORY:$SHA_TAG"
+          docker push "$IMAGE_REPOSITORY:$SHA_TAG"
+
+          docker tag "$LOCAL_IMAGE" "$IMAGE_REPOSITORY:$REF_NAME"
+          docker push "$IMAGE_REPOSITORY:$REF_NAME"
+
+          if [ "$REF_NAME" = "main" ]; then
+            docker tag "$LOCAL_IMAGE" "$IMAGE_REPOSITORY:latest"
+            docker push "$IMAGE_REPOSITORY:latest"
+          fi
+
+  test_live:
     name: Live provider smoke tests
-    runs-on: ubuntu-24.04
-    needs: [lint, test, docker-image]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, test, docker_image, nuromix_fallback]
+    if: >-
+      ${{
+        always() &&
+        github.ref == 'refs/heads/main' &&
+        github.event_name == 'push' &&
+        (
+          (
+            needs.lint.outputs.passed == 'true' &&
+            needs.test.outputs.passed == 'true' &&
+            needs.docker_image.outputs.passed == 'true'
+          ) ||
+          needs.nuromix_fallback.result == 'success'
+        )
+      }}
+    runs-on: ${{ needs.nuromix_fallback.result == 'success' && fromJSON('["self-hosted","linux","x64","nuromix"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
 
     steps:
