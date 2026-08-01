@@ -29,6 +29,17 @@ def _local_path_for_relative_upload(relative_path: str) -> str:
     return os.path.join("static", "uploads", relative_path)
 
 
+def _provider_safe_reference_url(file_url: str, kind: str) -> str:
+    if kind != "image":
+        return file_url
+    try:
+        safe_url = image_source_to_provider_safe_png_url(file_url)
+        return safe_url or file_url
+    except Exception:
+        logger.exception("Failed to normalize image reference: %s", file_url)
+        return file_url
+
+
 async def save_reference_file(
     telegram_id: int,
     file_bytes: bytes,
@@ -50,15 +61,11 @@ async def save_reference_file(
         if existing:
             local_path = resolve_local_upload_path(existing.file_url)
             if local_path and os.path.exists(local_path):
-                if normalized_kind == "image":
-                    try:
-                        image_source_to_provider_safe_png_url(existing.file_url)
-                    except Exception:
-                        logger.exception("Failed to restore png sidecar for existing reference: %s", existing.file_url)
+                public_url = _provider_safe_reference_url(existing.file_url, normalized_kind)
                 await touch_saved_references(
                     telegram_id, [existing.file_url], kind=normalized_kind
                 )
-                return existing.file_url, existing
+                return public_url, existing
 
         safe_ext = (file_ext or "bin").lower().strip(".")
         month = datetime.now().strftime("%Y%m")
@@ -71,22 +78,23 @@ async def save_reference_file(
         full_path = _local_path_for_relative_upload(relative_path)
 
         if not os.path.exists(full_path):
-            with open(full_path, "wb") as f:
-                f.write(bytes(file_bytes))
+            with open(full_path, "wb") as file_handle:
+                file_handle.write(bytes(file_bytes))
 
-        public_url = _build_reference_public_url(relative_path)
-        if normalized_kind == "image":
-            try:
-                image_source_to_provider_safe_png_url(public_url)
-            except Exception:
-                logger.exception("Failed to create png sidecar for reference: %s", public_url)
+        original_public_url = _build_reference_public_url(relative_path)
+        public_url = _provider_safe_reference_url(original_public_url, normalized_kind)
+        persisted_content_type = (
+            "image/png"
+            if normalized_kind == "image" and public_url != original_public_url
+            else content_type
+        )
         saved_reference = await save_user_reference(
             telegram_id,
             kind=normalized_kind,
             file_url=public_url,
             file_hash=file_hash,
             original_filename=original_filename,
-            content_type=content_type,
+            content_type=persisted_content_type,
             source=source,
         )
         return public_url, saved_reference

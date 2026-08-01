@@ -410,6 +410,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
   const [goal, setGoal] = useState('максимально похожее изображение для повторной генерации')
   const [isUploading, setIsUploading] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const photoUploadAttemptRef = useRef(0)
   const [result, setРезультат] = useState<{
     prompt_en: string
     prompt_ru: string
@@ -418,22 +419,33 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
   } | null>(null)
 
   async function handleUpload(file: File) {
+    const attemptId = ++photoUploadAttemptRef.current
+    const localPreviewUrl = URL.createObjectURL(file)
     setIsUploading(true)
     setРезультат(null)
+    setReference(null)
+    setPreviewUrl((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return localPreviewUrl
+    })
 
     try {
-      setPreviewUrl(URL.createObjectURL(file))
       const uploaded = await uploadFile('image_reference', file)
+      if (photoUploadAttemptRef.current !== attemptId) return
       setReference({
         name: uploaded.name,
         url: uploaded.url,
       })
       toast.success('Фото загружено')
     } catch (error) {
+      if (photoUploadAttemptRef.current !== attemptId) return
+      setReference(null)
+      setPreviewUrl((current) => current === localPreviewUrl ? null : current)
       const message = error instanceof Error ? error.message : 'Не удалось загрузить фото'
       toast.error('Ошибка загрузки', { description: message })
     } finally {
-      setIsUploading(false)
+      if (photoUploadAttemptRef.current === attemptId) setIsUploading(false)
+      URL.revokeObjectURL(localPreviewUrl)
     }
   }
 

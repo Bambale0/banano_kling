@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import aiohttp
 
 from bot.config import config
+from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +445,8 @@ class PhotoPromptService:
             raise RuntimeError("KIE_AI_API_KEY is not configured")
 
         image_url = (image_url or "").strip()
+        if image_url:
+            image_url = image_source_to_analysis_input(image_url)
         has_image = bool(image_url)
         has_audio = bool(audio_bytes)
         if not has_image and not has_audio:

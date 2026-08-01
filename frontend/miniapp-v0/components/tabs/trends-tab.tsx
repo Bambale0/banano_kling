@@ -48,6 +48,7 @@ export function TrendsTab() {
     setVideoPromptPreset,
   } = useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const previewUploadAttemptRef = useRef(0)
   const [items, setItems] = useState<PromptItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -184,7 +185,11 @@ export function TrendsTab() {
   const handlePreviewUpload = async (file?: File) => {
     if (!file) return
     const expectedPrefix = trendKind === 'video' ? 'video/' : 'image/'
-    if (!file.type.startsWith(expectedPrefix)) {
+    const extension = file.name.split('.').pop()?.toLowerCase() || ''
+    const fallbackExtensions = trendKind === 'video'
+      ? new Set(['mp4', 'mov', 'm4v', 'webm'])
+      : new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
+    if (!file.type.startsWith(expectedPrefix) && !fallbackExtensions.has(extension)) {
       setError(
         trendKind === 'video'
           ? 'Для видео-тренда нужен видеофайл'
@@ -193,18 +198,28 @@ export function TrendsTab() {
       return
     }
 
+    const attemptId = ++previewUploadAttemptRef.current
+    const localPreviewUrl = URL.createObjectURL(file)
     setUploadingPreview(true)
     setError(null)
+    setPreviewUrl((current) => {
+      if (current.startsWith('blob:')) URL.revokeObjectURL(current)
+      return localPreviewUrl
+    })
     try {
       const uploaded = await uploadFile(
         trendKind === 'video' ? 'video_reference' : 'image_reference',
         file,
       )
+      if (previewUploadAttemptRef.current !== attemptId) return
       setPreviewUrl(uploaded.url)
     } catch (e) {
+      if (previewUploadAttemptRef.current !== attemptId) return
+      setPreviewUrl((current) => current === localPreviewUrl ? '' : current)
       setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
     } finally {
-      setUploadingPreview(false)
+      if (previewUploadAttemptRef.current === attemptId) setUploadingPreview(false)
+      URL.revokeObjectURL(localPreviewUrl)
     }
   }
 
