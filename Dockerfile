@@ -78,4 +78,4 @@ EXPOSE 1888
 HEALTHCHECK --interval=20s --timeout=7s --start-period=40s --retries=5 \
     CMD ["python", "scripts/docker_healthcheck.py"]
 
-CMD ["python", "-m", "bot.main"]
+CMD ["python", "-m", "bot.secure_main"]
