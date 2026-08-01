@@ -22,7 +22,6 @@ from bot.database import (
     DATABASE_PATH,
     MAX_ACTIVE_PROMPTS_PER_USER,
     SavedReference,
-    add_credits,
     add_feed_comment,
     add_generation_task,
     approve_prompt,
@@ -132,6 +131,7 @@ from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_local_upload_path,
 )
+from bot.services.generation_refund_service import refund_generation_credits_once
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
@@ -3612,7 +3612,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
 
         if launch_result["status"] == "failed":
             if not is_admin:
-                await add_credits(telegram_id, unit_cost)
+                await refund_generation_credits_once(
+                    telegram_id,
+                    unit_cost,
+                    refund_key=f"generation:{launch_result['task_id']}",
+                    reason="provider_launch_failed",
+                )
             return web.json_response(
                 {"ok": False, "error": "Не удалось запустить remix. Бананы уже возвращены."},
                 status=500,
@@ -3827,7 +3832,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
 
         if launch_result["status"] == "failed":
             if not is_admin:
-                await add_credits(telegram_id, unit_cost)
+                await refund_generation_credits_once(
+                    telegram_id,
+                    unit_cost,
+                    refund_key=f"generation:{launch_result['task_id']}",
+                    reason="provider_launch_failed",
+                )
             return web.json_response(
                 {
                     "ok": False,
@@ -4264,7 +4274,12 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
         if launch_result["status"] == "failed":
             if not is_admin:
-                await add_credits(telegram_id, cost)
+                await refund_generation_credits_once(
+                    telegram_id,
+                    cost,
+                    refund_key=f"generation:{launch_result['task_id']}",
+                    reason="provider_launch_failed",
+                )
             return web.json_response(
                 {
                     "ok": False,
@@ -4303,6 +4318,9 @@ async def miniapp_generate_video(request: web.Request) -> web.Response:
 
 async def miniapp_generate_motion(request: web.Request) -> web.Response:
     """Mini App endpoint for Motion Control."""
+    motion_refund_key = f"miniapp-motion:{time.time_ns()}:{id(request)}"
+    motion_debit_succeeded = False
+    motion_launch_accepted = False
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -4376,6 +4394,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         debit_error = await _deduct_miniapp_generation_cost(telegram_id, cost)
         if debit_error is not None:
             return debit_error
+        motion_debit_succeeded = not is_admin
 
         callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
         api_motion_model = (
@@ -4399,6 +4418,7 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
         )
 
         result_status, error_message = _classify_video_generation_result(result)
+        motion_launch_accepted = result_status in {"queued", "done"}
 
         if result_status == "queued":
             task_id = result["task_id"]
@@ -4473,8 +4493,13 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
             )
 
         await complete_video_task(local_task_id, None)
-        if not is_admin:
-            await add_credits(telegram_id, cost)
+        if motion_debit_succeeded:
+            await refund_generation_credits_once(
+                telegram_id,
+                cost,
+                refund_key=motion_refund_key,
+                reason="provider_launch_failed",
+            )
 
         return web.json_response(
             {
@@ -4486,11 +4511,20 @@ async def miniapp_generate_motion(request: web.Request) -> web.Response:
 
     except Exception as e:
         logger.exception(f"Mini App Motion Control failed: {e}")
-        if 'telegram_id' in locals() and 'cost' in locals():
-            try:
-                await add_credits(telegram_id, cost)
-            except Exception:
-                pass
+        if motion_debit_succeeded:
+            if not motion_launch_accepted:
+                try:
+                    await refund_generation_credits_once(
+                        telegram_id,
+                        cost,
+                        refund_key=motion_refund_key,
+                        reason="motion_exception_before_provider_acceptance",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Mini App Motion Control refund failed: key=%s",
+                        motion_refund_key,
+                    )
         return _miniapp_error_response(e, log_message="Mini App Motion Control generation failed")
 
 
