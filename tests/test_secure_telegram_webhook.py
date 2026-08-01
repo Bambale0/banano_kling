@@ -1,14 +1,12 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from bot.config import config
 from bot.services import telegram_webhook_runtime as runtime
-
 
 SECRET = "secure_telegram_webhook_secret_1234567890"
 
