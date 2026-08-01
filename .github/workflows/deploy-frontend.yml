@@ -1,0 +1,419 @@
+name: Deploy — NEUROMIX frontend
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - "frontend/**"
+      - "cdn.sh"
+      - "scripts/install_miniapp_frontend_https_host.sh"
+      - ".github/workflows/deploy-frontend.yml"
+  push:
+    branches: [tanyapi]
+    paths:
+      - "frontend/**"
+      - "cdn.sh"
+      - "scripts/install_miniapp_frontend_https_host.sh"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: neuromix-production-frontend
+  cancel-in-progress: false
+
+env:
+  FRONTEND_DIR: frontend/miniapp-v0
+
+jobs:
+  github_frontend:
+    name: GitHub runner — frontend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    continue-on-error: ${{ github.event_name == 'push' }}
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        id: setup_node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked dependencies
+        id: dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Run frontend tests
+        id: tests
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm test -- --runInBand
+
+      - name: Build static Mini App
+        id: build
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://tanyapi.chillcreative.ru
+        run: npm run build
+
+      - name: Verify static export
+        id: verify
+        working-directory: ${{ env.FRONTEND_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+          printf 'frontend_export_bytes=%s\n' "$(du -sb out | awk '{print $1}')"
+
+      - name: Record GitHub frontend result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP_NODE: ${{ steps.setup_node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] \
+            && [ "$SETUP_NODE" = success ] \
+            && [ "$DEPENDENCIES" = success ] \
+            && [ "$TESTS" = success ] \
+            && [ "$BUILD" = success ] \
+            && [ "$VERIFY" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  nuromix_frontend:
+    name: nuromix fallback — frontend checks
+    needs: github_frontend
+    if: >-
+      ${{
+        always() &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/tanyapi' &&
+        needs.github_frontend.outputs.passed != 'true'
+      }}
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v6
+        with:
+          clean: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Run frontend tests
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm test -- --runInBand
+
+      - name: Build static Mini App
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://tanyapi.chillcreative.ru
+        run: npm run build
+
+      - name: Verify static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+  frontend_gate:
+    name: Frontend validation gate
+    needs: [github_frontend, nuromix_frontend]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Accept GitHub or nuromix result
+        env:
+          PRIMARY_PASSED: ${{ needs.github_frontend.outputs.passed }}
+          FALLBACK_RESULT: ${{ needs.nuromix_frontend.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ "$PRIMARY_PASSED" = true ]; then
+            echo "Frontend passed on GitHub-hosted runner"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = push ] && [ "$FALLBACK_RESULT" = success ]; then
+            echo "Frontend passed on self-hosted nuromix runner"
+            exit 0
+          fi
+
+          echo "::error::Frontend validation failed. primary=$PRIMARY_PASSED fallback=$FALLBACK_RESULT"
+          exit 1
+
+  deploy_frontend:
+    name: Deploy frontend to remote host
+    needs: frontend_gate
+    if: >-
+      ${{
+        needs.frontend_gate.result == 'success' &&
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+
+    env:
+      FRONTEND_SSH_HOST: ${{ secrets.FRONTEND_SSH_HOST }}
+      FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
+      FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
+      FRONTEND_SSH_PRIVATE_KEY: ${{ secrets.FRONTEND_SSH_PRIVATE_KEY || secrets.PROD_SSH_PRIVATE_KEY }}
+      FRONTEND_SSH_KNOWN_HOSTS: ${{ secrets.FRONTEND_SSH_KNOWN_HOSTS }}
+      FRONTEND_PROJECT_PATH: ${{ secrets.FRONTEND_PROJECT_PATH }}
+      FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN }}
+
+    steps:
+      - name: Check frontend deployment configuration
+        id: gate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "${FRONTEND_SSH_HOST:-}" ] && [ -z "${FRONTEND_SSH_PRIVATE_KEY:-}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Frontend deploy is disabled until FRONTEND_SSH_* secrets are configured."
+            exit 0
+          fi
+
+          missing=()
+          [ -n "${FRONTEND_SSH_HOST:-}" ] || missing+=(FRONTEND_SSH_HOST)
+          [ -n "${FRONTEND_SSH_PRIVATE_KEY:-}" ] || missing+=(FRONTEND_SSH_PRIVATE_KEY)
+          [ -n "${FRONTEND_SSH_KNOWN_HOSTS:-}" ] || missing+=(FRONTEND_SSH_KNOWN_HOSTS)
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing frontend secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for matching full CI
+        if: steps.gate.outputs.enabled == 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deadline=$((SECONDS + 2700))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -f event=push \
+                -F per_page=10
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "Full CI for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Full CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for full CI for $GITHUB_SHA"
+          exit 1
+
+      - name: Configure pinned SSH
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$FRONTEND_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/frontend_key"
+          printf '%s\n' "$FRONTEND_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/frontend_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/frontend_key" >/dev/null
+
+      - name: Deploy exact commit to frontend host
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deploy_user="${FRONTEND_SSH_USER:-root}"
+          deploy_port="${FRONTEND_SSH_PORT:-22}"
+          deploy_path="${FRONTEND_PROJECT_PATH:-/opt/banano-kling-src}"
+          deploy_domain="${FRONTEND_DOMAIN:-cdn.chillcreative.ru}"
+          printf -v quoted_path '%q' "$deploy_path"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+          printf -v quoted_domain '%q' "$deploy_domain"
+
+          ssh \
+            -i "$HOME/.ssh/frontend_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$FRONTEND_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha $quoted_domain" <<'REMOTE'
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          DOMAIN="$3"
+
+          command -v git >/dev/null
+          command -v curl >/dev/null
+          command -v flock >/dev/null
+          command -v bash >/dev/null
+
+          exec 9>/var/lock/neuromix-frontend-deploy.lock
+          flock -n 9 || {
+            echo "Another frontend deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Frontend repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+          [ -f "/etc/banano-miniapp/profiles/${DOMAIN}.env" ] || {
+            echo "Frontend profile is missing for $DOMAIN" >&2
+            exit 1
+          }
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Local frontend checkout changes block automatic deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+
+          actual_sha="$(git rev-parse HEAD)"
+          [ "$actual_sha" = "$EXPECTED_SHA" ] || {
+            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+            exit 1
+          }
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash cdn.sh --deploy-domain "$DOMAIN"
+          else
+            sudo -n bash cdn.sh --deploy-domain "$DOMAIN"
+          fi
+
+          health="$(curl -fsS --max-time 20 "https://${DOMAIN}/frontend-health")"
+          http_code="$(curl -fsS -o /tmp/neuromix-live-index.html -w '%{http_code}' --max-time 20 "https://${DOMAIN}/mini-app/?sha=${EXPECTED_SHA}")"
+
+          [ "$http_code" = 200 ] || {
+            echo "Mini App returned HTTP $http_code" >&2
+            exit 1
+          }
+          grep -q '_next/static' /tmp/neuromix-live-index.html || {
+            echo "Public Mini App index does not reference static assets" >&2
+            exit 1
+          }
+
+          printf 'frontend_host=%s\n' "$(hostname)"
+          printf 'frontend_sha=%s\n' "$actual_sha"
+          printf 'frontend_health=%s\n' "$health"
+          printf 'frontend_http=%s\n' "$http_code"
+          REMOTE
+
+      - name: Collect frontend diagnostics on failure
+        if: failure() && steps.gate.outputs.enabled == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          deploy_user="${FRONTEND_SSH_USER:-root}"
+          deploy_port="${FRONTEND_SSH_PORT:-22}"
+          deploy_path="${FRONTEND_PROJECT_PATH:-/opt/banano-kling-src}"
+          deploy_domain="${FRONTEND_DOMAIN:-cdn.chillcreative.ru}"
+          printf -v quoted_path '%q' "$deploy_path"
+          printf -v quoted_domain '%q' "$deploy_domain"
+
+          ssh \
+            -i "$HOME/.ssh/frontend_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$FRONTEND_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_domain" <<'REMOTE'
+          set +e
+          PROJECT_DIR="$1"
+          DOMAIN="$2"
+          cd "$PROJECT_DIR" || exit 0
+          echo '=== git ==='
+          git status --short
+          git log -1 --oneline
+          echo '=== nginx ==='
+          systemctl is-active nginx
+          nginx -t
+          echo '=== frontend health ==='
+          curl -i --max-time 15 "https://${DOMAIN}/frontend-health"
+          curl -I --max-time 15 "https://${DOMAIN}/mini-app/"
+          echo '=== installer log ==='
+          tail -n 200 /var/log/banano-miniapp-installer.log 2>/dev/null
+          echo '=== cdn log ==='
+          tail -n 200 /var/log/banano-miniapp-cdn.log 2>/dev/null
+          REMOTE
+
+      - name: Remove frontend SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/frontend_key"
