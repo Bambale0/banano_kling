@@ -1,0 +1,92 @@
+name: Apply changed-line Ruff gate
+
+on:
+  pull_request:
+    branches:
+      - tanyapi
+
+permissions:
+  contents: write
+
+jobs:
+  codemod:
+    if: github.head_ref == 'ci/tanyapi-ruff-changed-lines'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ci/tanyapi-ruff-changed-lines
+          fetch-depth: 0
+
+      - name: Switch both CI lint paths
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text(encoding='utf-8')
+
+          github_old = '''          set +e
+          ruff check "${changed_files[@]}" \\
+            --ignore=E402,F403,F405,E501 \\
+            --output-format=concise 2>&1 | tee ruff-output.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+'''
+          github_new = '''          set +e
+          python scripts/ruff_changed_lines.py \\
+            --base "$BASE_SHA" \\
+            --head "$HEAD_SHA" \\
+            "${changed_files[@]}" 2>&1 | tee ruff-output.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+'''
+
+          fallback_old = '''          set +e
+          ruff check "${changed_files[@]}" \\
+            --ignore=E402,F403,F405,E501 \\
+            --output-format=concise 2>&1 | tee ruff-output-nuromix.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+'''
+          fallback_new = '''          set +e
+          python scripts/ruff_changed_lines.py \\
+            --base "$BASE_SHA" \\
+            --head "$HEAD_SHA" \\
+            "${changed_files[@]}" 2>&1 | tee ruff-output-nuromix.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+'''
+
+          if text.count(github_old) != 1:
+              raise SystemExit(
+                  f'Expected one GitHub Ruff block, found {text.count(github_old)}'
+              )
+          if text.count(fallback_old) != 1:
+              raise SystemExit(
+                  f'Expected one fallback Ruff block, found {text.count(fallback_old)}'
+              )
+
+          text = text.replace(github_old, github_new, 1)
+          text = text.replace(fallback_old, fallback_new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          python -m py_compile scripts/ruff_changed_lines.py
+          rm -f .github/workflows/apply-ruff-diff-gate.yml
+
+      - name: Commit CI change
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/ci.yml .github/workflows/apply-ruff-diff-gate.yml
+          git commit -m 'Gate Ruff on changed lines'
+          git push origin HEAD:ci/tanyapi-ruff-changed-lines
