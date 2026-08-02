@@ -19,10 +19,13 @@ def test_development_backend_deploy_isolated_from_production_secrets() -> None:
 
     assert "branches: [dev]" in workflow
     assert "environment: development" in workflow
+    assert 'GITHUB_REF" = "refs/heads/dev' in workflow
     assert "DEV_SSH_HOST" in workflow
     assert "DEV_PROJECT_PATH" in workflow
     assert "PROD_" not in workflow
     assert "git fetch --prune origin dev" in workflow
+    assert 'remote_sha="$(git rev-parse origin/dev)"' in workflow
+    assert '"$remote_sha" = "$EXPECTED_SHA"' in workflow
     assert "git switch dev" in workflow
     assert "banano-kling-dev-bot" in workflow
 
@@ -32,10 +35,15 @@ def test_development_frontend_deploy_isolated_from_production() -> None:
 
     assert "branches: [dev]" in workflow
     assert "environment: development" in workflow
+    assert 'GITHUB_REF" = "refs/heads/dev' in workflow
     assert "DEV_API_BASE_URL" in workflow
     assert "DEV_FRONTEND_DOMAIN" in workflow
     assert "PROD_" not in workflow
     assert "git fetch --prune origin dev" in workflow
+    assert 'remote_sha="$(git rev-parse origin/dev)"' in workflow
+    assert '"$remote_sha" = "$EXPECTED_SHA"' in workflow
+    assert "REPO_BRANCH:-}" in workflow
+    assert "BACKEND_ORIGIN%/" in workflow
     assert "git switch dev" in workflow
 
 
