@@ -1,0 +1,240 @@
+name: Deploy — NEUROMIX development frontend
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "frontend/**"
+      - "cdn.sh"
+      - "scripts/install_miniapp_frontend_https_host.sh"
+      - ".github/workflows/deploy-frontend-development.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: neuromix-development-frontend
+  cancel-in-progress: false
+
+env:
+  FRONTEND_DIR: frontend/miniapp-v0
+
+jobs:
+  ci_gate:
+    name: Wait for strict development CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Wait for matching development CI run
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deadline=$((SECONDS + 4500))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci-development.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -f event=push \
+                -F per_page=10
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "Development CI for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "Development CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Development CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for development CI for $GITHUB_SHA"
+          exit 1
+
+  deploy:
+    name: Deploy exact SHA to DEV Mini App
+    needs: ci_gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment: development
+
+    env:
+      DEV_API_BASE_URL: ${{ vars.DEV_API_BASE_URL }}
+      DEV_FRONTEND_DOMAIN: ${{ vars.DEV_FRONTEND_DOMAIN }}
+      DEV_FRONTEND_PROJECT_PATH: ${{ vars.DEV_FRONTEND_PROJECT_PATH }}
+      DEV_FRONTEND_PROFILE: ${{ vars.DEV_FRONTEND_PROFILE }}
+      DEV_FRONTEND_SSH_HOST: ${{ secrets.DEV_FRONTEND_SSH_HOST }}
+      DEV_FRONTEND_SSH_USER: ${{ secrets.DEV_FRONTEND_SSH_USER }}
+      DEV_FRONTEND_SSH_PORT: ${{ secrets.DEV_FRONTEND_SSH_PORT }}
+      DEV_FRONTEND_SSH_PRIVATE_KEY: ${{ secrets.DEV_FRONTEND_SSH_PRIVATE_KEY }}
+      DEV_FRONTEND_SSH_KNOWN_HOSTS: ${{ secrets.DEV_FRONTEND_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Require complete development frontend configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${DEV_API_BASE_URL:-}" ] || missing+=(DEV_API_BASE_URL)
+          [ -n "${DEV_FRONTEND_DOMAIN:-}" ] || missing+=(DEV_FRONTEND_DOMAIN)
+          [ -n "${DEV_FRONTEND_PROJECT_PATH:-}" ] || missing+=(DEV_FRONTEND_PROJECT_PATH)
+          [ -n "${DEV_FRONTEND_SSH_HOST:-}" ] || missing+=(DEV_FRONTEND_SSH_HOST)
+          [ -n "${DEV_FRONTEND_SSH_PRIVATE_KEY:-}" ] || missing+=(DEV_FRONTEND_SSH_PRIVATE_KEY)
+          [ -n "${DEV_FRONTEND_SSH_KNOWN_HOSTS:-}" ] || missing+=(DEV_FRONTEND_SSH_KNOWN_HOSTS)
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Development frontend deployment is not configured. Missing: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout exact development commit
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked frontend dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Build development static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ env.DEV_API_BASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          npm run lint
+          npm test -- --runInBand
+          npm run build
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+      - name: Configure pinned frontend SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEV_FRONTEND_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/development_frontend_key"
+          printf '%s\n' "$DEV_FRONTEND_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/development_frontend_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/development_frontend_key" >/dev/null
+
+      - name: Deploy development frontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deploy_user="${DEV_FRONTEND_SSH_USER:-root}"
+          deploy_port="${DEV_FRONTEND_SSH_PORT:-22}"
+          profile="${DEV_FRONTEND_PROFILE:-/etc/banano-miniapp/profiles/${DEV_FRONTEND_DOMAIN}.env}"
+
+          printf -v quoted_path '%q' "$DEV_FRONTEND_PROJECT_PATH"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+          printf -v quoted_domain '%q' "$DEV_FRONTEND_DOMAIN"
+          printf -v quoted_profile '%q' "$profile"
+
+          ssh \
+            -i "$HOME/.ssh/development_frontend_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$DEV_FRONTEND_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha $quoted_domain $quoted_profile" <<'REMOTE'
+          set -Eeuo pipefail
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          DOMAIN="$3"
+          PROFILE="$4"
+          INSTALLER="$PROJECT_DIR/scripts/install_miniapp_frontend_https_host.sh"
+
+          command -v git >/dev/null
+          command -v curl >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/neuromix-development-frontend-deploy.lock
+          flock -n 9 || {
+            echo "Another development frontend deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Development frontend repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+          [ -f "$PROFILE" ] || {
+            echo "Development frontend profile is missing: $PROFILE" >&2
+            exit 1
+          }
+
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block development frontend deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin dev
+          git switch dev
+          git reset --hard "$EXPECTED_SHA"
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          [ -f "$INSTALLER" ]
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash "$INSTALLER" --config "$PROFILE" --deploy-only
+          else
+            sudo -n bash "$INSTALLER" --config "$PROFILE" --deploy-only
+          fi
+
+          # shellcheck disable=SC1090
+          source "$PROFILE"
+          source_index="$PROJECT_DIR/frontend/miniapp-v0/out/index.html"
+          deployed_index="${MINIAPP_ROOT:?MINIAPP_ROOT is missing in profile}/index.html"
+          [ -s "$source_index" ]
+          [ -s "$deployed_index" ]
+          cmp -s "$source_index" "$deployed_index"
+
+          health="$(curl -fsS --max-time 20 "https://${DOMAIN}/frontend-health")"
+          http_code="$(curl -fsS -o /tmp/neuromix-dev-index.html -w '%{http_code}' --max-time 20 "https://${DOMAIN}/mini-app/?sha=${EXPECTED_SHA}")"
+          [ "$http_code" = 200 ]
+          grep -q '_next/static' /tmp/neuromix-dev-index.html
+
+          echo "development_frontend_host=$(hostname)"
+          echo "development_frontend_sha=$(git rev-parse HEAD)"
+          echo "development_frontend_health=$health"
+          echo "development_frontend_http=$http_code"
+          REMOTE
+
+      - name: Remove development frontend SSH key
+        if: always()
+        run: rm -f "$HOME/.ssh/development_frontend_key"
