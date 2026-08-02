@@ -492,11 +492,11 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
       </div>
 
       <div className="rounded-[1.75rem] border border-border/60 bg-card/45 p-4">
-        <label className="block cursor-pointer">
+        <label className="relative block cursor-pointer overflow-hidden">
           <input
             type="file"
             accept="image/*"
-            className="sr-only"
+            className="relative z-10 mb-3 block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
             disabled={isUploading || isAnalyzing}
             onChange={(event) => {
               const file = event.target.files?.[0]

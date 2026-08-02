@@ -82,7 +82,7 @@ export function UploadArea({
     onFilesChange(nextFiles)
   }, [onFilesChange])
 
-  const handleFiles = useCallback(async (fileList: FileList) => {
+  const handleFiles = useCallback(async (fileList: FileList | File[]) => {
     setUploadError(null)
 
     for (const sourceFile of Array.from(fileList)) {
@@ -179,7 +179,10 @@ export function UploadArea({
   return (
     <div className="space-y-3" aria-busy={files.some((file) => file.uploading)}>
       {canUploadMore && (
-        <label
+        <div
+          onPointerDown={() => {
+            sendMiniAppClientLog('upload-area-pointer-down', { accept })
+          }}
           onDragOver={(event) => {
             event.preventDefault()
             setIsDragging(true)
@@ -202,12 +205,24 @@ export function UploadArea({
             type="file"
             accept={accept}
             multiple={maxFiles > 1}
-            onChange={(event) => {
-              const selectedFiles = event.target.files
-              event.target.value = ''
-              if (selectedFiles) void handleFiles(selectedFiles)
+            onClick={() => {
+              sendMiniAppClientLog('upload-input-click', { accept })
             }}
-            className="sr-only"
+            onChange={(event) => {
+              const selectedFiles = Array.from(event.target.files || [])
+              event.target.value = ''
+              if (selectedFiles.length > 0) {
+                void handleFiles(selectedFiles)
+                return
+              }
+              sendMiniAppClientLog('upload-input-change-empty', { accept })
+            }}
+            className={cn(
+              'relative z-10 mt-4 block w-full max-w-xs cursor-pointer rounded-lg border border-border/60',
+              'bg-background/80 px-3 py-2 text-sm text-foreground',
+              'file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5',
+              'file:text-sm file:font-medium file:text-primary-foreground'
+            )}
           />
 
           <div className={cn(
@@ -223,7 +238,7 @@ export function UploadArea({
           <p className="text-xs text-muted-foreground">
             Макс. {maxFiles} {maxFiles === 1 ? 'файл' : 'файла'}
           </p>
-        </label>
+        </div>
       )}
 
       {availableLibraryFiles.length > 0 && (

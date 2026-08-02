@@ -65,7 +65,7 @@ def _mark_public_feed_cleanup_done() -> None:
     _last_public_feed_cleanup_at = time.monotonic()
     _last_public_feed_cleanup_db_path = DATABASE_PATH
 
-PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "other"}
+PROMPT_CATEGORIES = {"art", "business", "marketing", "photo", "video", "other"}
 PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
 
 # Партнёрская программа — единственный источник констант
@@ -406,6 +406,8 @@ def infer_tags(prompt_text: str) -> list[str]:
 def infer_category(prompt_text: str, tags: list[str] | None = None) -> str:
     text = str(prompt_text or "").lower()
     tag_set = set(tags or [])
+    if "trend-video" in tag_set or "video" in tag_set:
+        return "video"
     if {"product", "marketing"} & tag_set or any(
         word in text for word in ("advert", "banner", "реклама", "бренд", "campaign")
     ):

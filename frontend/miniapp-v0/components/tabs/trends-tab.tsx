@@ -490,17 +490,6 @@ export function TrendsTab() {
             <span className="text-xs font-medium text-muted-foreground">
               {trendKind === 'video' ? 'Видео-пример шаблона' : 'Preview шаблона'}
             </span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={
-                trendKind === 'video'
-                  ? 'video/mp4,video/webm,video/quicktime'
-                  : 'image/jpeg,image/png,image/webp'
-              }
-              className="hidden"
-              onChange={(event) => void handlePreviewUpload(event.target.files?.[0])}
-            />
             {previewUrl ? (
               <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-secondary/40">
                 {trendKind === 'video' ? (
@@ -532,12 +521,21 @@ export function TrendsTab() {
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingPreview}
-                className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-secondary/35 text-sm text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"
+              <div
+                className="relative flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"
               >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={
+                    trendKind === 'video'
+                      ? 'video/mp4,video/webm,video/quicktime'
+                      : 'image/jpeg,image/png,image/webp'
+                  }
+                  className="relative z-10 block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
+                  disabled={uploadingPreview}
+                  onChange={(event) => void handlePreviewUpload(event.target.files?.[0])}
+                />
                 {uploadingPreview ? (
                   <Loader2 className="h-6 w-6 animate-spin" />
                 ) : trendKind === 'video' ? (
@@ -550,7 +548,7 @@ export function TrendsTab() {
                   : trendKind === 'video'
                     ? 'Загрузить видео'
                     : 'Загрузить изображение'}
-              </button>
+              </div>
             )}
             {uploadingPreview ? (
               <p className="text-xs text-muted-foreground">

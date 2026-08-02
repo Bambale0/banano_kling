@@ -30,6 +30,11 @@ declare global {
       botUsername?: string
       miniAppUrl?: string
     }
+    __BANANO_INITIAL_LAUNCH__?: {
+      hash?: string
+      search?: string
+    }
+    __BANANO_TG_INIT_DATA__?: string
   }
 }
 
@@ -68,8 +73,31 @@ function getTelegramLaunchValue(name: string): string {
 function getInitDataFromLocation(): string {
   // tgWebAppData may appear in hash OR search params depending on Telegram version
   const raw = getTelegramLaunchValue('tgWebAppData')
-  if (!raw) return ''
-  return raw
+  if (raw) return raw
+
+  if (typeof window === 'undefined') return ''
+
+  const parseLaunch = (rawValue: string) => {
+    const value = String(rawValue || '').trim()
+    if (!value) return ''
+    const params = new URLSearchParams(value.startsWith('#') || value.startsWith('?') ? value.slice(1) : value)
+    return String(params.get('tgWebAppData') || '').trim()
+  }
+
+  try {
+    const snap = window.__BANANO_INITIAL_LAUNCH__
+    const fromSnapshot = parseLaunch(snap?.hash || '') || parseLaunch(snap?.search || '')
+    if (fromSnapshot) return fromSnapshot
+  } catch {}
+
+  for (const key of ['__banano_initial_hash', '__banano_initial_search']) {
+    try {
+      const fromStorageSnapshot = parseLaunch(window.sessionStorage.getItem(key) || '')
+      if (fromStorageSnapshot) return fromStorageSnapshot
+    } catch {}
+  }
+
+  return ''
 }
 
 export function getInitData(): string {
@@ -78,9 +106,14 @@ export function getInitData(): string {
   // on slow networks/VPN where the Telegram SDK CDN may be delayed.
   const fromLocation = getInitDataFromLocation()
   const fromTelegram = getWebApp()?.initData || ''
-  const initData = fromLocation || fromTelegram
+  const fromWindow =
+    typeof window !== 'undefined'
+      ? String(window.__BANANO_TG_INIT_DATA__ || '').trim()
+      : ''
+  const initData = fromLocation || fromTelegram || fromWindow
   if (initData && typeof window !== 'undefined') {
     try {
+      window.__BANANO_TG_INIT_DATA__ = initData
       window.sessionStorage.setItem(INIT_DATA_STORAGE_KEY, initData)
     } catch {}
     return initData
@@ -88,7 +121,11 @@ export function getInitData(): string {
 
   if (typeof window !== 'undefined') {
     try {
-      return window.sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || ''
+      const fromStorage = window.sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || ''
+      if (fromStorage) {
+        window.__BANANO_TG_INIT_DATA__ = fromStorage
+        return fromStorage
+      }
     } catch {}
   }
   return ''
@@ -1062,6 +1099,7 @@ export async function remixFeedItem(payload: {
   model: string
   ratio: string
   quality: string
+  prompt?: string
   references?: string[]
 }): Promise<{
   task: Task
@@ -1089,6 +1127,7 @@ export async function remixFeedItem(payload: {
     img_service: payload.model,
     img_ratio: payload.ratio,
     img_quality: payload.quality,
+    prompt: payload.prompt || '',
     reference_images: restoreProviderUploadUrls(payload.references || []),
   })
 

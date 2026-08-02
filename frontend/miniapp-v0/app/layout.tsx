@@ -6,6 +6,17 @@ const telegramBootstrapScript = `
 (function () {
   var attempts = 0;
 
+  try {
+    window.__BANANO_INITIAL_LAUNCH__ = {
+      hash: window.location.hash || '',
+      search: window.location.search || ''
+    };
+    if (window.sessionStorage) {
+      window.sessionStorage.setItem('__banano_initial_hash', window.location.hash || '');
+      window.sessionStorage.setItem('__banano_initial_search', window.location.search || '');
+    }
+  } catch (e) {}
+
   function postTelegramEvent(eventType, eventData) {
     if (eventData === undefined) {
       eventData = '';

@@ -6,6 +6,9 @@ const localTelegramJs = 'telegram-web-app.js'
 const localTelegramSrc = `/mini-app/${localTelegramJs}`
 const telegramScript = `<script defer src="${localTelegramSrc}"></script>`
 const inlineMiniappCss = process.env.MINIAPP_INLINE_CSS === '1'
+const assetVersion =
+  process.env.MINIAPP_ASSET_VERSION ||
+  new Date().toISOString().replace(/\D/g, '').slice(0, 14)
 
 const telegramEarlyScriptPattern =
   /<script\b(?=[^>]*\bid=(["'])telegram-early-ready\1)[^>]*>[\s\S]*?<\/script>/gi
@@ -67,6 +70,13 @@ function inlineMiniappStyles(html) {
   return html.replace(stylesheetTag, `${stylesheetTag}${inlineStyle}`)
 }
 
+function versionStaticAssets(html) {
+  return html.replace(
+    /(\/mini-app\/_next\/static\/[^"']+\.(?:js|css))(?!\?v=)/g,
+    `$1?v=${assetVersion}`,
+  )
+}
+
 // Copy local telegram-web-app.js into out/ so it is served from the same origin
 const publicTelegramJs = join(process.cwd(), 'public', localTelegramJs)
 const outTelegramJs = join(outDir, localTelegramJs)
@@ -106,7 +116,7 @@ for (const file of htmlFiles(outDir)) {
   const nextHtmlWithTelegram = charsetMatch
     ? stripped.replace(charsetMatch[0], `${charsetMatch[0]}${telegramHeadScripts}`)
     : stripped.replace('<head>', `<head>${telegramHeadScripts}`)
-  const nextHtml = inlineMiniappStyles(nextHtmlWithTelegram)
+  const nextHtml = versionStaticAssets(inlineMiniappStyles(nextHtmlWithTelegram))
 
   if (nextHtml !== html) {
     writeFileSync(file, nextHtml)
@@ -115,5 +125,5 @@ for (const file of htmlFiles(outDir)) {
 }
 
 console.log(
-  `Patched Telegram head scripts in ${patched} HTML files. inline css: ${inlineMiniappCss ? 'on' : 'off'}.`,
+  `Patched Telegram head scripts in ${patched} HTML files. inline css: ${inlineMiniappCss ? 'on' : 'off'}. asset version: ${assetVersion}.`,
 )

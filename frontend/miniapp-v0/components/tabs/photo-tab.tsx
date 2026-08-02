@@ -5,7 +5,7 @@ import { useApp } from '@/lib/app-context'
 import { ImageGeneratorForm } from '../forms/image-generator-form'
 import { ResultCard } from '../result-card'
 import type { Task, UploadedFile } from '@/lib/types'
-import { generateImage, uploadFile } from '@/lib/api'
+import { generateImage, remixFeedItem, uploadFile } from '@/lib/api'
 
 export function PhotoTab() {
   const { state, addTask, setCredits, setTaskDetail, selectTask, addSavedReference, promptPreset, setPromptPreset } = useApp()
@@ -36,17 +36,26 @@ export function PhotoTab() {
       let latestCredits = state.user.credits
 
       for (let index = 0; index < data.count; index += 1) {
-        const result = await generateImage({
-          model: data.model,
-          ratio: data.ratio,
-          quality: data.quality,
-          nsfwChecker: data.nsfwChecker,
-          nsfwEnabled: data.nsfwEnabled,
-          promptId: data.promptId,
-          sourceFeedGenId: data.sourceFeedGenId,
-          prompt: data.prompt,
-          references: data.references,
-        })
+        const result = data.sourceFeedGenId
+          ? await remixFeedItem({
+              genId: data.sourceFeedGenId,
+              model: data.model,
+              ratio: data.ratio,
+              quality: data.quality,
+              prompt: data.prompt,
+              references: data.references,
+            })
+          : await generateImage({
+              model: data.model,
+              ratio: data.ratio,
+              quality: data.quality,
+              nsfwChecker: data.nsfwChecker,
+              nsfwEnabled: data.nsfwEnabled,
+              promptId: data.promptId,
+              sourceFeedGenId: data.sourceFeedGenId,
+              prompt: data.prompt,
+              references: data.references,
+            })
         addTask(result.task)
         latestCredits = result.credits
         lastTask = result.task

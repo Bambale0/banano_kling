@@ -139,11 +139,17 @@ async def _secure_prompt_submit(
     miniapp_module = _get_miniapp_module()
     body = await miniapp_module._miniapp_payload(request)
     if _requests_trend_publication(body):
-        telegram_id, _ctx = await miniapp_module._get_user_context(
-            request.app,
-            body.get("init_data", ""),
-            body.get("start_param_fallback"),
-        )
+        try:
+            telegram_id, _ctx = await miniapp_module._get_user_context(
+                request.app,
+                body.get("init_data", ""),
+                body.get("start_param_fallback"),
+            )
+        except ValueError as error:
+            return web.json_response(
+                {"ok": False, "error": str(error) or "Telegram auth failed"},
+                status=401,
+            )
         if not config.is_admin(telegram_id):
             return web.json_response(
                 {"ok": False, "error": "Добавлять тренды может только администратор"},

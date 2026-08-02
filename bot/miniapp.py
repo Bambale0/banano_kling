@@ -1185,6 +1185,10 @@ def _payload_bool(value: Any, default: bool = False) -> bool:
 
 
 async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
+    cached_payload = request.get("_miniapp_payload_cache")
+    if isinstance(cached_payload, dict):
+        return dict(cached_payload)
+
     payload: dict[str, Any] = {}
     if request.can_read_body:
         try:
@@ -1205,6 +1209,7 @@ async def _miniapp_payload(request: web.Request) -> dict[str, Any]:
     init_data = request.headers.get("X-Telegram-Init-Data")
     if init_data and not payload.get("init_data"):
         payload["init_data"] = init_data
+    request["_miniapp_payload_cache"] = dict(payload)
     return payload
 
 

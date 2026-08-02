@@ -622,6 +622,10 @@ def _install_miniapp_video_submit(miniapp_module: Any) -> None:
             tags = [TREND_TAG]
             if is_video:
                 tags.append(TREND_VIDEO_TAG)
+            for tag in body.get("tags", []) or []:
+                normalized_tag = str(tag or "").strip().lower()
+                if normalized_tag.startswith(("trend-scenario:", "trend-duration:")):
+                    tags.append(normalized_tag)
             prompt = await database.create_prompt(
                 author_id=ctx["user"].id,
                 prompt_text=prompt_text,
