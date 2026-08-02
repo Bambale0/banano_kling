@@ -21,7 +21,7 @@ def test_mobile_media_upload_contract() -> None:
     assert "timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS" in miniapp
     assert "_normalize_miniapp_upload_content_type" in miniapp
     assert "application/octet-stream" in miniapp
-    assert "MEDIA_UPLOAD_TIMEOUT_MS = 60_000" in api
+    assert "MEDIA_UPLOAD_TIMEOUT_MS = 900_000" in api
     assert "normalizedMediaUploadFile" in api
     assert "controller.abort()" in api
     assert "globalThis.clearTimeout(timeoutId)" in api
