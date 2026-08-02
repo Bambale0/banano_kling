@@ -23,7 +23,7 @@ jobs:
   verify:
     name: Strict development verification
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -103,18 +103,16 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm ci --no-audit --no-fund
 
+      - name: Block high-severity frontend dependency vulnerabilities
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm audit --audit-level=high
+
       - name: Lint frontend
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm run lint
 
-      - name: Run frontend tests
-        working-directory: ${{ env.FRONTEND_DIR }}
-        run: npm test -- --runInBand
-
       - name: Build development Mini App
         working-directory: ${{ env.FRONTEND_DIR }}
-        env:
-          NEXT_PUBLIC_API_BASE_URL: https://development.invalid
         run: npm run build
 
       - name: Verify static export
@@ -124,6 +122,22 @@ jobs:
           test -s out/index.html
           test -d out/_next/static
           grep -q '_next/static' out/index.html
+
+      - name: Install locked Chromium runtime
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare mounted static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+
+      - name: Run critical browser flows
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: node e2e/critical-flows.mjs
 
       - name: Build backend image
         run: |
