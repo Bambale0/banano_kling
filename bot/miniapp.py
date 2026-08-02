@@ -152,6 +152,9 @@ from bot.video_reference_policy import (
 
 MINIAPP_MEDIA_CACHE_DIR = Path("static/uploads/miniapp-media-cache")
 MINIAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024
+MINIAPP_UPLOAD_TIMEOUT_SECONDS = 900
+MINIAPP_UPLOAD_DEFAULT_MAX_BYTES = 50 * 1024 * 1024
+MINIAPP_TREND_VIDEO_MAX_BYTES = 200 * 1024 * 1024
 _miniapp_media_locks: dict[str, asyncio.Lock] = {}
 
 logger = logging.getLogger(__name__)
@@ -681,6 +684,14 @@ FILE_KIND_MAP = {
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
     "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
     "assistant_audio": {"prefix": "audio/", "fallback_ext": "webm", "group": "audio"},
+    "trend_video_preview": {
+        "prefix": "video/",
+        "fallback_ext": "mp4",
+        "group": "video",
+        "max_bytes": MINIAPP_TREND_VIDEO_MAX_BYTES,
+        "durable_reference": True,
+        "source": "miniapp_trend",
+    },
 }
 
 
@@ -2429,6 +2440,12 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
             "init_data_len": int(payload.get("init_data_len") or 0),
             "message": str(payload.get("message") or "")[:500],
             "source": str(payload.get("source") or "")[:200],
+            "file_kind": str(payload.get("file_kind") or "")[:80],
+            "file_name": str(payload.get("file_name") or "")[:200],
+            "file_type": str(payload.get("file_type") or "")[:120],
+            "file_size": int(payload.get("file_size") or 0),
+            "duration_ms": int(payload.get("duration_ms") or 0),
+            "status": int(payload.get("status") or 0),
             "lineno": payload.get("lineno"),
             "colno": payload.get("colno"),
             "user_agent": request.headers.get("User-Agent", "")[:300],
@@ -2563,7 +2580,7 @@ async def miniapp_action(request: web.Request) -> web.Response:
 
 async def miniapp_upload(request: web.Request) -> web.Response:
     try:
-        data = await asyncio.wait_for(request.post(), timeout=60)
+        data = await asyncio.wait_for(request.post(), timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS)
         init_data = str(data.get("init_data", ""))
         file_kind = str(data.get("file_kind", "image_reference"))
         upload = data.get("file")
@@ -2607,9 +2624,11 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        if len(raw) > 50 * 1024 * 1024:
+        max_bytes = int(config_entry.get("max_bytes") or MINIAPP_UPLOAD_DEFAULT_MAX_BYTES)
+        if len(raw) > max_bytes:
+            max_mb = max(1, max_bytes // (1024 * 1024))
             return web.json_response(
-                {"ok": False, "error": "Файл слишком большой, максимум 50MB"},
+                {"ok": False, "error": f"Файл слишком большой, максимум {max_mb}MB"},
                 status=400,
             )
 
@@ -2620,7 +2639,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
         )
         public_url = None
         saved_reference = None
-        if file_kind.endswith("_reference"):
+        if file_kind.endswith("_reference") or config_entry.get("durable_reference"):
             public_url, saved_reference = await save_reference_file(
                 telegram_id,
                 bytes(raw),
@@ -2628,7 +2647,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 kind=config_entry["group"],
                 original_filename=getattr(upload, "filename", "") or None,
                 content_type=content_type or None,
-                source="miniapp",
+                source=str(config_entry.get("source") or "miniapp"),
             )
         if not public_url:
             public_url = save_uploaded_file(bytes(raw), extension)

@@ -33,6 +33,8 @@ declare global {
   }
 }
 
+const INIT_DATA_STORAGE_KEY = '__banano_tg_init_data'
+
 function getWebApp() {
   if (typeof window === 'undefined') {
     return null
@@ -75,8 +77,21 @@ export function getInitData(): string {
   // before window.Telegram.WebApp is fully initialized. This is critical
   // on slow networks/VPN where the Telegram SDK CDN may be delayed.
   const fromLocation = getInitDataFromLocation()
-  if (fromLocation) return fromLocation
-  return getWebApp()?.initData || ''
+  const fromTelegram = getWebApp()?.initData || ''
+  const initData = fromLocation || fromTelegram
+  if (initData && typeof window !== 'undefined') {
+    try {
+      window.sessionStorage.setItem(INIT_DATA_STORAGE_KEY, initData)
+    } catch {}
+    return initData
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      return window.sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || ''
+    } catch {}
+  }
+  return ''
 }
 
 export function hasTelegramInitData(): boolean {
@@ -209,6 +224,15 @@ export function getApiBasePath(): string {
   return '/mini-app/api'
 }
 
+function getUploadApiUrl(): string {
+  const path = `${getApiBasePath()}/upload`
+  if (typeof window === 'undefined') return path
+  if (window.location.hostname.toLowerCase() === 'cdn.chillcreative.ru') {
+    return 'https://tanyapi.chillcreative.ru/mini-app/api/upload'
+  }
+  return path
+}
+
 function isTemporaryMediaUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false
   try {
@@ -219,7 +243,40 @@ function isTemporaryMediaUrl(value: unknown): value is string {
   }
 }
 
+function rewriteBackendUploadUrl(value: string): string {
+  if (typeof window === 'undefined') return value
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    if (host === 'tanyapi.chillcreative.ru' && url.pathname.startsWith('/uploads/feed/thumbs/')) {
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
+    }
+  } catch {
+    return value
+  }
+  return value
+}
+
+function restoreProviderUploadUrl(value: string | null | undefined): string {
+  if (!value) return ''
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    if (host === 'cdn.chillcreative.ru' && url.pathname.startsWith('/uploads/')) {
+      return `https://tanyapi.chillcreative.ru${url.pathname}${url.search}${url.hash}`
+    }
+  } catch {
+    return value
+  }
+  return value
+}
+
+function restoreProviderUploadUrls(values: string[]): string[] {
+  return values.map((value) => restoreProviderUploadUrl(value)).filter(Boolean)
+}
+
 function rewriteTemporaryMedia(value: unknown): unknown {
+  if (typeof value === 'string') return rewriteBackendUploadUrl(value)
   if (Array.isArray(value)) return value.map(rewriteTemporaryMedia)
   if (!value || typeof value !== 'object') return value
 
@@ -335,7 +392,7 @@ export async function fetchTaskDetail(taskId: string): Promise<TaskDetail> {
   return response.task
 }
 
-const MEDIA_UPLOAD_TIMEOUT_MS = 60_000
+const MEDIA_UPLOAD_TIMEOUT_MS = 900_000
 
 const MEDIA_MIME_BY_EXTENSION: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -370,8 +427,132 @@ function normalizedMediaUploadFile(file: File): File {
   })
 }
 
+export function sendMiniAppClientLog(event: string, payload: Record<string, unknown> = {}) {
+  if (typeof window === 'undefined') return
+  try {
+    const body = JSON.stringify({
+      event,
+      href: `${window.location.pathname || ''}${window.location.search || ''}`,
+      search: window.location.search || '',
+      hash_len: window.location.hash.length,
+      has_tg: Boolean(window.Telegram),
+      has_webapp: Boolean(window.Telegram?.WebApp),
+      init_data_len: getInitData().length,
+      ...payload,
+    })
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'application/json' })
+      if (navigator.sendBeacon(`${getApiBasePath()}/client-log`, blob)) return
+    }
+    void fetch(`${getApiBasePath()}/client-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch(() => {})
+  } catch {
+    // best-effort diagnostics only
+  }
+}
+
+function parseUploadJson(text: string, status: number): {
+  ok: true
+  url: string
+  kind: 'image' | 'video' | 'audio'
+  filename: string
+  reference?: SavedReference | null
+} {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
+  }
+
+  const payload = data as {
+    ok?: boolean
+    error?: string
+    url?: string
+    kind?: 'image' | 'video' | 'audio'
+    filename?: string
+    reference?: SavedReference | null
+  }
+  if (status < 200 || status >= 300 || payload.ok === false) {
+    throw new Error(payload.error || 'Не удалось выполнить действие')
+  }
+  if (!payload.url || !payload.kind || !payload.filename) {
+    throw new Error('Не удалось загрузить данные. Обновите mini app и попробуйте снова.')
+  }
+
+  return {
+    ok: true,
+    url: payload.url,
+    kind: payload.kind,
+    filename: payload.filename,
+    reference: payload.reference || null,
+  }
+}
+
+function uploadFileWithXhr(
+  formData: FormData,
+  logPayload: Record<string, unknown>,
+  startedAt: number,
+): Promise<{
+  ok: true
+  url: string
+  kind: 'image' | 'video' | 'audio'
+  filename: string
+  reference?: SavedReference | null
+}> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', getUploadApiUrl())
+    xhr.timeout = MEDIA_UPLOAD_TIMEOUT_MS
+    xhr.responseType = 'text'
+    xhr.setRequestHeader('Accept', 'application/json')
+
+    xhr.onload = () => {
+      sendMiniAppClientLog('upload-response', {
+        ...logPayload,
+        duration_ms: Date.now() - startedAt,
+        status: xhr.status,
+      })
+      try {
+        resolve(parseUploadJson(String(xhr.responseText || ''), xhr.status))
+      } catch (error) {
+        reject(error)
+      }
+    }
+    xhr.onerror = () => {
+      sendMiniAppClientLog('upload-network-error', {
+        ...logPayload,
+        duration_ms: Date.now() - startedAt,
+        message: 'XMLHttpRequest network error',
+      })
+      reject(new Error('Сеть оборвала загрузку. Проверьте соединение и повторите.'))
+    }
+    xhr.ontimeout = () => {
+      sendMiniAppClientLog('upload-network-error', {
+        ...logPayload,
+        duration_ms: Date.now() - startedAt,
+        message: 'XMLHttpRequest timeout',
+      })
+      reject(new Error('Загрузка не завершилась за 15 минут. Проверьте сеть и повторите.'))
+    }
+    xhr.onabort = () => {
+      sendMiniAppClientLog('upload-network-error', {
+        ...logPayload,
+        duration_ms: Date.now() - startedAt,
+        message: 'XMLHttpRequest aborted',
+      })
+      reject(new Error('Загрузка была отменена. Повторите попытку.'))
+    }
+    xhr.send(formData)
+  })
+}
+
 export async function uploadFile(
-  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio',
+  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
   file: File
 ): Promise<UploadedFile> {
   const initData = getInitData()
@@ -380,16 +561,38 @@ export async function uploadFile(
   }
 
   const normalizedFile = normalizedMediaUploadFile(file)
+  const startedAt = Date.now()
+  const uploadLogPayload = {
+    file_kind: fileKind,
+    file_name: normalizedFile.name,
+    file_type: normalizedFile.type,
+    file_size: normalizedFile.size,
+  }
+  sendMiniAppClientLog('upload-start', uploadLogPayload)
   const formData = new FormData()
   formData.append('init_data', initData)
   formData.append('file_kind', fileKind)
   formData.append('file', normalizedFile)
 
+  if (typeof XMLHttpRequest !== 'undefined') {
+    const data = await uploadFileWithXhr(formData, uploadLogPayload, startedAt)
+    return {
+      id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      name: data.filename,
+      url: data.url,
+      type: data.kind,
+      size: normalizedFile.size,
+      saved_reference_id: data.reference?.id || null,
+      created_at: data.reference?.created_at || null,
+      source: data.reference?.source,
+    }
+  }
+
   const controller = new AbortController()
   const timeoutId = globalThis.setTimeout(() => controller.abort(), MEDIA_UPLOAD_TIMEOUT_MS)
   let response: Response
   try {
-    response = await fetch(`${getApiBasePath()}/upload`, {
+    response = await fetch(getUploadApiUrl(), {
       method: 'POST',
       headers: { Accept: 'application/json' },
       body: formData,
@@ -398,13 +601,24 @@ export async function uploadFile(
       signal: controller.signal,
     })
   } catch (error) {
+    sendMiniAppClientLog('upload-network-error', {
+      ...uploadLogPayload,
+      duration_ms: Date.now() - startedAt,
+      message: error instanceof Error ? error.message : String(error),
+    })
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Загрузка не завершилась за 60 секунд. Проверьте сеть и повторите.')
+      throw new Error('Загрузка не завершилась за 15 минут. Проверьте сеть и повторите.')
     }
     throw error
   } finally {
     globalThis.clearTimeout(timeoutId)
   }
+
+  sendMiniAppClientLog('upload-response', {
+    ...uploadLogPayload,
+    duration_ms: Date.now() - startedAt,
+    status: response.status,
+  })
 
   const data = await parseJson<{
     ok: true
@@ -467,7 +681,7 @@ export async function generateImage(payload: {
     prompt: payload.prompt,
     prompt_id: payload.promptId || null,
     source_feed_gen_id: payload.sourceFeedGenId || null,
-    reference_images: payload.references,
+    reference_images: restoreProviderUploadUrls(payload.references),
   })
 
   const promptHidden = Boolean(response.prompt_hidden)
@@ -497,7 +711,7 @@ export async function generateImage(payload: {
             ...task,
             prompt: promptHidden ? '' : payload.prompt,
             request_data: {
-              reference_images: payload.references,
+              reference_images: restoreProviderUploadUrls(payload.references),
               source_feed_gen_id: response.source_feed_gen_id || payload.sourceFeedGenId || null,
             },
           }
@@ -875,7 +1089,7 @@ export async function remixFeedItem(payload: {
     img_service: payload.model,
     img_ratio: payload.ratio,
     img_quality: payload.quality,
-    reference_images: payload.references || [],
+    reference_images: restoreProviderUploadUrls(payload.references || []),
   })
 
   const task: Task = {
@@ -902,7 +1116,7 @@ export async function remixFeedItem(payload: {
             prompt: '',
             request_data: {
               source_feed_gen_id: response.source_feed_gen_id,
-              reference_images: payload.references || [],
+              reference_images: restoreProviderUploadUrls(payload.references || []),
             },
           }
         : null,
@@ -961,6 +1175,10 @@ export async function generateVideo(payload: {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
+  const startImage = restoreProviderUploadUrl(payload.startImage)
+  const imageReferences = restoreProviderUploadUrls(payload.references)
+  const videoReferences = restoreProviderUploadUrls(payload.videoReferences)
+  const audioReference = restoreProviderUploadUrl(payload.audioReference)
 
   const response = await postJson<{
     ok: true
@@ -1001,11 +1219,11 @@ export async function generateVideo(payload: {
     omni_character_name: payload.omniCharacterName,
     omni_character_audio_ids: payload.omniCharacterAudioIds || [],
     prompt: payload.prompt,
-    v_image_url: payload.startImage || '',
-    reference_images: payload.references,
-    v_reference_videos: payload.videoReferences,
-    audio_url: payload.audioReference || '',
-    audio_references: payload.audioReference ? [payload.audioReference] : [],
+    v_image_url: startImage,
+    reference_images: imageReferences,
+    v_reference_videos: videoReferences,
+    audio_url: audioReference,
+    audio_references: audioReference ? [audioReference] : [],
   })
 
   const task: Task = {
@@ -1034,11 +1252,11 @@ export async function generateVideo(payload: {
             prompt: payload.prompt,
             request_data: {
               reference_images: [
-                ...(payload.startImage ? [payload.startImage] : []),
-                ...payload.references,
+                ...(startImage ? [startImage] : []),
+                ...imageReferences,
               ],
-              v_reference_videos: payload.videoReferences,
-              audio_reference: payload.audioReference || null,
+              v_reference_videos: videoReferences,
+              audio_reference: audioReference || null,
               source_feed_gen_id: response.source_feed_gen_id || payload.sourceFeedGenId || null,
               omni_audio_ids: payload.omniAudioIds || [],
               omni_character_ids: payload.omniCharacterIds || [],
@@ -1089,6 +1307,8 @@ export async function generateMotion(payload: {
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')
   }
+  const imageUrl = restoreProviderUploadUrl(payload.imageUrl)
+  const videoUrl = restoreProviderUploadUrl(payload.videoUrl)
 
   const response = await postJson<{
     ok: true
@@ -1102,8 +1322,8 @@ export async function generateMotion(payload: {
     init_data: initData,
     prompt: payload.prompt,
     motion_model: payload.model,
-    motion_image_url: payload.imageUrl,
-    motion_video_url: payload.videoUrl,
+    motion_image_url: imageUrl,
+    motion_video_url: videoUrl,
     motion_mode: payload.mode,
     motion_direction: payload.direction,
     ...(payload.videoDuration ? { motion_duration: payload.videoDuration } : {}),
@@ -1134,8 +1354,8 @@ export async function generateMotion(payload: {
             request_data: {
               v_type: 'motion_control',
               motion_model: payload.model,
-              motion_image_url: payload.imageUrl,
-              motion_video_url: payload.videoUrl,
+              motion_image_url: imageUrl,
+              motion_video_url: videoUrl,
               motion_mode: payload.mode,
               motion_direction: payload.direction,
             },
@@ -1168,7 +1388,7 @@ export async function photoToPrompt(payload: {
     model_hint: string
   }>('photo-to-prompt', {
     init_data: initData,
-    image_url: payload.imageUrl,
+    image_url: restoreProviderUploadUrl(payload.imageUrl),
     preserve: payload.preserve || '',
     goal: payload.goal || '',
   })

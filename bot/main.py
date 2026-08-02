@@ -4080,7 +4080,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
             return fallback
         return raw if raw.startswith("/") else f"/{raw}"
 
-    app = web.Application(client_max_size=60 * 1024 * 1024)
+    app = web.Application(client_max_size=220 * 1024 * 1024)
 
     # Rate limiter middleware — applies to all routes except /health GET
     from bot.services.rate_limiter import rate_limiter_middleware

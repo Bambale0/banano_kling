@@ -84,27 +84,51 @@ function getPublicReferences(item: FeedItem | null) {
   ].filter((item) => isHttpUrl(item.url))
 }
 
-function FeedImage({ src, alt, priority, onError, style, className }: {
+function FeedImage({ src, fallbackSrc, alt, priority, onError, style, className }: {
   src: string
+  fallbackSrc?: string
   alt: string
   priority?: boolean
   onError?: () => void
   style?: CSSProperties
   className?: string
 }) {
+  const [currentSrc, setCurrentSrc] = useState(src)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setCurrentSrc(src)
+    setLoaded(false)
+  }, [src])
+
+  const handleError = () => {
+    if (fallbackSrc && fallbackSrc !== currentSrc) {
+      setCurrentSrc(fallbackSrc)
+      return
+    }
+    onError?.()
+  }
+
   return (
     <div
       className={cn('relative overflow-hidden bg-secondary/50', className)}
       style={style}
     >
+      {!loaded ? (
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
+      ) : null}
       <img
-        src={src}
+        src={currentSrc}
         alt={alt}
         fetchPriority={priority ? 'high' : undefined}
         loading={priority ? 'eager' : 'lazy'}
         decoding="async"
-        onError={onError}
-        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+        onLoad={() => setLoaded(true)}
+        onError={handleError}
+        className={cn(
+          'relative z-10 h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]',
+          loaded ? 'opacity-100' : 'opacity-0'
+        )}
       />
     </div>
   )
@@ -116,23 +140,38 @@ function FeedVideoPreview({ poster, aspectRatio, blurred, onError }: {
   blurred?: boolean
   onError?: () => void
 }) {
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setLoaded(false)
+  }, [poster])
+
   return (
     <div
       style={{ aspectRatio: getPinAspectRatio(aspectRatio, 'video') }}
       className={cn(
-        'relative w-full overflow-hidden bg-black transition-transform duration-500 group-hover:scale-[1.03]',
+        'relative w-full overflow-hidden bg-secondary/70 transition-transform duration-500 group-hover:scale-[1.03]',
         blurred && 'scale-[1.04] blur-xl'
       )}
     >
       {poster ? (
-        <img
-          src={poster}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          onError={onError}
-          className="h-full w-full object-cover opacity-80"
-        />
+        <>
+          {!loaded ? (
+            <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
+          ) : null}
+          <img
+            src={poster}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            onError={onError}
+            className={cn(
+              'relative z-10 h-full w-full object-cover transition-opacity duration-500',
+              loaded ? 'opacity-100' : 'opacity-0'
+            )}
+          />
+        </>
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-secondary/70 text-muted-foreground">
           <Video className="h-8 w-8" />
@@ -217,6 +256,16 @@ export function FeedTab() {
     let ignore = false
     let requestInFlight = false
 
+    function mergeRefreshedFirstPage(currentItems: FeedItem[], firstPage: FeedItem[]) {
+      if (currentItems.length <= FEED_PAGE_SIZE) return firstPage
+
+      const refreshedById = new Map(firstPage.map((item) => [item.id, item]))
+      const updatedCurrent = currentItems.map((item) => refreshedById.get(item.id) || item)
+      const existingIds = new Set(updatedCurrent.map((item) => item.id))
+      const newItems = firstPage.filter((item) => !existingIds.has(item.id))
+      return [...newItems, ...updatedCurrent]
+    }
+
     async function load(showSpinner = true) {
       if (!isLive) {
         setItems([])
@@ -229,10 +278,11 @@ export function FeedTab() {
       try {
         const response = await fetchFeed({ source, model, limit: FEED_PAGE_SIZE, offset: 0 })
         if (!ignore) {
-          setItems(mergePendingPublication(response.feed, 'feed'))
+          const firstPage = mergePendingPublication(response.feed, 'feed')
+          setItems((prev) => showSpinner ? firstPage : mergeRefreshedFirstPage(prev, firstPage))
           setAvailableModels(response.models)
-          setHasMore(response.feed.length === FEED_PAGE_SIZE)
-          setBrokenMediaIds(new Set())
+          setHasMore((current) => current || response.feed.length === FEED_PAGE_SIZE)
+          if (showSpinner) setBrokenMediaIds(new Set())
         }
       } catch (e) {
         if (!ignore) setError(getErrorMessage(e, 'Не удалось загрузить ленту'))
@@ -547,6 +597,7 @@ export function FeedTab() {
                         ) : (
                           <FeedImage
                             src={item.preview_url || item.result_url}
+                            fallbackSrc={item.result_url}
                             alt=""
                             priority={priorityImageIds.has(item.id)}
                             onError={() => handleMediaError(item)}

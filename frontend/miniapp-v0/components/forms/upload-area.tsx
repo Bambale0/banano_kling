@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Upload, X, Loader2, Video, Music, Plus } from 'lucide-react'
+import { sendMiniAppClientLog } from '@/lib/api'
 
 interface UploadAreaProps {
   files: UploadedFile[]
@@ -86,9 +87,22 @@ export function UploadArea({
 
     for (const sourceFile of Array.from(fileList)) {
       const file = normalizedBrowserFile(sourceFile)
+      sendMiniAppClientLog('upload-file-selected', {
+        accept,
+        file_name: file.name,
+        file_type: file.type,
+        file_size: file.size,
+      })
       const currentFiles = filesRef.current
       if (currentFiles.length >= maxFiles) break
       if (!matchesAcceptedType(file, accept)) {
+        sendMiniAppClientLog('upload-file-rejected', {
+          accept,
+          file_name: file.name,
+          file_type: file.type,
+          file_size: file.size,
+          reason: 'type_mismatch',
+        })
         setUploadError(
           accept.startsWith('image/')
             ? 'Можно загружать только изображения'
@@ -106,6 +120,7 @@ export function UploadArea({
         id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         name: file.name,
         url: localUrl,
+        preview_url: localUrl,
         type: file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image',
         size: file.size,
         uploading: true,
@@ -122,7 +137,9 @@ export function UploadArea({
             }
         const latestFiles = filesRef.current
         const nextFiles = latestFiles.map((item) =>
-          item.id === pendingFile.id ? { ...uploadedFile, id: pendingFile.id, uploading: false } : item
+          item.id === pendingFile.id
+            ? { ...uploadedFile, id: pendingFile.id, preview_url: localUrl || uploadedFile.preview_url, uploading: false }
+            : item
         )
         publishFiles(nextFiles)
       } catch (error) {
@@ -130,7 +147,6 @@ export function UploadArea({
         setUploadError(
           error instanceof Error ? error.message : 'Не удалось загрузить файл'
         )
-      } finally {
         if (localUrl) URL.revokeObjectURL(localUrl)
       }
     }
@@ -145,6 +161,9 @@ export function UploadArea({
   const handleRemove = (id: string) => {
     const removed = filesRef.current.find((file) => file.id === id)
     if (removed?.url.startsWith('blob:')) URL.revokeObjectURL(removed.url)
+    if (removed?.preview_url?.startsWith('blob:') && removed.preview_url !== removed.url) {
+      URL.revokeObjectURL(removed.preview_url)
+    }
     publishFiles(filesRef.current.filter((file) => file.id !== id))
   }
 
@@ -160,14 +179,13 @@ export function UploadArea({
   return (
     <div className="space-y-3" aria-busy={files.some((file) => file.uploading)}>
       {canUploadMore && (
-        <div
+        <label
           onDragOver={(event) => {
             event.preventDefault()
             setIsDragging(true)
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
           className={cn(
             'relative flex flex-col items-center justify-center',
             'p-6 rounded-xl border-2 border-dashed cursor-pointer',
@@ -205,7 +223,7 @@ export function UploadArea({
           <p className="text-xs text-muted-foreground">
             Макс. {maxFiles} {maxFiles === 1 ? 'файл' : 'файла'}
           </p>
-        </div>
+        </label>
       )}
 
       {availableLibraryFiles.length > 0 && (
@@ -261,7 +279,7 @@ export function UploadArea({
                     <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
                   </div>
                 ) : file.type === 'image' ? (
-                  <img src={file.url} alt="" className="w-full h-full object-cover" />
+                  <img src={file.preview_url || file.url} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     {file.type === 'audio' ? (

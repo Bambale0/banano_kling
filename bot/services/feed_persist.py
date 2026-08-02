@@ -28,6 +28,7 @@ FEED_THUMB_MIN_BYTES = 50 * 1024
 FEED_THUMB_MAX_BYTES = 200 * 1024
 FEED_THUMB_MIN_QUALITY = 35
 FEED_THUMB_MAX_QUALITY = 90
+FEED_THUMB_BACKGROUND = (255, 255, 255)
 
 
 async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) -> str | None:
@@ -145,9 +146,34 @@ def _local_feed_upload_path(url: str) -> Path | None:
 
 def _thumbnail_paths(source: Path) -> tuple[Path, Path]:
     return (
-        FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp",
         FEED_THUMB_STORAGE_DIR / f"{source.stem}.jpg",
+        FEED_THUMB_STORAGE_DIR / f"{source.stem}.webp",
     )
+
+
+def _has_alpha_channel(image: Image.Image) -> bool:
+    return image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info)
+
+
+def _flatten_transparency(image: Image.Image) -> Image.Image:
+    if not _has_alpha_channel(image):
+        return image.convert("RGB")
+
+    rgba = image.convert("RGBA")
+    background = Image.new("RGB", rgba.size, FEED_THUMB_BACKGROUND)
+    background.paste(rgba, mask=rgba.getchannel("A"))
+    rgba.close()
+    return background
+
+
+def _thumbnail_is_usable(path: Path) -> bool:
+    try:
+        with Image.open(path) as image:
+            image.load()
+            return not _has_alpha_channel(image)
+    except Exception:
+        logger.warning("Feed thumbnail: existing thumbnail is unreadable %s", path)
+        return False
 
 
 def feed_thumbnail_url_for(url: str) -> str | None:
@@ -156,34 +182,39 @@ def feed_thumbnail_url_for(url: str) -> str | None:
     if not source or source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
 
-    webp_thumb, legacy_jpg_thumb = _thumbnail_paths(source)
-    for thumb in (webp_thumb, legacy_jpg_thumb):
-        if thumb.exists():
+    jpg_thumb, legacy_webp_thumb = _thumbnail_paths(source)
+    for thumb in (jpg_thumb,):
+        if thumb.exists() and _thumbnail_is_usable(thumb):
             return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
-    return None
+    if legacy_webp_thumb.exists():
+        try:
+            legacy_webp_thumb.unlink()
+        except OSError:
+            logger.warning("Feed thumbnail: failed to remove legacy thumbnail %s", legacy_webp_thumb)
+            return None
+    return ensure_feed_thumbnail(url)
 
 
-def _encode_webp(image: Image.Image, quality: int) -> bytes:
+def _encode_jpeg(image: Image.Image, quality: int) -> bytes:
     buffer = BytesIO()
     image.save(
         buffer,
-        "WEBP",
+        "JPEG",
         quality=quality,
-        method=6,
         optimize=True,
-        exact=image.mode == "RGBA",
+        progressive=True,
     )
     return buffer.getvalue()
 
 
-def _best_webp_under_limit(image: Image.Image) -> tuple[bytes, int]:
+def _best_jpeg_under_limit(image: Image.Image) -> tuple[bytes, int]:
     low = FEED_THUMB_MIN_QUALITY
     high = FEED_THUMB_MAX_QUALITY
     best: tuple[bytes, int] | None = None
 
     while low <= high:
         quality = (low + high) // 2
-        encoded = _encode_webp(image, quality)
+        encoded = _encode_jpeg(image, quality)
         if len(encoded) <= FEED_THUMB_MAX_BYTES:
             best = (encoded, quality)
             low = quality + 1
@@ -192,18 +223,15 @@ def _best_webp_under_limit(image: Image.Image) -> tuple[bytes, int]:
 
     if best is not None:
         return best
-    return _encode_webp(image, FEED_THUMB_MIN_QUALITY), FEED_THUMB_MIN_QUALITY
+    return _encode_jpeg(image, FEED_THUMB_MIN_QUALITY), FEED_THUMB_MIN_QUALITY
 
 
-def _build_webp_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
+def _build_jpeg_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened)
         image.load()
 
-    if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
-        image = image.convert("RGBA")
-    else:
-        image = image.convert("RGB")
+    image = _flatten_transparency(image)
 
     image.thumbnail(
         (FEED_THUMB_MAX_SIDE, FEED_THUMB_MAX_SIDE),
@@ -212,7 +240,7 @@ def _build_webp_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
 
     try:
         while True:
-            encoded, quality = _best_webp_under_limit(image)
+            encoded, quality = _best_jpeg_under_limit(image)
             if len(encoded) <= FEED_THUMB_MAX_BYTES or max(image.size) <= 320:
                 return encoded, quality, image.size
 
@@ -228,7 +256,7 @@ def _build_webp_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
 
 
 def ensure_feed_thumbnail(url: str) -> str | None:
-    """Create a bounded WebP thumbnail for a local feed image."""
+    """Create a bounded JPEG thumbnail for a local feed image."""
     source = _local_feed_upload_path(url)
     if not source or not source.exists() or not source.is_file():
         return None
@@ -238,20 +266,27 @@ def ensure_feed_thumbnail(url: str) -> str | None:
         logger.warning("Feed thumbnail: skipped non-image feed file %s", source)
         return None
 
-    webp_thumb, _legacy_jpg_thumb = _thumbnail_paths(source)
-    if webp_thumb.exists():
-        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{webp_thumb.name}"
+    jpg_thumb, legacy_webp_thumb = _thumbnail_paths(source)
+    if jpg_thumb.exists() and _thumbnail_is_usable(jpg_thumb):
+        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{jpg_thumb.name}"
+    if jpg_thumb.exists():
+        try:
+            jpg_thumb.unlink()
+        except OSError:
+            logger.warning("Feed thumbnail: failed to remove unusable thumbnail %s", jpg_thumb)
+            return None
+    legacy_webp_thumb.unlink(missing_ok=True)
 
-    tmp = webp_thumb.with_suffix(".tmp.webp")
+    tmp = jpg_thumb.with_suffix(".tmp.jpg")
     try:
         FEED_THUMB_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-        encoded, quality, size = _build_webp_thumbnail(source)
+        encoded, quality, size = _build_jpeg_thumbnail(source)
         tmp.write_bytes(encoded)
-        os.replace(tmp, webp_thumb)
-        os.chmod(webp_thumb, 0o644)
+        os.replace(tmp, jpg_thumb)
+        os.chmod(jpg_thumb, 0o644)
         logger.info(
             "Feed thumbnail: built %s (%dx%d, q=%d, %.1f KB)",
-            webp_thumb,
+            jpg_thumb,
             size[0],
             size[1],
             quality,
@@ -260,10 +295,10 @@ def ensure_feed_thumbnail(url: str) -> str | None:
         if len(encoded) < FEED_THUMB_MIN_BYTES:
             logger.debug(
                 "Feed thumbnail smaller than preferred minimum: %s (%.1f KB)",
-                webp_thumb,
+                jpg_thumb,
                 len(encoded) / 1024,
             )
-        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{webp_thumb.name}"
+        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{jpg_thumb.name}"
     except Exception:
         try:
             tmp.unlink(missing_ok=True)

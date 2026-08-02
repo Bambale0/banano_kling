@@ -304,6 +304,7 @@ export interface UploadedFile {
   id: string
   name: string
   url: string
+  preview_url?: string
   type: UploadedFileType
   size: number
   uploading?: boolean

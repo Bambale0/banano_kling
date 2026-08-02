@@ -79,6 +79,49 @@ function getPublicReferences(item: FeedItem | null) {
   ].filter((item) => isHttpUrl(item.url))
 }
 
+function ProfileFeedImage({ src, fallbackSrc, blurred, onError }: {
+  src: string
+  fallbackSrc: string
+  blurred?: boolean
+  onError: () => void
+}) {
+  const [currentSrc, setCurrentSrc] = useState(src)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setCurrentSrc(src)
+    setLoaded(false)
+  }, [src])
+
+  const handleError = () => {
+    if (fallbackSrc && fallbackSrc !== currentSrc) {
+      setCurrentSrc(fallbackSrc)
+      return
+    }
+    onError()
+  }
+
+  return (
+    <>
+      {!loaded ? (
+        <span className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
+      ) : null}
+      <img
+        src={currentSrc}
+        alt=""
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={handleError}
+        className={cn(
+          'relative z-10 h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
+          loaded ? 'opacity-100' : 'opacity-0',
+          blurred && 'scale-110 blur-xl'
+        )}
+      />
+    </>
+  )
+}
+
 function profileInteractionsEnabled(item: FeedItem | null | undefined) {
   return Boolean(
     item &&
@@ -740,15 +783,11 @@ export function ProfileTab() {
                       </span>
                     )
                   ) : (
-                    <img
+                    <ProfileFeedImage
                       src={item.preview_url || item.result_url}
-                      alt=""
-                      loading="lazy"
+                      fallbackSrc={item.result_url}
+                      blurred={item.feed_blurred && !revealedIds.has(item.id)}
                       onError={() => handleMediaError(item)}
-                      className={cn(
-                        'h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
-                        item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
-                      )}
                     />
                   )
                 ) : (

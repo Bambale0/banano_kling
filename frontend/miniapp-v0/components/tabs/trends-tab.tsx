@@ -27,6 +27,7 @@ type TrendKind = 'image' | 'video'
 
 const TREND_TAG = 'trend'
 const VIDEO_TREND_TAG = 'trend-video'
+const VIDEO_TREND_PREVIEW_MAX_BYTES = 200 * 1024 * 1024
 
 function normalizedTags(trend: PromptItem) {
   return new Set((trend.tags || []).map((tag) => String(tag).trim().toLowerCase()))
@@ -49,6 +50,7 @@ export function TrendsTab() {
   } = useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const previewUploadAttemptRef = useRef(0)
+  const previewUploadPromiseRef = useRef<Promise<string | null> | null>(null)
   const [items, setItems] = useState<PromptItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -197,6 +199,10 @@ export function TrendsTab() {
       )
       return
     }
+    if (trendKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
+      setError('Видео-пример слишком большой, максимум 200MB')
+      return
+    }
 
     const attemptId = ++previewUploadAttemptRef.current
     const localPreviewUrl = URL.createObjectURL(file)
@@ -206,19 +212,28 @@ export function TrendsTab() {
       if (current.startsWith('blob:')) URL.revokeObjectURL(current)
       return localPreviewUrl
     })
-    try {
-      const uploaded = await uploadFile(
-        trendKind === 'video' ? 'video_reference' : 'image_reference',
+    const uploadPromise = uploadFile(
+        trendKind === 'video' ? 'trend_video_preview' : 'image_reference',
         file,
       )
+      .then((uploaded) => uploaded.url)
+      .catch((e) => {
+        if (previewUploadAttemptRef.current === attemptId) {
+          setPreviewUrl((current) => current === localPreviewUrl ? '' : current)
+          setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
+        }
+        return null
+      })
+    previewUploadPromiseRef.current = uploadPromise
+    try {
+      const uploadedUrl = await uploadPromise
       if (previewUploadAttemptRef.current !== attemptId) return
-      setPreviewUrl(uploaded.url)
-    } catch (e) {
-      if (previewUploadAttemptRef.current !== attemptId) return
-      setPreviewUrl((current) => current === localPreviewUrl ? '' : current)
-      setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
+      if (uploadedUrl) setPreviewUrl(uploadedUrl)
     } finally {
-      if (previewUploadAttemptRef.current === attemptId) setUploadingPreview(false)
+      if (previewUploadAttemptRef.current === attemptId) {
+        setUploadingPreview(false)
+        previewUploadPromiseRef.current = null
+      }
       URL.revokeObjectURL(localPreviewUrl)
     }
   }
@@ -232,11 +247,26 @@ export function TrendsTab() {
     setSubmitting(true)
     setError(null)
     try {
+      let finalPreviewUrl = previewUrl
+      if (finalPreviewUrl.startsWith('blob:') && previewUploadPromiseRef.current) {
+        setError('Дожидаюсь сохранения preview на сервере…')
+        const uploadedUrl = await previewUploadPromiseRef.current
+        if (!uploadedUrl) {
+          setError('Не удалось сохранить preview. Повторите загрузку файла.')
+          return
+        }
+        finalPreviewUrl = uploadedUrl
+        setPreviewUrl(uploadedUrl)
+      }
+      if (finalPreviewUrl.startsWith('blob:')) {
+        setError('Preview еще не сохранен на сервере. Подождите несколько секунд и повторите.')
+        return
+      }
       const created = await submitPrompt({
         title: title.trim(),
         description: description.trim(),
         promptText: promptText.trim(),
-        previewUrl,
+        previewUrl: finalPreviewUrl,
         model,
         tags: trendKind === 'video'
           ? [TREND_TAG, VIDEO_TREND_TAG, `trend-scenario:${videoScenario}`, `trend-duration:${videoDuration}`]
@@ -522,6 +552,13 @@ export function TrendsTab() {
                     : 'Загрузить изображение'}
               </button>
             )}
+            {uploadingPreview ? (
+              <p className="text-xs text-muted-foreground">
+                Сохраняю preview на сервере. Не закрывайте mini app до завершения.
+              </p>
+            ) : error ? (
+              <p className="text-xs text-destructive">{error}</p>
+            ) : null}
           </div>
 
           <Textarea
@@ -534,7 +571,7 @@ export function TrendsTab() {
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-            disabled={submitting || uploadingPreview}
+            disabled={submitting}
             onClick={() => void handleCreate()}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
