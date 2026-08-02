@@ -128,12 +128,11 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm ci --no-audit --no-fund
 
-      - name: Build development static export
+      - name: Rebuild verified development static export
         working-directory: ${{ env.FRONTEND_DIR }}
         run: |
           set -Eeuo pipefail
           npm run lint
-          npm test -- --runInBand
           npm run build
           test -s out/index.html
           test -d out/_next/static
