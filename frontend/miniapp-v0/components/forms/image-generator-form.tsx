@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { ImageModel, PromptPreset, UploadedFile } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -55,8 +55,6 @@ export function ImageGeneratorForm({
   const [remixTitle, setRemixTitle] = useState('')
   const [references, setReferences] = useState<UploadedFile[]>([])
   const [activeChanges, setActiveChanges] = useState<Set<string>>(new Set())
-  const [remixFilesTouched, setRemixFilesTouched] = useState(false)
-  const autoSubmittedRemixRef = useRef<string | null>(null)
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
@@ -116,8 +114,6 @@ export function ImageGeneratorForm({
     setSourceFeedGenId(promptPreset.sourceFeedGenId || null)
     setRemixTitle(promptPreset.sourceFeedGenId ? promptPreset.title : '')
     setActiveChanges(new Set())
-    setRemixFilesTouched(false)
-    autoSubmittedRemixRef.current = null
     if (promptPreset.model && models.some((item) => item.id === promptPreset.model)) {
       setSelectedModel(promptPreset.model)
     }
@@ -167,9 +163,6 @@ export function ImageGeneratorForm({
 
   const handleReferencesChange = (nextReferences: UploadedFile[]) => {
     setReferences(nextReferences)
-    if (isFeedRemix) {
-      setRemixFilesTouched(true)
-    }
   }
 
   const handleSubmit = useCallback(async () => {
@@ -192,7 +185,6 @@ export function ImageGeneratorForm({
     setRemixTitle('')
     setReferences([])
     setActiveChanges(new Set())
-    setRemixFilesTouched(false)
   }, [
     isValid,
     onSubmit,
@@ -207,16 +199,6 @@ export function ImageGeneratorForm({
     prompt,
     references,
   ])
-
-  useEffect(() => {
-    if (!isFeedRemix || !remixFilesTouched || !isValid || isSubmitting) return
-
-    const signature = `${sourceFeedGenId || ''}:${references.map((reference) => reference.url).join('|')}`
-    if (!signature || autoSubmittedRemixRef.current === signature) return
-
-    autoSubmittedRemixRef.current = signature
-    void handleSubmit()
-  }, [handleSubmit, isFeedRemix, isSubmitting, isValid, references, remixFilesTouched, sourceFeedGenId])
 
   return (
     <div className="space-y-4">
