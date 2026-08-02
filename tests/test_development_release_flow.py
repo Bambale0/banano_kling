@@ -14,6 +14,17 @@ def test_development_ci_targets_only_dev() -> None:
     assert "branches: [main]" not in workflow
 
 
+def test_development_ci_uses_current_browser_e2e_gate() -> None:
+    workflow = read(".github/workflows/ci-development.yml")
+
+    assert "npm audit --audit-level=high" in workflow
+    assert "npm run lint" in workflow
+    assert "npm run build" in workflow
+    assert "npx playwright install --with-deps chromium" in workflow
+    assert "node e2e/critical-flows.mjs" in workflow
+    assert "npm test" not in workflow
+
+
 def test_development_backend_deploy_isolated_from_production_secrets() -> None:
     workflow = read(".github/workflows/deploy-development.yml")
 
@@ -45,6 +56,8 @@ def test_development_frontend_deploy_isolated_from_production() -> None:
     assert "REPO_BRANCH:-}" in workflow
     assert "BACKEND_ORIGIN%/" in workflow
     assert "git switch dev" in workflow
+    assert "npm run build" in workflow
+    assert "npm test" not in workflow
 
 
 def test_production_backend_deploy_remains_on_tanyapi() -> None:
