@@ -26,15 +26,15 @@ jobs:
 
           path = Path('scripts/_apply_photo_prompt_one_ruble.py')
           text = path.read_text(encoding='utf-8')
-          text = text.replace(
-              '"""        # Таблица транзакций\\n"""',
-              '"""        # Таблица транзакций (платежи)\\n"""',
-          )
-          text = text.replace(
-              '        # Таблица транзакций\\n""",',
-              '        # Таблица транзакций (платежи)\\n""",',
-          )
-          path.write_text(text, encoding='utf-8')
+          old = '''    """        # Таблица транзакций
+          """,
+          '''
+          new = '''    """        # Таблица транзакций (платежи)
+          """,
+          '''
+          if old not in text:
+              raise SystemExit('Current database comment anchor not found in codemod')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Apply focused pricing patch
