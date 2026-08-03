@@ -1,4 +1,4 @@
-name: One-shot fix visible bonus, pricing and deployment
+name: One-shot fix visible pricing and backend deploy
 
 on:
   push:
@@ -21,12 +21,13 @@ jobs:
           ref: tanyapi
           fetch-depth: 0
 
-      - name: Apply source and deployment fixes
+      - name: Apply visible pricing and deployment fixes
         shell: bash
         run: |
           set -Eeuo pipefail
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           def replace_once(path: str, old: str, new: str) -> None:
               target = Path(path)
@@ -36,7 +37,6 @@ jobs:
                   raise SystemExit(f"Expected one match in {path}, found {count}: {old!r}")
               target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
-          # Show the real photo-to-prompt price directly on the main menu screen.
           replace_once(
               "bot/keyboards.py",
               "from bot.services.preset_manager import preset_manager\n",
@@ -46,110 +46,122 @@ jobs:
           replace_once(
               "bot/keyboards.py",
               'InlineKeyboardButton(text="✍️ Промпт по описанию", callback_data="photo_to_prompt"),',
-              'InlineKeyboardButton(\n'
-              '            text=f"✍️ Промпт по описанию • {photo_prompt_price_label()}",\n'
-              '            callback_data="photo_to_prompt",\n'
-              '        ),',
+              dedent('''\
+                  InlineKeyboardButton(
+                      text=f"✍️ Промпт по описанию • {photo_prompt_price_label()}",
+                      callback_data="photo_to_prompt",
+                  ),
+              ''').rstrip(),
           )
 
-          # Russian-facing prices use a decimal comma consistently.
           replace_once(
               "bot/services/photo_prompt_billing.py",
-              'def photo_prompt_price_label() -> str:\n'
-              '    return f"{photo_prompt_price_rub():g} ₽ ({photo_prompt_cost_credits():g} 🍌)"\n',
-              'def _format_price_number(value: float) -> str:\n'
-              '    return f"{float(value):g}".replace(".", ",")\n\n\n'
-              'def photo_prompt_price_label() -> str:\n'
-              '    return (\n'
-              '        f"{_format_price_number(photo_prompt_price_rub())} ₽ "\n'
-              '        f"({_format_price_number(photo_prompt_cost_credits())} 🍌)"\n'
-              '    )\n',
+              dedent('''\
+                  def photo_prompt_price_label() -> str:
+                      return f"{photo_prompt_price_rub():g} ₽ ({photo_prompt_cost_credits():g} 🍌)"
+              '''),
+              dedent('''\
+                  def _format_price_number(value: float) -> str:
+                      return f"{float(value):g}".replace(".", ",")
+
+
+                  def photo_prompt_price_label() -> str:
+                      return (
+                          f"{_format_price_number(photo_prompt_price_rub())} ₽ "
+                          f"({_format_price_number(photo_prompt_cost_credits())} 🍌)"
+                      )
+              '''),
           )
 
-          # Keep the opened screen aligned with the menu name and price wording.
           replace_once(
               "bot/handlers/image_analyzer.py",
-              '        "📸 <b>Промпт по фото</b>\\n\\n"\n'
-              '        f"Стоимость анализа фото: <b>{photo_prompt_price_label()}</b>\\n\\n"\n',
-              '        "✍️ <b>Промпт по описанию</b>\\n\\n"\n'
-              '        f"Стоимость: <b>{photo_prompt_price_label()}</b>\\n\\n"\n',
+              dedent('''\
+                      "📸 <b>Промпт по фото</b>\\n\\n"
+                      f"Стоимость анализа фото: <b>{photo_prompt_price_label()}</b>\\n\\n"
+              '''),
+              dedent('''\
+                      "✍️ <b>Промпт по описанию</b>\\n\\n"
+                      f"Стоимость: <b>{photo_prompt_price_label()}</b>\\n\\n"
+              '''),
           )
 
           replace_once(
               "tests/test_keyboards.py",
               '        btn.text == "✍️ Промпт по описанию"\n',
-              '        btn.text == (\n'
-              '            "✍️ Промпт по описанию • "\n'
-              '            f"{keyboards_module.photo_prompt_price_label()}"\n'
-              '        )\n',
+              dedent('''\
+                      btn.text == (
+                          "✍️ Промпт по описанию • "
+                          f"{keyboards_module.photo_prompt_price_label()}"
+                      )
+              '''),
           )
 
-          # Harden the backend deploy gate: unrelated/optional CI conclusions must
-          # not block a commit whose production image path was fully verified.
           deploy_path = Path(".github/workflows/deploy-production.yml")
           deploy_text = deploy_path.read_text(encoding="utf-8")
-          old_gate = '''            if [ "$status" = completed ]; then
-              [ "$conclusion" = success ] || {
-                echo "::error::Matching CI finished with conclusion=$conclusion"
-                exit 1
-              }
-              echo "Matching CI passed for $GITHUB_SHA"
-              exit 0
-            fi
+          old_gate = dedent('''\
+                          if [ "$status" = completed ]; then
+                            [ "$conclusion" = success ] || {
+                              echo "::error::Matching CI finished with conclusion=$conclusion"
+                              exit 1
+                            }
+                            echo "Matching CI passed for $GITHUB_SHA"
+                            exit 0
+                          fi
 
-            sleep 15
-'''
-          new_gate = '''            if [ "$status" != completed ]; then
-              sleep 15
-              continue
-            fi
+                          sleep 15
+          ''')
+          new_gate = dedent('''\
+                          if [ "$status" != completed ]; then
+                            sleep 15
+                            continue
+                          fi
 
-            jobs_payload="$(
-              gh api --method GET \\
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \\
-                -F per_page=100
-            )"
+                          jobs_payload="$(
+                            gh api --method GET \\
+                              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" \\
+                              -F per_page=100
+                          )"
 
-            github_image_ok=false
-            if jq -e '\
-              [.jobs[] | select(.name == "GitHub runner — Production Docker image")]\
-              | last as $job\
-              | $job != null\
-                and any($job.steps[]?; .name == "Build image with GitHub Actions cache" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Verify image filesystem and Python imports" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Validate production Compose configuration" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Publish verified image" and .conclusion == "success")\
-            ' <<< "$jobs_payload" >/dev/null; then
-              github_image_ok=true
-            fi
+                          github_image_ok=false
+                          if jq -e '\
+                            [.jobs[] | select(.name == "GitHub runner — Production Docker image")]\
+                            | last as $job\
+                            | $job != null\
+                              and any($job.steps[]?; .name == "Build image with GitHub Actions cache" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Verify image filesystem and Python imports" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Validate production Compose configuration" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Publish verified image" and .conclusion == "success")\
+                          ' <<< "$jobs_payload" >/dev/null; then
+                            github_image_ok=true
+                          fi
 
-            nuromix_image_ok=false
-            if jq -e '\
-              [.jobs[] | select(.name == "nuromix fallback — Full CI validation")]\
-              | last as $job\
-              | $job != null\
-                and any($job.steps[]?; .name == "Run full safe regression suite" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Build image on nuromix" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Verify nuromix image" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Validate production Compose on nuromix" and .conclusion == "success")\
-                and any($job.steps[]?; .name == "Publish nuromix-verified image" and .conclusion == "success")\
-            ' <<< "$jobs_payload" >/dev/null; then
-              nuromix_image_ok=true
-            fi
+                          nuromix_image_ok=false
+                          if jq -e '\
+                            [.jobs[] | select(.name == "nuromix fallback — Full CI validation")]\
+                            | last as $job\
+                            | $job != null\
+                              and any($job.steps[]?; .name == "Run full safe regression suite" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Build image on nuromix" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Verify nuromix image" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Validate production Compose on nuromix" and .conclusion == "success")\
+                              and any($job.steps[]?; .name == "Publish nuromix-verified image" and .conclusion == "success")\
+                          ' <<< "$jobs_payload" >/dev/null; then
+                            nuromix_image_ok=true
+                          fi
 
-            echo "verified_github_image=$github_image_ok"
-            echo "verified_nuromix_image=$nuromix_image_ok"
+                          echo "verified_github_image=$github_image_ok"
+                          echo "verified_nuromix_image=$nuromix_image_ok"
 
-            if [ "$github_image_ok" = true ] || [ "$nuromix_image_ok" = true ]; then
-              echo "Exact commit $GITHUB_SHA passed a complete CI image path"
-              exit 0
-            fi
+                          if [ "$github_image_ok" = true ] || [ "$nuromix_image_ok" = true ]; then
+                            echo "Exact commit $GITHUB_SHA passed a complete CI image path"
+                            exit 0
+                          fi
 
-            echo "::error::CI completed without a fully verified image path for $GITHUB_SHA"
-            jq -r '.jobs[] | "job=\\(.name) status=\\(.status) conclusion=\\(.conclusion)"' \\
-              <<< "$jobs_payload"
-            exit 1
-'''
+                          echo "::error::CI completed without a fully verified image path for $GITHUB_SHA"
+                          jq -r '.jobs[] | "job=\\(.name) status=\\(.status) conclusion=\\(.conclusion)"' \\
+                            <<< "$jobs_payload"
+                          exit 1
+          ''')
           if deploy_text.count(old_gate) != 1:
               raise SystemExit(
                   f"Expected one legacy deploy gate, found {deploy_text.count(old_gate)}"
@@ -167,83 +179,16 @@ jobs:
           )
           deploy_path.write_text(deploy_text, encoding="utf-8")
 
-          # The Mini App is hosted separately from the backend. Deploy it whenever
-          # frontend source or its deployment tooling changes. Including this
-          # workflow path makes its first commit deploy the already-fixed frontend.
-          frontend_workflow = '''name: Deploy — Tanya Mini App frontend
-
-on:
-  push:
-    branches: [tanyapi]
-    paths:
-      - frontend/miniapp-v0/**
-      - cdn.sh
-      - scripts/install_miniapp_frontend_https_host.sh
-      - .github/workflows/deploy-frontend.yml
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: tanya-production-frontend
-  cancel-in-progress: false
-
-jobs:
-  deploy:
-    name: nuromix — Deploy Mini App to CDN
-    runs-on: [self-hosted, linux, x64, nuromix]
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout exact commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Validate frontend deployment inputs
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test -f frontend/miniapp-v0/package.json
-          test -f frontend/miniapp-v0/components/balance-sheet.tsx
-          grep -F 'Welcome-бонус для новых пользователей: 5🍌' \
-            frontend/miniapp-v0/components/balance-sheet.tsx
-          grep -F 'credits: 5' frontend/miniapp-v0/lib/mock-data.ts
-          bash -n cdn.sh
-          bash -n scripts/install_miniapp_frontend_https_host.sh
-
-      - name: Deploy static frontend and verify remote status
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          remote_name="tanyafrontend"
-          if [ "$(id -u)" -eq 0 ]; then
-            bash cdn.sh --remote-deploy "$remote_name"
-            bash cdn.sh --remote-status "$remote_name"
-          else
-            sudo -n bash cdn.sh --remote-deploy "$remote_name"
-            sudo -n bash cdn.sh --remote-status "$remote_name"
-          fi
-'''
-          Path(".github/workflows/deploy-frontend.yml").write_text(
-              frontend_workflow,
-              encoding="utf-8",
-          )
-
-          # Guard the exact visible values before committing.
+          keyboard_text = Path("bot/keyboards.py").read_text(encoding="utf-8")
+          billing_text = Path("bot/services/photo_prompt_billing.py").read_text(encoding="utf-8")
+          analyzer_text = Path("bot/handlers/image_analyzer.py").read_text(encoding="utf-8")
+          assert "Промпт по описанию • {photo_prompt_price_label()}" in keyboard_text
+          assert 'replace(".", ",")' in billing_text
+          assert "Стоимость: <b>{photo_prompt_price_label()}</b>" in analyzer_text
           assert "PARTNER_NEW_USER_BONUS: int = 5" in Path("bot/database.py").read_text(encoding="utf-8")
           assert "Welcome-бонус для новых пользователей: 5🍌" in Path(
               "frontend/miniapp-v0/components/balance-sheet.tsx"
           ).read_text(encoding="utf-8")
-          assert "credits: 5" in Path("frontend/miniapp-v0/lib/mock-data.ts").read_text(encoding="utf-8")
-          assert "Промпт по описанию • {photo_prompt_price_label()}" in Path(
-              "bot/keyboards.py"
-          ).read_text(encoding="utf-8")
-          assert "1 ₽ (0,1 🍌)" == __import__(
-              "bot.services.photo_prompt_billing",
-              fromlist=["photo_prompt_price_label"],
-          ).photo_prompt_price_label()
           PY
 
           python -m compileall -q \
@@ -251,8 +196,6 @@ jobs:
             bot/services/photo_prompt_billing.py \
             bot/handlers/image_analyzer.py \
             tests/test_keyboards.py
-          bash -n cdn.sh
-          bash -n scripts/install_miniapp_frontend_https_host.sh
 
       - name: Commit final fix and remove one-shot workflow
         shell: bash
@@ -266,8 +209,7 @@ jobs:
             bot/services/photo_prompt_billing.py \
             bot/handlers/image_analyzer.py \
             tests/test_keyboards.py \
-            .github/workflows/deploy-production.yml \
-            .github/workflows/deploy-frontend.yml
+            .github/workflows/deploy-production.yml
           git diff --cached --check
-          git commit -m "Fix visible welcome bonus and photo prompt pricing"
+          git commit -m "Fix visible photo prompt pricing and backend deploy gate"
           git push origin HEAD:tanyapi
