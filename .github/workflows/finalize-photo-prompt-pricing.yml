@@ -1,0 +1,90 @@
+name: Finalize photo prompt one-ruble pricing
+
+on:
+  pull_request:
+    branches: [automation/photo-prompt-pricing-finalize]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Make PostgreSQL credit migration conditional
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/database.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        if db_backend.is_postgres():
+              await db.execute(
+                  "ALTER TABLE users ALTER COLUMN credits TYPE NUMERIC(12, 4) USING credits::numeric"
+              )
+          '''
+          new = '''        if db_backend.is_postgres():
+              cursor = await db.execute(
+                  """
+                  SELECT data_type
+                  FROM information_schema.columns
+                  WHERE table_schema = current_schema()
+                    AND table_name = 'users'
+                    AND column_name = 'credits'
+                  """
+              )
+              row = await cursor.fetchone()
+              if row and str(row[0]).lower() in {"smallint", "integer", "bigint"}:
+                  await db.execute(
+                      "ALTER TABLE users ALTER COLUMN credits "
+                      "TYPE NUMERIC(12, 4) USING credits::numeric"
+                  )
+          '''
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('PostgreSQL credit migration anchor not found')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Normalize Python imports
+        run: |
+          python -m pip install --quiet ruff
+          ruff check --select I --fix \
+            bot/handlers/image_analyzer.py \
+            bot/miniapp.py \
+            tests/test_photo_prompt_pricing.py
+
+      - name: Validate focused code
+        run: |
+          python -m py_compile \
+            bot/database.py \
+            bot/handlers/image_analyzer.py \
+            bot/miniapp.py \
+            bot/services/photo_prompt_billing.py \
+            bot/services/preset_manager.py \
+            tests/test_photo_prompt_pricing.py
+          python -m json.tool data/price.json >/dev/null
+
+      - name: Commit finalization
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No finalization changes"
+            exit 0
+          fi
+          git commit -m "Harden one-ruble photo prompt pricing"
+          git push origin "HEAD:${HEAD_BRANCH}"
