@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Remove legacy scenario state and stabilize hooks
+      - name: Remove stale scenario state
         shell: bash
         run: |
           python - <<'PY'
@@ -27,194 +27,39 @@ jobs:
 
           path = Path('frontend/miniapp-v0/components/tabs/trends-tab.tsx')
           text = path.read_text(encoding='utf-8')
+          marker = "  useEffect(() => {\n    if (trendKind !== 'video') return"
+          start = text.find(marker)
+          if start < 0:
+              if 'setVideoScenario' not in text:
+                  print('Stale scenario block already removed')
+                  raise SystemExit(0)
+              raise SystemExit('Could not locate stale scenario effect')
 
-          def replace_once(old: str, new: str) -> None:
-              global text
-              if new in text:
-                  return
-              if old not in text:
-                  raise SystemExit(f'Expected anchor not found: {old[:120]!r}')
-              text = text.replace(old, new, 1)
+          end_marker = "\n\n  useEffect(() => {"
+          end = text.find(end_marker, start + len(marker))
+          if end < 0:
+              raise SystemExit('Could not locate the next effect boundary')
 
-          replace_once(
-              "import { useEffect, useMemo, useRef, useState } from 'react'",
-              "import { useCallback, useEffect, useMemo, useRef, useState } from 'react'",
-          )
-
-          old_derived = '''  const availableModels = trendKind === 'video'
-            ? state.videoModels.filter((item) => item.supports.includes('imgtxt'))
-            : state.imageModels
-          const selectedTrendImageModel = state.imageModels.find((item) => item.id === model)
-          const selectedTrendVideoModel = state.videoModels.find((item) => item.id === model)
-          const trendImageQualities =
-            selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
-              ? ['1K', '2K', '4K']
-              : selectedTrendImageModel?.qualities?.length
-                ? selectedTrendImageModel.qualities
-                : ['basic']
-          '''
-          new_derived = '''  const availableModels = useMemo(
-            () =>
-              trendKind === 'video'
-                ? state.videoModels.filter((item) => item.supports.includes('imgtxt'))
-                : state.imageModels,
-            [state.imageModels, state.videoModels, trendKind],
-          )
-          const selectedTrendImageModel = useMemo(
-            () => state.imageModels.find((item) => item.id === model),
-            [model, state.imageModels],
-          )
-          const selectedTrendVideoModel = useMemo(
-            () => state.videoModels.find((item) => item.id === model),
-            [model, state.videoModels],
-          )
-          const trendImageQualities = useMemo(
-            () =>
-              selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
-                ? ['1K', '2K', '4K']
-                : selectedTrendImageModel?.qualities?.length
-                  ? selectedTrendImageModel.qualities
-                  : ['basic'],
-            [selectedTrendImageModel],
-          )
-          '''
-          replace_once(old_derived, new_derived)
-
-          old_detection = '''  const isVideoTrend = (trend: PromptItem) =>
-            trend.category === 'video' ||
-            hasVideoTag(trend) ||
-            videoModelIds.has(String(trend.model || ''))
-
-          const photoTrends = useMemo(() => items.filter((item) => !isVideoTrend(item)), [items, videoModelIds])
-          const videoTrends = useMemo(() => items.filter((item) => isVideoTrend(item)), [items, videoModelIds])
-          '''
-          new_detection = '''  const isVideoTrend = useCallback(
-            (trend: PromptItem) =>
-              trend.category === 'video' ||
-              hasVideoTag(trend) ||
-              videoModelIds.has(String(trend.model || '')),
-            [videoModelIds],
-          )
-
-          const photoTrends = useMemo(
-            () => items.filter((item) => !isVideoTrend(item)),
-            [isVideoTrend, items],
-          )
-          const videoTrends = useMemo(
-            () => items.filter((item) => isVideoTrend(item)),
-            [isVideoTrend, items],
-          )
-          '''
-          replace_once(old_detection, new_detection)
-
-          old_loader = '''  async function loadTrends() {
-            if (!isLive) {
-              setItems([])
-              return
-            }
-            setLoading(true)
-            setError(null)
-            try {
-              const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-              // Keep a client-side guard as well, so a backend/cache regression cannot
-              // leak ordinary public prompts into the curated trends section.
-              setItems(trends.filter(hasTrendTag))
-            } catch (e) {
-              setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
-            } finally {
-              setLoading(false)
-            }
-          }
-
-          useEffect(() => {
-            void loadTrends()
-          }, [isLive])
-          '''
-          new_loader = '''  const loadTrends = useCallback(async () => {
-            if (!isLive) {
-              setItems([])
-              return
-            }
-            setLoading(true)
-            setError(null)
-            try {
-              const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-              // Keep a client-side guard as well, so a backend/cache regression cannot
-              // leak ordinary public prompts into the curated trends section.
-              setItems(trends.filter(hasTrendTag))
-            } catch (e) {
-              setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
-            } finally {
-              setLoading(false)
-            }
-          }, [isLive])
-
-          useEffect(() => {
-            void loadTrends()
-          }, [loadTrends])
-          '''
-          replace_once(old_loader, new_loader)
-
-          old_model_effect = '''  useEffect(() => {
-            const models = trendKind === 'video' ? state.videoModels : state.imageModels
-            if (!models.some((item) => item.id === model)) {
-              setModel(models[0]?.id || (trendKind === 'video' ? 'v3_pro' : 'banana_pro'))
-            }
-          }, [model, state.imageModels, state.videoModels, trendKind])
-          '''
-          new_model_effect = '''  useEffect(() => {
-            if (!availableModels.some((item) => item.id === model)) {
-              setModel(availableModels[0]?.id || (trendKind === 'video' ? 'v3_pro' : 'banana_pro'))
-            }
-          }, [availableModels, model, trendKind])
-          '''
-          replace_once(old_model_effect, new_model_effect)
-
-          old_scenario_effect = '''  useEffect(() => {
-            if (trendKind !== 'video') return
-            const selectedVideoModel = state.videoModels.find((item) => item.id === model)
-            if (!selectedVideoModel) return
-
-            setVideoScenario((current) => (
-              selectedVideoModel.supports.includes(current)
-                ? current
-                : selectedVideoModel.supports.includes('imgtxt')
-                  ? 'imgtxt'
-                  : selectedVideoModel.supports[0] || 'text'
-            ))
-            setVideoDuration((current) => (
-              selectedVideoModel.durations.includes(current)
-                ? current
-                : selectedVideoModel.durations[0] || 5
-            ))
-          }, [model, state.videoModels, trendKind])
-          '''
-          new_scenario_effect = '''  useEffect(() => {
+          replacement = """  useEffect(() => {
             if (trendKind !== 'video' || !selectedTrendVideoModel) return
             setVideoDuration((current) => (
               selectedTrendVideoModel.durations.includes(current)
                 ? current
                 : selectedTrendVideoModel.durations[0] || 5
             ))
-          }, [selectedTrendVideoModel, trendKind])
-          '''
-          replace_once(old_scenario_effect, new_scenario_effect)
+          }, [selectedTrendVideoModel, trendKind])"""
+          text = text[:start] + replacement + text[end:]
 
           if 'setVideoScenario' in text:
               raise SystemExit('Legacy setVideoScenario call remains')
-          if "useCallback" not in text:
-              raise SystemExit('Hook stabilization was not applied')
-
           path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Validate source invariants
-        shell: bash
+      - name: Validate source invariant
         run: |
           set -Eeuo pipefail
           ! grep -q 'setVideoScenario' frontend/miniapp-v0/components/tabs/trends-tab.tsx
-          grep -q 'const loadTrends = useCallback' frontend/miniapp-v0/components/tabs/trends-tab.tsx
-          grep -q 'const isVideoTrend = useCallback' frontend/miniapp-v0/components/tabs/trends-tab.tsx
+          grep -q "selectedTrendVideoModel.durations.includes" frontend/miniapp-v0/components/tabs/trends-tab.tsx
 
       - name: Commit build fix
         env:
