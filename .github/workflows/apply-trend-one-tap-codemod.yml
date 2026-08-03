@@ -1,0 +1,42 @@
+name: Apply trend one-tap codemod
+
+on:
+  pull_request:
+    branches: [automation/trend-one-tap-codemod]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply focused patch
+        run: python scripts/_apply_trend_one_tap_patch.py
+
+      - name: Validate generated Python syntax
+        run: |
+          python -m py_compile bot/database.py bot/miniapp.py tests/test_trend_one_tap_contract.py
+
+      - name: Commit patch to feature branch
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "Make trends one-photo automatic flows"
+          git push origin "HEAD:${HEAD_BRANCH}"
