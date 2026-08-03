@@ -35,8 +35,15 @@ def photo_prompt_cost_credits() -> float:
     return preset_manager.get_photo_prompt_cost()
 
 
+def _format_price_number(value: float) -> str:
+    return f"{float(value):g}".replace(".", ",")
+
+
 def photo_prompt_price_label() -> str:
-    return f"{photo_prompt_price_rub():g} ₽ ({photo_prompt_cost_credits():g} 🍌)"
+    return (
+        f"{_format_price_number(photo_prompt_price_rub())} ₽ "
+        f"({_format_price_number(photo_prompt_cost_credits())} 🍌)"
+    )
 
 
 async def reserve_photo_prompt_charge(telegram_id: int) -> PhotoPromptCharge:
