@@ -320,7 +320,8 @@ try {
 
   const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
   await taskDetailTitle.waitFor()
-  await taskDetailTitle.locator('xpath=..').locator('button').click()
+  await page.mouse.click(10, 10)
+  await taskDetailTitle.waitFor({ state: 'hidden' })
 
   // Admin upload E2E: uploaded preview survives duration/model changes.
   await page.getByRole('button', { name: 'Добавить', exact: true }).click()
