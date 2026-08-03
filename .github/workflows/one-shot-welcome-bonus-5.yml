@@ -1,0 +1,141 @@
+name: One-shot welcome bonus migration
+
+on:
+  push:
+    branches:
+      - tanyapi
+    paths:
+      - .github/workflows/one-shot-welcome-bonus-5.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tanyapi
+        uses: actions/checkout@v4
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+
+      - name: Apply welcome bonus change
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_required(path: str, old: str, new: str) -> None:
+              file_path = Path(path)
+              text = file_path.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Required pattern not found in {path}: {old!r}")
+              file_path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          database_path = Path("bot/database.py")
+          database_text = database_path.read_text(encoding="utf-8")
+          database_text = database_text.replace(
+              "PARTNER_NEW_USER_BONUS: int = 15   # бананы новому пользователю при регистрации",
+              "PARTNER_NEW_USER_BONUS: int = 5    # бананы новому пользователю при регистрации",
+              1,
+          )
+          old_insert = '''                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, 15, ?, NULL)",
+                (telegram_id, new_referral_code),'''
+          new_insert = '''                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, ?, ?, NULL)",
+                (telegram_id, PARTNER_NEW_USER_BONUS, new_referral_code),'''
+          if old_insert not in database_text:
+              raise SystemExit("New-user INSERT with hardcoded 15 was not found")
+          database_text = database_text.replace(old_insert, new_insert, 1)
+          database_path.write_text(database_text, encoding="utf-8")
+
+          replace_required(
+              "frontend/miniapp-v0/components/balance-sheet.tsx",
+              "Welcome-бонус для новых пользователей: 15🍌",
+              "Welcome-бонус для новых пользователей: 5🍌",
+          )
+
+          replace_required(
+              "frontend/miniapp-v0/lib/mock-data.ts",
+              "    botUsername: 'BananaBoombot_bot',\n    credits: 15,\n    isAdmin: false,",
+              "    botUsername: 'BananaBoombot_bot',\n    credits: 5,\n    isAdmin: false,",
+          )
+
+          test_path = Path("tests/test_referral_system.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          test_text = test_text.replace(
+              "PARTNER_NEW_USER_BONUS=15 at registration",
+              "PARTNER_NEW_USER_BONUS=5 at registration",
+          )
+          test_name = "test_new_user_receives_five_welcome_bananas"
+          if test_name not in test_text:
+              test_text += '''\n\ndef test_new_user_receives_five_welcome_bananas(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "welcome_bonus.db")
+        await db.init_db()
+
+        user = await db.get_or_create_user(550001)
+
+        assert db.PARTNER_NEW_USER_BONUS == 5
+        assert user.credits == 5
+
+    asyncio.run(run())
+'''
+          test_path.write_text(test_text, encoding="utf-8")
+
+          # Keep user-facing runtime copy aligned. Only lines that explicitly
+          # describe registration/welcome bonuses are normalized; package and
+          # generation prices containing 15 are intentionally untouched.
+          welcome_context = re.compile(
+              r"welcome|приветств|нов(?:ому|ых) пользовател|регистрац|для тестирования бота|реферальн.*бонус",
+              re.IGNORECASE,
+          )
+          stale_lines = []
+          for root in (Path("bot"), Path("frontend/miniapp-v0")):
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.suffix.lower() not in {".py", ".ts", ".tsx", ".js", ".jsx", ".html"}:
+                      continue
+                  lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+                  changed = False
+                  for index, line in enumerate(lines):
+                      if welcome_context.search(line) and re.search(r"(?<!\d)15(?!\d)", line):
+                          lines[index] = re.sub(r"(?<!\d)15(?!\d)", "5", line)
+                          changed = True
+                  if changed:
+                      path.write_text("".join(lines), encoding="utf-8")
+
+          for root in (Path("bot"), Path("frontend/miniapp-v0")):
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.suffix.lower() not in {".py", ".ts", ".tsx", ".js", ".jsx", ".html"}:
+                      continue
+                  for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                      if welcome_context.search(line) and re.search(r"(?<!\d)15(?!\d)", line):
+                          stale_lines.append(f"{path}:{line_number}: {line.strip()}")
+
+          if stale_lines:
+              raise SystemExit("Stale welcome bonus references remain:\n" + "\n".join(stale_lines))
+
+          if "PARTNER_NEW_USER_BONUS: int = 5" not in database_path.read_text(encoding="utf-8"):
+              raise SystemExit("Welcome bonus constant was not changed to 5")
+          PY
+
+      - name: Validate syntax and focused tests
+        shell: bash
+        run: |
+          python -m compileall -q bot
+          python -m pip install -q -r requirements.txt
+          pytest -q tests/test_referral_system.py -k "welcome_bananas or process_referral_adds_bonus"
+
+      - name: Commit final change and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-shot-welcome-bonus-5.yml
+          git add bot/database.py frontend/miniapp-v0/components/balance-sheet.tsx frontend/miniapp-v0/lib/mock-data.ts tests/test_referral_system.py
+          git add -u bot frontend/miniapp-v0
+          git diff --cached --check
+          git commit -m "Fix welcome bonus at 5 bananas"
+          git push origin HEAD:tanyapi
