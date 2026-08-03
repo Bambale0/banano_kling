@@ -133,6 +133,11 @@ jobs:
           )
           PY
 
+      - name: Normalize test imports with Ruff
+        run: |
+          python -m pip install --quiet ruff
+          ruff check --select I --fix tests/test_trend_one_tap_contract.py
+
       - name: Validate syntax
         run: python -m py_compile bot/database.py bot/miniapp.py tests/test_trend_one_tap_contract.py
 
@@ -148,5 +153,5 @@ jobs:
             echo "No fixes needed"
             exit 0
           fi
-          git commit -m "Fix one-tap trend validation issues"
+          git commit -m "Normalize one-tap trend test imports"
           git push origin "HEAD:${HEAD_BRANCH}"
