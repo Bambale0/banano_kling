@@ -1,0 +1,99 @@
+name: Fix photo prompt API contract
+
+on:
+  pull_request:
+    branches: [automation/photo-prompt-api-contract-fix]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Return authoritative pricing fields
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontend/miniapp-v0/lib/api.ts')
+          text = path.read_text(encoding='utf-8')
+
+          old_response = '''  const response = await postJson<{
+            ok: true
+            prompt_en: string
+            prompt_ru: string
+            negative_prompt: string
+            model_hint: string
+          }>('photo-to-prompt', {
+          '''
+          new_response = '''  const response = await postJson<{
+            ok: true
+            prompt_en: string
+            prompt_ru: string
+            negative_prompt: string
+            model_hint: string
+            credits: number
+            cost_credits: number
+            price_rub: number
+          }>('photo-to-prompt', {
+          '''
+          if new_response not in text:
+              if old_response not in text:
+                  raise SystemExit('photoToPrompt response contract anchor not found')
+              text = text.replace(old_response, new_response, 1)
+
+          old_return = '''  return {
+            prompt_en: response.prompt_en,
+            prompt_ru: response.prompt_ru,
+            negative_prompt: response.negative_prompt,
+            model_hint: response.model_hint,
+          }
+          '''
+          new_return = '''  return {
+            prompt_en: response.prompt_en,
+            prompt_ru: response.prompt_ru,
+            negative_prompt: response.negative_prompt,
+            model_hint: response.model_hint,
+            credits: response.credits,
+            cost_credits: response.cost_credits,
+            price_rub: response.price_rub,
+          }
+          '''
+          if new_return not in text:
+              if old_return not in text:
+                  raise SystemExit('photoToPrompt return object anchor not found')
+              text = text.replace(old_return, new_return, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate frontend contract
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run build
+
+      - name: Commit API contract fix
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/miniapp-v0/lib/api.ts
+          if git diff --cached --quiet; then
+            echo "API contract already fixed"
+            exit 0
+          fi
+          git commit -m "Return photo prompt pricing fields to Mini App"
+          git push origin "HEAD:${HEAD_BRANCH}"
