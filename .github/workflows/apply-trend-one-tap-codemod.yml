@@ -1,4 +1,4 @@
-name: Apply trend one-tap codemod
+name: Apply trend one-tap fixes
 
 on:
   pull_request:
@@ -19,14 +19,126 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Apply focused patch
-        run: python scripts/_apply_trend_one_tap_patch.py
+      - name: Apply focused fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path_str: str, old: str, new: str) -> None:
+              path = Path(path_str)
+              text = path.read_text(encoding="utf-8")
+              if old not in text:
+                  return
+              path.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace(
+              "bot/database.py",
+              "generation_settings: Optional[dict[str, Any]] = None",
+              "generation_settings: dict[str, Any] | None = None",
+          )
+          replace(
+              "bot/database.py",
+              'if "generation_settings" in row.keys()',
+              'if "generation_settings" in row',
+          )
+
+          test_path = Path("tests/test_trend_one_tap_contract.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          if not test_text.startswith("from __future__ import annotations"):
+              test_path.write_text(
+                  "from __future__ import annotations\n\n" + test_text,
+                  encoding="utf-8",
+              )
+
+          replace(
+              "frontend/miniapp-v0/lib/trend-settings.ts",
+              """function finiteNumber(value: unknown): number | null {
+            const parsed = Number(value)
+            return Number.isFinite(parsed) ? parsed : null
+          }
+          """,
+              """function finiteNumber(value: unknown): number | null {
+            if (value === null || value === undefined || value === '') return null
+            const parsed = Number(value)
+            return Number.isFinite(parsed) ? parsed : null
+          }
+          """,
+          )
+          replace(
+              "frontend/miniapp-v0/lib/trend-settings.ts",
+              """  const model =
+            videoModels.find((item) => item.id === stored.model) ||
+            videoModels.find((item) => item.id === trend.model) ||
+            videoModels.find((item) => item.supports.includes('imgtxt')) ||
+            videoModels[0]
+          """,
+              """  const model =
+            videoModels.find(
+              (item) => item.id === stored.model && item.supports.includes('imgtxt'),
+            ) ||
+            videoModels.find(
+              (item) => item.id === trend.model && item.supports.includes('imgtxt'),
+            ) ||
+            videoModels.find((item) => item.supports.includes('imgtxt')) ||
+            videoModels[0]
+          """,
+          )
+
+          replace(
+              "frontend/miniapp-v0/components/tabs/trends-tab.tsx",
+              "import type { PromptItem, ScenarioType } from '@/lib/types'",
+              "import type { PromptItem } from '@/lib/types'",
+          )
+          replace(
+              "frontend/miniapp-v0/components/tabs/trends-tab.tsx",
+              "  const [videoScenario, setVideoScenario] = useState<ScenarioType>('imgtxt')\n",
+              "",
+          )
+          replace(
+              "frontend/miniapp-v0/components/tabs/trends-tab.tsx",
+              """    setVideoScenario((current) => (
+              selectedVideoModel.supports.includes(current)
+                ? current
+                : selectedVideoModel.supports.includes('imgtxt')
+                  ? 'imgtxt'
+                  : selectedVideoModel.supports[0] || 'text'
+            ))
+          """,
+              "",
+          )
+          replace(
+              "frontend/miniapp-v0/components/tabs/trends-tab.tsx",
+              "    setVideoScenario('imgtxt')\n",
+              "",
+          )
+          replace(
+              "frontend/miniapp-v0/components/tabs/trends-tab.tsx",
+              """  const trendImageQualities =
+            selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
+              ? ['1K', '2K', '4K']
+              : selectedTrendImageModel?.qualities?.length
+                ? selectedTrendImageModel.qualities
+                : ['basic']
+          """,
+              """  const trendImageQualities = useMemo(
+            () =>
+              selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
+                ? ['1K', '2K', '4K']
+                : selectedTrendImageModel?.qualities?.length
+                  ? selectedTrendImageModel.qualities
+                  : ['basic'],
+            [selectedTrendImageModel],
+          )
+          """,
+          )
+          PY
 
       - name: Validate generated Python syntax
         run: |
           python -m py_compile bot/database.py bot/miniapp.py tests/test_trend_one_tap_contract.py
 
-      - name: Commit patch to feature branch
+      - name: Commit fixes to feature branch
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
@@ -38,5 +150,5 @@ jobs:
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "Make trends one-photo automatic flows"
+          git commit -m "Fix one-tap trend validation issues"
           git push origin "HEAD:${HEAD_BRANCH}"
