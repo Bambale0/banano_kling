@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: tanya-production-backend
+  group: tanya-production-visible-copy-hotfix
   cancel-in-progress: false
 
 jobs:
@@ -48,8 +48,8 @@ jobs:
           expected_sha="$GITHUB_SHA"
 
           exec 9>/var/lock/banano-kling-production-deploy.lock
-          flock -n 9 || {
-            echo "Another production deployment is already running" >&2
+          flock -w 1800 9 || {
+            echo "Timed out waiting for the production deployment lock" >&2
             exit 1
           }
 
@@ -84,7 +84,7 @@ jobs:
           test "$health" = healthy
           test "$revision" = "$GITHUB_SHA"
 
-          docker exec banano-kling-bot python - <<'PY'
+          docker exec -i banano-kling-bot python - <<'PY'
           from bot.database import PARTNER_NEW_USER_BONUS
           from bot.keyboards import get_main_menu_keyboard
           from bot.services.photo_prompt_billing import photo_prompt_price_label
