@@ -232,7 +232,11 @@ export function TrendRunnerDialog({
             accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
             className="absolute inset-0 cursor-pointer opacity-0"
             disabled={busy}
-            onChange={(event) => void handlePhoto(event.target.files?.[0])}
+            onChange={(event) => {
+    const file = event.currentTarget.files?.[0]
+    event.currentTarget.value = ''
+    void handlePhoto(file)
+  }}
           />
           {busy ? (
             <Loader2 className="h-7 w-7 animate-spin text-gold" />

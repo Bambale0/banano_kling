@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+
+from bot.database import _row_optional_value
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,3 +82,18 @@ def test_admin_snapshot_contains_every_generation_parameter_used_by_runner() -> 
 
     assert "trend-scenario:" not in trends
     assert "trend-duration:" not in trends
+
+
+def test_sqlite_row_reads_structured_trend_settings() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            'SELECT ? AS generation_settings',
+            ('{"ratio":"9:16"}',),
+        ).fetchone()
+        assert row is not None
+        assert _row_optional_value(row, "generation_settings") == '{"ratio":"9:16"}'
+        assert _row_optional_value(row, "missing") is None
+    finally:
+        connection.close()

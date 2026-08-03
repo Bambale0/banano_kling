@@ -219,6 +219,17 @@ def _parse_json_dict(value: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _row_optional_value(
+    row: db_backend.Row,
+    key: str,
+    default: Any = None,
+) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def _parse_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
