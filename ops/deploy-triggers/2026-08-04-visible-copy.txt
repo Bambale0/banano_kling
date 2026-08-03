@@ -3,4 +3,4 @@ Deploy the merged tanyapi commit and verify:
 - photo prompt price is 1 ₽ (0,1 banana);
 - the price is visible directly on the main-menu button.
 
-Trigger nonce: merge-2026-08-04T00:52+03:00
+Trigger nonce: merge-v2-2026-08-04T01:10+03:00
