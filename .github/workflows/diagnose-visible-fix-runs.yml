@@ -1,0 +1,74 @@
+name: Diagnostics — Visible fix deployment runs
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - ops/deploy-triggers/2026-08-04-diagnose-visible-fix.txt
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect workflow and job diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ops/diagnostics
+          report=ops/diagnostics/visible-fix-runs.txt
+          : > "$report"
+
+          for sha in \
+            53941df1f19b1448ee300a83a6e47d07b63b2a8f \
+            d724667f8743415efe4ee6cd5d140fad27d49041 \
+            64c431d5439815abd046202c90242bf2e2999a0e \
+            a7e7669668b6c120e85b0cc7be434ccc48082b6f; do
+            echo "=== SHA $sha ===" >> "$report"
+            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${sha}&per_page=100")"
+            jq -r '.workflow_runs[] | "RUN id=\(.id) name=\(.name) event=\(.event) status=\(.status) conclusion=\(.conclusion // "null") created=\(.created_at) updated=\(.updated_at)"' \
+              <<< "$runs" >> "$report"
+
+            while IFS= read -r run_id; do
+              [ -n "$run_id" ] || continue
+              jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")"
+              jq -r '.jobs[] | "JOB id=\(.id) name=\(.name) status=\(.status) conclusion=\(.conclusion // "null") runner=\(.runner_name // "")"' \
+                <<< "$jobs" >> "$report"
+              jq -r '.jobs[] as $job | $job.steps[]? | "STEP job=\($job.id) number=\(.number) name=\(.name) status=\(.status) conclusion=\(.conclusion // "null")"' \
+                <<< "$jobs" >> "$report"
+            done < <(jq -r '.workflow_runs[].id' <<< "$runs")
+            echo >> "$report"
+          done
+
+          echo '=== RECENT ACTIVE/FAILED ===' >> "$report"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.status != "completed" or (.conclusion != "success" and .conclusion != "skipped")) | "RUN id=\(.id) sha=\(.head_sha) name=\(.name) event=\(.event) status=\(.status) conclusion=\(.conclusion // "null")"' \
+            >> "$report"
+
+          cat "$report"
+
+      - name: Commit diagnostics
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch origin tanyapi
+          git checkout -B diagnostics origin/tanyapi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm \
+            ops/deploy-triggers/2026-08-04-diagnose-visible-fix.txt \
+            .github/workflows/diagnose-visible-fix-runs.yml
+          git add ops/diagnostics/visible-fix-runs.txt
+          git commit -m 'Record visible fix deployment diagnostics'
+          git push origin HEAD:tanyapi
