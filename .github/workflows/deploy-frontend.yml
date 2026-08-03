@@ -1,0 +1,55 @@
+name: Deploy — Tanya Mini App frontend
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - frontend/miniapp-v0/**
+      - cdn.sh
+      - scripts/install_miniapp_frontend_https_host.sh
+      - .github/workflows/deploy-frontend.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tanya-production-frontend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: nuromix — Deploy Mini App to CDN
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate frontend deployment inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f frontend/miniapp-v0/package.json
+          test -f frontend/miniapp-v0/components/balance-sheet.tsx
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' \
+            frontend/miniapp-v0/components/balance-sheet.tsx
+          grep -F 'credits: 5' frontend/miniapp-v0/lib/mock-data.ts
+          bash -n cdn.sh
+          bash -n scripts/install_miniapp_frontend_https_host.sh
+
+      - name: Deploy static frontend and verify remote status
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote_name="tanyafrontend"
+          if [ "$(id -u)" -eq 0 ]; then
+            bash cdn.sh --remote-deploy "$remote_name"
+            bash cdn.sh --remote-status "$remote_name"
+          else
+            sudo -n bash cdn.sh --remote-deploy "$remote_name"
+            sudo -n bash cdn.sh --remote-status "$remote_name"
+          fi
