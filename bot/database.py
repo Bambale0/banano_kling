@@ -71,7 +71,7 @@ PROMPT_STATUSES = {"pending", "approved", "rejected", "deactivated"}
 # Партнёрская программа — единственный источник констант
 PARTNER_LEVEL1_PERCENT: int = 30   # % с покупок рефералов 1-го уровня
 PARTNER_LEVEL2_PERCENT: int = 7    # % с покупок рефералов 2-го уровня
-PARTNER_NEW_USER_BONUS: int = 15   # бананы новому пользователю при регистрации
+PARTNER_NEW_USER_BONUS: int = 5    # бананы новому пользователю при регистрации
 PARTNER_INVITER_BONUS: int = 3     # бананы пригласившему за каждую регистрацию
 PROMPT_REPEAT_REWARD_RUB: float = float(os.getenv("PROMPT_REPEAT_REWARD_RUB", "10"))
 PROMO_BONUS_BY_CREDITS: dict[int, int] = {
@@ -1305,8 +1305,8 @@ async def get_or_create_user(
             # (из bot/services/referral_service.py) после получения user_id.
             # Это закрывает антифрод-дыру: раньше проверки обходились при INSERT.
             await db.execute(
-                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, 15, ?, NULL)",
-                (telegram_id, new_referral_code),
+                "INSERT INTO users (telegram_id, credits, referral_code, referred_by) VALUES (?, ?, ?, NULL)",
+                (telegram_id, PARTNER_NEW_USER_BONUS, new_referral_code),
             )
             await db.commit()
             logger.info(
@@ -1711,7 +1711,7 @@ async def process_referral(
     signup_bonus: int = 0,
     inviter_bonus: int = PARTNER_INVITER_BONUS,
 ) -> bool:
-    """Закрепляет пользователя за партнёром: пригласившему +3🍌 (новичок уже получил 15 при регистрации)."""
+    """Закрепляет пользователя за партнёром: пригласившему +3🍌 (новичок уже получил 5 при регистрации)."""
     referral_code = (referral_code or "").strip().upper()
     if not referral_code:
         logger.info(

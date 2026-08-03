@@ -52,7 +52,7 @@ def test_process_referral_adds_bonus_and_links_user(tmp_path, monkeypatch):
         stats = await db.get_referral_stats(master.telegram_id)
 
         assert updated_referred.referred_by == master.id
-        # new user already got PARTNER_NEW_USER_BONUS=15 at registration; process_referral gives signup_bonus=0 more
+        # new user already got PARTNER_NEW_USER_BONUS=5 at registration; process_referral gives signup_bonus=0 more
         assert updated_referred.credits == db.PARTNER_NEW_USER_BONUS
         # inviter gets PARTNER_INVITER_BONUS credits into referral_earned
         assert updated_master.referral_earned == db.PARTNER_INVITER_BONUS
@@ -887,5 +887,16 @@ def test_stats_include_referrals(tmp_path, monkeypatch):
 
         assert user_stats["referrals_count"] == 1
         assert admin_stats["total_referrals"] == 1
+
+    asyncio.run(run())
+
+
+def test_new_user_receives_five_welcome_bananas(tmp_path, monkeypatch):
+    async def run():
+        db = _reload_database(monkeypatch, tmp_path / "welcome_bonus.db")
+        await db.init_db()
+        user = await db.get_or_create_user(550001)
+        assert db.PARTNER_NEW_USER_BONUS == 5
+        assert user.credits == 5
 
     asyncio.run(run())
