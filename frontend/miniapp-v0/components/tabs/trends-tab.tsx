@@ -125,23 +125,13 @@ export function TrendsTab() {
   }, [model, state.imageModels, state.videoModels, trendKind])
 
   useEffect(() => {
-    if (trendKind !== 'video') return
-    const selectedVideoModel = state.videoModels.find((item) => item.id === model)
-    if (!selectedVideoModel) return
-
-    setVideoScenario((current) => (
-      selectedVideoModel.supports.includes(current)
-        ? current
-        : selectedVideoModel.supports.includes('imgtxt')
-          ? 'imgtxt'
-          : selectedVideoModel.supports[0] || 'text'
-    ))
-    setVideoDuration((current) => (
-      selectedVideoModel.durations.includes(current)
-        ? current
-        : selectedVideoModel.durations[0] || 5
-    ))
-  }, [model, state.videoModels, trendKind])
+  if (trendKind !== 'video' || !selectedTrendVideoModel) return
+  setVideoDuration((current) => (
+    selectedTrendVideoModel.durations.includes(current)
+      ? current
+      : selectedTrendVideoModel.durations[0] || 5
+  ))
+}, [selectedTrendVideoModel, trendKind])
 
   useEffect(() => {
     const selectedModel = trendKind === 'video'
