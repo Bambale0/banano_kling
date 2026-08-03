@@ -27,152 +27,125 @@ jobs:
 
           path = Path('frontend/miniapp-v0/e2e/critical-flows.mjs')
           text = path.read_text(encoding='utf-8')
+          marker = 'let trendGenerationPayload = null'
+          if marker in text:
+              print('Exact one-tap browser coverage is already present')
+              raise SystemExit(0)
 
-          def replace_once(old: str, new: str) -> None:
-              global text
-              if new in text:
-                  return
-              if old not in text:
-                  raise SystemExit(f'Expected E2E anchor not found: {old[:100]!r}')
-              text = text.replace(old, new, 1)
+          trend_anchor = "  model: 'v3_pro',\n  author_id: 1,"
+          trend_replacement = """  model: 'v3_pro',
+          generation_settings: {
+            kind: 'video',
+            user_input: 'photo',
+            model: 'v3_pro',
+            scenario: 'imgtxt',
+            ratio: '16:9',
+            duration: 5,
+            grok_mode: 'normal',
+            grok_resolution: '480p',
+            kling_negative_prompt: '',
+            kling_cfg_scale: 0.5,
+          },
+          author_id: 1,"""
+          if trend_anchor not in text:
+              raise SystemExit('Curated trend anchor not found')
+          text = text.replace(trend_anchor, trend_replacement, 1)
 
-          replace_once(
-              """  model: 'v3_pro',
-            author_id: 1,
-          """,
-              """  model: 'v3_pro',
-            generation_settings: {
-              kind: 'video',
-              user_input: 'photo',
-              model: 'v3_pro',
-              scenario: 'imgtxt',
-              ratio: '16:9',
-              duration: 5,
-              grok_mode: 'normal',
-              grok_resolution: '480p',
-              kling_negative_prompt: '',
-              kling_cfg_scale: 0.5,
-            },
-            author_id: 1,
-          """,
-          )
+          variables_anchor = "  let paymentPayload = null\n  let promptsPayload = null"
+          variables_replacement = """  let paymentPayload = null
+          let promptsPayload = null
+          let trendGenerationPayload = null
+          let trendPhotoUploadExpected = false"""
+          if variables_anchor not in text:
+              raise SystemExit('E2E state anchor not found')
+          text = text.replace(variables_anchor, variables_replacement, 1)
 
-          replace_once(
-              """  let paymentPayload = null
-            let promptsPayload = null
-          """,
-              """  let paymentPayload = null
-            let promptsPayload = null
-            let trendGenerationPayload = null
-            let trendPhotoUploadExpected = false
-          """,
-          )
-
-          replace_once(
-              """    if (path.endsWith('/upload')) {
-              await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({
-                  ok: true,
-                  url: 'https://cdn.example/trend-upload.mp4',
-                  kind: 'video',
-                  filename: 'trend.mp4',
-                  reference: null,
-                }),
-              })
-              return
-            }
-          """,
-              """    if (path.endsWith('/generate-video')) {
-              trendGenerationPayload = JSON.parse(request.postData() || '{}')
-              await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({
-                  ok: true,
-                  status: 'done',
-                  task_id: 'trend-e2e-task',
-                  saved_url: 'https://cdn.example/trend-result.mp4',
-                  task_type: 'video',
-                  credits: 115,
-                  cost: 10,
-                  model_label: 'Kling 3 Pro',
-                  prompt_hidden: true,
-                  prompt_actions_allowed: false,
-                }),
-              })
-              return
-            }
-
-            if (path.endsWith('/upload')) {
-              const isTrendPhoto = trendPhotoUploadExpected
-              trendPhotoUploadExpected = false
-              await route.fulfill({
-                status: 200,
-                contentType: 'application/json',
-                body: JSON.stringify({
-                  ok: true,
-                  url: isTrendPhoto
-                    ? 'https://cdn.example/user-trend-photo.jpg'
-                    : 'https://cdn.example/trend-upload.mp4',
-                  kind: isTrendPhoto ? 'image' : 'video',
-                  filename: isTrendPhoto ? 'user-photo.jpg' : 'trend.mp4',
-                  reference: null,
-                }),
-              })
-              return
-            }
-          """,
-          )
-
-          replace_once(
-              """  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
-
-            // Admin upload E2E: uploaded preview survives duration/model changes.
-          """,
-              """  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
-
-            // User trend E2E: one photo, no settings, automatic generation with hidden preset.
-            await page.getByRole('button', { name: 'Повторить', exact: true }).click()
-            const trendRunner = page.getByRole('dialog')
-            await trendRunner.getByText('Загрузите своё фото', { exact: true }).waitFor()
-            assert.equal(await trendRunner.locator('select').count(), 0)
-            assert.equal(await trendRunner.getByText('Модель', { exact: true }).count(), 0)
-            assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)
-            assert.equal(await trendRunner.getByText('Длительность', { exact: true }).count(), 0)
-
-            trendPhotoUploadExpected = true
-            const generatedResponse = page.waitForResponse((response) =>
-              new URL(response.url()).pathname.endsWith('/generate-video'),
-            )
-            await trendRunner.locator('input[type="file"]').setInputFiles({
-              name: 'user-photo.jpg',
-              mimeType: 'image/jpeg',
-              buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+          upload_start = text.index("    if (path.endsWith('/upload')) {")
+          upload_end = text.index("\n\n    await route.fulfill({", upload_start)
+          api_blocks = """    if (path.endsWith('/generate-video')) {
+            trendGenerationPayload = JSON.parse(request.postData() || '{}')
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                ok: true,
+                status: 'done',
+                task_id: 'trend-e2e-task',
+                saved_url: 'https://cdn.example/trend-result.mp4',
+                task_type: 'video',
+                credits: 115,
+                cost: 10,
+                model_label: 'Kling 3 Pro',
+                prompt_hidden: true,
+                prompt_actions_allowed: false,
+              }),
             })
-            await generatedResponse
+            return
+          }
 
-            assert.equal(trendGenerationPayload?.v_model, 'v3_pro')
-            assert.equal(trendGenerationPayload?.v_type, 'imgtxt')
-            assert.equal(trendGenerationPayload?.v_ratio, '16:9')
-            assert.equal(trendGenerationPayload?.v_duration, 5)
-            assert.equal(
-              trendGenerationPayload?.v_image_url,
-              'https://cdn.example/user-trend-photo.jpg',
-            )
-            assert.equal(
-              trendGenerationPayload?.prompt,
-              curatedTrend.prompt_text,
-            )
+          if (path.endsWith('/upload')) {
+            const isTrendPhoto = trendPhotoUploadExpected
+            trendPhotoUploadExpected = false
+            await route.fulfill({
+              status: 200,
+              contentType: 'application/json',
+              body: JSON.stringify({
+                ok: true,
+                url: isTrendPhoto
+                  ? 'https://cdn.example/user-trend-photo.jpg'
+                  : 'https://cdn.example/trend-upload.mp4',
+                kind: isTrendPhoto ? 'image' : 'video',
+                filename: isTrendPhoto ? 'user-photo.jpg' : 'trend.mp4',
+                reference: null,
+              }),
+            })
+            return
+          }"""
+          text = text[:upload_start] + api_blocks + text[upload_end:]
 
-            const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
-            await taskDetailTitle.waitFor()
-            await taskDetailTitle.locator('xpath=..').locator('button').click()
+          flow_anchor = """  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
 
-            // Admin upload E2E: uploaded preview survives duration/model changes.
-          """,
+          // Admin upload E2E: uploaded preview survives duration/model changes."""
+          flow_replacement = """  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
+
+          // User trend E2E: one photo, no settings, automatic generation with hidden preset.
+          await page.getByRole('button', { name: 'Повторить', exact: true }).click()
+          const trendRunner = page.getByRole('dialog')
+          await trendRunner.getByText('Загрузите своё фото', { exact: true }).waitFor()
+          assert.equal(await trendRunner.locator('select').count(), 0)
+          assert.equal(await trendRunner.getByText('Модель', { exact: true }).count(), 0)
+          assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)
+          assert.equal(await trendRunner.getByText('Длительность', { exact: true }).count(), 0)
+
+          trendPhotoUploadExpected = true
+          const generatedResponse = page.waitForResponse((response) =>
+            new URL(response.url()).pathname.endsWith('/generate-video'),
           )
+          await trendRunner.locator('input[type="file"]').setInputFiles({
+            name: 'user-photo.jpg',
+            mimeType: 'image/jpeg',
+            buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+          })
+          await generatedResponse
+
+          assert.equal(trendGenerationPayload?.v_model, 'v3_pro')
+          assert.equal(trendGenerationPayload?.v_type, 'imgtxt')
+          assert.equal(trendGenerationPayload?.v_ratio, '16:9')
+          assert.equal(trendGenerationPayload?.v_duration, 5)
+          assert.equal(
+            trendGenerationPayload?.v_image_url,
+            'https://cdn.example/user-trend-photo.jpg',
+          )
+          assert.equal(trendGenerationPayload?.prompt, curatedTrend.prompt_text)
+
+          const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
+          await taskDetailTitle.waitFor()
+          await taskDetailTitle.locator('xpath=..').locator('button').click()
+
+          // Admin upload E2E: uploaded preview survives duration/model changes."""
+          if flow_anchor not in text:
+              raise SystemExit('Trend browser flow anchor not found')
+          text = text.replace(flow_anchor, flow_replacement, 1)
 
           path.write_text(text, encoding='utf-8')
           PY
