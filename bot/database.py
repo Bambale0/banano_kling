@@ -230,17 +230,6 @@ def _row_optional_value(
         return default
 
 
-def _row_optional_value(
-    row: db_backend.Row,
-    key: str,
-    default: Any = None,
-) -> Any:
-    try:
-        return row[key]
-    except (KeyError, IndexError):
-        return default
-
-
 def _parse_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
@@ -318,10 +307,8 @@ def _row_to_user_prompt(row: db_backend.Row | None) -> Optional[UserPrompt]:
         preview_url=row["preview_url"],
         model=row["model"],
         tags=[str(tag) for tag in _parse_json_list(row["tags"])],
-        generation_settings=(
-            _parse_json_dict(row["generation_settings"])
-            if "generation_settings" in row
-            else {}
+        generation_settings=_parse_json_dict(
+            _row_optional_value(row, "generation_settings")
         ),
         likes=int(row["likes"] or 0),
         uses_count=int(row["uses_count"] or 0),
