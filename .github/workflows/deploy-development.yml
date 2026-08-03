@@ -1,0 +1,253 @@
+name: Deploy — Tanya development
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: tanya-development-backend
+  cancel-in-progress: false
+
+jobs:
+  ci_gate:
+    name: Wait for strict development CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Require the development branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [ "$GITHUB_REF" = "refs/heads/dev" ] || {
+            echo "::error::Development deploy is allowed only from refs/heads/dev, got $GITHUB_REF"
+            exit 1
+          }
+
+      - name: Wait for matching development CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deadline=$((SECONDS + 4500))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci-development.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -F per_page=20
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "Development CI for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "Development CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Development CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              echo "Strict development CI passed for $GITHUB_SHA"
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for development CI for $GITHUB_SHA"
+          exit 1
+
+  deploy:
+    name: Deploy exact SHA to DEV bot
+    needs: ci_gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment: development
+
+    env:
+      DEV_SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
+      DEV_SSH_USER: ${{ secrets.DEV_SSH_USER }}
+      DEV_SSH_PORT: ${{ secrets.DEV_SSH_PORT }}
+      DEV_SSH_PRIVATE_KEY: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+      DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
+      DEV_PROJECT_PATH: ${{ vars.DEV_PROJECT_PATH }}
+      DEV_COMPOSE_PROJECT_NAME: ${{ vars.DEV_COMPOSE_PROJECT_NAME }}
+      DEV_CONTAINER_NAME: ${{ vars.DEV_CONTAINER_NAME }}
+      DEV_SYSTEMD_SERVICE: ${{ vars.DEV_SYSTEMD_SERVICE }}
+
+    steps:
+      - name: Require complete development deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${DEV_SSH_HOST:-}" ] || missing+=(DEV_SSH_HOST)
+          [ -n "${DEV_SSH_PRIVATE_KEY:-}" ] || missing+=(DEV_SSH_PRIVATE_KEY)
+          [ -n "${DEV_SSH_KNOWN_HOSTS:-}" ] || missing+=(DEV_SSH_KNOWN_HOSTS)
+          [ -n "${DEV_PROJECT_PATH:-}" ] || missing+=(DEV_PROJECT_PATH)
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Development deployment is not configured. Missing: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Configure pinned SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEV_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/development_key"
+          printf '%s\n' "$DEV_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/development_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/development_key" >/dev/null
+
+      - name: Deploy development backend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deploy_user="${DEV_SSH_USER:-root}"
+          deploy_port="${DEV_SSH_PORT:-22}"
+          compose_project="${DEV_COMPOSE_PROJECT_NAME:-banano-kling-dev}"
+          container_name="${DEV_CONTAINER_NAME:-banano-kling-dev-bot}"
+          systemd_service="${DEV_SYSTEMD_SERVICE:-banano-kling-dev}"
+
+          printf -v quoted_path '%q' "$DEV_PROJECT_PATH"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+          printf -v quoted_project '%q' "$compose_project"
+          printf -v quoted_container '%q' "$container_name"
+          printf -v quoted_service '%q' "$systemd_service"
+
+          ssh \
+            -i "$HOME/.ssh/development_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$DEV_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha $quoted_project $quoted_container $quoted_service" <<'REMOTE'
+          set -Eeuo pipefail
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          COMPOSE_NAME="$3"
+          DEV_CONTAINER="$4"
+          DEV_SERVICE="$5"
+
+          command -v git >/dev/null
+          command -v docker >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/banano-kling-development-deploy.lock
+          flock -n 9 || {
+            echo "Another development deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Development repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+          [ -f .env ] || {
+            echo "Development .env is missing: $PROJECT_DIR/.env" >&2
+            exit 1
+          }
+
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block development deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin dev
+          remote_sha="$(git rev-parse origin/dev)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Development head moved or SHA is not current: expected=$EXPECTED_SHA origin/dev=$remote_sha" >&2
+            exit 1
+          }
+          git switch dev
+          git reset --hard "$EXPECTED_SHA"
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+
+          export COMPOSE_PROJECT_NAME="$COMPOSE_NAME"
+          export CONTAINER_NAME="$DEV_CONTAINER"
+          export SYSTEMD_SERVICE="$DEV_SERVICE"
+          export BANANO_IMAGE="banano-kling-dev-bot:${EXPECTED_SHA}"
+
+          run_root() {
+            if [ "$(id -u)" -eq 0 ]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          run_root bash scripts/deploy_backend_docker.sh deploy
+          run_root bash scripts/deploy_backend_docker.sh status
+
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$DEV_CONTAINER")"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$DEV_CONTAINER")"
+
+          echo "development_host=$(hostname)"
+          echo "development_sha=$(git rev-parse HEAD)"
+          echo "development_container=$DEV_CONTAINER"
+          echo "development_health=$health"
+          echo "development_revision=$revision"
+
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
+          REMOTE
+
+      - name: Collect development diagnostics on failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          deploy_user="${DEV_SSH_USER:-root}"
+          deploy_port="${DEV_SSH_PORT:-22}"
+          container_name="${DEV_CONTAINER_NAME:-banano-kling-dev-bot}"
+          printf -v quoted_path '%q' "$DEV_PROJECT_PATH"
+          printf -v quoted_container '%q' "$container_name"
+
+          ssh \
+            -i "$HOME/.ssh/development_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$DEV_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_container" <<'REMOTE'
+          set +e
+          cd "$1" || exit 0
+          echo '=== git ==='
+          git status --short
+          git log -1 --oneline
+          echo '=== container ==='
+          docker inspect "$2" 2>/dev/null | head -200 || true
+          docker logs --tail=200 "$2" 2>/dev/null || true
+          REMOTE
+
+      - name: Remove development SSH key
+        if: always()
+        run: rm -f "$HOME/.ssh/development_key"
