@@ -1,0 +1,109 @@
+name: Validate final trend one-tap flow
+
+on:
+  pull_request:
+    branches: [automation/trend-one-tap-final-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      BOT_TOKEN: 123456:TEST_TOKEN_FOR_CI_ONLY
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - name: Checkout exact feature SHA
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet ruff pytest
+          pip install --quiet -r requirements.txt
+          python -m pip check
+
+      - name: Lint changed Python lines
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$HEAD_SHA" -- \
+              'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
+              'tests/*.py' 'tests/**/*.py'
+          )
+          if [ "${#changed_files[@]}" -gt 0 ]; then
+            python scripts/ruff_changed_lines.py \
+              --base "$BASE_SHA" \
+              --head "$HEAD_SHA" \
+              "${changed_files[@]}"
+          fi
+
+      - name: Run backend regression suite
+        run: pytest -q
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend/miniapp-v0
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit frontend dependencies
+        working-directory: frontend/miniapp-v0
+        run: npm audit --audit-level=high
+
+      - name: Lint frontend
+        working-directory: frontend/miniapp-v0
+        run: npm run lint
+
+      - name: Build production Mini App
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm run build
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+      - name: Install locked Chromium runtime
+        working-directory: frontend/miniapp-v0
+        run: npx playwright install --with-deps chromium
+
+      - name: Run critical browser flows
+        working-directory: frontend/miniapp-v0
+        run: npm run test:e2e -- --project=chromium
+
+      - name: Build backend image
+        run: |
+          docker build \
+            --build-arg VCS_REF="${{ github.event.pull_request.head.sha }}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
+            .
+
+      - name: Verify backend image and isolated Compose
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
+            -c "import bot.database, bot.miniapp"
+          COMPOSE_PROJECT_NAME=banano-kling-dev \
+          CONTAINER_NAME=banano-kling-dev-bot \
+          BANANO_IMAGE=banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
+          docker compose -f compose.backend.yml config >/tmp/trend-final-compose.yml
+          grep -q 'container_name: banano-kling-dev-bot' /tmp/trend-final-compose.yml
