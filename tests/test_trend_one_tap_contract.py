@@ -26,7 +26,9 @@ def test_trend_runner_only_requests_a_photo_and_autostarts() -> None:
     runner = read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
 
     assert 'type="file"' in runner
-    assert "void handlePhoto(event.target.files?.[0])" in runner
+    assert "const file = event.currentTarget.files?.[0]" in runner
+    assert "event.currentTarget.value = ''" in runner
+    assert "void handlePhoto(file)" in runner
     assert "await uploadFile('image_reference', file)" in runner
     assert "await runVideoTrend(uploaded.url)" in runner
     assert "await runImageTrend(uploaded.url)" in runner
