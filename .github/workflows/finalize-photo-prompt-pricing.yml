@@ -34,22 +34,24 @@ jobs:
               end = text.find(end_marker, start)
               if start < 0 or end < 0:
                   raise SystemExit('PostgreSQL credit migration boundaries not found')
-              replacement = '''        if db_backend.is_postgres():
-            cursor = await db.execute(
-                """
-                SELECT data_type
-                FROM information_schema.columns
-                WHERE table_schema = current_schema()
-                  AND table_name = 'users'
-                  AND column_name = 'credits'
-                """
-            )
-            row = await cursor.fetchone()
-            if row and str(row[0]).lower() in {"smallint", "integer", "bigint"}:
-                await db.execute(
-                    "ALTER TABLE users ALTER COLUMN credits "
-                    "TYPE NUMERIC(12, 4) USING credits::numeric"
-                )'''
+              replacement = '\n'.join([
+                  '        if db_backend.is_postgres():',
+                  '            cursor = await db.execute(',
+                  '                """',
+                  '                SELECT data_type',
+                  '                FROM information_schema.columns',
+                  '                WHERE table_schema = current_schema()',
+                  "                  AND table_name = 'users'",
+                  "                  AND column_name = 'credits'",
+                  '                """',
+                  '            )',
+                  '            row = await cursor.fetchone()',
+                  '            if row and str(row[0]).lower() in {"smallint", "integer", "bigint"}:',
+                  '                await db.execute(',
+                  '                    "ALTER TABLE users ALTER COLUMN credits "',
+                  '                    "TYPE NUMERIC(12, 4) USING credits::numeric"',
+                  '                )',
+              ])
               text = text[:start] + replacement + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
