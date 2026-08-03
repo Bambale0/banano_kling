@@ -1,4 +1,4 @@
-name: Add trend one-tap browser coverage
+name: Stabilize trend one-tap browser coverage
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v6
@@ -19,164 +19,46 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Add exact browser flow and update contract
+      - name: Replace unstable animated button click
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          e2e_path = Path('frontend/miniapp-v0/e2e/critical-flows.mjs')
-          text = e2e_path.read_text(encoding='utf-8')
-          marker = 'let trendGenerationPayload = null'
-
-          if marker not in text:
-              trend_anchor = "  model: 'v3_pro',\n  author_id: 1,"
-              trend_replacement = "\n".join([
-                  "  model: 'v3_pro',",
-                  "  generation_settings: {",
-                  "    kind: 'video',",
-                  "    user_input: 'photo',",
-                  "    model: 'v3_pro',",
-                  "    scenario: 'imgtxt',",
-                  "    ratio: '16:9',",
-                  "    duration: 5,",
-                  "    grok_mode: 'normal',",
-                  "    grok_resolution: '480p',",
-                  "    kling_negative_prompt: '',",
-                  "    kling_cfg_scale: 0.5,",
-                  "  },",
-                  "  author_id: 1,",
-              ])
-              if trend_anchor not in text:
-                  raise SystemExit('Curated trend anchor not found')
-              text = text.replace(trend_anchor, trend_replacement, 1)
-
-              variables_anchor = "  let paymentPayload = null\n  let promptsPayload = null"
-              variables_replacement = "\n".join([
-                  "  let paymentPayload = null",
-                  "  let promptsPayload = null",
-                  "  let trendGenerationPayload = null",
-                  "  let trendPhotoUploadExpected = false",
-              ])
-              if variables_anchor not in text:
-                  raise SystemExit('E2E state anchor not found')
-              text = text.replace(variables_anchor, variables_replacement, 1)
-
-              upload_start = text.index("    if (path.endsWith('/upload')) {")
-              upload_end = text.index("\n\n    await route.fulfill({", upload_start)
-              api_blocks = "\n".join([
-                  "    if (path.endsWith('/generate-video')) {",
-                  "      trendGenerationPayload = JSON.parse(request.postData() || '{}')",
-                  "      await route.fulfill({",
-                  "        status: 200,",
-                  "        contentType: 'application/json',",
-                  "        body: JSON.stringify({",
-                  "          ok: true,",
-                  "          status: 'done',",
-                  "          task_id: 'trend-e2e-task',",
-                  "          saved_url: 'https://cdn.example/trend-result.mp4',",
-                  "          task_type: 'video',",
-                  "          credits: 115,",
-                  "          cost: 10,",
-                  "          model_label: 'Kling 3 Pro',",
-                  "          prompt_hidden: true,",
-                  "          prompt_actions_allowed: false,",
-                  "        }),",
-                  "      })",
-                  "      return",
-                  "    }",
-                  "",
-                  "    if (path.endsWith('/upload')) {",
-                  "      const isTrendPhoto = trendPhotoUploadExpected",
-                  "      trendPhotoUploadExpected = false",
-                  "      await route.fulfill({",
-                  "        status: 200,",
-                  "        contentType: 'application/json',",
-                  "        body: JSON.stringify({",
-                  "          ok: true,",
-                  "          url: isTrendPhoto",
-                  "            ? 'https://cdn.example/user-trend-photo.jpg'",
-                  "            : 'https://cdn.example/trend-upload.mp4',",
-                  "          kind: isTrendPhoto ? 'image' : 'video',",
-                  "          filename: isTrendPhoto ? 'user-photo.jpg' : 'trend.mp4',",
-                  "          reference: null,",
-                  "        }),",
-                  "      })",
-                  "      return",
-                  "    }",
-              ])
-              text = text[:upload_start] + api_blocks + text[upload_end:]
-
-              assertion = "  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)"
-              insert_at = text.index(assertion) + len(assertion)
-              flow = "\n" + "\n".join([
-                  "",
-                  "  // User trend E2E: one photo, no settings, automatic generation with hidden preset.",
-                  "  await page.getByRole('button', { name: 'Повторить', exact: true }).click()",
-                  "  const trendRunner = page.getByRole('dialog')",
-                  "  await trendRunner.getByText('Загрузите своё фото', { exact: true }).waitFor()",
-                  "  assert.equal(await trendRunner.locator('select').count(), 0)",
-                  "  assert.equal(await trendRunner.getByText('Модель', { exact: true }).count(), 0)",
-                  "  assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)",
-                  "  assert.equal(await trendRunner.getByText('Длительность', { exact: true }).count(), 0)",
-                  "",
-                  "  trendPhotoUploadExpected = true",
-                  "  const generatedResponse = page.waitForResponse((response) =>",
-                  "    new URL(response.url()).pathname.endsWith('/generate-video'),",
-                  "  )",
-                  "  await trendRunner.locator('input[type=\"file\"]').setInputFiles({",
-                  "    name: 'user-photo.jpg',",
-                  "    mimeType: 'image/jpeg',",
-                  "    buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),",
-                  "  })",
-                  "  await generatedResponse",
-                  "",
-                  "  assert.equal(trendGenerationPayload?.v_model, 'v3_pro')",
-                  "  assert.equal(trendGenerationPayload?.v_type, 'imgtxt')",
-                  "  assert.equal(trendGenerationPayload?.v_ratio, '16:9')",
-                  "  assert.equal(trendGenerationPayload?.v_duration, 5)",
-                  "  assert.equal(",
-                  "    trendGenerationPayload?.v_image_url,",
-                  "    'https://cdn.example/user-trend-photo.jpg',",
-                  "  )",
-                  "  assert.equal(trendGenerationPayload?.prompt, curatedTrend.prompt_text)",
-                  "",
-                  "  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })",
-                  "  await taskDetailTitle.waitFor()",
-                  "  await taskDetailTitle.locator('xpath=..').locator('button').click()",
-              ])
-              text = text[:insert_at] + flow + text[insert_at:]
-              e2e_path.write_text(text, encoding='utf-8')
-
-          contract_path = Path('tests/test_trend_one_tap_contract.py')
-          contract = contract_path.read_text(encoding='utf-8')
-          old_assertion = '    assert "void handlePhoto(event.target.files?.[0])" in runner\n'
-          new_assertions = (
-              '    assert "const file = event.currentTarget.files?.[0]" in runner\n'
-              '    assert "event.currentTarget.value = \'\'" in runner\n'
-              '    assert "void handlePhoto(file)" in runner\n'
-          )
-          if old_assertion in contract:
-              contract = contract.replace(old_assertion, new_assertions, 1)
-              contract_path.write_text(contract, encoding='utf-8')
+          path = Path('frontend/miniapp-v0/e2e/critical-flows.mjs')
+          text = path.read_text(encoding='utf-8')
+          old = """  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
+          await taskDetailTitle.waitFor()
+          await taskDetailTitle.locator('xpath=..').locator('button').click()
+          """
+          new = """  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
+          await taskDetailTitle.waitFor()
+          await page.mouse.click(10, 10)
+          await taskDetailTitle.waitFor({ state: 'hidden' })
+          """
+          if new in text:
+              print('Stable backdrop close is already present')
+          elif old in text:
+              text = text.replace(old, new, 1)
+          else:
+              raise SystemExit('Task detail close anchor not found')
+          path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Validate generated syntax
-        run: |
-          node --check frontend/miniapp-v0/e2e/critical-flows.mjs
-          python -m py_compile tests/test_trend_one_tap_contract.py
+      - name: Validate JavaScript syntax
+        run: node --check frontend/miniapp-v0/e2e/critical-flows.mjs
 
-      - name: Commit browser coverage
+      - name: Commit E2E stabilization
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -Eeuo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/miniapp-v0/e2e/critical-flows.mjs tests/test_trend_one_tap_contract.py
+          git add frontend/miniapp-v0/e2e/critical-flows.mjs
           if git diff --cached --quiet; then
-            echo "Browser coverage already present"
+            echo "E2E close already stable"
             exit 0
           fi
-          git commit -m "Cover one-photo trend flow in browser E2E"
+          git commit -m "Stabilize one-tap trend browser test"
           git push origin "HEAD:${HEAD_BRANCH}"
