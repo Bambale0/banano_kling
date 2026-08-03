@@ -38,17 +38,88 @@ jobs:
           )
           replace(
               "bot/database.py",
-              'if "generation_settings" in row.keys()',
-              'if "generation_settings" in row',
+              """def _parse_json_dict(value: Any) -> dict[str, Any]:
+              if value in (None, ""):
+                  return {}
+              if isinstance(value, dict):
+                  return value
+              try:
+                  parsed = json.loads(value)
+              except (TypeError, json.JSONDecodeError):
+                  return {}
+              return parsed if isinstance(parsed, dict) else {}
+          """,
+              """def _parse_json_dict(value: Any) -> dict[str, Any]:
+              if value in (None, ""):
+                  return {}
+              if isinstance(value, dict):
+                  return value
+              try:
+                  parsed = json.loads(value)
+              except (TypeError, json.JSONDecodeError):
+                  return {}
+              return parsed if isinstance(parsed, dict) else {}
+
+
+          def _row_optional_value(
+              row: db_backend.Row,
+              key: str,
+              default: Any = None,
+          ) -> Any:
+              try:
+                  return row[key]
+              except (KeyError, IndexError):
+                  return default
+          """,
+          )
+          replace(
+              "bot/database.py",
+              """        generation_settings=(
+                  _parse_json_dict(row["generation_settings"])
+                  if "generation_settings" in row
+                  else {}
+              ),
+          """,
+              """        generation_settings=_parse_json_dict(
+                  _row_optional_value(row, "generation_settings")
+              ),
+          """,
           )
 
           test_path = Path("tests/test_trend_one_tap_contract.py")
           test_text = test_path.read_text(encoding="utf-8")
           if not test_text.startswith("from __future__ import annotations"):
-              test_path.write_text(
-                  "from __future__ import annotations\n\n" + test_text,
-                  encoding="utf-8",
+              test_text = "from __future__ import annotations\n\n" + test_text
+          if "import sqlite3" not in test_text:
+              test_text = test_text.replace(
+                  "from pathlib import Path\n",
+                  "import sqlite3\nfrom pathlib import Path\n",
+                  1,
               )
+          if "from bot.database import _row_optional_value" not in test_text:
+              test_text = test_text.replace(
+                  "from pathlib import Path\n",
+                  "from pathlib import Path\n\nfrom bot.database import _row_optional_value\n",
+                  1,
+              )
+          if "def test_sqlite_row_reads_structured_trend_settings" not in test_text:
+              test_text += """
+
+          def test_sqlite_row_reads_structured_trend_settings() -> None:
+              connection = sqlite3.connect(":memory:")
+              connection.row_factory = sqlite3.Row
+              try:
+                  row = connection.execute(
+                      'SELECT ? AS generation_settings',
+                      ('{\"ratio\":\"9:16\"}',),
+                  ).fetchone()
+                  assert row is not None
+                  assert _row_optional_value(row, "generation_settings") == '{\"ratio\":\"9:16\"}'
+                  assert _row_optional_value(row, "missing") is None
+              finally:
+                  connection.close()
+          """
+          test_path.write_text(test_text, encoding="utf-8")
 
           replace(
               "frontend/miniapp-v0/lib/trend-settings.ts",
@@ -131,6 +202,17 @@ jobs:
           )
           """,
           )
+          replace(
+              "frontend/miniapp-v0/components/trend-runner-dialog.tsx",
+              """            onChange={(event) => void handlePhoto(event.target.files?.[0])}
+          """,
+              """            onChange={(event) => {
+              const file = event.currentTarget.files?.[0]
+              event.currentTarget.value = ''
+              void handlePhoto(file)
+            }}
+          """,
+          )
           PY
 
       - name: Normalize test imports with Ruff
@@ -153,5 +235,5 @@ jobs:
             echo "No fixes needed"
             exit 0
           fi
-          git commit -m "Normalize one-tap trend test imports"
+          git commit -m "Harden one-tap trend settings and upload retry"
           git push origin "HEAD:${HEAD_BRANCH}"
