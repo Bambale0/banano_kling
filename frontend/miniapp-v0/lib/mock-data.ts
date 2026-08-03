@@ -322,7 +322,7 @@ export const mockAppState: AppState = {
     promptRepeatBalanceRub: 120,
     promptRepeatTotalRub: 340,
     botUsername: 'BananaBoombot_bot',
-    credits: 15,
+    credits: 5,
     isAdmin: false,
   },
   imageModels: mockImageModels,
