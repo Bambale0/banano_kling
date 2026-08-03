@@ -62,7 +62,9 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . /app
 
-RUN install -d -o app -g app -m 0755 \
+RUN python scripts/apply_visible_copy_fixes.py \
+    && python -m compileall -q bot/keyboards.py bot/handlers/image_analyzer.py \
+    && install -d -o app -g app -m 0755 \
         /app/data \
         /app/static/uploads \
         /app/logs \
