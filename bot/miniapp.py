@@ -139,6 +139,11 @@ from bot.services.subscription_service import (
     should_block_for_subscription,
 )
 from bot.services.preset_manager import preset_manager
+from bot.services.photo_prompt_billing import (
+    PhotoPromptInsufficientBalance,
+    refund_photo_prompt_charge,
+    reserve_photo_prompt_charge,
+)
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
 from bot.utils.validators import detect_explicit_prompt_policy_violation
@@ -2912,7 +2917,8 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
 
 
 async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
-    """Analyze a reference image and return generation prompts via GPT 5.4."""
+    """Analyze a photo for 1 RUB (0.1 credit) without changing generation prices."""
+    charge = None
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -2920,7 +2926,11 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
         preserve = str(body.get("preserve", "") or "").strip()
         goal = str(body.get("goal", "") or "").strip()
 
-        await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, _ctx = await _get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
 
         if not image_url:
             return web.json_response(
@@ -2928,13 +2938,31 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        try:
+            charge = await reserve_photo_prompt_charge(telegram_id)
+        except PhotoPromptInsufficientBalance as exc:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "credits": exc.balance,
+                    "cost_credits": exc.cost_credits,
+                    "price_rub": exc.price_rub,
+                },
+                status=402,
+            )
+
         from bot.services.photo_prompt_service import photo_prompt_service
 
-        result = await photo_prompt_service.analyze_photo(
-            image_url=image_url,
-            preserve=preserve,
-            goal=goal,
-        )
+        try:
+            result = await photo_prompt_service.analyze_photo(
+                image_url=image_url,
+                preserve=preserve,
+                goal=goal,
+            )
+        except Exception:
+            await refund_photo_prompt_charge(charge)
+            raise
 
         return web.json_response(
             {
@@ -2948,6 +2976,9 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 "voice_prompt_summary_ru": result.get("voice_prompt_summary_ru", ""),
                 "voice_description_ru": result.get("voice_description_ru", ""),
                 "key_details": result.get("key_details", []),
+                "credits": charge.balance_after,
+                "cost_credits": charge.cost_credits,
+                "price_rub": charge.price_rub,
             }
         )
     except Exception as e:

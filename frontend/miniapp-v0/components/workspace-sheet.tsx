@@ -404,6 +404,7 @@ function buildFallbackReply(input: string, credits: number) {
 }
 
 function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
+  const { setCredits } = useApp()
   const [reference, setReference] = useState<{ name: string; url: string } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [preserve, setPreserve] = useState('композицию, лицо/объект, свет, цвета и стиль')
@@ -466,7 +467,8 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
         goal,
       })
       setРезультат(data)
-      toast.success('Промпт собран')
+      setCredits(data.credits)
+      toast.success('Промпт собран', { description: 'Списано 1 ₽ (0,1 🍌).' })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось собрать промпт'
       toast.error('Ошибка анализа', { description: message })
@@ -488,6 +490,9 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Загрузите референс. AI разберёт кадр и соберёт промпт для генерации похожего изображения:
           композиция, объект, свет, стиль, цвета и важные детали.
+        </p>
+        <p className="mt-3 inline-flex rounded-full border border-gold/25 bg-gold/10 px-3 py-1.5 text-xs font-medium text-gold">
+          Стоимость: 1 ₽ · 0,1 🍌
         </p>
       </div>
 
@@ -560,7 +565,7 @@ function PhotoPromptPanel({ onOpenPhoto }: { onOpenPhoto: () => void }) {
         ) : (
           <Wand2 className="mr-2 h-5 w-5" />
         )}
-        {isAnalyzing ? 'Анализирую фото…' : 'Собрать точный промпт'}
+        {isAnalyzing ? 'Анализирую фото…' : 'Собрать точный промпт · 1 ₽'}
       </Button>
 
       {result && (

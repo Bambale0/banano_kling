@@ -1416,6 +1416,9 @@ export async function photoToPrompt(payload: {
   prompt_ru: string
   negative_prompt: string
   model_hint: string
+  credits: number
+  cost_credits: number
+  price_rub: number
 }> {
   const initData = getInitData()
   if (!initData) {

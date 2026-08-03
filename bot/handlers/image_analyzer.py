@@ -21,6 +21,12 @@ from bot.services.photo_prompt_service import photo_prompt_service
 from bot.services.video_prompt_service import video_prompt_service
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.preset_manager import preset_manager
+from bot.services.photo_prompt_billing import (
+    PhotoPromptInsufficientBalance,
+    photo_prompt_price_label,
+    refund_photo_prompt_charge,
+    reserve_photo_prompt_charge,
+)
 from bot.states import ImageAnalyzerStates
 
 logger = logging.getLogger(__name__)
@@ -507,6 +513,7 @@ async def photo_to_prompt_handler(callback: CallbackQuery, state: FSMContext):
 
     text = (
         "📸 <b>Промпт по фото</b>\n\n"
+        f"Стоимость анализа фото: <b>{photo_prompt_price_label()}</b>\n\n"
         "Отправьте фото, голосовой промпт или сначала голос, а затем фото.\n"
         "GPT-5.5 разберёт фото отдельно, голос отдельно или объединит голос с последующим фото.\n\n"
         "В результате вы получите:\n"
@@ -683,6 +690,7 @@ async def analyze_voice_prompt(message: Message, state: FSMContext):
 @router.message(ImageAnalyzerStates.waiting_for_photo, F.photo)
 async def analyze_photo(message: Message, state: FSMContext):
     processing = await message.answer("🔍 Анализирую фото и собираю точный prompt…")
+    charge = None
 
     try:
         data = await state.get_data()
@@ -730,6 +738,8 @@ async def analyze_photo(message: Message, state: FSMContext):
             )
             return
 
+        charge = await reserve_photo_prompt_charge(message.from_user.id)
+
         result = await photo_prompt_service.analyze_photo(
             image_url=image_url,
             preserve="внешность/объект, композицию, свет, одежду, фон, стиль и цветовую палитру",
@@ -748,8 +758,18 @@ async def analyze_photo(message: Message, state: FSMContext):
         await _send_photo_prompt_result(message, result)
         await state.clear()
 
+    except PhotoPromptInsufficientBalance as e:
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            f"❌ {html.escape(str(e))}",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
     except Exception as e:
         logger.exception("Photo to prompt analysis failed")
+        await refund_photo_prompt_charge(charge)
         await _safe_edit_or_answer(
             processing,
             message,
