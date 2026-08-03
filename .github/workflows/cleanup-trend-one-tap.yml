@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
-      - name: Remove duplicate helper definition
+      - name: Repair helper and structured row access
         shell: bash
         run: |
           python - <<'PY'
@@ -39,12 +39,28 @@ jobs:
           '''
           while text.count(block) > 1:
               text = text.replace(block + '\n\n' + block, block, 1)
+
+          unsafe = '''        generation_settings=(
+              _parse_json_dict(row["generation_settings"])
+              if "generation_settings" in row
+              else {}
+          ),
+          '''
+          safe = '''        generation_settings=_parse_json_dict(
+              _row_optional_value(row, "generation_settings")
+          ),
+          '''
+          if unsafe in text:
+              text = text.replace(unsafe, safe, 1)
+
           definitions = text.count('def _row_optional_value(')
           usages = text.count('_row_optional_value(') - definitions
           if definitions != 1:
               raise SystemExit(f'Expected exactly one helper definition, found {definitions}')
           if usages < 1:
               raise SystemExit('Structured trend settings are not using safe row access')
+          if 'if "generation_settings" in row' in text:
+              raise SystemExit('Unsafe aiosqlite.Row membership check remains')
           path.write_text(text, encoding='utf-8')
           PY
 
@@ -66,5 +82,5 @@ jobs:
             echo "Cleanup already applied"
             exit 0
           fi
-          git commit -m "Remove duplicate trend settings helper"
+          git commit -m "Repair trend settings row access"
           git push origin "HEAD:${HEAD_BRANCH}"
