@@ -1,0 +1,50 @@
+name: Apply photo prompt one-ruble pricing
+
+on:
+  pull_request:
+    branches: [automation/photo-prompt-one-ruble]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Apply focused pricing patch
+        run: python scripts/_apply_photo_prompt_one_ruble.py
+
+      - name: Validate generated syntax and JSON
+        run: |
+          python -m py_compile \
+            bot/database.py \
+            bot/miniapp.py \
+            bot/handlers/image_analyzer.py \
+            bot/services/photo_prompt_billing.py \
+            bot/services/preset_manager.py \
+            tests/test_photo_prompt_pricing.py
+          python -m json.tool data/price.json >/dev/null
+          node --check frontend/miniapp-v0/e2e/critical-flows.mjs
+
+      - name: Commit patch to feature branch
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "Price photo prompt at one ruble"
+          git push origin "HEAD:${HEAD_BRANCH}"
