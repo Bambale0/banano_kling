@@ -1,22 +1,38 @@
 # Документация NEUROMIX
 
-Этот каталог содержит документацию production-ветки `tanyapi` репозитория `Bambale0/banano_kling`.
+Этот каталог содержит документацию DEV- и production-контуров репозитория `Bambale0/banano_kling`.
+
+## Ветки и release flow
+
+```text
+feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smoke
+          -> PR dev -> tanyapi -> автодеплой production
+```
+
+- `dev` — источник DEV-бота и DEV Mini App;
+- `tanyapi` — единственный источник production-бота и production Mini App;
+- `main` не участвует в deploy NEUROMIX.
+
+Главный документ по новому процессу: [development-deployment.md](development-deployment.md).
 
 ## Как пользоваться документацией
 
-Для обычной эксплуатации начинайте с документов в таком порядке:
+Для разработки и выпуска:
 
-1. [../README.md](../README.md) — что это за система и где она размещена;
-2. [production-deployment.md](production-deployment.md) — первичное развёртывание и полный deploy;
-3. [runbook.md](runbook.md) — ежедневные команды оператора;
-4. [troubleshooting.md](troubleshooting.md) — диагностика ошибок;
-5. [architecture.md](architecture.md) — устройство системы и потоки данных.
+1. [development-deployment.md](development-deployment.md) — отдельный DEV-бот, secrets, серверы, autodeploy и promotion `dev -> tanyapi`;
+2. [../README.md](../README.md) — что это за система и где находится production;
+3. [production_auto_deploy.md](production_auto_deploy.md) — production autodeploy строго из `tanyapi`;
+4. [production-deployment.md](production-deployment.md) — первичное production-развёртывание и полный deploy;
+5. [runbook.md](runbook.md) — ежедневные команды оператора;
+6. [troubleshooting.md](troubleshooting.md) — диагностика ошибок;
+7. [architecture.md](architecture.md) — устройство системы и потоки данных.
 
 Для изменения frontend:
 
 1. [../frontend/miniapp-v0/README.md](../frontend/miniapp-v0/README.md);
 2. [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md);
-3. [branding.md](branding.md).
+3. [development-deployment.md](development-deployment.md) для отдельного DEV profile/domain;
+4. [branding.md](branding.md).
 
 Для media-домена:
 
@@ -28,7 +44,9 @@
 
 | Документ | Для кого | Что содержит |
 | --- | --- | --- |
+| [development-deployment.md](development-deployment.md) | разработчик, DevOps, владелец | DEV-бот, ветка `dev`, environment secrets, автодеплой и выпуск в `tanyapi` |
 | [architecture.md](architecture.md) | разработчик, интегратор | компоненты, topology, auth, storage, API и media flows |
+| [production_auto_deploy.md](production_auto_deploy.md) | разработчик, DevOps | promotion `dev -> tanyapi` и production autodeploy |
 | [production-deployment.md](production-deployment.md) | DevOps, владелец проекта | DNS, backend, frontend, media, SSL, Cloudflare, smoke tests и rollback |
 | [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) | frontend/DevOps | `cdn.sh`, remote profile, build, release, cache overlap и npm troubleshooting |
 | [environment.md](environment.md) | разработчик, DevOps | env-переменные, обязательность, значения и правила хранения секретов |
@@ -49,7 +67,7 @@ cdn.chillcreative.ru (91.200.84.187)
   └── /mini-app/api/*        -> HTTPS proxy на tanyapi.chillcreative.ru
 
 tanyapi.chillcreative.ru (144.76.188.75)
-  ├── Telegram webhook
+  ├── Telegram webhook production-бота
   ├── Mini App API
   ├── provider/payment webhooks
   └── aiohttp runtime за локальным Nginx
@@ -58,13 +76,17 @@ media.chillcreative.ru (Cloudflare -> 144.76.188.75)
   └── /uploads/*             -> Nginx -> bind mount -> static/uploads
 ```
 
+Production topology относится только к ветке `tanyapi`. DEV domains, paths и credentials задаются GitHub environment `development` и DEV server `.env`; они не должны использовать production bot token, database или media root.
+
 ## Владение документами
 
 ### Операционные документы
 
 Должны обновляться при изменении:
 
+- DEV/production branch policy;
 - production-доменов или IP;
+- DEV-доменов или deploy paths;
 - systemd service;
 - путей проекта;
 - Nginx topology;
@@ -76,7 +98,9 @@ media.chillcreative.ru (Cloudflare -> 144.76.188.75)
 К этой группе относятся:
 
 - `README.md`;
+- `docs/development-deployment.md`;
 - `docs/architecture.md`;
+- `docs/production_auto_deploy.md`;
 - `docs/production-deployment.md`;
 - `docs/miniapp-frontend-deployment.md`;
 - `docs/environment.md`;
@@ -94,7 +118,6 @@ media.chillcreative.ru (Cloudflare -> 144.76.188.75)
 - `veo_api.md`;
 - `motion_control_api.md`;
 - `tbank_api.md`;
-- `yookassa.md`;
 - `crypto_api.md`.
 
 Если reference-документ конфликтует с runtime, приоритет имеют:
@@ -114,28 +137,37 @@ media.chillcreative.ru (Cloudflare -> 144.76.188.75)
 - backup-файлы;
 - historical tracemap;
 - старое название Banano/Banana;
-- старые схемы прямого доступа к backend port.
+- старые схемы прямого доступа к backend port;
+- старые упоминания deploy из `main`.
 
-Они не должны использоваться для production-действий без сверки с документами из раздела «Операционные документы».
+Они не должны использоваться для production-действий без сверки с `development-deployment.md`, `production_auto_deploy.md` и текущими workflows.
 
 ## Правила обновления документации
 
-При изменении production-инфраструктуры в одном pull request или серии связанных коммитов обновить:
+При изменении инфраструктуры в одном pull request или серии связанных коммитов обновить:
 
+- branch/release flow;
 - topology в `README.md` и `architecture.md`;
 - команды deploy в соответствующем runbook;
 - env-reference, если добавлена или изменена переменная;
 - troubleshooting, если появился новый класс ошибки;
 - rollback-процедуру;
-- дату и фактический результат проверки в описании изменения, но не хранить временные логи и секреты в документах.
+- фактический результат проверки в описании изменения, но не временные логи и секреты.
 
 ## Минимальный documentation review перед релизом
 
+- feature PR направлен в `dev`;
+- DEV exact SHA автоматически задеплоен;
+- DEV Telegram smoke пройден;
+- release PR направлен `dev -> tanyapi`;
+- production workflow слушает только `tanyapi`;
+- `main` не указан как production branch;
+- DEV и production bot tokens различаются;
+- DEV и production databases/storage различаются;
 - все пользовательские заголовки используют NEUROMIX;
-- указана ветка `tanyapi`;
-- frontend указан как `cdn.chillcreative.ru`;
-- backend указан как `tanyapi.chillcreative.ru`;
-- media указан как `media.chillcreative.ru`;
+- production frontend указан как `cdn.chillcreative.ru`;
+- production backend указан как `tanyapi.chillcreative.ru`;
+- production media указан как `media.chillcreative.ru`;
 - нет рекомендаций открывать `:1888` в интернет;
 - нет реальных токенов, паролей и содержимого `.env`;
 - deploy и rollback команды проверены на синтаксические ошибки;

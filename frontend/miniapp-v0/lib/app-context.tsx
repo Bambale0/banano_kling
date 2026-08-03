@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
-import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptPreset, SavedReference, ScenarioType, Task, TaskDetail, UploadedFile, VideoPromptPreset, WorkspacePanel } from './types'
+import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptItem, PromptPreset, SavedReference, ScenarioType, Task, TaskDetail, UploadedFile, VideoPromptPreset, WorkspacePanel } from './types'
 import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
 import { parseMiniAppStartParam } from './start-params'
@@ -16,6 +16,7 @@ interface AppContextType {
   feedDeepLink: FeedDeepLink | null
   promptPreset: PromptPreset | null
   videoPromptPreset: VideoPromptPreset | null
+  trendToRun: PromptItem | null
   viewedProfileCode: string | null
   activeTab: number
   setActiveTab: (tab: number) => void
@@ -35,6 +36,7 @@ interface AppContextType {
   addSavedReference: (file: UploadedFile) => void
   setPromptPreset: (preset: PromptPreset | null) => void
   setVideoPromptPreset: (preset: VideoPromptPreset | null) => void
+  setTrendToRun: (trend: PromptItem | null) => void
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -159,6 +161,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [feedDeepLink, setFeedDeepLink] = useState<FeedDeepLink | null>(null)
   const [promptPreset, setPromptPreset] = useState<PromptPreset | null>(null)
   const [videoPromptPreset, setVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
+  const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
   const [activeTab, setActiveTabState] = useState(0)
   const pollRef = useRef<number | null>(null)
@@ -216,6 +219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setFeedDeepLink(null)
     setPromptPreset(null)
     setVideoPromptPreset(null)
+    setTrendToRun(null)
     setViewedProfileCode(null)
     setActiveTabState(0)
     setState(createLockedState(message, false))
@@ -410,6 +414,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (startTarget.kind === 'prompt') {
           const prompt = await fetchPromptDetail(startTarget.promptId)
           if (cancelled) return
+          const isTrend = (prompt.tags || []).some(
+            (tag) => String(tag).toLowerCase() === 'trend',
+          )
+          if (isTrend) {
+            setTrendToRun(prompt)
+            setActiveTabState(5)
+            return
+          }
+
           const isVideoTrend =
             prompt.category === 'video' ||
             (prompt.tags || []).some((tag) => String(tag).toLowerCase() === 'trend-video') ||
@@ -605,6 +618,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         feedDeepLink,
         promptPreset,
         videoPromptPreset,
+        trendToRun,
         viewedProfileCode,
         activeTab,
         setActiveTab,
@@ -624,6 +638,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addSavedReference,
         setPromptPreset,
         setVideoPromptPreset,
+        setTrendToRun,
       }}
     >
       {children}

@@ -12,6 +12,7 @@ import type {
   ScenarioType,
   Task,
   TaskDetail,
+  TrendGenerationSettings,
   UploadedFile,
 } from './types'
 
@@ -820,6 +821,7 @@ export async function submitPrompt(payload: {
   previewUrl?: string
   model?: string
   tags?: string[]
+  generationSettings?: TrendGenerationSettings
 }): Promise<PromptItem> {
   const initData = getInitData()
   if (!initData) {
@@ -833,6 +835,7 @@ export async function submitPrompt(payload: {
     preview_url: payload.previewUrl || '',
     model: payload.model || '',
     tags: payload.tags || [],
+    generation_settings: payload.generationSettings || {},
   })
   return response.prompt
 }

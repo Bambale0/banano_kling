@@ -1,0 +1,181 @@
+name: CI — Tanya development
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tanya-development-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOT_TOKEN: 123456:TEST_TOKEN_FOR_CI_ONLY
+  PYTHONPATH: ${{ github.workspace }}
+  FRONTEND_DIR: frontend/miniapp-v0
+
+jobs:
+  verify:
+    name: Strict development verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet ruff pytest pytest-asyncio pytest-mock
+          pip install --quiet -r requirements.txt
+          python -m pip check
+
+      - name: Validate shell entrypoints
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/deploy_backend_docker.sh
+          bash -n scripts/backup_db.sh
+          bash -n cdn.sh
+
+      - name: Lint changed Python lines
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          base_sha="${PR_BASE_SHA:-$PUSH_BEFORE_SHA}"
+          head_sha="${PR_HEAD_SHA:-$CURRENT_SHA}"
+
+          if [ -z "$base_sha" ] || [[ "$base_sha" =~ ^0+$ ]]; then
+            base_sha="${head_sha}^"
+          fi
+
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=ACMRT "$base_sha" "$head_sha" -- \
+              'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
+              'tests/*.py' 'tests/**/*.py'
+          )
+
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No changed Python files to lint"
+            exit 0
+          fi
+
+          python scripts/ruff_changed_lines.py \
+            --base "$base_sha" \
+            --head "$head_sha" \
+            "${changed_files[@]}"
+
+      - name: Run backend regression suite
+        run: |
+          set -Eeuo pipefail
+          pytest tests/ \
+            --ignore=tests/live \
+            -m "not live_smoke" \
+            -v \
+            --tb=short
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Block high-severity frontend dependency vulnerabilities
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm audit --audit-level=high
+
+      - name: Lint frontend
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm run lint
+
+      - name: Build development Mini App
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm run build
+
+      - name: Verify static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -Eeuo pipefail
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+      - name: Install locked Chromium runtime
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare mounted static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+
+      - name: Run critical browser flows
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: node e2e/critical-flows.mjs
+
+      - name: Build backend image
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg VCS_REF="$GITHUB_SHA" \
+            --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            -t "banano-kling-development-ci:${GITHUB_SHA}" \
+            .
+
+      - name: Verify backend image and development Compose isolation
+        run: |
+          set -Eeuo pipefail
+          image="banano-kling-development-ci:${GITHUB_SHA}"
+
+          docker run --rm --entrypoint python "$image" \
+            -m compileall -q /app/bot /app/scripts
+
+          docker run --rm \
+            -e BOT_TOKEN='123456:TEST_TOKEN_FOR_CI_ONLY' \
+            -e BANANO_SKIP_PROJECT_ENV=1 \
+            -e BANANO_LOG_TO_STDOUT=1 \
+            --entrypoint python "$image" \
+            -c 'import bot.config, bot.database, bot.main, bot.miniapp; print("development container imports: ok")'
+
+          trap 'rm -f .env .env.postgres' EXIT
+          cat > .env <<'ENV'
+          BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY
+          WEBHOOK_HOST=https://development.invalid
+          WEBHOOK_PORT=2888
+          MINI_APP_URL=https://development.invalid/mini-app/
+          DATABASE_URL=sqlite:////app/data/development-ci.db
+          REDIS_URL=redis://127.0.0.1:6379/15
+          REDIS_PREFIX=neuromix-development-ci
+          ENV
+          : > .env.postgres
+
+          COMPOSE_PROJECT_NAME=banano-kling-development-ci \
+          CONTAINER_NAME=banano-kling-development-ci-bot \
+          BANANO_IMAGE="$image" \
+          docker compose -f compose.backend.yml config --quiet

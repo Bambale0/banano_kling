@@ -80,6 +80,18 @@ const curatedTrend = {
   likes: 3,
   preview_url: 'https://cdn.example/curated.mp4',
   model: 'v3_pro',
+  generation_settings: {
+    kind: 'video',
+    user_input: 'photo',
+    model: 'v3_pro',
+    scenario: 'imgtxt',
+    ratio: '16:9',
+    duration: 5,
+    grok_mode: 'normal',
+    grok_resolution: '480p',
+    kling_negative_prompt: '',
+    kling_cfg_scale: 0.5,
+  },
   author_id: 1,
   status: 'approved',
 }
@@ -129,6 +141,8 @@ try {
 
   let paymentPayload = null
   let promptsPayload = null
+  let trendGenerationPayload = null
+  let trendPhotoUploadExpected = false
 
   await page.addInitScript(() => {
     window.__openedLinks = []
@@ -201,15 +215,40 @@ try {
       return
     }
 
-    if (path.endsWith('/upload')) {
+    if (path.endsWith('/generate-video')) {
+      trendGenerationPayload = JSON.parse(request.postData() || '{}')
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          url: 'https://cdn.example/trend-upload.mp4',
-          kind: 'video',
-          filename: 'trend.mp4',
+          status: 'done',
+          task_id: 'trend-e2e-task',
+          saved_url: 'https://cdn.example/trend-result.mp4',
+          task_type: 'video',
+          credits: 115,
+          cost: 10,
+          model_label: 'Kling 3 Pro',
+          prompt_hidden: true,
+          prompt_actions_allowed: false,
+        }),
+      })
+      return
+    }
+
+    if (path.endsWith('/upload')) {
+      const isTrendPhoto = trendPhotoUploadExpected
+      trendPhotoUploadExpected = false
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          url: isTrendPhoto
+            ? 'https://cdn.example/user-trend-photo.jpg'
+            : 'https://cdn.example/trend-upload.mp4',
+          kind: isTrendPhoto ? 'image' : 'video',
+          filename: isTrendPhoto ? 'user-photo.jpg' : 'trend.mp4',
           reference: null,
         }),
       })
@@ -248,6 +287,41 @@ try {
   assert.equal(promptsPayload?.source, 'tag')
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
+
+  // User trend E2E: one photo, no settings, automatic generation with hidden preset.
+  await page.getByRole('button', { name: 'Повторить', exact: true }).click()
+  const trendRunner = page.getByRole('dialog')
+  await trendRunner.getByText('Загрузите своё фото', { exact: true }).waitFor()
+  assert.equal(await trendRunner.locator('select').count(), 0)
+  assert.equal(await trendRunner.getByText('Модель', { exact: true }).count(), 0)
+  assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)
+  assert.equal(await trendRunner.getByText('Длительность', { exact: true }).count(), 0)
+
+  trendPhotoUploadExpected = true
+  const generatedResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/generate-video'),
+  )
+  await trendRunner.locator('input[type="file"]').setInputFiles({
+    name: 'user-photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+  })
+  await generatedResponse
+
+  assert.equal(trendGenerationPayload?.v_model, 'v3_pro')
+  assert.equal(trendGenerationPayload?.v_type, 'imgtxt')
+  assert.equal(trendGenerationPayload?.v_ratio, '16:9')
+  assert.equal(trendGenerationPayload?.v_duration, 5)
+  assert.equal(
+    trendGenerationPayload?.v_image_url,
+    'https://cdn.example/user-trend-photo.jpg',
+  )
+  assert.equal(trendGenerationPayload?.prompt, curatedTrend.prompt_text)
+
+  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
+  await taskDetailTitle.waitFor()
+  await page.mouse.click(10, 10)
+  await taskDetailTitle.waitFor({ state: 'hidden' })
 
   // Admin upload E2E: uploaded preview survives duration/model changes.
   await page.getByRole('button', { name: 'Добавить', exact: true }).click()

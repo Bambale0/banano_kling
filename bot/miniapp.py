@@ -3076,6 +3076,20 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
         if policy_error:
             return web.json_response({"ok": False, "error": policy_error}, status=400)
 
+        raw_generation_settings = body.get("generation_settings")
+        generation_settings = (
+            dict(raw_generation_settings)
+            if isinstance(raw_generation_settings, dict)
+            else {}
+        )
+        if not config.is_admin(telegram_id):
+            generation_settings = {}
+        if len(json.dumps(generation_settings, ensure_ascii=False)) > 12_000:
+            return web.json_response(
+                {"ok": False, "error": "Слишком много настроек тренда"},
+                status=400,
+            )
+
         active_count = await count_active_prompts_by_author(user.id)
         if active_count >= MAX_ACTIVE_PROMPTS_PER_USER and not config.is_admin(telegram_id):
             return web.json_response(
@@ -3092,6 +3106,7 @@ async def miniapp_prompt_submit(request: web.Request) -> web.Response:
             preview_url=str(body.get("preview_url", "") or "").strip() or None,
             model=str(body.get("model", "") or "").strip() or None,
             tags=[str(item) for item in list(body.get("tags", []) or [])],
+            generation_settings=generation_settings,
             is_public=True,
         )
         if prompt:

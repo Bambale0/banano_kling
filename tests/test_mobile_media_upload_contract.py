@@ -17,10 +17,11 @@ def test_mobile_media_upload_contract() -> None:
         "bot/services/photo_prompt_service.py"
     ).read_text(encoding="utf-8")
 
-    assert "asyncio.wait_for(request.post(), timeout=60)" in miniapp
+    assert "MINIAPP_UPLOAD_TIMEOUT_SECONDS = 900" in miniapp
+    assert "timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS" in miniapp
     assert "_normalize_miniapp_upload_content_type" in miniapp
     assert "application/octet-stream" in miniapp
-    assert "MEDIA_UPLOAD_TIMEOUT_MS = 60_000" in api
+    assert "MEDIA_UPLOAD_TIMEOUT_MS = 900_000" in api
     assert "normalizedMediaUploadFile" in api
     assert "controller.abort()" in api
     assert "globalThis.clearTimeout(timeoutId)" in api

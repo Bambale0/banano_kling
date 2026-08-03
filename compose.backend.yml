@@ -1,4 +1,4 @@
-name: banano-kling
+name: ${COMPOSE_PROJECT_NAME:-banano-kling}
 
 services:
   bot:
@@ -9,7 +9,7 @@ services:
       args:
         VCS_REF: ${VCS_REF:-local}
         BUILD_DATE: ${BUILD_DATE:-local}
-    container_name: banano-kling-bot
+    container_name: ${CONTAINER_NAME:-banano-kling-bot}
     network_mode: host
     restart: unless-stopped
     stop_grace_period: 30s
