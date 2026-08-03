@@ -14,6 +14,7 @@ jobs:
     env:
       BOT_TOKEN: 123456:TEST_TOKEN_FOR_CI_ONLY
       PYTHONPATH: ${{ github.workspace }}
+      FRONTEND_DIR: frontend/miniapp-v0
     steps:
       - name: Checkout exact feature SHA
         uses: actions/checkout@v6
@@ -28,8 +29,9 @@ jobs:
 
       - name: Install backend dependencies
         run: |
+          set -Eeuo pipefail
           python -m pip install --quiet --upgrade pip
-          pip install --quiet ruff pytest
+          pip install --quiet ruff pytest pytest-asyncio pytest-mock
           pip install --quiet -r requirements.txt
           python -m pip check
 
@@ -38,6 +40,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          set -Eeuo pipefail
           mapfile -t changed_files < <(
             git diff --name-only --diff-filter=ACMRT "$BASE_SHA" "$HEAD_SHA" -- \
               'bot/*.py' 'bot/**/*.py' 'scripts/*.py' 'scripts/**/*.py' \
@@ -51,7 +54,13 @@ jobs:
           fi
 
       - name: Run backend regression suite
-        run: pytest -q
+        run: |
+          set -Eeuo pipefail
+          pytest tests/ \
+            --ignore=tests/live \
+            -m "not live_smoke" \
+            -v \
+            --tb=short
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
@@ -61,49 +70,82 @@ jobs:
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: frontend/miniapp-v0
+        working-directory: ${{ env.FRONTEND_DIR }}
         run: npm ci --no-audit --no-fund
 
       - name: Audit frontend dependencies
-        working-directory: frontend/miniapp-v0
+        working-directory: ${{ env.FRONTEND_DIR }}
         run: npm audit --audit-level=high
 
       - name: Lint frontend
-        working-directory: frontend/miniapp-v0
+        working-directory: ${{ env.FRONTEND_DIR }}
         run: npm run lint
 
       - name: Build production Mini App
-        working-directory: frontend/miniapp-v0
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm run build
+
+      - name: Verify static export
+        working-directory: ${{ env.FRONTEND_DIR }}
         run: |
-          npm run build
+          set -Eeuo pipefail
           test -s out/index.html
           test -d out/_next/static
           grep -q '_next/static' out/index.html
 
       - name: Install locked Chromium runtime
-        working-directory: frontend/miniapp-v0
+        working-directory: ${{ env.FRONTEND_DIR }}
         run: npx playwright install --with-deps chromium
 
+      - name: Prepare mounted static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+
       - name: Run critical browser flows
-        working-directory: frontend/miniapp-v0
-        run: npm run test:e2e -- --project=chromium
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: node e2e/critical-flows.mjs
 
       - name: Build backend image
         run: |
+          set -Eeuo pipefail
           docker build \
             --build-arg VCS_REF="${{ github.event.pull_request.head.sha }}" \
-            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
+            --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            -t "banano-kling-trend-final:${{ github.event.pull_request.head.sha }}" \
             .
 
       - name: Verify backend image and isolated Compose
         run: |
+          set -Eeuo pipefail
+          image="banano-kling-trend-final:${{ github.event.pull_request.head.sha }}"
+
+          docker run --rm --entrypoint python "$image" \
+            -m compileall -q /app/bot /app/scripts
+
           docker run --rm \
-            --entrypoint python \
-            banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
-            -c "import bot.database, bot.miniapp"
-          COMPOSE_PROJECT_NAME=banano-kling-dev \
-          CONTAINER_NAME=banano-kling-dev-bot \
-          BANANO_IMAGE=banano-kling-trend-final:${{ github.event.pull_request.head.sha }} \
-          docker compose -f compose.backend.yml config >/tmp/trend-final-compose.yml
-          grep -q 'container_name: banano-kling-dev-bot' /tmp/trend-final-compose.yml
+            -e BOT_TOKEN='123456:TEST_TOKEN_FOR_CI_ONLY' \
+            -e BANANO_SKIP_PROJECT_ENV=1 \
+            -e BANANO_LOG_TO_STDOUT=1 \
+            --entrypoint python "$image" \
+            -c 'import bot.config, bot.database, bot.main, bot.miniapp; print("trend container imports: ok")'
+
+          trap 'rm -f .env .env.postgres' EXIT
+          cat > .env <<'ENV'
+          BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY
+          WEBHOOK_HOST=https://development.invalid
+          WEBHOOK_PORT=2888
+          MINI_APP_URL=https://development.invalid/mini-app/
+          DATABASE_URL=sqlite:////app/data/development-ci.db
+          REDIS_URL=redis://127.0.0.1:6379/15
+          REDIS_PREFIX=neuromix-development-ci
+          ENV
+          : > .env.postgres
+
+          COMPOSE_PROJECT_NAME=banano-kling-development-ci \
+          CONTAINER_NAME=banano-kling-development-ci-bot \
+          BANANO_IMAGE="$image" \
+          docker compose -f compose.backend.yml config --quiet
