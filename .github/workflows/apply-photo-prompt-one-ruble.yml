@@ -19,6 +19,24 @@ jobs:
           fetch-depth: 0
           token: ${{ github.token }}
 
+      - name: Repair codemod anchor for current database schema
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/_apply_photo_prompt_one_ruble.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '"""        # Таблица транзакций\\n"""',
+              '"""        # Таблица транзакций (платежи)\\n"""',
+          )
+          text = text.replace(
+              '        # Таблица транзакций\\n""",',
+              '        # Таблица транзакций (платежи)\\n""",',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply focused pricing patch
         run: python scripts/_apply_photo_prompt_one_ruble.py
 
