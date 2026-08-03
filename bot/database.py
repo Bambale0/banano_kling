@@ -180,6 +180,7 @@ class UserPrompt:
     preview_url: Optional[str] = None
     model: Optional[str] = None
     tags: Optional[list[str]] = None
+    generation_settings: Optional[dict[str, Any]] = None
     likes: int = 0
     uses_count: int = 0
     is_public: bool = True
@@ -295,6 +296,11 @@ def _row_to_user_prompt(row: db_backend.Row | None) -> Optional[UserPrompt]:
         preview_url=row["preview_url"],
         model=row["model"],
         tags=[str(tag) for tag in _parse_json_list(row["tags"])],
+        generation_settings=(
+            _parse_json_dict(row["generation_settings"])
+            if "generation_settings" in row.keys()
+            else {}
+        ),
         likes=int(row["likes"] or 0),
         uses_count=int(row["uses_count"] or 0),
         is_public=bool(row["is_public"]),
@@ -323,6 +329,7 @@ def _prompt_to_dict(prompt: UserPrompt | None) -> Optional[dict[str, Any]]:
         "preview_url": prompt.preview_url,
         "model": prompt.model,
         "tags": prompt.tags or [],
+        "generation_settings": prompt.generation_settings or {},
         "likes": prompt.likes,
         "uses_count": prompt.uses_count,
         "is_public": prompt.is_public,
@@ -452,6 +459,7 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
             preview_url TEXT,
             model TEXT,
             tags TEXT DEFAULT '[]',
+            generation_settings TEXT DEFAULT '{}',
             likes INTEGER DEFAULT 0,
             uses_count INTEGER DEFAULT 0,
             is_public BOOLEAN DEFAULT 1,
@@ -471,6 +479,12 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     """)
     try:
         await db.execute("ALTER TABLE user_prompts ADD COLUMN source_generation_id INTEGER")
+    except db_backend.OperationalError:
+        pass
+    try:
+        await db.execute(
+            "ALTER TABLE user_prompts ADD COLUMN generation_settings TEXT DEFAULT '{}'"
+        )
     except db_backend.OperationalError:
         pass
     await db.execute("""
@@ -4975,6 +4989,7 @@ async def create_prompt(
     preview_url: Optional[str] = None,
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
+    generation_settings: Optional[dict[str, Any]] = None,
     is_public: bool = True,
 ) -> Optional[dict[str, Any]]:
     prompt_text = str(prompt_text or "").strip()
@@ -4992,9 +5007,9 @@ async def create_prompt(
             """
             INSERT INTO user_prompts (
                 author_id, title, description, category, prompt_text, preview_url,
-                model, tags, is_public, status
+                model, tags, generation_settings, is_public, status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 author_id,
@@ -5005,6 +5020,7 @@ async def create_prompt(
                 preview_url,
                 model,
                 json.dumps(inferred_tags, ensure_ascii=False),
+                json.dumps(generation_settings or {}, ensure_ascii=False),
                 1 if is_public else 0,
             ),
         )

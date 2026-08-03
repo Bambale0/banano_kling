@@ -170,6 +170,38 @@ export interface BootstrapResponse {
   saved_references?: SavedReference[]
 }
 
+export interface TrendGenerationSettings {
+  kind: 'image' | 'video'
+  user_input: 'photo'
+  model: string
+  ratio: string
+  quality?: string
+  count?: number
+  nsfw_checker?: boolean
+  nsfw_enabled?: boolean
+  scenario?: ScenarioType
+  duration?: number
+  grok_mode?: string
+  grok_resolution?: string
+  veo_generation_type?: string
+  veo_translation?: boolean
+  veo_resolution?: string
+  veo_seed?: number | null
+  veo_watermark?: string
+  kling_negative_prompt?: string
+  kling_cfg_scale?: number
+  omni_resolution?: string
+  omni_seed?: number | null
+  omni_audio_ids?: string[]
+  omni_character_ids?: string[]
+  omni_base_voice?: string
+  omni_voice_name?: string
+  omni_voice_description?: string
+  omni_example_dialogue?: string
+  omni_character_name?: string
+  omni_character_audio_ids?: string[]
+}
+
 export interface PromptItem {
   id: number
   title: string
@@ -181,6 +213,7 @@ export interface PromptItem {
   likes: number
   preview_url?: string | null
   model?: string | null
+  generation_settings?: TrendGenerationSettings | null
   author_id: number
   status: 'pending' | 'approved' | 'rejected' | 'deactivated'
   reject_reason?: string | null

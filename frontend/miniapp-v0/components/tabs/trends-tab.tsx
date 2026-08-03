@@ -7,6 +7,7 @@ import type { PromptItem, ScenarioType } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   Film,
@@ -42,12 +43,7 @@ function hasVideoTag(trend: PromptItem) {
 }
 
 export function TrendsTab() {
-  const {
-    state,
-    setActiveTab,
-    setPromptPreset,
-    setVideoPromptPreset,
-  } = useApp()
+  const { state, trendToRun, setTrendToRun } = useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const previewUploadAttemptRef = useRef(0)
   const previewUploadPromiseRef = useRef<Promise<string | null> | null>(null)
@@ -62,6 +58,8 @@ export function TrendsTab() {
   const [model, setModel] = useState('banana_pro')
   const [videoScenario, setVideoScenario] = useState<ScenarioType>('imgtxt')
   const [videoDuration, setVideoDuration] = useState(5)
+  const [trendRatio, setTrendRatio] = useState('1:1')
+  const [imageQuality, setImageQuality] = useState('2K')
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -72,7 +70,17 @@ export function TrendsTab() {
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
-  const availableModels = trendKind === 'video' ? state.videoModels : state.imageModels
+  const availableModels = trendKind === 'video'
+    ? state.videoModels.filter((item) => item.supports.includes('imgtxt'))
+    : state.imageModels
+  const selectedTrendImageModel = state.imageModels.find((item) => item.id === model)
+  const selectedTrendVideoModel = state.videoModels.find((item) => item.id === model)
+  const trendImageQualities =
+    selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
+      ? ['1K', '2K', '4K']
+      : selectedTrendImageModel?.qualities?.length
+        ? selectedTrendImageModel.qualities
+        : ['basic']
 
   const videoModelIds = useMemo(
     () => new Set(state.videoModels.map((item) => item.id)),
@@ -136,6 +144,27 @@ export function TrendsTab() {
     ))
   }, [model, state.videoModels, trendKind])
 
+  useEffect(() => {
+    const selectedModel = trendKind === 'video'
+      ? state.videoModels.find((item) => item.id === model)
+      : state.imageModels.find((item) => item.id === model)
+    const ratios = selectedModel?.ratios || []
+    if (ratios.length && !ratios.includes(trendRatio)) {
+      setTrendRatio(ratios[0])
+    }
+    if (trendKind === 'image' && !trendImageQualities.includes(imageQuality)) {
+      setImageQuality(trendImageQualities[0] || 'basic')
+    }
+  }, [
+    imageQuality,
+    model,
+    state.imageModels,
+    state.videoModels,
+    trendImageQualities,
+    trendKind,
+    trendRatio,
+  ])
+
   const changeTrendKind = (nextKind: TrendKind) => {
     if (nextKind === trendKind) return
     setTrendKind(nextKind)
@@ -151,37 +180,14 @@ export function TrendsTab() {
     setModel(state.imageModels[0]?.id || 'banana_pro')
     setVideoScenario('imgtxt')
     setVideoDuration(5)
+    setTrendRatio('1:1')
+    setImageQuality('2K')
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const applyTrend = (trend: PromptItem) => {
-    if (isVideoTrend(trend)) {
-      const videoModel = state.videoModels.find((item) => item.id === trend.model)
-      const scenarioTag = (trend.tags || []).find((tag) => String(tag).startsWith('trend-scenario:'))
-      const durationTag = (trend.tags || []).find((tag) => String(tag).startsWith('trend-duration:'))
-      const configuredScenario = String(scenarioTag || '').split(':')[1] as ScenarioType
-      const scenario = videoModel?.supports.includes(configuredScenario)
-        ? configuredScenario
-        : videoModel?.supports.includes('imgtxt') ? 'imgtxt' : videoModel?.supports[0] || 'text'
-      setVideoPromptPreset({
-        title: trend.title,
-        prompt: trend.prompt_text,
-        model: videoModel?.id || state.videoModels[0]?.id || 'v3_pro',
-        scenario,
-        duration: Number(String(durationTag || '').split(':')[1]) || videoModel?.durations[0] || 5,
-      })
-      setActiveTab(2)
-      return
-    }
-
-    setPromptPreset({
-      promptId: trend.id,
-      title: trend.title,
-      prompt: trend.prompt_text,
-      model: trend.model || state.imageModels[0]?.id || 'banana_pro',
-    })
-    setActiveTab(1)
+    setTrendToRun(trend)
   }
 
   const handlePreviewUpload = async (file?: File) => {
@@ -262,6 +268,50 @@ export function TrendsTab() {
         setError('Preview еще не сохранен на сервере. Подождите несколько секунд и повторите.')
         return
       }
+      const generationSettings = trendKind === 'video'
+        ? {
+            kind: 'video' as const,
+            user_input: 'photo' as const,
+            model,
+            scenario: 'imgtxt' as const,
+            ratio: trendRatio,
+            duration: videoDuration,
+            grok_mode: selectedTrendVideoModel?.grok_modes?.[0] || 'normal',
+            grok_resolution: selectedTrendVideoModel?.grok_resolutions?.[0] || '480p',
+            veo_generation_type:
+              selectedTrendVideoModel?.veo_generation_types?.find((value) =>
+                value.toUpperCase().includes('IMAGE'),
+              ) ||
+              selectedTrendVideoModel?.veo_generation_types?.[0] ||
+              'IMAGE_2_VIDEO',
+            veo_translation: true,
+            veo_resolution: selectedTrendVideoModel?.veo_resolutions?.[0] || '720p',
+            veo_seed: null,
+            veo_watermark: '',
+            kling_negative_prompt: '',
+            kling_cfg_scale: 0.5,
+            omni_resolution: selectedTrendVideoModel?.omni_resolutions?.[0] || '720p',
+            omni_seed: null,
+            omni_audio_ids: [],
+            omni_character_ids: [],
+            omni_base_voice: selectedTrendVideoModel?.omni_base_voices?.[0] || 'achernar',
+            omni_voice_name: '',
+            omni_voice_description: '',
+            omni_example_dialogue: '',
+            omni_character_name: '',
+            omni_character_audio_ids: [],
+          }
+        : {
+            kind: 'image' as const,
+            user_input: 'photo' as const,
+            model,
+            ratio: trendRatio,
+            quality: imageQuality,
+            count: 1,
+            nsfw_checker: false,
+            nsfw_enabled: false,
+          }
+
       const created = await submitPrompt({
         title: title.trim(),
         description: description.trim(),
@@ -269,8 +319,9 @@ export function TrendsTab() {
         previewUrl: finalPreviewUrl,
         model,
         tags: trendKind === 'video'
-          ? [TREND_TAG, VIDEO_TREND_TAG, `trend-scenario:${videoScenario}`, `trend-duration:${videoDuration}`]
+          ? [TREND_TAG, VIDEO_TREND_TAG]
           : [TREND_TAG],
+        generationSettings,
       })
       setItems((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
       resetForm()
@@ -468,23 +519,42 @@ export function TrendsTab() {
           {trendKind === 'video' ? (
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-2">
-                <span className="text-xs font-medium text-muted-foreground">Режим повтора</span>
-                <select value={videoScenario} onChange={(event) => setVideoScenario(event.target.value as ScenarioType)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
-                  {(state.videoModels.find((item) => item.id === model)?.supports || ['text']).map((scenario) => (
-                    <option key={scenario} value={scenario}>{scenario === 'imgtxt' ? 'Фото + текст' : scenario === 'text' ? 'Текст → видео' : scenario}</option>
+                <span className="text-xs font-medium text-muted-foreground">Формат</span>
+                <select value={trendRatio} onChange={(event) => setTrendRatio(event.target.value)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
+                  {(selectedTrendVideoModel?.ratios || ['16:9']).map((ratio) => (
+                    <option key={ratio} value={ratio}>{ratio}</option>
                   ))}
                 </select>
               </label>
               <label className="block space-y-2">
                 <span className="text-xs font-medium text-muted-foreground">Длительность</span>
                 <select value={videoDuration} onChange={(event) => setVideoDuration(Number(event.target.value))} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
-                  {(state.videoModels.find((item) => item.id === model)?.durations || [5]).map((duration) => (
+                  {(selectedTrendVideoModel?.durations || [5]).map((duration) => (
                     <option key={duration} value={duration}>{duration} сек</option>
                   ))}
                 </select>
               </label>
             </div>
-          ) : null}
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">Формат</span>
+                <select value={trendRatio} onChange={(event) => setTrendRatio(event.target.value)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
+                  {(selectedTrendImageModel?.ratios || ['1:1']).map((ratio) => (
+                    <option key={ratio} value={ratio}>{ratio}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-2">
+                <span className="text-xs font-medium text-muted-foreground">Качество</span>
+                <select value={imageQuality} onChange={(event) => setImageQuality(event.target.value)} className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground">
+                  {trendImageQualities.map((quality) => (
+                    <option key={quality} value={quality}>{quality}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
 
           <div className="space-y-2">
             <span className="text-xs font-medium text-muted-foreground">
@@ -600,6 +670,14 @@ export function TrendsTab() {
           <p className="mt-1 text-xs text-muted-foreground">{isAdmin ? 'Нажмите «Добавить», чтобы опубликовать первый шаблон.' : 'Команда NEUROMIX скоро добавит новые шаблоны.'}</p>
         </div>
       )}
+
+      <TrendRunnerDialog
+        trend={trendToRun}
+        open={Boolean(trendToRun)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setTrendToRun(null)
+        }}
+      />
 
       <Dialog open={Boolean(previewTrend)} onOpenChange={(open) => { if (!open) setPreviewTrend(null) }}>
         <DialogContent className="max-w-3xl border-border/60 bg-background p-3">
