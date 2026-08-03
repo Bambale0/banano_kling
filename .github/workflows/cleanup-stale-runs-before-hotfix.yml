@@ -1,0 +1,51 @@
+name: Maintenance — Clear stale runs before final hotfix
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - ops/deploy-triggers/2026-08-04-clear-stale-runs.txt
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: GitHub runner — Cancel stale queued and active runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Cancel runs from older commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CURRENT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          for status in queued in_progress waiting requested pending; do
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs?status=${status}&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .head_sha, .name, .status] | @tsv' \
+              || true
+          done | sort -u > stale-runs.tsv
+
+          while IFS=$'\t' read -r run_id head_sha name status; do
+            [ -n "$run_id" ] || continue
+            [ "$run_id" != "$CURRENT_RUN_ID" ] || continue
+            [ "$head_sha" != "$CURRENT_SHA" ] || continue
+
+            echo "Cancelling stale run id=$run_id sha=$head_sha status=$status name=$name"
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel" \
+              >/dev/null 2>&1 || true
+          done < stale-runs.tsv
+
+          echo 'Remaining runs for current commit:'
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${CURRENT_SHA}&per_page=100" \
+            --jq '.workflow_runs[] | "id=\(.id) name=\(.name) status=\(.status)"' \
+            || true
