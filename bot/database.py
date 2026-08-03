@@ -230,6 +230,17 @@ def _row_optional_value(
         return default
 
 
+def _row_optional_value(
+    row: db_backend.Row,
+    key: str,
+    default: Any = None,
+) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def _parse_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
