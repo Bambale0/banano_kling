@@ -180,7 +180,7 @@ class UserPrompt:
     preview_url: Optional[str] = None
     model: Optional[str] = None
     tags: Optional[list[str]] = None
-    generation_settings: Optional[dict[str, Any]] = None
+    generation_settings: dict[str, Any] | None = None
     likes: int = 0
     uses_count: int = 0
     is_public: bool = True
@@ -298,7 +298,7 @@ def _row_to_user_prompt(row: db_backend.Row | None) -> Optional[UserPrompt]:
         tags=[str(tag) for tag in _parse_json_list(row["tags"])],
         generation_settings=(
             _parse_json_dict(row["generation_settings"])
-            if "generation_settings" in row.keys()
+            if "generation_settings" in row
             else {}
         ),
         likes=int(row["likes"] or 0),
@@ -4989,7 +4989,7 @@ async def create_prompt(
     preview_url: Optional[str] = None,
     model: Optional[str] = None,
     tags: Optional[list[str]] = None,
-    generation_settings: Optional[dict[str, Any]] = None,
+    generation_settings: dict[str, Any] | None = None,
     is_public: bool = True,
 ) -> Optional[dict[str, Any]]:
     prompt_text = str(prompt_text or "").strip()

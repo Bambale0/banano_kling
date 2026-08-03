@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import type { PromptItem, ScenarioType } from '@/lib/types'
+import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
@@ -56,7 +56,6 @@ export function TrendsTab() {
   const [description, setDescription] = useState('')
   const [promptText, setPromptText] = useState('')
   const [model, setModel] = useState('banana_pro')
-  const [videoScenario, setVideoScenario] = useState<ScenarioType>('imgtxt')
   const [videoDuration, setVideoDuration] = useState(5)
   const [trendRatio, setTrendRatio] = useState('1:1')
   const [imageQuality, setImageQuality] = useState('2K')
@@ -178,7 +177,6 @@ export function TrendsTab() {
     setDescription('')
     setPromptText('')
     setModel(state.imageModels[0]?.id || 'banana_pro')
-    setVideoScenario('imgtxt')
     setVideoDuration(5)
     setTrendRatio('1:1')
     setImageQuality('2K')
