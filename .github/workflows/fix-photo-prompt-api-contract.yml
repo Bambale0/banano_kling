@@ -32,18 +32,28 @@ jobs:
               raise SystemExit('photoToPrompt function boundaries not found')
 
           function = text[start:end]
-          if 'credits: number\n  cost_credits: number\n  price_rub: number' not in function:
-              response_anchor = '    model_hint: string\n  }>(\'photo-to-prompt\', {'
+          response_start = function.find('  const response = await postJson<{')
+          response_end = function.find("  }>('photo-to-prompt', {", response_start)
+          if response_start < 0 or response_end < 0:
+              raise SystemExit('photoToPrompt postJson response boundaries not found')
+          response_type = function[response_start:response_end]
+
+          if 'credits: number' not in response_type:
+              response_anchor = '    model_hint: string\n'
               response_replacement = (
                   '    model_hint: string\n'
                   '    credits: number\n'
                   '    cost_credits: number\n'
                   '    price_rub: number\n'
-                  "  }>('photo-to-prompt', {"
               )
-              if response_anchor not in function:
+              if response_anchor not in response_type:
                   raise SystemExit('photoToPrompt response type anchor not found')
-              function = function.replace(response_anchor, response_replacement, 1)
+              response_type = response_type.replace(response_anchor, response_replacement, 1)
+              function = (
+                  function[:response_start]
+                  + response_type
+                  + function[response_end:]
+              )
 
           if 'credits: response.credits' not in function:
               return_anchor = '    model_hint: response.model_hint,\n  }'
