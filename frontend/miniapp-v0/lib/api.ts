@@ -1431,6 +1431,9 @@ export async function photoToPrompt(payload: {
     prompt_ru: string
     negative_prompt: string
     model_hint: string
+    credits: number
+    cost_credits: number
+    price_rub: number
   }>('photo-to-prompt', {
     init_data: initData,
     image_url: restoreProviderUploadUrl(payload.imageUrl),
@@ -1443,6 +1446,9 @@ export async function photoToPrompt(payload: {
     prompt_ru: response.prompt_ru,
     negative_prompt: response.negative_prompt,
     model_hint: response.model_hint,
+    credits: response.credits,
+    cost_credits: response.cost_credits,
+    price_rub: response.price_rub,
   }
 }
 
