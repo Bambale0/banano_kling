@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path('bot/database.py')
@@ -40,18 +41,21 @@ jobs:
           while text.count(block) > 1:
               text = text.replace(block + '\n\n' + block, block, 1)
 
-          unsafe = '''        generation_settings=(
-              _parse_json_dict(row["generation_settings"])
-              if "generation_settings" in row
-              else {}
-          ),
-          '''
-          safe = '''        generation_settings=_parse_json_dict(
-              _row_optional_value(row, "generation_settings")
-          ),
-          '''
-          if unsafe in text:
-              text = text.replace(unsafe, safe, 1)
+          pattern = re.compile(
+              r'(?m)^\s{8}generation_settings=\(\n'
+              r'\s+_parse_json_dict\(row\["generation_settings"\]\)\n'
+              r'\s+if "generation_settings" in row\n'
+              r'\s+else \{\}\n'
+              r'\s+\),'
+          )
+          replacement = (
+              '        generation_settings=_parse_json_dict(\n'
+              '            _row_optional_value(row, "generation_settings")\n'
+              '        ),'
+          )
+          text, replacements = pattern.subn(replacement, text, count=1)
+          if replacements not in (0, 1):
+              raise SystemExit(f'Unexpected row-access replacements: {replacements}')
 
           definitions = text.count('def _row_optional_value(')
           usages = text.count('_row_optional_value(') - definitions
