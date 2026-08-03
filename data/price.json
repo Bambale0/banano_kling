@@ -323,6 +323,8 @@
     "rub_per_credit": 10
   },
   "service_prices": {
-    "video_prompt": 3
-  }
+    "video_prompt": 3,
+    "photo_prompt_rub": 1
+  },
+  "credit_rub_value": 10
 }

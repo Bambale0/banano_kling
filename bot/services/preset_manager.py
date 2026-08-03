@@ -74,6 +74,8 @@ CANONICAL_VIDEO_ALIASES = {
 DEFAULT_IMAGE_COST = 3
 DEFAULT_VIDEO_COST = 8
 DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT = 10
+DEFAULT_CREDIT_RUB_VALUE = 10
+DEFAULT_PHOTO_PROMPT_PRICE_RUB = 1
 DEFAULT_VIDEO_PROMPT_COST = 3
 
 
@@ -202,6 +204,19 @@ class PresetManager:
         exchange_cfg = self._price_config.get("partner_exchange", {}) or {}
         value = exchange_cfg.get("rub_per_credit", DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT)
         return float(value or DEFAULT_PARTNER_EXCHANGE_RUB_PER_CREDIT)
+
+    def get_credit_rub_value(self) -> float:
+        value = self._price_config.get("credit_rub_value", DEFAULT_CREDIT_RUB_VALUE)
+        normalized = float(value or DEFAULT_CREDIT_RUB_VALUE)
+        return normalized if normalized > 0 else float(DEFAULT_CREDIT_RUB_VALUE)
+
+    def get_photo_prompt_price_rub(self) -> float:
+        service_prices = self._price_config.get("service_prices", {}) or {}
+        value = service_prices.get("photo_prompt_rub", DEFAULT_PHOTO_PROMPT_PRICE_RUB)
+        return round(float(value or DEFAULT_PHOTO_PROMPT_PRICE_RUB), 2)
+
+    def get_photo_prompt_cost(self) -> float:
+        return round(self.get_photo_prompt_price_rub() / self.get_credit_rub_value(), 4)
 
     def get_video_prompt_cost(self) -> float:
         service_prices = self._price_config.get("service_prices", {}) or {}

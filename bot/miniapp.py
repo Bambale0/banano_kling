@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
-import html
 import hmac
+import html
 import json
 import logging
 import mimetypes
@@ -12,11 +12,11 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
-from aiogram.types import BufferedInputFile, LabeledPrice
-from bot import db as db_backend
 import aiohttp
+from aiogram.types import BufferedInputFile, LabeledPrice
 from aiohttp import web
 
+from bot import db as db_backend
 from bot.config import config
 from bot.database import (
     DATABASE_PATH,
@@ -28,25 +28,28 @@ from bot.database import (
     approve_prompt,
     check_can_afford,
     complete_video_task,
-    create_transaction,
     count_active_prompts_by_author,
-    credit_feed_prompt_repeat,
     create_prompt,
-    deduct_credits,
+    create_transaction,
+    credit_feed_prompt_repeat,
     deactivate_prompt,
-    get_approved_prompts,
+    deduct_credits,
+    generation_adult_content,
+    generation_profile_visible,
+    generation_publication_scope,
     get_and_clear_miniapp_notifications,
+    get_approved_prompts,
     get_author_prompts,
     get_feed_comments,
     get_feed_generation_card,
     get_feed_generations,
-    get_profile_generation_card,
     get_generation_task_payload,
     get_or_create_user,
     get_partner_overview,
+    get_popular_prompts,
+    get_profile_generation_card,
     get_promo_bonus_for_credits,
     get_promo_code_by_code,
-    get_popular_prompts,
     get_prompt_by_id,
     get_prompts_by_tag,
     get_top_prompts,
@@ -54,9 +57,6 @@ from bot.database import (
     get_user_feed_generations,
     get_user_feed_summary,
     get_user_stats,
-    generation_adult_content,
-    generation_profile_visible,
-    generation_publication_scope,
     increment_feed_share,
     is_channel_subscription_required,
     like_feed_generation,
@@ -108,12 +108,26 @@ from bot.keyboards import (
 )
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
+)
+from bot.miniapp_links import (
     feed_link as build_feed_link,
+)
+from bot.miniapp_links import (
     profile_link as build_profile_link,
+)
+from bot.miniapp_links import (
     prompt_link as build_prompt_link,
+)
+from bot.miniapp_links import (
     referral_bot_link as build_referral_bot_link,
+)
+from bot.miniapp_links import (
     referral_link as build_referral_link,
+)
+from bot.miniapp_links import (
     remix_bot_link as build_remix_bot_link,
+)
+from bot.miniapp_links import (
     remix_link as build_remix_link,
 )
 from bot.payment_utils import (
@@ -123,24 +137,27 @@ from bot.payment_utils import (
     package_stars_amount,
     total_package_credits,
 )
-
-from bot.quality_pricing import QUALITY_COSTS
-from bot.quality_pricing import SEEDREAM_5_PRO_QUALITY_COSTS
+from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
     missing_local_upload_sources,
     resolve_local_upload_path,
 )
+from bot.services.photo_prompt_billing import (
+    PhotoPromptInsufficientBalance,
+    refund_photo_prompt_charge,
+    reserve_photo_prompt_charge,
+)
+from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
     should_block_for_subscription,
 )
-from bot.services.preset_manager import preset_manager
-from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.services.yookassa_service import yookassa_service
+from bot.utils.user_facing_errors import make_user_friendly_generation_error
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     apply_video_reference_cost,
@@ -2912,7 +2929,8 @@ async def miniapp_create_payment(request: web.Request) -> web.Response:
 
 
 async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
-    """Analyze a reference image and return generation prompts via GPT 5.4."""
+    """Analyze a photo for 1 RUB (0.1 credit) without changing generation prices."""
+    charge = None
     try:
         body = await request.json()
         init_data = body.get("init_data", "")
@@ -2920,7 +2938,11 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
         preserve = str(body.get("preserve", "") or "").strip()
         goal = str(body.get("goal", "") or "").strip()
 
-        await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        telegram_id, _ctx = await _get_user_context(
+            request.app,
+            init_data,
+            body.get("start_param_fallback"),
+        )
 
         if not image_url:
             return web.json_response(
@@ -2928,13 +2950,31 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        try:
+            charge = await reserve_photo_prompt_charge(telegram_id)
+        except PhotoPromptInsufficientBalance as exc:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "credits": exc.balance,
+                    "cost_credits": exc.cost_credits,
+                    "price_rub": exc.price_rub,
+                },
+                status=402,
+            )
+
         from bot.services.photo_prompt_service import photo_prompt_service
 
-        result = await photo_prompt_service.analyze_photo(
-            image_url=image_url,
-            preserve=preserve,
-            goal=goal,
-        )
+        try:
+            result = await photo_prompt_service.analyze_photo(
+                image_url=image_url,
+                preserve=preserve,
+                goal=goal,
+            )
+        except Exception:
+            await refund_photo_prompt_charge(charge)
+            raise
 
         return web.json_response(
             {
@@ -2948,6 +2988,9 @@ async def miniapp_photo_to_prompt(request: web.Request) -> web.Response:
                 "voice_prompt_summary_ru": result.get("voice_prompt_summary_ru", ""),
                 "voice_description_ru": result.get("voice_description_ru", ""),
                 "key_details": result.get("key_details", []),
+                "credits": charge.balance_after,
+                "cost_credits": charge.cost_credits,
+                "price_rub": charge.price_rub,
             }
         )
     except Exception as e:

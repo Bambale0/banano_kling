@@ -697,7 +697,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE NOT NULL,
-                credits INTEGER DEFAULT 0,
+                credits REAL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -788,7 +788,24 @@ async def init_db():
             except db_backend.OperationalError:
                 pass
 
-        # Таблица транзакций (платежи)
+        if db_backend.is_postgres():
+            cursor = await db.execute(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'users'
+                  AND column_name = 'credits'
+                """
+            )
+            row = await cursor.fetchone()
+            if row and str(row[0]).lower() in {"smallint", "integer", "bigint"}:
+                await db.execute(
+                    "ALTER TABLE users ALTER COLUMN credits "
+                    "TYPE NUMERIC(12, 4) USING credits::numeric"
+                )
+
+        # Таблица транзакций
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4524,10 +4541,10 @@ async def record_promo_redemption(transaction: Transaction) -> dict[str, Any]:
     }
 
 
-async def get_user_credits(telegram_id: int) -> int:
-    """Получает баланс кредитов пользователя"""
+async def get_user_credits(telegram_id: int) -> Credits:
+    """Получает баланс без потери дробной части кредита."""
     user = await get_or_create_user(telegram_id)
-    return int(user.credits)
+    return Credits(user.credits)
 
 
 async def add_credits(telegram_id: int, amount: int) -> bool:

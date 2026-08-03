@@ -19,7 +19,7 @@ const primaryServices = [
     icon: Wand2,
     title: 'Промпт по фото',
     description: 'Загрузите референс — AI соберёт точный prompt для похожей генерации.',
-    badge: 'Разбор фото',
+    badge: '1 ₽ · 0,1 🍌',
     tone: 'gold',
   },
   {
