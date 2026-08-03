@@ -27,21 +27,26 @@ jobs:
 
           path = Path('frontend/miniapp-v0/e2e/critical-flows.mjs')
           text = path.read_text(encoding='utf-8')
-          old = """  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
-          await taskDetailTitle.waitFor()
-          await taskDetailTitle.locator('xpath=..').locator('button').click()
-          """
-          new = """  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
-          await taskDetailTitle.waitFor()
-          await page.mouse.click(10, 10)
-          await taskDetailTitle.waitFor({ state: 'hidden' })
-          """
-          if new in text:
+          stable_line = "  await page.mouse.click(10, 10)"
+          if stable_line in text:
               print('Stable backdrop close is already present')
-          elif old in text:
-              text = text.replace(old, new, 1)
-          else:
-              raise SystemExit('Task detail close anchor not found')
+              raise SystemExit(0)
+
+          start_marker = "  const taskDetailTitle = page.getByText('Детали задачи', { exact: true })"
+          end_marker = "  await taskDetailTitle.locator('xpath=..').locator('button').click()"
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('Task detail close boundaries not found')
+          end += len(end_marker)
+
+          replacement = "\n".join([
+              start_marker,
+              "  await taskDetailTitle.waitFor()",
+              stable_line,
+              "  await taskDetailTitle.waitFor({ state: 'hidden' })",
+          ])
+          text = text[:start] + replacement + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
 
