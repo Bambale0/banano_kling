@@ -1,0 +1,2 @@
+Cancel queued and active workflow runs from older commits, while preserving all
+runs for the merge commit that contains this trigger.
