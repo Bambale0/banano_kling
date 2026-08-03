@@ -789,9 +789,21 @@ async def init_db():
                 pass
 
         if db_backend.is_postgres():
-            await db.execute(
-                "ALTER TABLE users ALTER COLUMN credits TYPE NUMERIC(12, 4) USING credits::numeric"
+            cursor = await db.execute(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'users'
+                  AND column_name = 'credits'
+                """
             )
+            row = await cursor.fetchone()
+            if row and str(row[0]).lower() in {"smallint", "integer", "bigint"}:
+                await db.execute(
+                    "ALTER TABLE users ALTER COLUMN credits "
+                    "TYPE NUMERIC(12, 4) USING credits::numeric"
+                )
 
         # Таблица транзакций
         await db.execute("""

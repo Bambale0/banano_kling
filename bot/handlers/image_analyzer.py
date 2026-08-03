@@ -17,16 +17,16 @@ from bot.keyboards import (
     get_photo_prompt_result_keyboard,
     get_video_prompt_result_keyboard,
 )
-from bot.services.photo_prompt_service import photo_prompt_service
-from bot.services.video_prompt_service import video_prompt_service
 from bot.services.media_input_utils import resolve_local_upload_path
-from bot.services.preset_manager import preset_manager
 from bot.services.photo_prompt_billing import (
     PhotoPromptInsufficientBalance,
     photo_prompt_price_label,
     refund_photo_prompt_charge,
     reserve_photo_prompt_charge,
 )
+from bot.services.photo_prompt_service import photo_prompt_service
+from bot.services.preset_manager import preset_manager
+from bot.services.video_prompt_service import video_prompt_service
 from bot.states import ImageAnalyzerStates
 
 logger = logging.getLogger(__name__)

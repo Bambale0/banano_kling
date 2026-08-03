@@ -16,7 +16,6 @@ from bot.services.photo_prompt_billing import (
 )
 from bot.services.preset_manager import preset_manager
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
