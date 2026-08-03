@@ -1,0 +1,2 @@
+Deploy and verify the current tanyapi backend and standalone Mini App frontend.
+The run must prove the live production state before writing its receipt.
