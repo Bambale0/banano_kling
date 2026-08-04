@@ -34,10 +34,12 @@ NEW_WELCOME_COPY = (
     'бананов в подарок!</b>\\n"\n'
 )
 OLD_PARTNER_BONUS_COPY = (
-    '        "  🍌 15 бананов для тестирования бота\\n"\n'
+    '        "• Каждый, кто перейдёт по вашей реферальной ссылке, получает '
+    '🍌 <code>15</code> бананов для тестирования бота\\n"\n'
 )
 NEW_PARTNER_BONUS_COPY = (
-    '        f"  🍌 {PARTNER_NEW_USER_BONUS} бананов для тестирования бота\\n"\n'
+    '        f"• Каждый, кто перейдёт по вашей реферальной ссылке, получает '
+    '🍌 <code>{PARTNER_NEW_USER_BONUS}</code> бананов для тестирования бота\\n"\n'
 )
 
 
@@ -94,7 +96,7 @@ def normalize_runtime_bonus_copy() -> None:
 
     stale_fragments = (
         "Новым пользователям — 15 бананов",
-        "15 бананов для тестирования бота",
+        "<code>15</code> бананов для тестирования бота",
     )
     for fragment in stale_fragments:
         if fragment in handler_text:
