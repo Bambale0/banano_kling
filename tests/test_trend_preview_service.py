@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import asyncio
+from pathlib import Path
 
 from bot.services import trend_preview_service
 
