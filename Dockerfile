@@ -1,20 +1,5 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-bookworm-slim AS miniapp-builder
-
-ENV NEXT_TELEMETRY_DISABLED=1
-WORKDIR /build
-
-COPY frontend/miniapp-v0/package.json frontend/miniapp-v0/package-lock.json ./
-RUN npm ci
-
-COPY frontend/miniapp-v0/ ./
-RUN npm run build \
-    && test -f out/index.html \
-    && grep -R -F "Welcome-бонус для новых пользователей: 5🍌" out >/dev/null \
-    && ! grep -R -F "Welcome-бонус для новых пользователей: 15🍌" out >/dev/null
-
-
 FROM python:3.12-slim-bookworm AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -45,7 +30,7 @@ ARG VCS_REF="unknown"
 ARG BUILD_DATE="unknown"
 
 LABEL org.opencontainers.image.title="Banano Kling Telegram Bot" \
-      org.opencontainers.image.description="Webhook backend and Mini App for the Banano Kling / NEUROMIX bot" \
+      org.opencontainers.image.description="Webhook backend for the Banano Kling / NEUROMIX Telegram bot" \
       org.opencontainers.image.source="https://github.com/Bambale0/banano_kling" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}"
@@ -76,13 +61,9 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . /app
-COPY --from=miniapp-builder --chown=app:app /build/out /app/frontend/miniapp-v0/out
 
 RUN python scripts/apply_visible_copy_fixes.py \
-    && python -m compileall -q bot scripts \
-    && test -f /app/frontend/miniapp-v0/out/index.html \
-    && grep -R -F "Welcome-бонус для новых пользователей: 5🍌" \
-        /app/frontend/miniapp-v0/out >/dev/null \
+    && python -m compileall -q bot/keyboards.py bot/handlers/image_analyzer.py \
     && install -d -o app -g app -m 0755 \
         /app/data \
         /app/static/uploads \
