@@ -51,6 +51,67 @@ NEW_PARTNER_BONUS_COPY = (
     '🍌 <code>{PARTNER_NEW_USER_BONUS}</code> бананов для тестирования бота\\n"\n'
 )
 
+MINIAPP_PREVIEW_IMPORT_ANCHOR = "from bot.services.preset_manager import preset_manager\n"
+MINIAPP_PREVIEW_IMPORT = (
+    "from bot.services.trend_preview_service import "
+    "ensure_lightweight_trend_preview_url\n"
+)
+MINIAPP_PREVIEW_HELPERS_ANCHOR = "\n\nasync def miniapp_prompts(request: web.Request) -> web.Response:\n"
+MINIAPP_PREVIEW_HELPERS = '''
+
+
+def _is_video_trend_prompt(prompt: dict) -> bool:
+    tags = {
+        str(tag or "").strip().lower()
+        for tag in list(prompt.get("tags") or [])
+        if str(tag or "").strip()
+    }
+    settings = prompt.get("generation_settings")
+    return (
+        "trend" in tags
+        and isinstance(settings, dict)
+        and str(settings.get("kind") or "").strip().lower() == "video"
+    )
+
+
+async def _apply_lightweight_trend_preview(prompt: dict) -> dict:
+    if not isinstance(prompt, dict) or not _is_video_trend_prompt(prompt):
+        return prompt
+    preview_url = str(prompt.get("preview_url") or "").strip()
+    if not preview_url:
+        return prompt
+    lightweight_url = await ensure_lightweight_trend_preview_url(preview_url)
+    if not lightweight_url or lightweight_url == preview_url:
+        return prompt
+    updated = dict(prompt)
+    updated["preview_url"] = lightweight_url
+    updated["original_preview_url"] = preview_url
+    return updated
+
+
+async def _apply_lightweight_trend_previews(prompts) -> list[dict]:
+    return [
+        await _apply_lightweight_trend_preview(prompt)
+        for prompt in list(prompts or [])
+    ]
+'''
+MINIAPP_PROMPTS_RETURN = '        return web.json_response({"ok": True, "prompts": prompts})\n'
+MINIAPP_PROMPTS_RETURN_WITH_PREVIEWS = (
+    "        prompts = await _apply_lightweight_trend_previews(prompts)\n"
+    '        return web.json_response({"ok": True, "prompts": prompts})\n'
+)
+MINIAPP_DETAIL_RETURN_BLOCK = (
+    '        return web.json_response({"ok": True, "prompt": prompt})\n'
+    "    except Exception as e:\n"
+    "        return _miniapp_error_response(e, log_message=\"Mini App prompt detail failed\")\n"
+)
+MINIAPP_DETAIL_RETURN_BLOCK_WITH_PREVIEW = (
+    "        prompt = await _apply_lightweight_trend_preview(prompt)\n"
+    '        return web.json_response({"ok": True, "prompt": prompt})\n'
+    "    except Exception as e:\n"
+    "        return _miniapp_error_response(e, log_message=\"Mini App prompt detail failed\")\n"
+)
+
 
 def read_text(path: str) -> str:
     with open(path, encoding="utf-8") as source:
@@ -137,6 +198,59 @@ def normalize_runtime_bonus_copy() -> None:
     write_text(handler_path, handler_text)
 
 
+def normalize_miniapp_trend_video_previews() -> None:
+    miniapp_path = "bot/miniapp.py"
+    miniapp_text = read_text(miniapp_path)
+
+    if MINIAPP_PREVIEW_IMPORT not in miniapp_text:
+        if MINIAPP_PREVIEW_IMPORT_ANCHOR not in miniapp_text:
+            raise RuntimeError("Mini App trend preview import anchor was not found")
+        miniapp_text = miniapp_text.replace(
+            MINIAPP_PREVIEW_IMPORT_ANCHOR,
+            MINIAPP_PREVIEW_IMPORT_ANCHOR + MINIAPP_PREVIEW_IMPORT,
+            1,
+        )
+
+    if "async def _apply_lightweight_trend_preview" not in miniapp_text:
+        if MINIAPP_PREVIEW_HELPERS_ANCHOR not in miniapp_text:
+            raise RuntimeError("Mini App prompts handler anchor was not found")
+        miniapp_text = miniapp_text.replace(
+            MINIAPP_PREVIEW_HELPERS_ANCHOR,
+            MINIAPP_PREVIEW_HELPERS + MINIAPP_PREVIEW_HELPERS_ANCHOR,
+            1,
+        )
+
+    if MINIAPP_PROMPTS_RETURN_WITH_PREVIEWS not in miniapp_text:
+        if MINIAPP_PROMPTS_RETURN not in miniapp_text:
+            raise RuntimeError("Mini App prompts response anchor was not found")
+        miniapp_text = miniapp_text.replace(
+            MINIAPP_PROMPTS_RETURN,
+            MINIAPP_PROMPTS_RETURN_WITH_PREVIEWS,
+            1,
+        )
+
+    if MINIAPP_DETAIL_RETURN_BLOCK_WITH_PREVIEW not in miniapp_text:
+        if MINIAPP_DETAIL_RETURN_BLOCK not in miniapp_text:
+            raise RuntimeError("Mini App prompt detail response anchor was not found")
+        miniapp_text = miniapp_text.replace(
+            MINIAPP_DETAIL_RETURN_BLOCK,
+            MINIAPP_DETAIL_RETURN_BLOCK_WITH_PREVIEW,
+            1,
+        )
+
+    for required_fragment in (
+        "ensure_lightweight_trend_preview_url",
+        "_apply_lightweight_trend_previews(prompts)",
+        "_apply_lightweight_trend_preview(prompt)",
+    ):
+        if required_fragment not in miniapp_text:
+            raise RuntimeError(
+                f"Mini App trend preview patch is missing: {required_fragment}"
+            )
+
+    write_text(miniapp_path, miniapp_text)
+
+
 def main() -> None:
     keyboard_path = "bot/keyboards.py"
     keyboard_text = read_text(keyboard_path)
@@ -148,6 +262,7 @@ def main() -> None:
     normalize_photo_prompt_screen()
     validate_active_prompt_analyzer_screen()
     normalize_runtime_bonus_copy()
+    normalize_miniapp_trend_video_previews()
 
     database_text = read_text("bot/database.py")
     if "PARTNER_NEW_USER_BONUS: int = 5" not in database_text:

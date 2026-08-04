@@ -66,7 +66,10 @@ RUN python scripts/apply_visible_copy_fixes.py \
     && PYTHONPYCACHEPREFIX=/tmp/banano-pycache python -m compileall -q \
         bot/keyboards.py \
         bot/handlers/image_analyzer.py \
+        bot/handlers/prompt_analyzer_v2.py \
         bot/browser_auth.py \
+        bot/miniapp.py \
+        bot/services/trend_preview_service.py \
         bot/trend_api.py \
     && rm -rf /tmp/banano-pycache \
     && install -d -o app -g app -m 0755 \
