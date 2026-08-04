@@ -1,0 +1,124 @@
+name: Hotfix — Deploy visible bonus and prompt price
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - ops/deploy-triggers/2026-08-04-visible-copy.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tanya-production-visible-copy-hotfix
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: nuromix — Verified visible copy deploy
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 60
+    env:
+      NUROMIX_PROJECT_PATH: ${{ vars.NUROMIX_BACKEND_PROJECT_PATH }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate hotfix sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m compileall -q \
+            scripts/apply_visible_copy_fixes.py \
+            bot/services/photo_prompt_billing.py \
+            bot/database.py
+          grep -F 'PARTNER_NEW_USER_BONUS: int = 5' bot/database.py
+          grep -F 'python scripts/apply_visible_copy_fixes.py' Dockerfile
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' \
+            frontend/miniapp-v0/components/balance-sheet.tsx
+
+      - name: Deploy exact commit locally
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          project_dir="${NUROMIX_PROJECT_PATH:-/root/tanya/banano_kling}"
+          expected_sha="$GITHUB_SHA"
+
+          exec 9>/var/lock/banano-kling-production-deploy.lock
+          flock -w 1800 9 || {
+            echo "Timed out waiting for the production deployment lock" >&2
+            exit 1
+          }
+
+          cd "$project_dir"
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          git switch tanyapi
+          git reset --hard "$expected_sha"
+          test "$(git rev-parse HEAD)" = "$expected_sha"
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash scripts/deploy_backend_docker.sh deploy
+          else
+            sudo -n bash scripts/deploy_backend_docker.sh deploy
+          fi
+
+      - name: Verify production container copy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker inspect banano-kling-bot >/dev/null
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+          echo "container_health=$health"
+          echo "container_revision=$revision"
+          test "$health" = healthy
+          test "$revision" = "$GITHUB_SHA"
+
+          docker exec -i banano-kling-bot python - <<'PY'
+          from bot.database import PARTNER_NEW_USER_BONUS
+          from bot.keyboards import get_main_menu_keyboard
+          from bot.services.photo_prompt_billing import photo_prompt_price_label
+
+          expected_label = "1 ₽ (0,1 🍌)"
+          assert PARTNER_NEW_USER_BONUS == 5
+          assert photo_prompt_price_label() == expected_label
+
+          keyboard = get_main_menu_keyboard(5)
+          texts = [button.text for row in keyboard.inline_keyboard for button in row]
+          expected_button = f"✍️ Промпт по описанию • {expected_label}"
+          assert expected_button in texts, texts
+          print(f"welcome_bonus={PARTNER_NEW_USER_BONUS}")
+          print(f"photo_prompt_price={photo_prompt_price_label()}")
+          print(f"main_menu_button={expected_button}")
+          PY
+
+      - name: Record successful deployment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ops/deploy-receipts
+          cat > ops/deploy-receipts/2026-08-04-visible-copy.txt <<EOF
+          deployed_sha=$GITHUB_SHA
+          welcome_bonus=5
+          photo_prompt_price=1 ₽ (0,1 🍌)
+          main_menu_price_visible=true
+          container=banano-kling-bot
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm \
+            ops/deploy-triggers/2026-08-04-visible-copy.txt \
+            .github/workflows/hotfix-visible-copy-deploy.yml
+          git add ops/deploy-receipts/2026-08-04-visible-copy.txt
+          git commit -m "Record verified visible copy production deploy"
+          git push origin HEAD:tanyapi

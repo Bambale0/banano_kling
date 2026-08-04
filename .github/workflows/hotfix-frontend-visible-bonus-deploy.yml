@@ -1,0 +1,108 @@
+name: Hotfix — Deploy visible Mini App welcome bonus
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - ops/deploy-triggers/2026-08-04-frontend-bonus.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tanya-production-frontend-visible-bonus-hotfix
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: nuromix — Verified Mini App CDN deploy
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate source copy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' \
+            frontend/miniapp-v0/components/balance-sheet.tsx
+          grep -F 'credits: 5' frontend/miniapp-v0/lib/mock-data.ts
+          if grep -R -n -F 'Welcome-бонус для новых пользователей: 15🍌' \
+            frontend/miniapp-v0; then
+            echo 'Stale welcome bonus remains in frontend source' >&2
+            exit 1
+          fi
+          bash -n cdn.sh
+          bash -n scripts/install_miniapp_frontend_https_host.sh
+
+      - name: Deploy exact frontend to CDN host
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote_name="tanyafrontend"
+          if [ "$(id -u)" -eq 0 ]; then
+            bash cdn.sh --remote-deploy "$remote_name"
+            bash cdn.sh --remote-status "$remote_name"
+          else
+            sudo -n bash cdn.sh --remote-deploy "$remote_name"
+            sudo -n bash cdn.sh --remote-status "$remote_name"
+          fi
+
+      - name: Verify live CDN bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='https://cdn.chillcreative.ru/mini-app/'
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          curl -fsS --retry 5 --retry-all-errors \
+            -H 'Cache-Control: no-cache' \
+            "${base}?revision=${GITHUB_SHA}" > "$work/index.html"
+
+          grep -oE '/mini-app/_next/static/[^" ]+\.js' "$work/index.html" \
+            | sort -u > "$work/assets.txt"
+          test -s "$work/assets.txt"
+
+          while IFS= read -r asset; do
+            filename="$(printf '%s' "$asset" | sha256sum | cut -d' ' -f1).js"
+            curl -fsS --retry 5 --retry-all-errors \
+              -H 'Cache-Control: no-cache' \
+              "https://cdn.chillcreative.ru${asset}?revision=${GITHUB_SHA}" \
+              > "$work/$filename"
+          done < "$work/assets.txt"
+
+          cat "$work"/*.js > "$work/all.js"
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' "$work/all.js"
+          if grep -F 'Welcome-бонус для новых пользователей: 15🍌' "$work/all.js"; then
+            echo 'Live CDN still contains stale 15-banana welcome copy' >&2
+            exit 1
+          fi
+
+          echo "live_frontend_welcome_bonus=5"
+          echo "verified_revision=$GITHUB_SHA"
+
+      - name: Record successful frontend deployment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ops/deploy-receipts
+          cat > ops/deploy-receipts/2026-08-04-frontend-bonus.txt <<EOF
+          deployed_sha=$GITHUB_SHA
+          live_url=https://cdn.chillcreative.ru/mini-app/
+          welcome_bonus_copy=5
+          stale_15_copy_present=false
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm \
+            ops/deploy-triggers/2026-08-04-frontend-bonus.txt \
+            .github/workflows/hotfix-frontend-visible-bonus-deploy.yml
+          git add ops/deploy-receipts/2026-08-04-frontend-bonus.txt
+          git commit -m "Record verified Mini App welcome bonus deploy"
+          git push origin HEAD:tanyapi

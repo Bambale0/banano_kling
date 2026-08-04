@@ -1,0 +1,203 @@
+name: Hotfix — Final verified visible fix deploy
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - ops/deploy-triggers/2026-08-04-combined-visible-fix.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tanya-final-visible-fix-hotfix
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: nuromix — Verify backend and live Mini App
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 90
+    env:
+      NUROMIX_PROJECT_PATH: ${{ vars.NUROMIX_BACKEND_PROJECT_PATH }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate exact source state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m compileall -q \
+            scripts/apply_visible_copy_fixes.py \
+            bot/services/photo_prompt_billing.py \
+            bot/database.py
+          grep -F 'PARTNER_NEW_USER_BONUS: int = 5' bot/database.py
+          grep -F 'python scripts/apply_visible_copy_fixes.py' Dockerfile
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' \
+            frontend/miniapp-v0/components/balance-sheet.tsx
+          grep -F 'credits: 5' frontend/miniapp-v0/lib/mock-data.ts
+          if grep -R -n -F 'Welcome-бонус для новых пользователей: 15🍌' \
+            frontend/miniapp-v0; then
+            echo 'Stale 15-banana welcome copy remains in frontend source' >&2
+            exit 1
+          fi
+          bash -n cdn.sh
+          bash -n scripts/deploy_backend_docker.sh
+          bash -n scripts/install_miniapp_frontend_https_host.sh
+
+      - name: Deploy exact backend commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          project_dir="${NUROMIX_PROJECT_PATH:-/root/tanya/banano_kling}"
+          expected_sha="$GITHUB_SHA"
+
+          exec 9>/var/lock/banano-kling-production-deploy.lock
+          flock -w 2700 9 || {
+            echo 'Timed out waiting for backend deployment lock' >&2
+            exit 1
+          }
+
+          cd "$project_dir"
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo 'Tracked local changes block backend deployment:' >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          git switch tanyapi
+          git reset --hard "$expected_sha"
+          test "$(git rev-parse HEAD)" = "$expected_sha"
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash scripts/deploy_backend_docker.sh deploy
+          else
+            sudo -n bash scripts/deploy_backend_docker.sh deploy
+          fi
+
+      - name: Verify running backend container
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
+          revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+          echo "container_health=$health"
+          echo "container_revision=$revision"
+          test "$health" = healthy
+          test "$revision" = "$GITHUB_SHA"
+
+          docker exec -i banano-kling-bot python - <<'PY'
+          from bot.database import PARTNER_NEW_USER_BONUS
+          from bot.keyboards import get_main_menu_keyboard
+          from bot.services.photo_prompt_billing import photo_prompt_price_label
+
+          expected_label = "1 ₽ (0,1 🍌)"
+          assert PARTNER_NEW_USER_BONUS == 5
+          assert photo_prompt_price_label() == expected_label
+
+          texts = [
+              button.text
+              for row in get_main_menu_keyboard(5).inline_keyboard
+              for button in row
+          ]
+          expected_button = f"✍️ Промпт по описанию • {expected_label}"
+          assert expected_button in texts, texts
+          print(f"welcome_bonus={PARTNER_NEW_USER_BONUS}")
+          print(f"photo_prompt_price={photo_prompt_price_label()}")
+          print(f"main_menu_button={expected_button}")
+          PY
+
+      - name: Deploy exact Mini App frontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote_name='tanyafrontend'
+          if [ "$(id -u)" -eq 0 ]; then
+            bash cdn.sh --remote-deploy "$remote_name"
+            bash cdn.sh --remote-status "$remote_name"
+          else
+            sudo -n bash cdn.sh --remote-deploy "$remote_name"
+            sudo -n bash cdn.sh --remote-status "$remote_name"
+          fi
+
+      - name: Verify live CDN JavaScript
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          base='https://cdn.chillcreative.ru/mini-app/'
+
+          curl -fsS --retry 8 --retry-delay 3 --retry-all-errors \
+            -H 'Cache-Control: no-cache' \
+            "${base}?revision=${GITHUB_SHA}" > "$work/index.html"
+
+          grep -oE '/mini-app/_next/static/[^" ]+\.js' "$work/index.html" \
+            | sort -u > "$work/assets.txt"
+          test -s "$work/assets.txt"
+
+          while IFS= read -r asset; do
+            filename="$(printf '%s' "$asset" | sha256sum | cut -d' ' -f1).js"
+            curl -fsS --retry 8 --retry-delay 3 --retry-all-errors \
+              -H 'Cache-Control: no-cache' \
+              "https://cdn.chillcreative.ru${asset}?revision=${GITHUB_SHA}" \
+              > "$work/$filename"
+          done < "$work/assets.txt"
+
+          cat "$work"/*.js > "$work/all.js"
+          grep -F 'Welcome-бонус для новых пользователей: 5🍌' "$work/all.js"
+          if grep -F 'Welcome-бонус для новых пользователей: 15🍌' "$work/all.js"; then
+            echo 'Live CDN still contains stale 15-banana welcome copy' >&2
+            exit 1
+          fi
+          echo 'live_frontend_welcome_bonus=5'
+
+      - name: Record verified production state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deployed_sha="$GITHUB_SHA"
+
+          git fetch origin tanyapi
+          git checkout -B production-receipt origin/tanyapi
+          current_head="$(git rev-parse HEAD)"
+          test "$current_head" = "$deployed_sha" || {
+            echo "Branch advanced during verification: deployed=$deployed_sha current=$current_head" >&2
+            exit 1
+          }
+
+          mkdir -p ops/deploy-receipts
+          cat > ops/deploy-receipts/2026-08-04-visible-fix.txt <<EOF
+          deployed_sha=$deployed_sha
+          backend_container_health=healthy
+          welcome_bonus=5
+          photo_prompt_price=1 ₽ (0,1 🍌)
+          main_menu_price_visible=true
+          live_frontend_url=https://cdn.chillcreative.ru/mini-app/
+          live_frontend_welcome_bonus=5
+          stale_live_frontend_15_copy=false
+          EOF
+
+          rm -f \
+            ops/deploy-triggers/2026-08-04-combined-visible-fix.txt \
+            ops/deploy-triggers/2026-08-04-visible-copy.txt \
+            ops/deploy-triggers/2026-08-04-frontend-bonus.txt \
+            .github/workflows/hotfix-combined-visible-fix-deploy.yml \
+            .github/workflows/hotfix-visible-copy-deploy.yml \
+            .github/workflows/hotfix-frontend-visible-bonus-deploy.yml \
+            .github/workflows/one-shot-fix-visible-bonus-price-deploy.yml
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A \
+            ops/deploy-receipts/2026-08-04-visible-fix.txt \
+            ops/deploy-triggers \
+            .github/workflows
+          git commit -m 'Record verified welcome bonus and prompt price deploy'
+          git push origin HEAD:tanyapi
