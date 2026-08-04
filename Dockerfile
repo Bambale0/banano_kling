@@ -63,7 +63,12 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . /app
 
 RUN python scripts/apply_visible_copy_fixes.py \
-    && python -m compileall -q bot/keyboards.py bot/handlers/image_analyzer.py \
+    && PYTHONPYCACHEPREFIX=/tmp/banano-pycache python -m compileall -q \
+        bot/keyboards.py \
+        bot/handlers/image_analyzer.py \
+        bot/browser_auth.py \
+        bot/trend_api.py \
+    && rm -rf /tmp/banano-pycache \
     && install -d -o app -g app -m 0755 \
         /app/data \
         /app/static/uploads \
