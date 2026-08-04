@@ -15,10 +15,8 @@ services:
     stop_grace_period: 30s
 
     env_file:
-      - path: .env
-        required: true
-      - path: .env.postgres
-        required: false
+      - .env
+      - .env.postgres
 
     environment:
       BANANO_SKIP_PROJECT_ENV: "1"
@@ -26,7 +24,7 @@ services:
       WEBHOOK_BIND_HOST: "127.0.0.1"
       WEBHOOK_PORT: ${WEBHOOK_PORT:-1888}
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/bot.db}
-      MINI_APP_URL: ${MINI_APP_URL:-https://cdn.chillcreative.ru/mini-app/}
+      MINI_APP_URL: ${MINI_APP_URL:-https://tanyapi.chillcreative.ru/mini-app/}
 
     volumes:
       - ./data:/app/data
