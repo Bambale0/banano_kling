@@ -4,20 +4,19 @@ describe('runTrend', () => {
   beforeEach(() => {
     window.sessionStorage.clear()
     window.history.replaceState({}, '', '/mini-app/')
-    Object.defineProperty(window, 'Telegram', {
-      configurable: true,
-      value: {
-        WebApp: {
-          initData: 'signed-init-data',
-          initDataUnsafe: {},
-        },
-      },
-    })
+    const webApp = window.Telegram?.WebApp
+    if (!webApp) throw new Error('Telegram WebApp mock is unavailable')
+    webApp.initData = 'signed-init-data'
+    webApp.initDataUnsafe = { start_param: '' }
   })
 
   afterEach(() => {
     jest.restoreAllMocks()
-    delete window.Telegram
+    const webApp = window.Telegram?.WebApp
+    if (webApp) {
+      webApp.initData = 'mock_init_data'
+      webApp.initDataUnsafe = { start_param: '' }
+    }
   })
 
   it('sends only the trend id and uploaded references, never generation settings', async () => {
