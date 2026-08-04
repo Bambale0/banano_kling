@@ -1,23 +1,32 @@
 from pathlib import Path
 
 
-def test_frontend_deploy_uses_pinned_checkout_installer() -> None:
-    workflow = Path(".github/workflows/deploy-frontend-production.yml").read_text(
-        encoding="utf-8"
+OBSOLETE_REMOTE_WORKFLOWS = (
+    Path(".github/workflows/deploy-frontend-production.yml"),
+    Path(".github/workflows/deploy-frontend.yml"),
+)
+
+
+def test_obsolete_remote_frontend_workflows_are_removed() -> None:
+    for workflow in OBSOLETE_REMOTE_WORKFLOWS:
+        assert not workflow.exists(), (
+            f"{workflow} still deploys the Mini App through the retired remote/CDN flow"
+        )
+
+
+def test_miniapp_ci_validates_contract_and_static_build_without_deploying() -> None:
+    workflow = Path(".github/workflows/miniapp-ci.yml").read_text(encoding="utf-8")
+
+    assert "lib/__tests__/trend-api.test.ts" in workflow
+    assert "npm run build" in workflow
+    assert "actions/checkout@v6" in workflow
+    assert "actions/setup-node@v6" in workflow
+
+    forbidden_remote_markers = (
+        "FRONTEND_SSH_HOST",
+        "cdn.chillcreative.ru",
+        "tanyafrontend",
+        "--remote-deploy",
     )
-
-    assert 'git reset --hard "$EXPECTED_SHA"' in workflow
-    assert 'bash "$INSTALLER" --config "$PROFILE" --deploy-only' in workflow
-    assert 'bash cdn.sh --deploy-domain "$DOMAIN"' not in workflow
-    assert 'deployed_sha="$(git rev-parse HEAD)"' in workflow
-    assert 'cmp -s "$source_index" "$deployed_index"' in workflow
-
-
-def test_frontend_runner_fallback_is_limited_to_nuromix() -> None:
-    workflow = Path(".github/workflows/deploy-frontend-production.yml").read_text(
-        encoding="utf-8"
-    )
-
-    assert "runs-on: [self-hosted, linux, x64, nuromix]" in workflow
-    assert "github.event_name == 'push'" in workflow
-    assert "github.ref == 'refs/heads/tanyapi'" in workflow
+    for marker in forbidden_remote_markers:
+        assert marker not in workflow
