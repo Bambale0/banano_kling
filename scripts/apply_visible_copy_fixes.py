@@ -6,23 +6,11 @@ source layout changes.
 """
 
 
-OLD_BUTTON_TEXT = (
-    '        InlineKeyboardButton(text="✍️ Промпт по описанию", '
-    'callback_data="photo_to_prompt"),\n'
+BUTTON_TEXT = (
+    'InlineKeyboardButton(text="✍️ Промпт по описанию", '
+    'callback_data="photo_to_prompt"),'
 )
-NEW_BUTTON_TEXT = (
-    '        InlineKeyboardButton(\n'
-    '            text=f"✍️ Промпт по описанию • '
-    '{_photo_prompt_credit_label()} 🍌",\n'
-    '            callback_data="photo_to_prompt",\n'
-    '        ),\n'
-)
-PHOTO_PROMPT_HELPER_ANCHOR = "\ndef _video_prompt_price_label() -> str:\n"
-PHOTO_PROMPT_HELPER = (
-    "\ndef _photo_prompt_credit_label() -> str:\n"
-    "    value = float(preset_manager.get_photo_prompt_cost())\n"
-    '    return f"{value:g}".replace(".", ",")\n\n'
-)
+PRICE_IN_BUTTON_FRAGMENT = "Промпт по описанию •"
 
 OLD_SCREEN = (
     '        "📸 <b>Промпт по фото</b>\\n\\n"\n'
@@ -63,32 +51,6 @@ def read_text(path: str) -> str:
 def write_text(path: str, content: str) -> None:
     with open(path, "w", encoding="utf-8") as target:
         target.write(content)
-
-
-def normalize_photo_prompt_button() -> None:
-    keyboard_path = "bot/keyboards.py"
-    keyboard_text = read_text(keyboard_path)
-
-    if "def _photo_prompt_credit_label() -> str:" not in keyboard_text:
-        if PHOTO_PROMPT_HELPER_ANCHOR not in keyboard_text:
-            raise RuntimeError("Photo prompt menu price helper anchor was not found")
-        keyboard_text = keyboard_text.replace(
-            PHOTO_PROMPT_HELPER_ANCHOR,
-            PHOTO_PROMPT_HELPER + PHOTO_PROMPT_HELPER_ANCHOR,
-            1,
-        )
-
-    if OLD_BUTTON_TEXT in keyboard_text:
-        keyboard_text = keyboard_text.replace(OLD_BUTTON_TEXT, NEW_BUTTON_TEXT, 1)
-    elif NEW_BUTTON_TEXT not in keyboard_text:
-        raise RuntimeError("Main-menu photo prompt button was not found")
-
-    if "✍️ Промпт по описанию •" not in keyboard_text:
-        raise RuntimeError("Photo prompt credit price must be shown in the menu button")
-    if OLD_BUTTON_TEXT in keyboard_text:
-        raise RuntimeError("Plain photo prompt menu button remains after normalization")
-
-    write_text(keyboard_path, keyboard_text)
 
 
 def normalize_photo_prompt_screen() -> None:
@@ -144,7 +106,13 @@ def normalize_runtime_bonus_copy() -> None:
 
 
 def main() -> None:
-    normalize_photo_prompt_button()
+    keyboard_path = "bot/keyboards.py"
+    keyboard_text = read_text(keyboard_path)
+    if BUTTON_TEXT not in keyboard_text:
+        raise RuntimeError("Main-menu photo prompt button was not found")
+    if PRICE_IN_BUTTON_FRAGMENT in keyboard_text:
+        raise RuntimeError("Photo prompt price must not be shown in the menu button")
+
     normalize_photo_prompt_screen()
     normalize_runtime_bonus_copy()
 
