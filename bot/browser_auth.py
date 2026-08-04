@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from aiohttp import web
 
 from bot.config import config
+from bot.trend_api import setup_trend_routes
 
 _LOGIN_MAX_AGE_SECONDS = 10 * 60
 _BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -149,6 +150,10 @@ def setup_browser_auth_routes(app: web.Application) -> None:
     if not miniapp_path.startswith("/"):
         miniapp_path = f"/{miniapp_path}"
     miniapp_root = miniapp_path.rstrip("/")
+
+    # Exact routes must be registered before setup_miniapp_routes adds its
+    # catch-all /mini-app/api/{tail:.*} handler.
+    setup_trend_routes(app, miniapp_root)
     app.router.add_get(
         miniapp_root + "/api/browser-auth/config",
         browser_telegram_auth_config,
