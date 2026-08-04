@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from aiohttp import web
 
@@ -26,7 +27,7 @@ MAX_TREND_REFERENCES = 12
 
 
 class TrendRunValidationError(ValueError):
-    """Raised when a trend cannot be executed with the supplied references."""
+    """Raised when a curated trend cannot be run safely."""
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class TrustedTrendRun:
     model: str
     ratio: str
     reference_urls: tuple[str, ...]
-    settings: Mapping[str, Any]
+    settings: dict[str, Any]
 
 
 def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
@@ -59,6 +60,8 @@ def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
             raise TrendRunValidationError(
                 "Дождитесь окончания загрузки референсов и попробуйте снова"
             )
+        if not url.startswith(("https://", "http://", "/uploads/")):
+            raise TrendRunValidationError("Некорректная ссылка на референс")
         cleaned.append(url)
         if len(cleaned) > MAX_TREND_REFERENCES:
             raise TrendRunValidationError(
@@ -71,10 +74,11 @@ def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
 
 
 def parse_trend_run_request(body: Any) -> TrendRunRequest:
-    """Read only fields allowed for a user-triggered trend run.
+    """Accept only a trend ID and uploaded references from the client.
 
-    Model, prompt, ratio, quality, duration and all provider options are
-    intentionally ignored even if a caller adds them to the JSON payload.
+    Any client-supplied model, prompt, ratio, quality, duration or provider
+    options are deliberately ignored. Those values are loaded from the trend
+    record created by an administrator.
     """
 
     if not isinstance(body, Mapping):
@@ -107,12 +111,13 @@ def trusted_trend_run(
     if "trend" not in tags:
         raise TrendRunValidationError("Выбранный шаблон не является трендом")
 
-    settings = trend.get("generation_settings")
-    if not isinstance(settings, Mapping) or not settings:
+    stored_settings = trend.get("generation_settings")
+    if not isinstance(stored_settings, Mapping) or not stored_settings:
         raise TrendRunValidationError(
             "Настройки тренда не сохранены. Администратору нужно пересоздать тренд"
         )
 
+    settings = dict(stored_settings)
     kind = str(settings.get("kind") or "").strip().lower()
     if kind not in {"image", "video"}:
         raise TrendRunValidationError("Неизвестный тип тренда")
@@ -124,7 +129,8 @@ def trusted_trend_run(
     ratio = str(settings.get("ratio") or "").strip()
     if not prompt or not model or not ratio:
         raise TrendRunValidationError(
-            "Настройки тренда заполнены не полностью. Администратору нужно пересохранить тренд"
+            "Настройки тренда заполнены не полностью. "
+            "Администратору нужно пересохранить тренд"
         )
 
     return TrustedTrendRun(
@@ -134,27 +140,13 @@ def trusted_trend_run(
         model=model,
         ratio=ratio,
         reference_urls=reference_urls,
-        settings=dict(settings),
+        settings=settings,
     )
 
 
 def _int_setting(settings: Mapping[str, Any], key: str, default: int) -> int:
     try:
         return int(settings.get(key, default) or default)
-    except (TypeError, ValueError):
-        return default
-
-
-def _float_setting(
-    settings: Mapping[str, Any],
-    key: str,
-    default: float | None,
-) -> float | None:
-    value = settings.get(key)
-    if value in (None, ""):
-        return default
-    try:
-        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -167,6 +159,20 @@ def _optional_int(settings: Mapping[str, Any], key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_float(
+    settings: Mapping[str, Any],
+    key: str,
+    default: float | None = None,
+) -> float | None:
+    value = settings.get(key)
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _string_list(settings: Mapping[str, Any], key: str) -> list[str]:
@@ -188,6 +194,44 @@ async def _record_trend_use(
         logger.exception("Failed to record trend use: trend_id=%s", trend_id)
 
 
+async def _debit_for_generation(
+    telegram_id: int,
+    user: Any,
+    amount: float,
+) -> tuple[bool, web.Response | None]:
+    if config.is_admin(telegram_id):
+        return False, None
+    if not await check_can_afford(telegram_id, amount):
+        return False, web.json_response(
+            {
+                "ok": False,
+                "error": f"Недостаточно бананов. Нужно {amount}🍌",
+                "credits": user.credits,
+            },
+            status=400,
+        )
+    if not await deduct_credits(telegram_id, amount):
+        return False, web.json_response(
+            {"ok": False, "error": "Не удалось списать бананы. Обновите баланс"},
+            status=409,
+        )
+    return True, None
+
+
+def _validate_uploaded_references(
+    references: list[str],
+    miniapp_module: Any,
+) -> None:
+    if miniapp_module._browser_local_reference_urls(references):
+        raise TrendRunValidationError(
+            "Дождитесь окончания загрузки референсов и попробуйте снова"
+        )
+    if missing_local_upload_sources(references):
+        raise TrendRunValidationError(
+            "Один или несколько референсов уже удалены. Загрузите их заново"
+        )
+
+
 async def _run_image_trend(
     request: web.Request,
     *,
@@ -205,9 +249,11 @@ async def _run_image_trend(
         raise TrendRunValidationError("Модель фото-тренда больше недоступна")
     if trend.ratio not in model_meta.get("ratios", []):
         raise TrendRunValidationError("Формат фото-тренда больше не поддерживается")
-    if len(trend.reference_urls) > int(model_meta.get("max_references", 0) or 0):
+
+    max_references = int(model_meta.get("max_references", 0) or 0)
+    if max_references and len(trend.reference_urls) > max_references:
         raise TrendRunValidationError(
-            f"Слишком много референсов. Максимум: {model_meta['max_references']}"
+            f"Слишком много референсов. Максимум: {max_references}"
         )
 
     quality = str(trend.settings.get("quality") or "basic")
@@ -217,40 +263,22 @@ async def _run_image_trend(
     if allowed_qualities and quality not in allowed_qualities:
         raise TrendRunValidationError("Качество фото-тренда больше не поддерживается")
 
-    references = list(trend.reference_urls)
-    if miniapp_module._browser_local_reference_urls(references):
+    configured_count = _int_setting(trend.settings, "count", 1)
+    if configured_count != 1:
         raise TrendRunValidationError(
-            "Дождитесь окончания загрузки референсов и попробуйте снова"
-        )
-    if missing_local_upload_sources(references):
-        raise TrendRunValidationError(
-            "Один или несколько референсов уже удалены. Загрузите их заново"
+            "Тренд нужно пересохранить с одной генерацией за запуск"
         )
 
+    references = list(trend.reference_urls)
+    _validate_uploaded_references(references, miniapp_module)
     await touch_saved_references(telegram_id, references, kind="image")
 
-    unit_cost = miniapp_module._resolve_image_unit_cost(trend.model, quality)
-    is_admin = config.is_admin(telegram_id)
-    debited = False
+    cost = miniapp_module._resolve_image_unit_cost(trend.model, quality)
+    debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
+    if debit_error is not None:
+        return debit_error
+
     launched = False
-
-    if not is_admin:
-        if not await check_can_afford(telegram_id, unit_cost):
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": f"Недостаточно бананов. Нужно {unit_cost}🍌",
-                    "credits": user.credits,
-                },
-                status=400,
-            )
-        debited = await deduct_credits(telegram_id, unit_cost)
-        if not debited:
-            return web.json_response(
-                {"ok": False, "error": "Не удалось списать бананы. Обновите баланс"},
-                status=409,
-            )
-
     try:
         launch_result = await miniapp_module._start_image_generation_task(
             user=user,
@@ -259,17 +287,19 @@ async def _run_image_trend(
             prompt=trend.prompt,
             img_ratio=trend.ratio,
             reference_images=references,
-            unit_cost=unit_cost,
+            unit_cost=cost,
             img_quality=quality,
             img_nsfw_checker=bool(trend.settings.get("nsfw_checker", False)),
             nsfw_enabled=bool(trend.settings.get("nsfw_enabled", False)),
-            callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
+            callback_url=(
+                config.kie_notification_url if config.WEBHOOK_HOST else None
+            ),
             prompt_source_id=trend.trend_id,
             action_type="trend",
         )
         if launch_result["status"] == "failed":
             if debited:
-                await add_credits(telegram_id, unit_cost)
+                await add_credits(telegram_id, cost)
             return web.json_response(
                 {
                     "ok": False,
@@ -285,7 +315,7 @@ async def _run_image_trend(
             launch_result,
             img_service=trend.model,
             img_ratio=trend.ratio,
-            unit_cost=unit_cost,
+            unit_cost=cost,
         )
         await miniapp_module._deliver_miniapp_direct_image_result(
             request.app,
@@ -293,13 +323,13 @@ async def _run_image_trend(
             launch_result,
             img_service=trend.model,
             img_ratio=trend.ratio,
-            unit_cost=unit_cost,
+            unit_cost=cost,
             prompt_hidden=True,
         )
         await _record_trend_use(
             trend.trend_id,
             user.id,
-            credits_spent=float(unit_cost),
+            credits_spent=float(cost),
         )
 
         fresh_user = await get_or_create_user(telegram_id)
@@ -311,7 +341,7 @@ async def _run_image_trend(
                 "saved_url": launch_result.get("saved_url"),
                 "task_type": launch_result.get("task_type", "image"),
                 "credits": fresh_user.credits,
-                "cost": unit_cost,
+                "cost": cost,
                 "model": trend.model,
                 "model_label": miniapp_module.get_image_model_label(trend.model),
                 "aspect_ratio": trend.ratio,
@@ -323,12 +353,11 @@ async def _run_image_trend(
         )
     except Exception:
         if debited and not launched:
-            await add_credits(telegram_id, unit_cost)
+            await add_credits(telegram_id, cost)
         raise
 
 
 async def _run_video_trend(
-    request: web.Request,
     *,
     telegram_id: int,
     user: Any,
@@ -352,7 +381,9 @@ async def _run_video_trend(
 
     duration = _int_setting(trend.settings, "duration", 5)
     if duration not in model_meta.get("durations", []):
-        raise TrendRunValidationError("Длительность видео-тренда больше не поддерживается")
+        raise TrendRunValidationError(
+            "Длительность видео-тренда больше не поддерживается"
+        )
 
     max_extra_references = int(model_meta.get("max_image_references", 0) or 0)
     max_references = max(1, max_extra_references + 1)
@@ -364,18 +395,13 @@ async def _run_video_trend(
     image_url = trend.reference_urls[0]
     image_references = list(trend.reference_urls[1:])
     all_references = [image_url, *image_references]
-    if miniapp_module._browser_local_reference_urls(all_references):
-        raise TrendRunValidationError(
-            "Дождитесь окончания загрузки референсов и попробуйте снова"
-        )
-    if missing_local_upload_sources(all_references):
-        raise TrendRunValidationError(
-            "Один или несколько референсов уже удалены. Загрузите их заново"
-        )
-
+    _validate_uploaded_references(all_references, miniapp_module)
     await touch_saved_references(telegram_id, all_references, kind="image")
 
-    effective_model = miniapp_module._resolve_gemini_omni_model(trend.model, scenario)
+    effective_model = miniapp_module._resolve_gemini_omni_model(
+        trend.model,
+        scenario,
+    )
     veo_resolution = str(trend.settings.get("veo_resolution") or "720p")
     omni_resolution = str(trend.settings.get("omni_resolution") or "720p")
     pricing_quality = miniapp_module._video_pricing_quality(
@@ -390,26 +416,11 @@ async def _run_video_trend(
     )
     cost = apply_video_reference_cost(effective_model, cost, [])
 
-    is_admin = config.is_admin(telegram_id)
-    debited = False
-    launched = False
-    if not is_admin:
-        if not await check_can_afford(telegram_id, cost):
-            return web.json_response(
-                {
-                    "ok": False,
-                    "error": f"Недостаточно бананов. Нужно {cost}🍌",
-                    "credits": user.credits,
-                },
-                status=400,
-            )
-        debited = await deduct_credits(telegram_id, cost)
-        if not debited:
-            return web.json_response(
-                {"ok": False, "error": "Не удалось списать бананы. Обновите баланс"},
-                status=409,
-            )
+    debited, debit_error = await _debit_for_generation(telegram_id, user, cost)
+    if debit_error is not None:
+        return debit_error
 
+    launched = False
     try:
         launch_result = await miniapp_module._launch_video_generation_task(
             telegram_id=telegram_id,
@@ -432,11 +443,13 @@ async def _run_video_trend(
             veo_translation=bool(trend.settings.get("veo_translation", True)),
             veo_resolution=veo_resolution,
             veo_seed=_optional_int(trend.settings, "veo_seed"),
-            veo_watermark=str(trend.settings.get("veo_watermark") or "") or None,
+            veo_watermark=(
+                str(trend.settings.get("veo_watermark") or "") or None
+            ),
             kling_negative_prompt=(
                 str(trend.settings.get("kling_negative_prompt") or "") or None
             ),
-            kling_cfg_scale=_float_setting(
+            kling_cfg_scale=_optional_float(
                 trend.settings,
                 "kling_cfg_scale",
                 0.5,
@@ -481,12 +494,12 @@ async def _run_video_trend(
                 status=500,
             )
         launched = True
+
         await _record_trend_use(
             trend.trend_id,
             user.id,
             credits_spent=float(cost),
         )
-
         fresh_user = await get_or_create_user(telegram_id)
         return web.json_response(
             {
@@ -498,7 +511,9 @@ async def _run_video_trend(
                 "credits": fresh_user.credits,
                 "cost": cost,
                 "model": effective_model,
-                "model_label": miniapp_module.get_video_model_label(effective_model),
+                "model_label": miniapp_module.get_video_model_label(
+                    effective_model
+                ),
                 "aspect_ratio": trend.ratio,
                 "duration": duration,
                 "prompt_hidden": True,
@@ -513,7 +528,7 @@ async def _run_video_trend(
 
 
 async def miniapp_run_trend(request: web.Request) -> web.Response:
-    """Run a curated trend using settings stored by an administrator."""
+    """Run a curated trend using only settings stored by an administrator."""
 
     try:
         body = await request.json()
@@ -521,10 +536,9 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
 
         from bot import miniapp as miniapp_module
 
-        init_data = str(body.get("init_data") or "")
         telegram_id, context = await miniapp_module._get_user_context(
             request.app,
-            init_data,
+            str(body.get("init_data") or ""),
             body.get("start_param_fallback"),
         )
         prompt = await get_prompt_by_id(
@@ -535,7 +549,6 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
 
         if trend.kind == "video":
             return await _run_video_trend(
-                request,
                 telegram_id=telegram_id,
                 user=context["user"],
                 trend=trend,
@@ -557,6 +570,6 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
 
 
 def setup_trend_routes(app: web.Application, miniapp_root: str) -> None:
-    """Register exact routes before Mini App's catch-all API route."""
+    """Register the exact route before Mini App's catch-all API handler."""
 
     app.router.add_post(miniapp_root + "/api/trends/run", miniapp_run_trend)
