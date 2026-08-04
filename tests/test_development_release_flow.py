@@ -69,12 +69,20 @@ def test_production_backend_deploy_remains_on_tanyapi() -> None:
     assert "branches: [main]" not in workflow
 
 
-def test_production_frontend_deploy_remains_on_tanyapi() -> None:
-    workflow = read(".github/workflows/deploy-frontend-production.yml")
+def test_production_frontend_is_validated_on_tanyapi_without_remote_deploy() -> None:
+    try:
+        read(".github/workflows/deploy-frontend-production.yml")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("Retired remote frontend deployment workflow still exists")
 
+    workflow = read(".github/workflows/miniapp-ci.yml")
     assert "branches: [tanyapi]" in workflow
-    assert "git fetch --prune origin tanyapi" in workflow
-    assert "git switch tanyapi" in workflow
+    assert "lib/__tests__/trend-api.test.ts" in workflow
+    assert "npm run build" in workflow
+    assert "FRONTEND_SSH_HOST" not in workflow
+    assert "cdn.chillcreative.ru" not in workflow
     assert "branches: [main]" not in workflow
 
 
