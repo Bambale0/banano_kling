@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ImagePlus, Loader2, RefreshCcw, Sparkles } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
-import { generateImage, generateVideo, uploadFile } from '@/lib/api'
-import { resolveTrendSettings } from '@/lib/trend-settings'
-import type { PromptItem, Task } from '@/lib/types'
+import { uploadFile } from '@/lib/api'
+import { runTrend } from '@/lib/trend-api'
+import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -18,6 +18,7 @@ interface TrendRunnerDialogProps {
 }
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
+const MAX_REFERENCES = 12
 
 export function TrendRunnerDialog({
   trend,
@@ -25,7 +26,6 @@ export function TrendRunnerDialog({
   onOpenChange,
 }: TrendRunnerDialogProps) {
   const {
-    state,
     addTask,
     setCredits,
     setTaskDetail,
@@ -33,142 +33,72 @@ export function TrendRunnerDialog({
     addSavedReference,
   } = useApp()
   const inputRef = useRef<HTMLInputElement>(null)
-  const previewRef = useRef<string>('')
+  const previewRefs = useRef<string[]>([])
   const [phase, setPhase] = useState<RunnerPhase>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [previewUrl, setPreviewUrl] = useState('')
+  const [previewUrls, setPreviewUrls] = useState<string[]>([])
 
-  const settings = useMemo(
-    () =>
-      trend
-        ? resolveTrendSettings(trend, state.imageModels, state.videoModels)
-        : null,
-    [state.imageModels, state.videoModels, trend],
-  )
   const busy = phase === 'uploading' || phase === 'generating'
+  const isVideoTrend = trend?.generation_settings?.kind === 'video'
+
+  const clearPreviews = useCallback(() => {
+    for (const previewUrl of previewRefs.current) {
+      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+    }
+    previewRefs.current = []
+    setPreviewUrls([])
+  }, [])
 
   useEffect(() => {
     if (open) return
     setPhase('idle')
     setError(null)
-    if (previewRef.current.startsWith('blob:')) {
-      URL.revokeObjectURL(previewRef.current)
-    }
-    previewRef.current = ''
-    setPreviewUrl('')
+    clearPreviews()
     if (inputRef.current) inputRef.current.value = ''
-  }, [open])
+  }, [clearPreviews, open])
 
-  useEffect(
-    () => () => {
-      if (previewRef.current.startsWith('blob:')) {
-        URL.revokeObjectURL(previewRef.current)
-      }
-    },
-    [],
-  )
+  useEffect(() => clearPreviews, [clearPreviews])
 
-  const runImageTrend = async (uploadedUrl: string): Promise<Task> => {
-    if (!trend || !settings || settings.kind !== 'image') {
-      throw new Error('Настройки фото-тренда недоступны')
-    }
-
-    let lastTask: Task | null = null
-    let credits = state.user.credits
-    const count = settings.count || 1
-    for (let index = 0; index < count; index += 1) {
-      const result = await generateImage({
-        model: settings.model,
-        ratio: settings.ratio,
-        quality: settings.quality || 'basic',
-        nsfwChecker: Boolean(settings.nsfw_checker),
-        nsfwEnabled: Boolean(settings.nsfw_enabled),
-        promptId: trend.id,
-        sourceFeedGenId: null,
-        prompt: trend.prompt_text,
-        references: [uploadedUrl],
-      })
-      addTask(result.task)
-      if (result.detail) setTaskDetail(result.detail)
-      credits = result.credits
-      lastTask = result.task
-    }
-    setCredits(credits)
-    if (!lastTask) throw new Error('Не удалось создать задачу')
-    return lastTask
-  }
-
-  const runVideoTrend = async (uploadedUrl: string): Promise<Task> => {
-    if (!trend || !settings || settings.kind !== 'video') {
-      throw new Error('Настройки видео-тренда недоступны')
-    }
-    if (settings.scenario !== 'imgtxt') {
-      throw new Error('Этот видео-тренд нужно пересохранить в режиме «Фото + текст»')
-    }
-
-    const result = await generateVideo({
-      model: settings.model,
-      scenario: settings.scenario,
-      ratio: settings.ratio,
-      duration: settings.duration || 5,
-      grokMode: settings.grok_mode,
-      grokResolution: settings.grok_resolution,
-      veoGenerationType: settings.veo_generation_type,
-      veoTranslation: settings.veo_translation,
-      veoResolution: settings.veo_resolution,
-      veoSeed: settings.veo_seed,
-      veoWatermark: settings.veo_watermark,
-      klingNegativePrompt: settings.kling_negative_prompt,
-      klingCfgScale: settings.kling_cfg_scale,
-      omniResolution: settings.omni_resolution,
-      omniSeed: settings.omni_seed,
-      omniAudioIds: settings.omni_audio_ids,
-      omniCharacterIds: settings.omni_character_ids,
-      omniBaseVoice: settings.omni_base_voice,
-      omniVoiceName: settings.omni_voice_name,
-      omniVoiceDescription: settings.omni_voice_description,
-      omniExampleDialogue: settings.omni_example_dialogue,
-      omniCharacterName: settings.omni_character_name,
-      omniCharacterAudioIds: settings.omni_character_audio_ids,
-      prompt: trend.prompt_text,
-      startImage: uploadedUrl,
-      references: [],
-      videoReferences: [],
-      audioReference: null,
-    })
-    addTask(result.task)
-    setCredits(result.credits)
-    if (result.detail) setTaskDetail(result.detail)
-    return result.task
-  }
-
-  const handlePhoto = async (file?: File) => {
-    if (!file || !trend || !settings || busy) return
-    const extension = file.name.split('.').pop()?.toLowerCase() || ''
-    if (!file.type.startsWith('image/') && !IMAGE_EXTENSIONS.has(extension)) {
+  const handlePhotos = async (selectedFiles: File[]) => {
+    if (!trend || busy || !selectedFiles.length) return
+    if (selectedFiles.length > MAX_REFERENCES) {
       setPhase('error')
-      setError('Нужно загрузить фотографию')
+      setError(`Можно загрузить максимум ${MAX_REFERENCES} фото`)
       return
     }
 
-    if (previewRef.current.startsWith('blob:')) {
-      URL.revokeObjectURL(previewRef.current)
+    const invalidFile = selectedFiles.find((file) => {
+      const extension = file.name.split('.').pop()?.toLowerCase() || ''
+      return !file.type.startsWith('image/') && !IMAGE_EXTENSIONS.has(extension)
+    })
+    if (invalidFile) {
+      setPhase('error')
+      setError(`Файл «${invalidFile.name}» не является изображением`)
+      return
     }
-    const localPreview = URL.createObjectURL(file)
-    previewRef.current = localPreview
-    setPreviewUrl(localPreview)
+
+    clearPreviews()
+    const localPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
+    previewRefs.current = localPreviews
+    setPreviewUrls(localPreviews)
     setError(null)
     setPhase('uploading')
 
     try {
-      const uploaded = await uploadFile('image_reference', file)
-      addSavedReference(uploaded)
+      const uploadedReferences = await Promise.all(
+        selectedFiles.map((file) => uploadFile('image_reference', file)),
+      )
+      for (const uploaded of uploadedReferences) addSavedReference(uploaded)
+
       setPhase('generating')
-      const task =
-        settings.kind === 'video'
-          ? await runVideoTrend(uploaded.url)
-          : await runImageTrend(uploaded.url)
-      selectTask(task)
+      const result = await runTrend(
+        trend.id,
+        uploadedReferences.map((uploaded) => uploaded.url),
+      )
+      addTask(result.task)
+      setCredits(result.credits)
+      if (result.detail) setTaskDetail(result.detail)
+      selectTask(result.task)
       onOpenChange(false)
     } catch (cause) {
       setPhase('error')
@@ -189,7 +119,7 @@ export function TrendRunnerDialog({
         </DialogTitle>
 
         {trend?.preview_url ? (
-          settings?.kind === 'video' ? (
+          isVideoTrend ? (
             <video
               src={trend.preview_url}
               muted
@@ -210,33 +140,40 @@ export function TrendRunnerDialog({
         <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4 text-center">
           <Sparkles className="mx-auto h-6 w-6 text-gold" />
           <p className="mt-2 text-sm font-semibold text-foreground">
-            Загрузите своё фото
+            Загрузите свои фото
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Модель, промпт, формат, качество и остальные параметры применятся автоматически.
+            После загрузки генерация начнётся сразу. Модель, промпт, формат,
+            качество и остальные параметры уже настроены администратором.
           </p>
         </div>
 
-        {previewUrl ? (
-          <img
-            src={previewUrl}
-            alt="Загруженное фото"
-            className="max-h-56 w-full rounded-2xl object-contain"
-          />
+        {previewUrls.length ? (
+          <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto rounded-2xl bg-secondary/20 p-2">
+            {previewUrls.map((previewUrl, index) => (
+              <img
+                key={previewUrl}
+                src={previewUrl}
+                alt={`Референс ${index + 1}`}
+                className="h-28 w-full rounded-xl object-cover"
+              />
+            ))}
+          </div>
         ) : null}
 
         <label className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition hover:border-gold/50 hover:text-foreground">
           <input
             ref={inputRef}
             type="file"
+            multiple
             accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
             className="absolute inset-0 cursor-pointer opacity-0"
             disabled={busy}
             onChange={(event) => {
-    const file = event.currentTarget.files?.[0]
-    event.currentTarget.value = ''
-    void handlePhoto(file)
-  }}
+              const files = Array.from(event.currentTarget.files || [])
+              event.currentTarget.value = ''
+              void handlePhotos(files)
+            }}
           />
           {busy ? (
             <Loader2 className="h-7 w-7 animate-spin text-gold" />
@@ -247,13 +184,18 @@ export function TrendRunnerDialog({
           )}
           <span className="font-medium">
             {phase === 'uploading'
-              ? 'Загружаю фото…'
+              ? 'Загружаю референсы…'
               : phase === 'generating'
-                ? 'Применяю тренд и запускаю…'
+                ? 'Запускаю тренд…'
                 : phase === 'error'
-                  ? 'Выбрать другое фото'
+                  ? 'Выбрать фото заново'
                   : 'Выбрать фото'}
           </span>
+          {!busy ? (
+            <span className="text-xs text-muted-foreground">
+              До {MAX_REFERENCES} изображений
+            </span>
+          ) : null}
         </label>
 
         {error ? (
