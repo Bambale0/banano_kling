@@ -75,7 +75,7 @@ const curatedTrend = {
   description: 'Official trend',
   prompt_text: 'Create a cinematic motion scene',
   category: 'video',
-  tags: ['trend', 'trend-video', 'trend-scenario:imgtxt', 'trend-duration:5'],
+  tags: ['trend', 'trend-video'],
   uses_count: 2,
   likes: 3,
   preview_url: 'https://cdn.example/curated.mp4',
@@ -215,7 +215,7 @@ try {
       return
     }
 
-    if (path.endsWith('/generate-video')) {
+    if (path.endsWith('/trends/run')) {
       trendGenerationPayload = JSON.parse(request.postData() || '{}')
       await route.fulfill({
         status: 200,
@@ -228,9 +228,13 @@ try {
           task_type: 'video',
           credits: 115,
           cost: 10,
+          model: 'v3_pro',
           model_label: 'Kling 3 Pro',
+          aspect_ratio: '16:9',
+          duration: 5,
           prompt_hidden: true,
           prompt_actions_allowed: false,
+          trend_id: curatedTrend.id,
         }),
       })
       return
@@ -288,10 +292,10 @@ try {
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
 
-  // User trend E2E: one photo, no settings, automatic generation with hidden preset.
+  // User trend E2E: references only, no settings, immediate server-side run.
   await page.getByRole('button', { name: 'Повторить', exact: true }).click()
   const trendRunner = page.getByRole('dialog')
-  await trendRunner.getByText('Загрузите своё фото', { exact: true }).waitFor()
+  await trendRunner.getByText('Загрузите свои фото', { exact: true }).waitFor()
   assert.equal(await trendRunner.locator('select').count(), 0)
   assert.equal(await trendRunner.getByText('Модель', { exact: true }).count(), 0)
   assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)
@@ -299,7 +303,7 @@ try {
 
   trendPhotoUploadExpected = true
   const generatedResponse = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith('/generate-video'),
+    new URL(response.url()).pathname.endsWith('/trends/run'),
   )
   await trendRunner.locator('input[type="file"]').setInputFiles({
     name: 'user-photo.jpg',
@@ -308,15 +312,25 @@ try {
   })
   await generatedResponse
 
-  assert.equal(trendGenerationPayload?.v_model, 'v3_pro')
-  assert.equal(trendGenerationPayload?.v_type, 'imgtxt')
-  assert.equal(trendGenerationPayload?.v_ratio, '16:9')
-  assert.equal(trendGenerationPayload?.v_duration, 5)
-  assert.equal(
-    trendGenerationPayload?.v_image_url,
-    'https://cdn.example/user-trend-photo.jpg',
+  assert.equal(trendGenerationPayload?.trend_id, curatedTrend.id)
+  assert.deepEqual(
+    trendGenerationPayload?.reference_urls,
+    ['https://cdn.example/user-trend-photo.jpg'],
   )
-  assert.equal(trendGenerationPayload?.prompt, curatedTrend.prompt_text)
+  for (const forbiddenField of [
+    'model',
+    'prompt',
+    'ratio',
+    'quality',
+    'duration',
+    'generation_settings',
+  ]) {
+    assert.equal(
+      Object.hasOwn(trendGenerationPayload || {}, forbiddenField),
+      false,
+      `User trend request must not contain ${forbiddenField}`,
+    )
+  }
 
   const taskDetailTitle = page.getByText('Детали задачи', { exact: true })
   await taskDetailTitle.waitFor()
