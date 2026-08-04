@@ -33,6 +33,12 @@ NEW_WELCOME_COPY = (
     '        f"🎁 <b>Новым пользователям — {PARTNER_NEW_USER_BONUS} '
     'бананов в подарок!</b>\\n"\n'
 )
+OLD_PARTNER_BONUS_COPY = (
+    '        "  🍌 15 бананов для тестирования бота\\n"\n'
+)
+NEW_PARTNER_BONUS_COPY = (
+    '        f"  🍌 {PARTNER_NEW_USER_BONUS} бананов для тестирования бота\\n"\n'
+)
 
 
 def read_text(path: str) -> str:
@@ -55,7 +61,7 @@ def normalize_photo_prompt_screen() -> None:
         raise RuntimeError("Photo prompt screen copy was not found")
 
 
-def normalize_welcome_bonus_copy() -> None:
+def normalize_runtime_bonus_copy() -> None:
     handler_path = "bot/handlers/common.py"
     handler_text = read_text(handler_path)
 
@@ -77,8 +83,22 @@ def normalize_welcome_bonus_copy() -> None:
     elif NEW_WELCOME_COPY not in handler_text:
         raise RuntimeError("Telegram welcome bonus copy was not found")
 
-    if "Новым пользователям — 15 бананов" in handler_text:
-        raise RuntimeError("Stale 15-banana Telegram welcome copy remains")
+    if OLD_PARTNER_BONUS_COPY in handler_text:
+        handler_text = handler_text.replace(
+            OLD_PARTNER_BONUS_COPY,
+            NEW_PARTNER_BONUS_COPY,
+            1,
+        )
+    elif NEW_PARTNER_BONUS_COPY not in handler_text:
+        raise RuntimeError("Telegram partner cabinet bonus copy was not found")
+
+    stale_fragments = (
+        "Новым пользователям — 15 бананов",
+        "15 бананов для тестирования бота",
+    )
+    for fragment in stale_fragments:
+        if fragment in handler_text:
+            raise RuntimeError(f"Stale Telegram bonus copy remains: {fragment}")
 
     write_text(handler_path, handler_text)
 
@@ -92,7 +112,7 @@ def main() -> None:
         raise RuntimeError("Photo prompt price must not be shown in the menu button")
 
     normalize_photo_prompt_screen()
-    normalize_welcome_bonus_copy()
+    normalize_runtime_bonus_copy()
 
     database_text = read_text("bot/database.py")
     if "PARTNER_NEW_USER_BONUS: int = 5" not in database_text:
