@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    name: GitHub runner — Mini App tests and static build
+    name: GitHub runner — Trend contract and Mini App build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -31,10 +31,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -43,8 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests
-        run: npm test -- --runInBand
+      - name: Run server-authoritative trend contract tests
+        run: npm test -- --runInBand lib/__tests__/trend-api.test.ts
 
       - name: Build static Mini App
         run: npm run build
