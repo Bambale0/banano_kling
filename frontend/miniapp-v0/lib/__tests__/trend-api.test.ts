@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
 import { runTrend } from '../trend-api'
 
 describe('runTrend', () => {
@@ -66,5 +69,23 @@ describe('runTrend', () => {
     expect(result.task.aspect_ratio).toBe('1:1')
     expect(result.task.prompt_hidden).toBe(true)
     expect(result.task.prompt_actions_allowed).toBe(false)
+  })
+
+  it('keeps all generation controls out of the user trend runner', () => {
+    const runnerPath = path.join(
+      process.cwd(),
+      'components',
+      'trend-runner-dialog.tsx',
+    )
+    const source = fs.readFileSync(runnerPath, 'utf8')
+
+    expect(source).toContain('runTrend(')
+    expect(source).toContain('multiple')
+    expect(source).not.toContain('resolveTrendSettings')
+    expect(source).not.toContain('generateImage')
+    expect(source).not.toContain('generateVideo')
+    expect(source).not.toContain('<ModelSelect')
+    expect(source).not.toContain('<RatioSelect')
+    expect(source).not.toContain('<QualitySelect')
   })
 })
