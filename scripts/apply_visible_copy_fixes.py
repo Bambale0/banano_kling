@@ -20,6 +20,15 @@ NEW_SCREEN = (
     '        "✍️ <b>Промпт по описанию</b>\\n\\n"\n'
     '        f"Стоимость анализа: <b>{photo_prompt_price_label()}</b>\\n\\n"\n'
 )
+ACTIVE_PROMPT_SCREEN = (
+    '        "✨ <b>Анализ и создание промпта</b>\\n\\n"\n'
+    '        f"Стоимость анализа: <b>{photo_prompt_price_label()}</b>\\n\\n"\n'
+)
+ACTIVE_PROMPT_SCREEN_WITHOUT_PRICE = (
+    '        "✨ <b>Анализ и создание промпта</b>\\n\\n"\n'
+    '        "Отправьте одним сообщением:\\n"\n'
+)
+ACTIVE_PROMPT_REPLACED_TITLE = "✍️ <b>Промпт по описанию</b>"
 
 DATABASE_IMPORT_ANCHOR = "    PARTNER_INVITER_BONUS,\n"
 DATABASE_IMPORT_WITH_WELCOME_BONUS = (
@@ -61,6 +70,29 @@ def normalize_photo_prompt_screen() -> None:
         write_text(handler_path, handler_text)
     elif NEW_SCREEN not in handler_text:
         raise RuntimeError("Photo prompt screen copy was not found")
+
+
+def validate_active_prompt_analyzer_screen() -> None:
+    handler_text = read_text("bot/handlers/prompt_analyzer_v2.py")
+    if ACTIVE_PROMPT_SCREEN_WITHOUT_PRICE in handler_text:
+        raise RuntimeError("Active prompt analyzer still misses the price line")
+    if ACTIVE_PROMPT_SCREEN not in handler_text:
+        raise RuntimeError("Active prompt analyzer price screen copy was not found")
+    callback_block = handler_text.split('async def prompt_analyzer_handler', 1)[1].split(
+        '@router.message', 1
+    )[0]
+    if ACTIVE_PROMPT_REPLACED_TITLE in callback_block:
+        raise RuntimeError("Active prompt analyzer title must stay unchanged")
+    for required_fragment in (
+        "photo_prompt_price_label",
+        "reserve_photo_prompt_charge",
+        "refund_photo_prompt_charge",
+        "PhotoPromptInsufficientBalance",
+    ):
+        if required_fragment not in handler_text:
+            raise RuntimeError(
+                f"Active prompt analyzer is missing billing fragment: {required_fragment}"
+            )
 
 
 def normalize_runtime_bonus_copy() -> None:
@@ -114,6 +146,7 @@ def main() -> None:
         raise RuntimeError("Photo prompt price must not be shown in the menu button")
 
     normalize_photo_prompt_screen()
+    validate_active_prompt_analyzer_screen()
     normalize_runtime_bonus_copy()
 
     database_text = read_text("bot/database.py")

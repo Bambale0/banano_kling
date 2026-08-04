@@ -24,6 +24,12 @@ from bot.keyboards import (
     get_main_menu_button_keyboard,
     get_photo_prompt_result_keyboard,
 )
+from bot.services.photo_prompt_billing import (
+    PhotoPromptInsufficientBalance,
+    photo_prompt_price_label,
+    refund_photo_prompt_charge,
+    reserve_photo_prompt_charge,
+)
 from bot.services.prompt_analyzer_v2_service import prompt_analyzer_v2_service
 from bot.states import ImageAnalyzerStates
 
@@ -113,6 +119,7 @@ async def prompt_analyzer_handler(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(ImageAnalyzerStates.waiting_for_photo)
     text = (
         "✨ <b>Анализ и создание промпта</b>\n\n"
+        f"Стоимость анализа: <b>{photo_prompt_price_label()}</b>\n\n"
         "Отправьте одним сообщением:\n"
         "• текстовое описание или просто свои мысли\n"
         "• фотографию\n"
@@ -158,6 +165,7 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
     )
     processing = await message.answer("🎙 Превращаю голосовую идею в промпт…")
     audio_url = ""
+    charge = None
     try:
         audio_bytes, mime_type, audio_format = await _download_audio_prompt(message)
         from bot.handlers.generation import save_uploaded_file
@@ -175,6 +183,7 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
             photo_prompt_audio_pending=None,
             photo_prompt_audio_consumed_url=None,
         )
+        charge = await reserve_photo_prompt_charge(message.from_user.id)
         result = await prompt_analyzer_v2_service.analyze_prompt(
             audio_bytes=audio_bytes,
             audio_format=audio_format,
@@ -204,6 +213,20 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
             "Можно отправить фотографию следующим сообщением — голосовая идея будет объединена с ней.",
             reply_markup=get_back_keyboard("back_main"),
         )
+    except PhotoPromptInsufficientBalance as exc:
+        await _clear_photo_prompt_audio_if_current(
+            state,
+            audio_url=audio_url,
+            pending_token=audio_token,
+        )
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            f"❌ {html.escape(str(exc))}",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
     except ValueError:
         await _clear_photo_prompt_audio_if_current(
             state,
@@ -218,6 +241,7 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
         )
     except Exception as exc:
         logger.exception("Unified prompt voice analysis failed")
+        await refund_photo_prompt_charge(charge)
         await _clear_photo_prompt_audio_if_current(
             state,
             audio_url=audio_url,
@@ -234,6 +258,7 @@ async def analyze_voice_prompt_v2(message: Message, state: FSMContext) -> None:
 @router.message(ImageAnalyzerStates.waiting_for_photo, F.photo)
 async def analyze_photo_prompt_v2(message: Message, state: FSMContext) -> None:
     processing = await message.answer("🔍 Анализирую фото и собираю промпт…")
+    charge = None
     try:
         data = await state.get_data()
         audio_prompt = data.get("photo_prompt_audio")
@@ -277,6 +302,7 @@ async def analyze_photo_prompt_v2(message: Message, state: FSMContext) -> None:
             )
             return
 
+        charge = await reserve_photo_prompt_charge(message.from_user.id)
         caption = (message.caption or "").strip()
         result = await prompt_analyzer_v2_service.analyze_prompt(
             text=caption,
@@ -297,8 +323,18 @@ async def analyze_photo_prompt_v2(message: Message, state: FSMContext) -> None:
             pass
         await _send_prompt_result(message, result)
         await state.clear()
+    except PhotoPromptInsufficientBalance as exc:
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            f"❌ {html.escape(str(exc))}",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
     except Exception as exc:
         logger.exception("Unified photo prompt analysis failed")
+        await refund_photo_prompt_charge(charge)
         await _safe_edit_or_answer(
             processing,
             message,
@@ -325,7 +361,9 @@ async def analyze_text_prompt_v2(message: Message, state: FSMContext) -> None:
         return
 
     processing = await message.answer("✍️ Собираю промпт из вашего описания…")
+    charge = None
     try:
+        charge = await reserve_photo_prompt_charge(message.from_user.id)
         result = await prompt_analyzer_v2_service.analyze_prompt(text=user_text)
         result["source_mode"] = "text"
         try:
@@ -334,8 +372,18 @@ async def analyze_text_prompt_v2(message: Message, state: FSMContext) -> None:
             pass
         await _send_prompt_result(message, result)
         await state.clear()
+    except PhotoPromptInsufficientBalance as exc:
+        await _safe_edit_or_answer(
+            processing,
+            message,
+            f"❌ {html.escape(str(exc))}",
+            reply_markup=get_main_menu_button_keyboard(),
+            parse_mode="HTML",
+        )
+        await state.clear()
     except Exception as exc:
         logger.exception("Unified text prompt analysis failed")
+        await refund_photo_prompt_charge(charge)
         await _safe_edit_or_answer(
             processing,
             message,
