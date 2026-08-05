@@ -14,6 +14,7 @@ from typing import Any
 
 import aiohttp
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -36,6 +37,8 @@ _ALLOWED_MODELS = {
 }
 _SIZE_MODELS = {"nano-banana-2", "nano-banana-pro"}
 _ALLOWED_SIZES = {"2K", "4K"}
+_MAX_RESULT_BYTES = 25 * 1024 * 1024
+_TELEGRAM_PHOTO_SAFE_BYTES = 9 * 1024 * 1024
 
 
 class NexusAdminTestState(StatesGroup):
@@ -208,9 +211,75 @@ def _extract_image_result(payload: dict[str, Any]) -> tuple[str, str]:
 def _decode_base64_image(value: str) -> bytes:
     encoded = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
     try:
-        return base64.b64decode(encoded, validate=False)
+        decoded = base64.b64decode(encoded, validate=False)
     except Exception as exc:
         raise RuntimeError("NexusAPI вернул повреждённое base64-изображение") from exc
+    if not decoded:
+        raise RuntimeError("NexusAPI вернул пустое base64-изображение")
+    if len(decoded) > _MAX_RESULT_BYTES:
+        raise RuntimeError("Результат NexusAPI превышает допустимый размер 25 МБ")
+    return decoded
+
+
+def _image_extension(data: bytes, content_type: str = "") -> str:
+    normalized = content_type.lower().split(";", 1)[0].strip()
+    if data.startswith(b"\x89PNG\r\n\x1a\n") or normalized == "image/png":
+        return "png"
+    if data.startswith(b"\xff\xd8\xff") or normalized in {"image/jpeg", "image/jpg"}:
+        return "jpg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP" or normalized == "image/webp":
+        return "webp"
+    raise RuntimeError(f"NexusAPI вернул неподдерживаемый формат изображения: {content_type or 'unknown'}")
+
+
+async def _download_result_image(session: aiohttp.ClientSession, url: str) -> tuple[bytes, str]:
+    headers = {
+        "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8",
+        "User-Agent": "BananoKling-NexusTest/1.0",
+    }
+    async with session.get(url, headers=headers, allow_redirects=True) as response:
+        if response.status != 200:
+            body = (await response.text(errors="replace"))[:500]
+            raise RuntimeError(f"Не удалось скачать результат NexusAPI: HTTP {response.status}: {body}")
+        declared_size = response.content_length
+        if declared_size is not None and declared_size > _MAX_RESULT_BYTES:
+            raise RuntimeError("Результат NexusAPI превышает допустимый размер 25 МБ")
+        data = await response.read()
+        if not data:
+            raise RuntimeError("NexusAPI вернул пустой файл результата")
+        if len(data) > _MAX_RESULT_BYTES:
+            raise RuntimeError("Результат NexusAPI превышает допустимый размер 25 МБ")
+        extension = _image_extension(data, response.headers.get("Content-Type", ""))
+        logger.info(
+            "Downloaded Nexus result: bytes=%s content_type=%s final_host=%s",
+            len(data),
+            response.headers.get("Content-Type", ""),
+            response.url.host,
+        )
+        return data, extension
+
+
+async def _send_result_image(
+    message: types.Message,
+    image_bytes: bytes,
+    extension: str,
+    task_id: str,
+    caption: str,
+) -> None:
+    filename = f"nexus-{task_id}.{extension}"
+    upload = BufferedInputFile(image_bytes, filename=filename)
+    if len(image_bytes) > _TELEGRAM_PHOTO_SAFE_BYTES:
+        await message.answer_document(upload, caption=caption, parse_mode="HTML")
+        return
+    try:
+        await message.answer_photo(upload, caption=caption, parse_mode="HTML")
+    except TelegramBadRequest as exc:
+        logger.warning("Telegram rejected Nexus photo upload; retrying as document: %s", exc)
+        await message.answer_document(
+            BufferedInputFile(image_bytes, filename=filename),
+            caption=caption,
+            parse_mode="HTML",
+        )
 
 
 async def _telegram_photo_as_data_url(message: types.Message) -> str | None:
@@ -345,7 +414,6 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
 
     image_data_url = await _telegram_photo_as_data_url(message)
     if image_data_url:
-        # Nexus Nano Banana schemas require a list, even for one reference.
         params["image_urls"] = [image_data_url]
 
     await state.clear()
@@ -356,7 +424,7 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
         parse_mode="HTML",
     )
 
-    timeout = aiohttp.ClientTimeout(total=settings.timeout_seconds + 30, connect=15, sock_read=30)
+    timeout = aiohttp.ClientTimeout(total=settings.timeout_seconds + 90, connect=20, sock_read=60)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             task_id = await _start_task(session, settings, params)
@@ -365,7 +433,13 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
                 parse_mode="HTML",
             )
             payload = await _wait_for_task(session, settings, task_id)
-        result_type, result_value = _extract_image_result(payload)
+            result_type, result_value = _extract_image_result(payload)
+            if result_type == "url":
+                image_bytes, extension = await _download_result_image(session, result_value)
+            else:
+                image_bytes = _decode_base64_image(result_value)
+                extension = _image_extension(image_bytes)
+
         caption = (
             "✅ <b>NexusAPI тест завершён</b>\n"
             f"Модель: <code>{model_id}</code>\n"
@@ -373,14 +447,7 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
             f"Референсов передано: <code>{1 if image_data_url else 0}</code>\n"
             f"Task ID: <code>{task_id}</code>"
         )
-        if result_type == "url":
-            await message.answer_photo(result_value, caption=caption, parse_mode="HTML")
-        else:
-            await message.answer_photo(
-                BufferedInputFile(_decode_base64_image(result_value), filename=f"nexus-{task_id}.png"),
-                caption=caption,
-                parse_mode="HTML",
-            )
+        await _send_result_image(message, image_bytes, extension, task_id, caption)
         await progress.delete()
     except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, RuntimeError) as exc:
         logger.warning(
