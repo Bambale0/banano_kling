@@ -1,8 +1,6 @@
-"""Admin-only sandbox for evaluating NexusAPI Nano Banana models.
+"""Admin-only NexusAPI Nano Banana sandbox.
 
-This module is intentionally isolated from production generation, billing and
-provider fallback logic. It can be removed or promoted into a regular provider
-adapter after the trial period.
+Isolated from production billing, history, feed publishing and provider fallback.
 """
 
 from __future__ import annotations
@@ -28,6 +26,7 @@ router = Router(name="nexus_admin_test")
 
 _CALLBACK_OPEN = "admin_nexus_test"
 _CALLBACK_MODEL_PREFIX = "admin_nexus_model:"
+_CALLBACK_SIZE_PREFIX = "admin_nexus_size:"
 _CALLBACK_CANCEL = "admin_nexus_cancel"
 _TERMINAL_STATUSES = {"completed", "failed"}
 _ALLOWED_MODELS = {
@@ -35,9 +34,12 @@ _ALLOWED_MODELS = {
     "nano-banana-2": "Nano Banana 2",
     "nano-banana-pro": "Nano Banana Pro",
 }
+_SIZE_MODELS = {"nano-banana-2", "nano-banana-pro"}
+_ALLOWED_SIZES = {"2K", "4K"}
 
 
 class NexusAdminTestState(StatesGroup):
+    waiting_for_size = State()
     waiting_for_input = State()
 
 
@@ -65,21 +67,26 @@ def _is_admin(user_id: int | None) -> bool:
 def _model_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for model_id, label in _ALLOWED_MODELS.items():
-        builder.row(
-            InlineKeyboardButton(
-                text=label,
-                callback_data=f"{_CALLBACK_MODEL_PREFIX}{model_id}",
-            )
-        )
+        builder.row(InlineKeyboardButton(text=label, callback_data=f"{_CALLBACK_MODEL_PREFIX}{model_id}"))
     builder.row(InlineKeyboardButton(text="✖️ Закрыть", callback_data=_CALLBACK_CANCEL))
     return builder.as_markup()
 
 
-def _cancel_keyboard() -> InlineKeyboardMarkup:
+def _size_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✖️ Отменить тест", callback_data=_CALLBACK_CANCEL)]
+            [
+                InlineKeyboardButton(text="2K", callback_data=f"{_CALLBACK_SIZE_PREFIX}2K"),
+                InlineKeyboardButton(text="4K", callback_data=f"{_CALLBACK_SIZE_PREFIX}4K"),
+            ],
+            [InlineKeyboardButton(text="✖️ Отменить тест", callback_data=_CALLBACK_CANCEL)],
         ]
+    )
+
+
+def _cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✖️ Отменить тест", callback_data=_CALLBACK_CANCEL)]]
     )
 
 
@@ -125,11 +132,7 @@ async def _json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
     return payload
 
 
-async def _start_task(
-    session: aiohttp.ClientSession,
-    settings: NexusSettings,
-    params: dict[str, Any],
-) -> str:
+async def _start_task(session: aiohttp.ClientSession, settings: NexusSettings, params: dict[str, Any]) -> str:
     async with session.post(
         f"{settings.base_url}/generate",
         headers={"Authorization": f"Bearer {settings.api_key}"},
@@ -170,7 +173,7 @@ async def _wait_for_task(
     raise TimeoutError(f"NexusAPI не завершил задачу за {settings.timeout_seconds} секунд")
 
 
-def _extract_image_result(payload: dict[str, Any]) -> tuple[str, str | bytes]:
+def _extract_image_result(payload: dict[str, Any]) -> tuple[str, str]:
     result = payload.get("result")
     if isinstance(result, str) and result.strip():
         value = result.strip()
@@ -199,7 +202,6 @@ def _extract_image_result(payload: dict[str, Any]) -> tuple[str, str | bytes]:
         value = result.get(key)
         if isinstance(value, str) and value.strip():
             return "base64", value.strip()
-
     raise RuntimeError("Не удалось найти изображение в результате NexusAPI")
 
 
@@ -221,6 +223,20 @@ async def _telegram_photo_as_data_url(message: types.Message) -> str | None:
     return f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}"
 
 
+async def _ask_for_input(callback: types.CallbackQuery, state: FSMContext, model_id: str) -> None:
+    data = await state.get_data()
+    image_size = str(data.get("nexus_image_size") or "")
+    await state.set_state(NexusAdminTestState.waiting_for_input)
+    size_line = f"\nРазрешение: <b>{image_size}</b>" if image_size else ""
+    await callback.message.answer(
+        f"Выбрана <b>{_ALLOWED_MODELS[model_id]}</b>.{size_line}\n\n"
+        "Отправьте текстовый промпт или фото с промптом в подписи. "
+        "Фото будет передано как референс через <code>image_urls</code>.",
+        reply_markup=_cancel_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data == _CALLBACK_OPEN)
 async def open_nexus_test(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
@@ -231,7 +247,7 @@ async def open_nexus_test(callback: types.CallbackQuery, state: FSMContext) -> N
     if not settings.api_key:
         await callback.message.answer(
             "🧪 <b>NexusAPI тест</b>\n\n"
-            "Не задан <code>NEXUS_API_KEY</code>. Добавьте ключ в production env и перезапустите сервис.",
+            "Не задан <code>NEXUS_API_KEY</code>. Добавьте ключ в env контейнера и передеплойте.",
             parse_mode="HTML",
         )
         await callback.answer()
@@ -254,14 +270,37 @@ async def choose_nexus_model(callback: types.CallbackQuery, state: FSMContext) -
     if model_id not in _ALLOWED_MODELS:
         await callback.answer("Неизвестная модель", show_alert=True)
         return
-    await state.set_state(NexusAdminTestState.waiting_for_input)
     await state.update_data(nexus_model_id=model_id)
-    await callback.message.answer(
-        f"Выбрана <b>{_ALLOWED_MODELS[model_id]}</b>.\n\n"
-        "Отправьте текстовый промпт. Для проверки редактирования можно отправить одно фото с промптом в подписи.",
-        reply_markup=_cancel_keyboard(),
-        parse_mode="HTML",
-    )
+    if model_id in _SIZE_MODELS:
+        await state.set_state(NexusAdminTestState.waiting_for_size)
+        await callback.message.answer(
+            f"Выбрана <b>{_ALLOWED_MODELS[model_id]}</b>.\n\nВыберите разрешение результата:",
+            reply_markup=_size_keyboard(),
+            parse_mode="HTML",
+        )
+    else:
+        await state.update_data(nexus_image_size=None)
+        await _ask_for_input(callback, state, model_id)
+    await callback.answer()
+
+
+@router.callback_query(NexusAdminTestState.waiting_for_size, F.data.startswith(_CALLBACK_SIZE_PREFIX))
+async def choose_nexus_size(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Доступно только администраторам", show_alert=True)
+        return
+    image_size = str(callback.data).removeprefix(_CALLBACK_SIZE_PREFIX).upper()
+    if image_size not in _ALLOWED_SIZES:
+        await callback.answer("Неизвестное разрешение", show_alert=True)
+        return
+    data = await state.get_data()
+    model_id = str(data.get("nexus_model_id") or "")
+    if model_id not in _SIZE_MODELS:
+        await state.clear()
+        await callback.answer("Тестовая сессия устарела", show_alert=True)
+        return
+    await state.update_data(nexus_image_size=image_size)
+    await _ask_for_input(callback, state, model_id)
     await callback.answer()
 
 
@@ -288,6 +327,7 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     model_id = str(data.get("nexus_model_id") or "")
+    image_size = str(data.get("nexus_image_size") or "")
     if model_id not in _ALLOWED_MODELS:
         await state.clear()
         await message.answer("Тестовая сессия устарела. Откройте кнопку «Тест» заново.")
@@ -296,17 +336,23 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
     settings = NexusSettings.from_env()
     if not settings.api_key:
         await state.clear()
-        await message.answer("Не задан NEXUS_API_KEY в окружении сервиса.")
+        await message.answer("Не задан NEXUS_API_KEY в окружении контейнера.")
         return
 
     params: dict[str, Any] = {"model_name": model_id, "prompt": prompt}
+    if model_id in _SIZE_MODELS and image_size in _ALLOWED_SIZES:
+        params["image_size"] = image_size
+
     image_data_url = await _telegram_photo_as_data_url(message)
     if image_data_url:
-        params["image_url"] = image_data_url
+        # Nexus Nano Banana schemas require a list, even for one reference.
+        params["image_urls"] = [image_data_url]
 
     await state.clear()
+    ref_line = "\nРеференсов: <b>1</b>" if image_data_url else ""
+    size_line = f"\nРазрешение: <b>{image_size}</b>" if image_size else ""
     progress = await message.answer(
-        f"⏳ NexusAPI принял тест <b>{_ALLOWED_MODELS[model_id]}</b>. Запускаю задачу…",
+        f"⏳ Запускаю <b>{_ALLOWED_MODELS[model_id]}</b>…{size_line}{ref_line}",
         parse_mode="HTML",
     )
 
@@ -315,22 +361,23 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             task_id = await _start_task(session, settings, params)
             await progress.edit_text(
-                f"⏳ Задача <code>{task_id}</code> выполняется в NexusAPI…",
+                f"⏳ Задача <code>{task_id}</code> выполняется в NexusAPI…{size_line}{ref_line}",
                 parse_mode="HTML",
             )
             payload = await _wait_for_task(session, settings, task_id)
         result_type, result_value = _extract_image_result(payload)
         caption = (
-            f"✅ <b>NexusAPI тест завершён</b>\n"
+            "✅ <b>NexusAPI тест завершён</b>\n"
             f"Модель: <code>{model_id}</code>\n"
+            f"Разрешение: <code>{image_size or 'provider default'}</code>\n"
+            f"Референсов передано: <code>{1 if image_data_url else 0}</code>\n"
             f"Task ID: <code>{task_id}</code>"
         )
         if result_type == "url":
-            await message.answer_photo(str(result_value), caption=caption, parse_mode="HTML")
+            await message.answer_photo(result_value, caption=caption, parse_mode="HTML")
         else:
-            image_bytes = _decode_base64_image(str(result_value))
             await message.answer_photo(
-                BufferedInputFile(image_bytes, filename=f"nexus-{task_id}.png"),
+                BufferedInputFile(_decode_base64_image(result_value), filename=f"nexus-{task_id}.png"),
                 caption=caption,
                 parse_mode="HTML",
             )
@@ -353,6 +400,4 @@ async def run_nexus_test(message: types.Message, state: FSMContext) -> None:
             message.from_user.id if message.from_user else None,
             model_id,
         )
-        await progress.edit_text(
-            "❌ Непредвиденная ошибка тестового контура NexusAPI. Подробности записаны в лог.",
-        )
+        await progress.edit_text("❌ Непредвиденная ошибка тестового контура NexusAPI. Подробности в логах.")
