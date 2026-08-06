@@ -14,7 +14,6 @@ from typing import Any
 
 import aiohttp
 from aiogram import F, Router, types
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,7 +37,6 @@ _ALLOWED_MODELS = {
 _SIZE_MODELS = {"nano-banana-2", "nano-banana-pro"}
 _ALLOWED_SIZES = {"2K", "4K"}
 _MAX_RESULT_BYTES = 25 * 1024 * 1024
-_TELEGRAM_PHOTO_SAFE_BYTES = 9 * 1024 * 1024
 
 
 class NexusAdminTestState(StatesGroup):
@@ -227,7 +225,7 @@ def _image_extension(data: bytes, content_type: str = "") -> str:
         return "png"
     if data.startswith(b"\xff\xd8\xff") or normalized in {"image/jpeg", "image/jpg"}:
         return "jpg"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP" or normalized == "image/webp":
+    if (data.startswith(b"RIFF") and data[8:12] == b"WEBP") or normalized == "image/webp":
         return "webp"
     raise RuntimeError(f"NexusAPI вернул неподдерживаемый формат изображения: {content_type or 'unknown'}")
 
@@ -266,20 +264,13 @@ async def _send_result_image(
     task_id: str,
     caption: str,
 ) -> None:
+    """Send the original provider bytes as a Telegram document without recompression."""
     filename = f"nexus-{task_id}.{extension}"
-    upload = BufferedInputFile(image_bytes, filename=filename)
-    if len(image_bytes) > _TELEGRAM_PHOTO_SAFE_BYTES:
-        await message.answer_document(upload, caption=caption, parse_mode="HTML")
-        return
-    try:
-        await message.answer_photo(upload, caption=caption, parse_mode="HTML")
-    except TelegramBadRequest as exc:
-        logger.warning("Telegram rejected Nexus photo upload; retrying as document: %s", exc)
-        await message.answer_document(
-            BufferedInputFile(image_bytes, filename=filename),
-            caption=caption,
-            parse_mode="HTML",
-        )
+    await message.answer_document(
+        BufferedInputFile(image_bytes, filename=filename),
+        caption=caption,
+        parse_mode="HTML",
+    )
 
 
 async def _telegram_photo_as_data_url(message: types.Message) -> str | None:
