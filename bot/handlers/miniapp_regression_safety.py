@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import importlib
 import json
 from collections.abc import Awaitable, Callable
@@ -10,9 +9,13 @@ from typing import Any
 
 from aiohttp import web
 
-from bot import db as db_backend
 from bot.config import config
 from bot.services.lava_service import lava_service, normalize_lava_customer_email
+from bot.services.payment_email_store import (
+    get_payment_email,
+    has_payment_email,
+    save_payment_email,
+)
 
 RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -28,84 +31,21 @@ _REQUEST_LAVA_EMAIL: ContextVar[str | None] = ContextVar(
 _INSTALLED = False
 _ORIGINAL_ADD_POST: Callable[..., Any] | None = None
 _ORIGINAL_LAVA_CREATE_INVOICE: Callable[..., Awaitable[dict[str, Any]]] | None = None
-_PAYMENT_EMAIL_SCHEMA_READY = False
-_PAYMENT_EMAIL_SCHEMA_LOCK: asyncio.Lock | None = None
-
-
-def _get_payment_email_schema_lock() -> asyncio.Lock:
-    global _PAYMENT_EMAIL_SCHEMA_LOCK
-    if _PAYMENT_EMAIL_SCHEMA_LOCK is None:
-        _PAYMENT_EMAIL_SCHEMA_LOCK = asyncio.Lock()
-    return _PAYMENT_EMAIL_SCHEMA_LOCK
-
-
-async def _ensure_payment_email_schema() -> None:
-    """Add the account-level payment email column on old and clean databases."""
-
-    global _PAYMENT_EMAIL_SCHEMA_READY
-    if _PAYMENT_EMAIL_SCHEMA_READY:
-        return
-
-    async with _get_payment_email_schema_lock():
-        if _PAYMENT_EMAIL_SCHEMA_READY:
-            return
-        async with db_backend.connect() as db:
-            if db_backend.is_postgres():
-                # The project's PostgreSQL compatibility adapter intentionally
-                # skips top-level ALTER TABLE statements. Wrap the migration in
-                # a DO block so it executes on existing production databases.
-                await db.execute(
-                    """
-                    DO $$
-                    BEGIN
-                        ALTER TABLE users ADD COLUMN payment_email TEXT;
-                    EXCEPTION
-                        WHEN duplicate_column THEN NULL;
-                    END
-                    $$;
-                    """
-                )
-            else:
-                try:
-                    await db.execute("ALTER TABLE users ADD COLUMN payment_email TEXT")
-                except db_backend.OperationalError:
-                    # SQLite reports a duplicate-column error after the first run.
-                    pass
-            await db.commit()
-        _PAYMENT_EMAIL_SCHEMA_READY = True
 
 
 async def _get_saved_payment_email(telegram_id: int) -> str | None:
-    await _ensure_payment_email_schema()
-    async with db_backend.connect() as db:
-        db.row_factory = db_backend.Row
-        cursor = await db.execute(
-            "SELECT payment_email FROM users WHERE telegram_id = ? LIMIT 1",
-            (int(telegram_id),),
-        )
-        row = await cursor.fetchone()
-    if not row:
-        return None
-    return normalize_lava_customer_email(row["payment_email"])
+    """Read the address from the Mini App host's local payment database."""
+
+    return normalize_lava_customer_email(await get_payment_email(telegram_id))
 
 
 async def _save_payment_email(telegram_id: int, email: str) -> str:
+    """Persist a normalized address without exposing it back to the browser."""
+
     normalized = normalize_lava_customer_email(email)
     if not normalized:
         raise ValueError("Invalid Lava customer email")
-
-    await _ensure_payment_email_schema()
-    async with db_backend.connect() as db:
-        await db.execute(
-            """
-            UPDATE users
-            SET payment_email = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE telegram_id = ?
-            """,
-            (normalized, int(telegram_id)),
-        )
-        await db.commit()
-    return normalized
+    return await save_payment_email(telegram_id, normalized)
 
 
 def _normalized_tags(raw_tags: Any) -> set[str]:
@@ -163,7 +103,7 @@ async def _secure_bootstrap(
     original_handler: RequestHandler,
     request: web.Request,
 ) -> web.StreamResponse:
-    """Expose only the authenticated account's saved payment email."""
+    """Expose only a boolean; the saved personal data stays on the server."""
 
     response = await original_handler(request)
     if not isinstance(response, web.Response) or response.status >= 400:
@@ -183,7 +123,8 @@ async def _secure_bootstrap(
     if not telegram_id:
         return response
 
-    payload["payment_email"] = await _get_saved_payment_email(telegram_id) or ""
+    payload["payment_email_saved"] = await has_payment_email(telegram_id)
+    payload.pop("payment_email", None)
     headers = {
         key: value
         for key, value in response.headers.items()
@@ -269,6 +210,7 @@ def _is_payment_path(path: Any) -> bool:
 
 def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
     if _is_trend_submit_path(path):
+
         @wraps(handler)
         async def guarded_trend_submit(request: web.Request) -> web.StreamResponse:
             return await _secure_prompt_submit(handler, request)
@@ -276,6 +218,7 @@ def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
         return guarded_trend_submit
 
     if _is_bootstrap_path(path):
+
         @wraps(handler)
         async def guarded_bootstrap(request: web.Request) -> web.StreamResponse:
             return await _secure_bootstrap(handler, request)
@@ -283,6 +226,7 @@ def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
         return guarded_bootstrap
 
     if _is_payment_path(path):
+
         @wraps(handler)
         async def guarded_create_payment(request: web.Request) -> web.StreamResponse:
             return await _secure_create_payment(handler, request)

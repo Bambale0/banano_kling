@@ -38,6 +38,8 @@ export function BalanceSheet() {
   const emailInputRef = useRef<HTMLInputElement>(null)
   const [loadingPayment, setLoadingPayment] = useState<string | null>(null)
   const [customerEmail, setCustomerEmail] = useState('')
+  const [paymentEmailSaved, setPaymentEmailSaved] = useState(false)
+  const [editingPaymentEmail, setEditingPaymentEmail] = useState(false)
 
   const normalizedCustomerEmail = normalizeCustomerEmail(customerEmail)
   const customerEmailValid = isValidCustomerEmail(normalizedCustomerEmail)
@@ -51,15 +53,16 @@ export function BalanceSheet() {
     let cancelled = false
     void bootstrapApp()
       .then((data) => {
-        const savedEmail = normalizeCustomerEmail(
-          String((data as typeof data & { payment_email?: string }).payment_email || ''),
+        if (cancelled) return
+        const isSaved = Boolean(
+          (data as typeof data & { payment_email_saved?: boolean }).payment_email_saved,
         )
-        if (!cancelled && isValidCustomerEmail(savedEmail)) {
-          setCustomerEmail((current) => current.trim() ? current : savedEmail)
-        }
+        setPaymentEmailSaved(isSaved)
+        setEditingPaymentEmail(!isSaved)
+        setCustomerEmail('')
       })
       .catch(() => {
-        // Payment can still proceed: the backend also falls back to the saved account email.
+        // The backend remains the source of truth and will request an email if needed.
       })
 
     return () => {
@@ -72,6 +75,12 @@ export function BalanceSheet() {
       emailInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       emailInputRef.current?.focus()
     }, 50)
+  }
+
+  const startEditingPaymentEmail = () => {
+    setEditingPaymentEmail(true)
+    setCustomerEmail('')
+    focusCustomerEmail()
   }
 
   const openExternalPayment = (url: string) => {
@@ -101,7 +110,6 @@ export function BalanceSheet() {
 
     return new Promise<string>((resolve) => {
       try {
-        // Call through the WebApp object so Telegram keeps the native method context.
         webApp.openInvoice?.(url, (status) => resolve(status || 'unknown'))
       } catch {
         openExternalPayment(url)
@@ -114,16 +122,30 @@ export function BalanceSheet() {
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
 
+    const mustSubmitEmail = provider === 'lava' && (!paymentEmailSaved || editingPaymentEmail)
+    if (mustSubmitEmail && !customerEmailValid) {
+      toast.error('Укажите действующую почту', {
+        description: 'Она нужна платёжному сервису для создания счёта и электронного чека.',
+      })
+      focusCustomerEmail()
+      return
+    }
+
     const loadingKey = `${packageId}:${provider}`
     setLoadingPayment(loadingKey)
     try {
       const payment = await createPayment({
         packageId,
         provider,
-        customerEmail: provider === 'lava' && customerEmailValid
-          ? normalizedCustomerEmail
-          : undefined,
+        customerEmail: mustSubmitEmail ? normalizedCustomerEmail : undefined,
       })
+
+      if (mustSubmitEmail) {
+        setPaymentEmailSaved(true)
+        setEditingPaymentEmail(false)
+        setCustomerEmail('')
+      }
+
       if (payment.provider === 'telegram_stars' && payment.invoice_url) {
         const status = await openTelegramInvoice(payment.invoice_url)
         if (status === 'paid') {
@@ -154,6 +176,8 @@ export function BalanceSheet() {
       const message = error instanceof Error ? error.message : 'Не удалось создать платёж'
       toast.error(message)
       if (provider === 'lava' && message.toLowerCase().includes('почт')) {
+        setPaymentEmailSaved(false)
+        setEditingPaymentEmail(true)
         focusCustomerEmail()
       }
     } finally {
@@ -223,34 +247,58 @@ export function BalanceSheet() {
                 <StatCard icon={CreditCard} label="Видео" value={`${videoTasks}`} />
               </div>
 
-              <label className="block space-y-2" htmlFor="payment-customer-email">
-                <span className="text-sm font-medium text-foreground">Почта для карты и СБП</span>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    ref={emailInputRef}
-                    id="payment-customer-email"
-                    type="email"
-                    value={customerEmail}
-                    onChange={(event) => setCustomerEmail(event.target.value)}
-                    placeholder="name@example.com"
-                    autoComplete="email"
-                    inputMode="email"
-                    className={cn(
-                      'h-11 w-full rounded-xl border bg-secondary/40 pl-10 pr-3 text-sm text-foreground outline-none',
-                      customerEmail && !customerEmailValid
-                        ? 'border-destructive/60 focus:border-destructive'
-                        : 'border-border/50 focus:border-gold/50',
-                    )}
-                  />
+              {paymentEmailSaved && !editingPaymentEmail ? (
+                <div className="rounded-2xl border border-cyan/20 bg-cyan/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-background/40">
+                      <Mail className="h-4 w-4 text-cyan" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">Почта сохранена на сервере</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Адрес не возвращается в Mini App. При оплате сервер подставляет его автоматически.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={startEditingPaymentEmail}
+                        className="mt-3 h-9 border-border/50 bg-background/30 px-3 text-xs text-foreground"
+                      >
+                        Изменить почту
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <span className="block text-xs text-muted-foreground">
-                  Сохраним адрес в вашем аккаунте и автоматически подставим при следующих оплатах.
-                </span>
-                {customerEmail && !customerEmailValid ? (
-                  <span className="block text-xs text-destructive">Проверьте формат почты.</span>
-                ) : null}
-              </label>
+              ) : (
+                <label className="block space-y-2" htmlFor="payment-customer-email">
+                  <span className="text-sm font-medium text-foreground">Почта для карты и СБП</span>
+                  <div className="relative">
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      ref={emailInputRef}
+                      id="payment-customer-email"
+                      type="email"
+                      value={customerEmail}
+                      onChange={(event) => setCustomerEmail(event.target.value)}
+                      placeholder="name@example.com"
+                      autoComplete="email"
+                      inputMode="email"
+                      className={cn(
+                        'h-11 w-full rounded-xl border bg-secondary/40 pl-10 pr-3 text-sm text-foreground outline-none',
+                        customerEmail && !customerEmailValid
+                          ? 'border-destructive/60 focus:border-destructive'
+                          : 'border-border/50 focus:border-gold/50',
+                      )}
+                    />
+                  </div>
+                  <span className="block text-xs leading-5 text-muted-foreground">
+                    Адрес сохраняется в локальной базе на сервере Mini App и используется для создания платежа и электронного чека.
+                  </span>
+                  {customerEmail && !customerEmailValid ? (
+                    <span className="block text-xs text-destructive">Проверьте формат почты.</span>
+                  ) : null}
+                </label>
+              )}
 
               <div>
                 <div className="mb-3 flex items-center justify-between">
