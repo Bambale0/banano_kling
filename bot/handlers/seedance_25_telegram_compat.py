@@ -8,7 +8,7 @@ from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from . import generation as generation_module
 from . import seedance_25_preview as preview_module
@@ -134,7 +134,7 @@ async def _persist_image(message: types.Message, obj) -> str | None:
     try:
         with Image.open(io.BytesIO(raw)) as image:
             width, height = image.size
-    except Exception:
+    except (OSError, UnidentifiedImageError):
         await message.answer("❌ Не удалось прочитать фото. Попробуйте другое.")
         return None
 
