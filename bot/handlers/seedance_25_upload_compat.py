@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 """Register Seedance 2.5-specific Mini App upload kinds.
 
 The generic Mini App upload cap is 50 MB. Seedance 2.5 allows video references
