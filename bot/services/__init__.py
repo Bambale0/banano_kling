@@ -5,6 +5,15 @@
 Services for the Telegram bot.
 """
 
+from bot.config import config
+
+# Product routing: regular Nano Banana 2 must always use Kie.ai.
+# Legacy APIYI credentials may still exist in production .env, but they must not
+# switch Nano Banana 2 back to APIYI. Nano Banana 2 Lite uses its separate Kie
+# Market route and is unaffected.
+config.NANOBANANA2_FALLBACK_API_KEY = ""
+config.NANOBANANA2_FALLBACK_BASE_URL = ""
+
 from .cryptobot_service import CryptoBotService, cryptobot_service
 from .gpt_image_service import GPTImageService, gpt_image_service
 from .gemini_omni_service import GeminiOmniService, gemini_omni_service
