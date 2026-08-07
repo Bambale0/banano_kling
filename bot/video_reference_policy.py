@@ -12,6 +12,12 @@ from bot.model_capabilities import (
 
 DEFAULT_VIDEO_REFERENCE_MODEL = "seedance_2"
 SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER = 2
+SEEDANCE_VIDEO_REFERENCE_MODELS = {
+    "seedance_2",
+    "bytedance/seedance-2",
+    "seedance_2_5",
+    "bytedance/seedance-2-5",
+}
 
 
 def video_model_supports_reference_videos(model: str | None) -> bool:
@@ -55,10 +61,10 @@ def apply_video_reference_cost(
     base_cost: float,
     video_references: Iterable[str] | None,
 ) -> float:
-    """Double Seedance 2 cost once when at least one video reference is used."""
+    """Double Seedance retail cost once when at least one video reference is used."""
     normalized = normalize_video_model_key(model)
     has_video_reference = any(str(url or "").strip() for url in video_references or [])
-    if normalized in {"seedance_2", "bytedance/seedance-2"} and has_video_reference:
+    if normalized in SEEDANCE_VIDEO_REFERENCE_MODELS and has_video_reference:
         return base_cost * SEEDANCE_VIDEO_REFERENCE_PRICE_MULTIPLIER
     return base_cost
 
