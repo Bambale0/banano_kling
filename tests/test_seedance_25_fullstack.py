@@ -91,5 +91,7 @@ def test_seedance25_dedicated_callback_path_when_host_available(monkeypatch):
     # The helper reuses the public Kie callback host and switches only the path.
     import bot.services.seedance_25_service as module
 
-    monkeypatch.setattr(module.config, "kie_notification_url", "https://example.com/webhook/kie_ai")
+    monkeypatch.setattr(module.config, "WEBHOOK_HOST", "https://example.com")
+    monkeypatch.setattr(module.config, "KIE_AI_WEBHOOK_PATH", "/webhook/kie_ai")
+    monkeypatch.setattr(module.config, "KIE_AI_WEBHOOK_SECRET", "")
     assert get_seedance25_callback_url() == "https://example.com/webhook/kie_seedance25"
