@@ -3,7 +3,9 @@
 
 The generic Mini App upload cap is 50 MB. Seedance 2.5 allows video references
 up to 200 MB, while image/audio limits are 30/15 MB. Separate file kinds keep
-those larger limits isolated from every other model.
+those larger limits isolated from every other model. Large videos are uploaded
+in small temporary chunks so Cloudflare/Nginx request-size ceilings do not make
+the provider's 200 MB input limit unreachable.
 """
 
 from __future__ import annotations
@@ -22,9 +24,17 @@ _DEF = {
         "prefix": "video/",
         "fallback_ext": "mp4",
         "group": "video",
-        "max_bytes": 200 * 1024 * 1024,
+        "max_bytes": 45 * 1024 * 1024,
         "durable_reference": True,
         "source": "miniapp_seedance25",
+    },
+    "seedance25_video_chunk": {
+        "prefix": "video/",
+        "fallback_ext": "part",
+        "group": "video",
+        "max_bytes": 8 * 1024 * 1024,
+        "durable_reference": False,
+        "source": "miniapp_seedance25_chunk",
     },
     "seedance25_audio_reference": {
         "prefix": "audio/",
