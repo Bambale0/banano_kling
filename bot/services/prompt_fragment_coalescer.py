@@ -14,13 +14,14 @@ same protection.
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramAPIError
 
 from bot.states import (
     BatchGenerationStates,
@@ -37,7 +38,7 @@ PROMPT_FRAGMENT_QUIET_SECONDS = max(
 )
 PROMPT_FRAGMENT_LONG_QUIET_SECONDS = max(
     PROMPT_FRAGMENT_QUIET_SECONDS,
-    float(os.getenv("PROMPT_FRAGMENT_LONG_QUIET_SECONDS", "1.35")),
+    float(os.getenv("PROMPT_FRAGMENT_LONG_QUIET_SECONDS", "2.0")),
 )
 PROMPT_FRAGMENT_LONG_THRESHOLD = max(
     1000,
@@ -115,17 +116,14 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
 
     @staticmethod
     def _clone_with_text(event: Any, text: str) -> Any:
-        if hasattr(event, "model_copy"):
-            try:
-                return event.model_copy(update={"text": text, "entities": []})
-            except Exception:
-                logger.debug("Prompt coalescer model_copy failed", exc_info=True)
-        cloned = copy.copy(event)
-        try:
-            setattr(cloned, "text", text)
-        except Exception:
+        model_copy = getattr(event, "model_copy", None)
+        if not callable(model_copy):
+            logger.warning(
+                "Prompt coalescer received event without model_copy: %s",
+                type(event).__name__,
+            )
             return event
-        return cloned
+        return model_copy(update={"text": text, "entities": []})
 
     async def _cancel_pending(self, key: tuple[int, int, str]) -> None:
         pending = self._pending.pop(key, None)
@@ -176,8 +174,11 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                     await pending.event.answer(
                         f"❌ Промпт слишком длинный: {len(combined)} символов. Максимум для одного ввода — {self.max_chars}."
                     )
-                except Exception:
-                    logger.debug("Unable to report oversized combined prompt", exc_info=True)
+                except TelegramAPIError:
+                    logger.debug(
+                        "Unable to report oversized combined prompt",
+                        exc_info=True,
+                    )
                 return
 
             logger.info(
@@ -202,8 +203,11 @@ class PromptFragmentCoalescingMiddleware(BaseMiddleware):
                     await pending.event.answer(
                         "❌ Не удалось обработать длинный промпт. Отправьте его ещё раз."
                     )
-                except Exception:
-                    pass
+                except TelegramAPIError:
+                    logger.debug(
+                        "Unable to report prompt fragment failure",
+                        exc_info=True,
+                    )
         finally:
             async with self._lock:
                 self._inflight.discard(key)
