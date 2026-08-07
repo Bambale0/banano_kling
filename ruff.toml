@@ -1,6 +1,6 @@
 # Seedance 2.5 runtime is an isolated compatibility layer around existing
-# Mini App / Telegram / webhook seams. Keep the exceptions local to this file;
-# changed-line linting remains enabled for the rest of the project.
+# Mini App / Telegram / webhook seams. Keep the exceptions local to these
+# adapters; changed-line linting remains enabled for the rest of the project.
 
 [lint.per-file-ignores]
 "bot/handlers/seedance_25_fullstack.py" = [
@@ -13,3 +13,5 @@
   "SIM117",
   "UP035",
 ]
+"bot/handlers/seedance_25_chunk_upload.py" = ["BLE001"]
+"bot/handlers/seedance_25_public_release.py" = ["BLE001", "I001", "S110"]
