@@ -58,6 +58,7 @@ from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
 from .seedance_25_chunk_upload import install_seedance_25_chunk_upload
+from .seedance_25_client_compat import install_seedance_25_client_compat
 from .seedance_25_fullstack import install_seedance_25_fullstack
 from .seedance_25_fullstack import router as seedance_25_fullstack_router
 from .seedance_25_new_priority import install_seedance_25_new_priority
@@ -98,7 +99,7 @@ image_analyzer_router.include_router(legacy_image_analyzer_router)
 # Seedance 2.0 keeps its established multimodal compatibility layer. Seedance
 # 2.5 is assembled from isolated compatibility layers so the production branch
 # remains untouched: provider/runtime -> chunk uploads -> preview UI -> pricing
-# -> public access/billing -> NEW priority in Telegram and Mini App.
+# -> public access/billing -> stale-client request compatibility -> NEW priority.
 install_seedance_multimodal_runtime_compat()
 install_seedance_25_upload_compat()
 install_seedance_25_fullstack()
@@ -106,6 +107,7 @@ install_seedance_25_chunk_upload()
 install_seedance_25_preview()
 install_seedance_25_video_ref_pricing()
 install_seedance_25_public_release()
+install_seedance_25_client_compat()
 install_seedance_25_new_priority()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
