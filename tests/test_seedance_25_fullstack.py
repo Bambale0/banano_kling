@@ -11,14 +11,17 @@ from bot.handlers.seedance_25_fullstack import (
     _seedance25_model_meta,
     _validate_dimensions,
 )
+from bot.handlers.seedance_25_public_release import _clean_other_new_markers
 from bot.services.seedance_25_service import Seedance25Service, get_seedance25_callback_url
 
 
-def test_seedance25_model_meta_exposes_full_admin_contract():
+def test_seedance25_model_meta_exposes_public_new_contract():
     meta = _seedance25_model_meta()
 
     assert meta["id"] == "seedance_2_5"
-    assert meta["admin_only"] is True
+    assert meta["admin_only"] is False
+    assert meta["is_new"] is True
+    assert "NEW" in meta["label"]
     assert meta["seedance25_resolutions"] == ["480p", "720p"]
     assert meta["seedance25_output_formats"] == ["mp4", "mov"]
     assert meta["seedance25_scenarios"] == [
@@ -37,6 +40,12 @@ def test_seedance25_model_meta_exposes_full_admin_contract():
     assert meta["supports_web_search"] is True
     assert meta["supports_nsfw_checker"] is True
     assert meta["camera_control_via_prompt"] is True
+
+
+def test_seedance25_release_removes_new_markers_from_other_models():
+    assert _clean_other_new_markers("Grok Imagine 1.5 NEW🔥🔥🔥") == "Grok Imagine 1.5"
+    assert _clean_other_new_markers("Seedream 5 Pro 🔥 НОВИНКА") == "Seedream 5 Pro"
+    assert _clean_other_new_markers("Nano Banana 2 Lite НОВИНКА") == "Nano Banana 2 Lite"
 
 
 def test_seedance25_classifies_video_and_returned_last_frame():
