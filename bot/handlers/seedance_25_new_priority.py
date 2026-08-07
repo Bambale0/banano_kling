@@ -9,8 +9,8 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any
 
-from aiohttp import web
 from aiogram import types
+from aiohttp import web
 
 from bot.services.preset_manager import preset_manager
 
