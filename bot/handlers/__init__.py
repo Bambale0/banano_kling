@@ -64,6 +64,7 @@ from .seedance_25_preview import install_seedance_25_preview
 from .seedance_25_preview import router as seedance_25_preview_router
 from .seedance_25_public_release import install_seedance_25_public_release
 from .seedance_25_upload_compat import install_seedance_25_upload_compat
+from .seedance_25_video_ref_pricing import install_seedance_25_video_ref_pricing
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
 )
@@ -95,14 +96,15 @@ image_analyzer_router.include_router(legacy_image_analyzer_router)
 
 # Seedance 2.0 keeps its established multimodal compatibility layer. Seedance
 # 2.5 is assembled from isolated compatibility layers so the production branch
-# remains untouched: provider/runtime -> chunk uploads -> preview UI -> public
-# access/billing. The final layer opens the model to normal users and marks only
-# Seedance 2.5 as NEW.
+# remains untouched: provider/runtime -> chunk uploads -> preview UI -> pricing
+# -> public access/billing. The final layer opens the model to normal users and
+# marks only Seedance 2.5 as NEW.
 install_seedance_multimodal_runtime_compat()
 install_seedance_25_upload_compat()
 install_seedance_25_fullstack()
 install_seedance_25_chunk_upload()
 install_seedance_25_preview()
+install_seedance_25_video_ref_pricing()
 install_seedance_25_public_release()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
