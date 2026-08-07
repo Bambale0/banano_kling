@@ -66,6 +66,8 @@ from .seedance_25_new_priority import install_seedance_25_new_priority
 from .seedance_25_preview import install_seedance_25_preview
 from .seedance_25_preview import router as seedance_25_preview_router
 from .seedance_25_public_release import install_seedance_25_public_release
+from .seedance_25_telegram_compat import install_seedance_25_telegram_compat
+from .seedance_25_telegram_compat import router as seedance_25_telegram_compat_router
 from .seedance_25_upload_compat import install_seedance_25_upload_compat
 from .seedance_25_video_ref_pricing import install_seedance_25_video_ref_pricing
 from .seedance_multimodal_compat import (
@@ -109,7 +111,8 @@ image_analyzer_router.include_router(legacy_image_analyzer_router)
 # Seedance 2.0 keeps its established multimodal compatibility layer. Seedance
 # 2.5 is assembled from isolated compatibility layers so the production branch
 # remains untouched: provider/runtime -> chunk uploads -> preview UI -> pricing
-# -> public access/billing -> stale-client request compatibility -> NEW priority.
+# -> public access/billing -> stale-client request compatibility -> Telegram UX
+# -> NEW priority.
 install_seedance_multimodal_runtime_compat()
 install_seedance_25_upload_compat()
 install_seedance_25_fullstack()
@@ -118,9 +121,13 @@ install_seedance_25_preview()
 install_seedance_25_video_ref_pricing()
 install_seedance_25_public_release()
 install_seedance_25_client_compat()
+install_seedance_25_telegram_compat()
 install_seedance_25_new_priority()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
+# Public first-frame photo handling goes before the older Seedance routers so
+# it cannot be swallowed by a generic document/photo route.
+generation_router.include_router(seedance_25_telegram_compat_router)
 generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
@@ -169,6 +176,7 @@ __all__ = [
     "repeat_result_compat_router",
     "seedance_25_fullstack_router",
     "seedance_25_preview_router",
+    "seedance_25_telegram_compat_router",
     "seedance_multimodal_compat_router",
     "support_router",
     "trend_text_upload_router",
