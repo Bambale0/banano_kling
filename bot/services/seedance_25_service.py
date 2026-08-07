@@ -1,14 +1,18 @@
 """Kie.ai adapter for Bytedance Seedance 2.5.
 
-Seedance 2.5 uses the same unified Kie jobs API as the existing Seedance 2.0
-adapter, but it is kept separate so model-specific limits can evolve without
-changing the stable 2.0 production path.
+Implements the released Kie Market OpenAPI contract for
+``bytedance/seedance-2-5``.  The three media scenarios are deliberately kept
+mutually exclusive:
+
+1. text-to-video (no media inputs),
+2. first-frame / first+last-frame image-to-video,
+3. multimodal reference-to-video (images, videos and/or audio).
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 from bot.config import config
 from bot.services.kling_service import KlingService
@@ -18,68 +22,169 @@ logger = logging.getLogger(__name__)
 
 class Seedance25Service(KlingService):
     MODEL_NAME = "bytedance/seedance-2-5"
-    ALLOWED_RATIOS = {"16:9", "9:16", "1:1"}
-    ALLOWED_RESOLUTIONS = {"720p"}
-    ALLOWED_DURATIONS = {5, 10, 15}
-    MAX_REFERENCE_IMAGES = 9
-    MAX_REFERENCE_VIDEOS = 3
-    MAX_REFERENCE_AUDIO = 3
-    MAX_PROMPT_LENGTH = 20_000
+
+    ALLOWED_RATIOS = {
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16",
+        "21:9",
+        "adaptive",
+    }
+    ALLOWED_RESOLUTIONS = {"480p", "720p"}
+    ALLOWED_OUTPUT_FORMATS = {"mp4", "mov"}
+
+    MIN_DURATION = 4
+    MAX_DURATION = 30
+    AUTO_DURATION = -1
+    MAX_PROMPT_LENGTH = 5000
+
+    MAX_REFERENCE_IMAGES = 30
+    MAX_REFERENCE_VIDEOS = 10
+    MAX_REFERENCE_AUDIO = 10
+
+    @staticmethod
+    def _clean_urls(values: Iterable[str] | None, limit: int) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in values or []:
+            value = str(raw or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            cleaned.append(value)
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
+    @classmethod
+    def normalize_duration(cls, duration: int | str | None) -> int:
+        try:
+            value = int(duration if duration is not None else 5)
+        except (TypeError, ValueError):
+            value = 5
+        if value == cls.AUTO_DURATION:
+            return value
+        if not cls.MIN_DURATION <= value <= cls.MAX_DURATION:
+            raise ValueError(
+                f"Seedance 2.5 duration must be {cls.MIN_DURATION}-{cls.MAX_DURATION} seconds or -1 (auto)"
+            )
+        return value
+
+    @classmethod
+    def validate_scenario(
+        cls,
+        *,
+        first_frame_url: str | None,
+        last_frame_url: str | None,
+        reference_image_urls: list[str],
+        reference_video_urls: list[str],
+        reference_audio_urls: list[str],
+    ) -> str:
+        """Validate Kie's mutually-exclusive media scenarios.
+
+        Returns one of ``text``, ``first_frame``, ``first_last`` or
+        ``multimodal``.
+        """
+        first = str(first_frame_url or "").strip()
+        last = str(last_frame_url or "").strip()
+        has_refs = bool(
+            reference_image_urls or reference_video_urls or reference_audio_urls
+        )
+
+        if last and not first:
+            raise ValueError("last_frame_url requires first_frame_url")
+        if first and has_refs:
+            raise ValueError(
+                "Seedance 2.5 first/last-frame mode cannot be combined with multimodal references"
+            )
+        if first and last:
+            return "first_last"
+        if first:
+            return "first_frame"
+        if has_refs:
+            return "multimodal"
+        return "text"
 
     async def generate_video(
         self,
         prompt: str,
         *,
         duration: int = 5,
-        aspect_ratio: str = "16:9",
+        aspect_ratio: str = "adaptive",
         resolution: str = "720p",
+        first_frame_url: str | None = None,
+        last_frame_url: str | None = None,
         reference_image_urls: list[str] | None = None,
         reference_video_urls: list[str] | None = None,
         reference_audio_urls: list[str] | None = None,
         return_last_frame: bool = False,
         generate_audio: bool = True,
+        output_format: str = "mp4",
+        web_search: bool = False,
+        nsfw_checker: bool = False,
         callBackUrl: str | None = None,
     ) -> dict[str, Any]:
-        """Create a Seedance 2.5 task through Kie's unified jobs endpoint.
-
-        The adapter intentionally exposes only parameters confirmed by the
-        current Kie Seedance 2.5 request example. First/last-frame mode is not
-        mixed with multimodal references here, avoiding the mutually-exclusive
-        scenario conflict documented by Kie.
-        """
+        """Create a Seedance 2.5 task through Kie's unified jobs endpoint."""
         if not self.kie_key:
             return {"success": False, "error": "KIE_AI_API_KEY is not configured"}
 
         normalized_prompt = str(prompt or "").strip()
-        if not normalized_prompt:
-            return {"success": False, "error": "Prompt is required for Seedance 2.5"}
         if len(normalized_prompt) > self.MAX_PROMPT_LENGTH:
-            normalized_prompt = normalized_prompt[: self.MAX_PROMPT_LENGTH]
-
-        try:
-            normalized_duration = int(duration)
-        except (TypeError, ValueError):
-            normalized_duration = 5
-        if normalized_duration not in self.ALLOWED_DURATIONS:
             return {
                 "success": False,
-                "error": f"Unsupported Seedance 2.5 duration: {normalized_duration}",
+                "error": f"Seedance 2.5 prompt exceeds {self.MAX_PROMPT_LENGTH} characters",
             }
 
-        normalized_ratio = str(aspect_ratio or "16:9").strip()
+        try:
+            normalized_duration = self.normalize_duration(duration)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+
+        normalized_ratio = str(aspect_ratio or "adaptive").strip().lower()
         if normalized_ratio not in self.ALLOWED_RATIOS:
-            normalized_ratio = "16:9"
+            return {
+                "success": False,
+                "error": f"Unsupported Seedance 2.5 aspect ratio: {normalized_ratio}",
+            }
 
         normalized_resolution = str(resolution or "720p").strip().lower()
         if normalized_resolution not in self.ALLOWED_RESOLUTIONS:
-            normalized_resolution = "720p"
+            return {
+                "success": False,
+                "error": f"Unsupported Seedance 2.5 resolution: {normalized_resolution}",
+            }
 
-        image_urls = [str(url).strip() for url in (reference_image_urls or []) if str(url).strip()]
-        video_urls = [str(url).strip() for url in (reference_video_urls or []) if str(url).strip()]
-        audio_urls = [str(url).strip() for url in (reference_audio_urls or []) if str(url).strip()]
-        image_urls = image_urls[: self.MAX_REFERENCE_IMAGES]
-        video_urls = video_urls[: self.MAX_REFERENCE_VIDEOS]
-        audio_urls = audio_urls[: self.MAX_REFERENCE_AUDIO]
+        normalized_output = str(output_format or "mp4").strip().lower()
+        if normalized_output not in self.ALLOWED_OUTPUT_FORMATS:
+            return {
+                "success": False,
+                "error": f"Unsupported Seedance 2.5 output format: {normalized_output}",
+            }
+
+        image_urls = self._clean_urls(
+            reference_image_urls, self.MAX_REFERENCE_IMAGES
+        )
+        video_urls = self._clean_urls(
+            reference_video_urls, self.MAX_REFERENCE_VIDEOS
+        )
+        audio_urls = self._clean_urls(
+            reference_audio_urls, self.MAX_REFERENCE_AUDIO
+        )
+        first_frame = str(first_frame_url or "").strip() or None
+        last_frame = str(last_frame_url or "").strip() or None
+
+        try:
+            scenario = self.validate_scenario(
+                first_frame_url=first_frame,
+                last_frame_url=last_frame,
+                reference_image_urls=image_urls,
+                reference_video_urls=video_urls,
+                reference_audio_urls=audio_urls,
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
 
         input_data: dict[str, Any] = {
             "prompt": normalized_prompt,
@@ -88,7 +193,15 @@ class Seedance25Service(KlingService):
             "resolution": normalized_resolution,
             "aspect_ratio": normalized_ratio,
             "duration": normalized_duration,
+            "output_format": normalized_output,
+            "web_search": bool(web_search),
+            "nsfw_checker": bool(nsfw_checker),
         }
+
+        if first_frame:
+            input_data["first_frame_url"] = first_frame
+        if last_frame:
+            input_data["last_frame_url"] = last_frame
         if image_urls:
             input_data["reference_image_urls"] = image_urls
         if video_urls:
@@ -104,7 +217,10 @@ class Seedance25Service(KlingService):
             payload["callBackUrl"] = callBackUrl
 
         logger.info(
-            "Seedance 2.5 request: duration=%ss ratio=%s resolution=%s refs(image=%s,video=%s,audio=%s) audio=%s",
+            "Seedance 2.5 request: scenario=%s duration=%s ratio=%s resolution=%s "
+            "refs(image=%s,video=%s,audio=%s) generated_audio=%s output=%s "
+            "web_search=%s nsfw_checker=%s return_last_frame=%s",
+            scenario,
             normalized_duration,
             normalized_ratio,
             normalized_resolution,
@@ -112,8 +228,15 @@ class Seedance25Service(KlingService):
             len(video_urls),
             len(audio_urls),
             bool(generate_audio),
+            normalized_output,
+            bool(web_search),
+            bool(nsfw_checker),
+            bool(return_last_frame),
         )
-        return await self._kie_post("/api/v1/jobs/createTask", payload)
+        result = await self._kie_post("/api/v1/jobs/createTask", payload)
+        if isinstance(result, dict):
+            result.setdefault("scenario", scenario)
+        return result
 
 
 seedance_25_service = Seedance25Service(kie_key=config.KIE_AI_API_KEY)
