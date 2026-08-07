@@ -13,8 +13,8 @@ import aiohttp
 
 from bot.config import config
 from bot.services.photo_prompt_service import (
-    GPT55_MAX_ATTEMPTS,
-    GPT55_RETRYABLE_BODY_CODES,
+    GPT_MAX_ATTEMPTS as GPT55_MAX_ATTEMPTS,
+    GPT_RETRYABLE_BODY_CODES as GPT55_RETRYABLE_BODY_CODES,
     _extract_output_text,
     _is_fast_fallback_application_error,
 )
