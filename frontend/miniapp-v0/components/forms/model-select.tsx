@@ -18,7 +18,8 @@ interface ModelSelectProps {
   onChange: (value: string) => void
 }
 
-const NEW_MODEL_IDS = new Set(['nano-banana-2-lite', 'seedream_5_pro'])
+// Product rule: Seedance 2.5 is the only model currently highlighted as NEW.
+const NEW_MODEL_IDS = new Set(['seedance_2_5'])
 
 export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
