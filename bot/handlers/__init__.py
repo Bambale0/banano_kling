@@ -10,6 +10,7 @@ from bot.services.lava_binding_schema_compat import (
 )
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
+from bot.services.prompt_fragment_coalescer import PromptFragmentCoalescingMiddleware
 from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
@@ -84,6 +85,16 @@ install_lava_invoice_compat(payments_module, lava_checkout_module)
 legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
 legacy_common_router = common_module.router
+
+# Long Telegram prompts may arrive as several messages because a single text
+# message is capped by Telegram. Delay prompt handlers briefly and coalesce all
+# consecutive fragments into one submit. One shared instance protects image,
+# video, batch and prompt-analysis generation flows consistently.
+prompt_fragment_coalescer = PromptFragmentCoalescingMiddleware()
+generation_module.router.message.middleware(prompt_fragment_coalescer)
+batch_generation_router.message.middleware(prompt_fragment_coalescer)
+prompt_analyzer_v2_router.message.middleware(prompt_fragment_coalescer)
+legacy_image_analyzer_router.message.middleware(prompt_fragment_coalescer)
 
 # Ordinary photo-only prompt analysis should use the same compact result structure
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
