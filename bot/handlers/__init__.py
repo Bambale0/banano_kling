@@ -57,6 +57,8 @@ from .notification_campaigns import router as notification_campaigns_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
+from .seedance_25_fullstack import install_seedance_25_fullstack
+from .seedance_25_fullstack import router as seedance_25_fullstack_router
 from .seedance_25_preview import install_seedance_25_preview
 from .seedance_25_preview import router as seedance_25_preview_router
 from .seedance_multimodal_compat import (
@@ -89,12 +91,15 @@ image_analyzer_router.include_router(prompt_analyzer_v2_router)
 image_analyzer_router.include_router(legacy_image_analyzer_router)
 
 # Seedance 2.0 keeps its established multimodal compatibility layer. Seedance
-# 2.5 is installed as a separate admin-only preview before the broad generation
-# router so forged callbacks are rejected before reaching legacy handlers.
+# 2.5 is installed as a separate admin-only full-stack preview. The full-stack
+# router runs before the preview router so it can perform ffprobe validation for
+# Telegram document/video/audio inputs while preserving the established image UX.
 install_seedance_multimodal_runtime_compat()
+install_seedance_25_fullstack()
 install_seedance_25_preview()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
+generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
 generation_router.include_router(generation_module.router)
@@ -140,6 +145,7 @@ __all__ = [
     "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
     "repeat_result_compat_router",
+    "seedance_25_fullstack_router",
     "seedance_25_preview_router",
     "seedance_multimodal_compat_router",
     "support_router",
