@@ -36,7 +36,7 @@ export interface Seedance25GenerateResponse {
   credits: number
   cost: number
   model_label: string
-  admin_free: true
+  admin_free: boolean
   resolution: Seedance25Resolution
   duration: number
   aspect_ratio: string
