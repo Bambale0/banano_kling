@@ -13,6 +13,7 @@ from bot.handlers.seedance_25_fullstack import (
 )
 from bot.handlers.seedance_25_public_release import _clean_other_new_markers
 from bot.services.seedance_25_service import Seedance25Service, get_seedance25_callback_url
+from bot.video_reference_policy import apply_video_reference_cost
 
 
 def test_seedance25_model_meta_exposes_public_new_contract():
@@ -46,6 +47,16 @@ def test_seedance25_release_removes_new_markers_from_other_models():
     assert _clean_other_new_markers("Grok Imagine 1.5 NEW🔥🔥🔥") == "Grok Imagine 1.5"
     assert _clean_other_new_markers("Seedream 5 Pro 🔥 НОВИНКА") == "Seedream 5 Pro"
     assert _clean_other_new_markers("Nano Banana 2 Lite НОВИНКА") == "Nano Banana 2 Lite"
+
+
+def test_seedance25_video_reference_doubles_price_once():
+    assert apply_video_reference_cost("seedance_2_5", 20, []) == 20
+    assert apply_video_reference_cost("seedance_2_5", 20, ["https://example.com/ref.mp4"]) == 40
+    assert apply_video_reference_cost(
+        "seedance_2_5",
+        20,
+        ["https://example.com/a.mp4", "https://example.com/b.mp4"],
+    ) == 40
 
 
 def test_seedance25_classifies_video_and_returned_last_frame():
