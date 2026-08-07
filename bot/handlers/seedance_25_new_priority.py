@@ -29,7 +29,12 @@ def _priority_button_text(current_model: str) -> str:
 
 
 def _priority_model_meta() -> dict[str, Any]:
-    meta = public_release._public_model_meta_original()
+    original = getattr(
+        public_release,
+        "_public_model_meta_original",
+        public_release._public_model_meta,
+    )
+    meta = original()
     meta.update(
         {
             "label": MODEL_LABEL,
