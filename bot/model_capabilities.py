@@ -97,6 +97,14 @@ VIDEO_MODEL_CAPABILITIES: Mapping[str, VideoModelCapability] = {
         supports_reference_videos=True, max_reference_videos=3,
         supports_audio_input=True,
     ),
+    "seedance_2_5": VideoModelCapability(
+        key="seedance_2_5", label="Seedance 2.5", provider="seedance",
+        durations=(5, 10, 15), aspect_ratios=("16:9", "9:16", "1:1"),
+        resolutions=("720p",), supports_start_image=True,
+        supports_reference_images=True, max_reference_images=9,
+        supports_reference_videos=True, max_reference_videos=3,
+        supports_audio_input=True, supports_generated_audio=True,
+    ),
     "seedance_2_fast": VideoModelCapability(
         key="seedance_2_fast", label="Seedance 2.0 Fast", provider="seedance",
         durations=(5, 10, 15), aspect_ratios=("16:9", "9:16", "1:1"),
@@ -167,6 +175,9 @@ VIDEO_MODEL_ALIASES: Mapping[str, str] = {
     "motion_control": "motion_control_v26",
     "kling-2.6/motion-control": "motion_control_v26",
     "kling-3.0/motion-control": "motion_control_v30",
+    "seedance-2.5": "seedance_2_5",
+    "seedance_2.5": "seedance_2_5",
+    "bytedance/seedance-2-5": "seedance_2_5",
     "gemini_omni": "gemini_omni_video",
 }
 
