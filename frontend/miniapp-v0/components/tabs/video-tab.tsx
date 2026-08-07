@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
-import { Seedance25AdminForm } from '../forms/seedance25-admin-form'
+import { Seedance25PublicForm } from '../forms/seedance25-public-form'
 import { ResultCard } from '../result-card'
 import type { Task, ScenarioType, UploadedFile } from '@/lib/types'
 import type { Seedance25GenerateResponse } from '@/lib/seedance25-api'
@@ -24,7 +24,7 @@ export function VideoTab() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [adminVideoMode, setAdminVideoMode] = useState<'regular' | 'seedance25'>('regular')
+  const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>('regular')
   const [seedanceQueued, setSeedanceQueued] = useState<Seedance25GenerateResponse | null>(null)
 
   const seedance25Model = useMemo(
@@ -35,8 +35,8 @@ export function VideoTab() {
     () => state.videoModels.filter((item) => item.id !== 'seedance_2_5'),
     [state.videoModels],
   )
-  const canUseSeedance25 = Boolean(state.user.isAdmin && seedance25Model)
-  const effectiveAdminMode = canUseSeedance25 ? adminVideoMode : 'regular'
+  const canUseSeedance25 = Boolean(seedance25Model)
+  const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
 
   const handleSubmit = async (data: {
     model: string
@@ -87,8 +87,6 @@ export function VideoTab() {
       selectTask(result.task)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить видео')
-      // The form clears uploaded media only after onSubmit resolves.
-      // Re-throw so failed generation attempts preserve all selected references.
       throw e
     } finally {
       setIsSubmitting(false)
@@ -128,7 +126,7 @@ export function VideoTab() {
     try {
       await refreshTasks()
     } catch {
-      // The dedicated webhook will still deliver the result in Telegram.
+      // Dedicated Seedance webhook/polling still completes the task in Telegram.
     }
   }
 
@@ -147,33 +145,36 @@ export function VideoTab() {
         <div className="mx-auto mb-4 grid max-w-xl grid-cols-2 gap-2 rounded-2xl border border-cyan/20 bg-background/40 p-1.5">
           <button
             type="button"
-            onClick={() => setAdminVideoMode('regular')}
+            onClick={() => setVideoMode('regular')}
             className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
-              effectiveAdminMode === 'regular'
+              effectiveMode === 'regular'
                 ? 'bg-secondary text-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            Обычные модели
+            Все модели
           </button>
           <button
             type="button"
-            onClick={() => setAdminVideoMode('seedance25')}
+            onClick={() => setVideoMode('seedance25')}
             className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
-              effectiveAdminMode === 'seedance25'
+              effectiveMode === 'seedance25'
                 ? 'bg-cyan/15 text-cyan'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            🧪 Seedance 2.5
+            <span className="mr-1 rounded-full border border-gold/40 bg-gold/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-gold">NEW</span>
+            Seedance 2.5
           </button>
         </div>
       ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
-        {effectiveAdminMode === 'seedance25' && seedance25Model ? (
-          <Seedance25AdminForm
+        {effectiveMode === 'seedance25' && seedance25Model ? (
+          <Seedance25PublicForm
             model={seedance25Model}
+            credits={state.user.credits}
+            isAdmin={state.user.isAdmin}
             onQueued={handleSeedanceQueued}
             onSavedReference={addSavedReference}
           />
@@ -195,27 +196,30 @@ export function VideoTab() {
         )}
 
         <div className="space-y-4">
-          {error && effectiveAdminMode === 'regular' ? (
+          {error && effectiveMode === 'regular' ? (
             <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/30">
               <p className="text-sm text-destructive">{error}</p>
             </div>
           ) : null}
 
-          {effectiveAdminMode === 'seedance25' ? (
+          {effectiveMode === 'seedance25' ? (
             <div className="glass rounded-2xl border border-cyan/20 p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Seedance queue</p>
-              <h3 className="font-serif text-lg text-foreground mb-2">Admin-проверка модели</h3>
+              <h3 className="font-serif text-lg text-foreground mb-2">Seedance 2.5</h3>
               {seedanceQueued ? (
                 <div className="space-y-2 text-sm">
                   <p>✅ Задача отправлена в Kie.ai.</p>
                   <p className="break-all font-mono text-xs text-muted-foreground">{seedanceQueued.task_id}</p>
                   <p className="text-xs text-muted-foreground">
-                    Dedicated webhook заберёт видео, MOV будет отправлен файлом, а при Return last frame бот пришлёт последний кадр отдельно. Если callback потеряется, включён polling fallback.
+                    {seedanceQueued.admin_free
+                      ? 'Для администратора списание отключено.'
+                      : `Списано ${seedanceQueued.cost}🍌.`}{' '}
+                    Результат придёт в Telegram. Если callback задержится, включён polling fallback.
                   </p>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Здесь отображается последняя отправленная Seedance-задача. Сам результат придёт в Telegram после завершения Kie.ai.
+                  Здесь появится ID последней задачи Seedance 2.5. Итоговое видео бот пришлёт автоматически.
                 </p>
               )}
             </div>
