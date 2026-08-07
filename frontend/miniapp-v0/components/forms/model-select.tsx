@@ -18,12 +18,16 @@ interface ModelSelectProps {
   onChange: (value: string) => void
 }
 
-const NEW_MODEL_IDS = new Set(['nano-banana-2-lite', 'seedream_5_pro'])
+// Product rule: Seedance 2.5 is the only model currently highlighted as NEW.
+const NEW_MODEL_IDS = new Set(['seedance_2_5'])
 
 export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const selected = models.find(m => m.id === value)
   const selectedIsNew = selected ? NEW_MODEL_IDS.has(selected.id) : false
+  const orderedModels = [...models].sort(
+    (left, right) => Number(NEW_MODEL_IDS.has(right.id)) - Number(NEW_MODEL_IDS.has(left.id)),
+  )
 
   return (
     <div className="relative min-w-0">
@@ -41,8 +45,8 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium text-foreground">{selected?.label}</p>
             {selectedIsNew && (
-              <span className="shrink-0 rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold">
-                New
+              <span className="shrink-0 rounded-full border border-gold/60 bg-gold/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-gold shadow-[0_0_14px_rgba(251,191,36,0.2)]">
+                🔥 NEW
               </span>
             )}
           </div>
@@ -80,7 +84,7 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                 "glass-strong border border-border/50 shadow-xl"
               )}
             >
-              {models.map((model) => {
+              {orderedModels.map((model) => {
                 const isNew = NEW_MODEL_IDS.has(model.id)
                 return (
                 <button
@@ -93,15 +97,16 @@ export function ModelSelect({ models, value, onChange }: ModelSelectProps) {
                     "w-full flex items-center gap-3 px-4 py-3",
                     "transition-colors",
                     "hover:bg-secondary/50",
-                    model.id === value && "bg-gold/10"
+                    model.id === value && "bg-gold/10",
+                    isNew && "border-y border-gold/20 bg-gold/5"
                   )}
                 >
                   <div className="min-w-0 flex-1 text-left">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium text-foreground">{model.label}</p>
                       {isNew && (
-                        <span className="shrink-0 rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold">
-                          New
+                        <span className="shrink-0 rounded-full border border-gold/60 bg-gold/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-gold shadow-[0_0_14px_rgba(251,191,36,0.2)]">
+                          🔥 NEW
                         </span>
                       )}
                     </div>

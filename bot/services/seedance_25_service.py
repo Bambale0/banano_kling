@@ -1,7 +1,7 @@
 """Kie.ai adapter for Bytedance Seedance 2.5.
 
 Implements the released Kie Market OpenAPI contract for
-``bytedance/seedance-2-5``.  The three media scenarios are deliberately kept
+``bytedance/seedance-2-5``. The media scenarios are deliberately kept
 mutually exclusive:
 
 1. text-to-video (no media inputs),
@@ -13,11 +13,41 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from bot.config import config
 from bot.services.kling_service import KlingService
 
 logger = logging.getLogger(__name__)
+
+
+def get_seedance25_callback_url() -> str:
+    """Return a dedicated callback URL for Seedance 2.5.
+
+    Seedance 2.5 can return more than one result (video + requested last frame)
+    and can return MOV. A dedicated webhook lets us preserve those outputs
+    without changing the established generic Kie webhook behaviour.
+    """
+    legacy = str(getattr(config, "kie_notification_url", "") or "").strip()
+    if legacy:
+        parts = urlsplit(legacy)
+        if parts.scheme and parts.netloc:
+            return urlunsplit(
+                (
+                    parts.scheme,
+                    parts.netloc,
+                    "/webhook/kie_seedance25",
+                    "",
+                    "",
+                )
+            )
+
+    host = str(getattr(config, "WEBHOOK_HOST", "") or "").strip().rstrip("/")
+    if not host:
+        return ""
+    if host.startswith(("http://", "https://")):
+        return f"{host}/webhook/kie_seedance25"
+    return f"https://{host}/webhook/kie_seedance25"
 
 
 class Seedance25Service(KlingService):
@@ -45,7 +75,7 @@ class Seedance25Service(KlingService):
     MAX_REFERENCE_AUDIO = 10
 
     @staticmethod
-    def _clean_urls(values: Iterable[str] | None, limit: int) -> list[str]:
+    def _clean_urls(values: Iterable[str] | None) -> list[str]:
         cleaned: list[str] = []
         seen: set[str] = set()
         for raw in values or []:
@@ -54,8 +84,19 @@ class Seedance25Service(KlingService):
                 continue
             seen.add(value)
             cleaned.append(value)
-            if len(cleaned) >= limit:
-                break
+        return cleaned
+
+    @classmethod
+    def _normalize_urls(
+        cls,
+        values: Iterable[str] | None,
+        *,
+        limit: int,
+        label: str,
+    ) -> list[str]:
+        cleaned = cls._clean_urls(values)
+        if len(cleaned) > limit:
+            raise ValueError(f"Seedance 2.5 accepts at most {limit} {label}")
         return cleaned
 
     @classmethod
@@ -139,6 +180,21 @@ class Seedance25Service(KlingService):
 
         try:
             normalized_duration = self.normalize_duration(duration)
+            image_urls = self._normalize_urls(
+                reference_image_urls,
+                limit=self.MAX_REFERENCE_IMAGES,
+                label="image references",
+            )
+            video_urls = self._normalize_urls(
+                reference_video_urls,
+                limit=self.MAX_REFERENCE_VIDEOS,
+                label="video references",
+            )
+            audio_urls = self._normalize_urls(
+                reference_audio_urls,
+                limit=self.MAX_REFERENCE_AUDIO,
+                label="audio references",
+            )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
@@ -163,15 +219,6 @@ class Seedance25Service(KlingService):
                 "error": f"Unsupported Seedance 2.5 output format: {normalized_output}",
             }
 
-        image_urls = self._clean_urls(
-            reference_image_urls, self.MAX_REFERENCE_IMAGES
-        )
-        video_urls = self._clean_urls(
-            reference_video_urls, self.MAX_REFERENCE_VIDEOS
-        )
-        audio_urls = self._clean_urls(
-            reference_audio_urls, self.MAX_REFERENCE_AUDIO
-        )
         first_frame = str(first_frame_url or "").strip() or None
         last_frame = str(last_frame_url or "").strip() or None
 
@@ -213,13 +260,18 @@ class Seedance25Service(KlingService):
             "model": self.MODEL_NAME,
             "input": input_data,
         }
-        if callBackUrl:
-            payload["callBackUrl"] = callBackUrl
+
+        callback_url = str(callBackUrl or "").strip()
+        legacy_callback = str(getattr(config, "kie_notification_url", "") or "").strip()
+        if not callback_url or callback_url == legacy_callback:
+            callback_url = get_seedance25_callback_url()
+        if callback_url:
+            payload["callBackUrl"] = callback_url
 
         logger.info(
             "Seedance 2.5 request: scenario=%s duration=%s ratio=%s resolution=%s "
             "refs(image=%s,video=%s,audio=%s) generated_audio=%s output=%s "
-            "web_search=%s nsfw_checker=%s return_last_frame=%s",
+            "web_search=%s nsfw_checker=%s return_last_frame=%s callback=%s",
             scenario,
             normalized_duration,
             normalized_ratio,
@@ -232,10 +284,13 @@ class Seedance25Service(KlingService):
             bool(web_search),
             bool(nsfw_checker),
             bool(return_last_frame),
+            callback_url or "polling-only",
         )
         result = await self._kie_post("/api/v1/jobs/createTask", payload)
         if isinstance(result, dict):
+            result.setdefault("success", bool(result.get("task_id")))
             result.setdefault("scenario", scenario)
+            result.setdefault("provider_model", self.MODEL_NAME)
         return result
 
 

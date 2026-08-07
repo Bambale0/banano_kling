@@ -10,6 +10,7 @@ from bot.services.lava_binding_schema_compat import (
 )
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
+from bot.services.prompt_fragment_coalescer import PromptFragmentCoalescingMiddleware
 from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
 )
@@ -57,8 +58,18 @@ from .notification_campaigns import router as notification_campaigns_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
+from .seedance_25_chunk_upload import install_seedance_25_chunk_upload
+from .seedance_25_client_compat import install_seedance_25_client_compat
+from .seedance_25_fullstack import install_seedance_25_fullstack
+from .seedance_25_fullstack import router as seedance_25_fullstack_router
+from .seedance_25_new_priority import install_seedance_25_new_priority
 from .seedance_25_preview import install_seedance_25_preview
 from .seedance_25_preview import router as seedance_25_preview_router
+from .seedance_25_public_release import install_seedance_25_public_release
+from .seedance_25_telegram_compat import install_seedance_25_telegram_compat
+from .seedance_25_telegram_compat import router as seedance_25_telegram_compat_router
+from .seedance_25_upload_compat import install_seedance_25_upload_compat
+from .seedance_25_video_ref_pricing import install_seedance_25_video_ref_pricing
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
 )
@@ -77,6 +88,15 @@ legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
 legacy_common_router = common_module.router
 
+# Long Telegram prompts may arrive as several messages because a single text
+# message is capped by Telegram. Delay only actual generation prompt handlers
+# briefly and coalesce consecutive fragments into one submit. Analyzer routers
+# are intentionally excluded because some of their handlers use SkipHandler
+# fallback routing after the matched callback returns.
+prompt_fragment_coalescer = PromptFragmentCoalescingMiddleware()
+generation_module.router.message.middleware(prompt_fragment_coalescer)
+batch_generation_router.message.middleware(prompt_fragment_coalescer)
+
 # Ordinary photo-only prompt analysis should use the same compact result structure
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
 install_vk_photo_prompt_result_compat()
@@ -89,12 +109,26 @@ image_analyzer_router.include_router(prompt_analyzer_v2_router)
 image_analyzer_router.include_router(legacy_image_analyzer_router)
 
 # Seedance 2.0 keeps its established multimodal compatibility layer. Seedance
-# 2.5 is installed as a separate admin-only preview before the broad generation
-# router so forged callbacks are rejected before reaching legacy handlers.
+# 2.5 is assembled from isolated compatibility layers so the production branch
+# remains untouched: provider/runtime -> chunk uploads -> preview UI -> pricing
+# -> public access/billing -> stale-client request compatibility -> Telegram UX
+# -> NEW priority.
 install_seedance_multimodal_runtime_compat()
+install_seedance_25_upload_compat()
+install_seedance_25_fullstack()
+install_seedance_25_chunk_upload()
 install_seedance_25_preview()
+install_seedance_25_video_ref_pricing()
+install_seedance_25_public_release()
+install_seedance_25_client_compat()
+install_seedance_25_telegram_compat()
+install_seedance_25_new_priority()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
+# Public first-frame photo handling goes before the older Seedance routers so
+# it cannot be swallowed by a generic document/photo route.
+generation_router.include_router(seedance_25_telegram_compat_router)
+generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
 generation_router.include_router(generation_module.router)
@@ -140,7 +174,9 @@ __all__ = [
     "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
     "repeat_result_compat_router",
+    "seedance_25_fullstack_router",
     "seedance_25_preview_router",
+    "seedance_25_telegram_compat_router",
     "seedance_multimodal_compat_router",
     "support_router",
     "trend_text_upload_router",
