@@ -61,6 +61,7 @@ from .seedance_25_fullstack import install_seedance_25_fullstack
 from .seedance_25_fullstack import router as seedance_25_fullstack_router
 from .seedance_25_preview import install_seedance_25_preview
 from .seedance_25_preview import router as seedance_25_preview_router
+from .seedance_25_upload_compat import install_seedance_25_upload_compat
 from .seedance_multimodal_compat import (
     install_seedance_multimodal_runtime_compat,
 )
@@ -95,6 +96,7 @@ image_analyzer_router.include_router(legacy_image_analyzer_router)
 # router runs before the preview router so it can perform ffprobe validation for
 # Telegram document/video/audio inputs while preserving the established image UX.
 install_seedance_multimodal_runtime_compat()
+install_seedance_25_upload_compat()
 install_seedance_25_fullstack()
 install_seedance_25_preview()
 generation_router = Router()
