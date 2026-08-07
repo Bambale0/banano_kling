@@ -87,14 +87,13 @@ lava_checkout_router = lava_checkout_module.router
 legacy_common_router = common_module.router
 
 # Long Telegram prompts may arrive as several messages because a single text
-# message is capped by Telegram. Delay prompt handlers briefly and coalesce all
-# consecutive fragments into one submit. One shared instance protects image,
-# video, batch and prompt-analysis generation flows consistently.
+# message is capped by Telegram. Delay only actual generation prompt handlers
+# briefly and coalesce consecutive fragments into one submit. Analyzer routers
+# are intentionally excluded because some of their handlers use SkipHandler
+# fallback routing after the matched callback returns.
 prompt_fragment_coalescer = PromptFragmentCoalescingMiddleware()
 generation_module.router.message.middleware(prompt_fragment_coalescer)
 batch_generation_router.message.middleware(prompt_fragment_coalescer)
-prompt_analyzer_v2_router.message.middleware(prompt_fragment_coalescer)
-legacy_image_analyzer_router.message.middleware(prompt_fragment_coalescer)
 
 # Ordinary photo-only prompt analysis should use the same compact result structure
 # as the VK bot. Voice-only and photo+voice keep the richer Telegram result.
