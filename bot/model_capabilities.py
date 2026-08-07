@@ -13,6 +13,7 @@ class VideoModelCapability:
     durations: tuple[int, ...] = ()
     aspect_ratios: tuple[str, ...] = ()
     resolutions: tuple[str, ...] = ()
+    output_formats: tuple[str, ...] = ()
     supports_text: bool = True
     supports_start_image: bool = False
     supports_end_image: bool = False
@@ -21,7 +22,13 @@ class VideoModelCapability:
     supports_reference_videos: bool = False
     max_reference_videos: int = 0
     supports_audio_input: bool = False
+    max_reference_audio: int = 0
     supports_generated_audio: bool = False
+    supports_return_last_frame: bool = False
+    supports_web_search: bool = False
+    supports_nsfw_checker: bool = False
+    supports_auto_duration: bool = False
+    camera_control_via_prompt: bool = False
     supports_negative_prompt: bool = False
     supports_cfg_scale: bool = False
     supports_multi_shot: bool = False
@@ -99,11 +106,25 @@ VIDEO_MODEL_CAPABILITIES: Mapping[str, VideoModelCapability] = {
     ),
     "seedance_2_5": VideoModelCapability(
         key="seedance_2_5", label="Seedance 2.5", provider="seedance",
-        durations=(5, 10, 15), aspect_ratios=("16:9", "9:16", "1:1"),
-        resolutions=("720p",), supports_start_image=True,
-        supports_reference_images=True, max_reference_images=9,
-        supports_reference_videos=True, max_reference_videos=3,
-        supports_audio_input=True, supports_generated_audio=True,
+        modes=("text", "first_frame", "first_last", "multimodal"),
+        durations=(-1,) + tuple(range(4, 31)),
+        aspect_ratios=("1:1", "4:3", "3:4", "16:9", "9:16", "21:9", "adaptive"),
+        resolutions=("480p", "720p"),
+        output_formats=("mp4", "mov"),
+        supports_start_image=True,
+        supports_end_image=True,
+        supports_reference_images=True,
+        max_reference_images=30,
+        supports_reference_videos=True,
+        max_reference_videos=10,
+        supports_audio_input=True,
+        max_reference_audio=10,
+        supports_generated_audio=True,
+        supports_return_last_frame=True,
+        supports_web_search=True,
+        supports_nsfw_checker=True,
+        supports_auto_duration=True,
+        camera_control_via_prompt=True,
     ),
     "seedance_2_fast": VideoModelCapability(
         key="seedance_2_fast", label="Seedance 2.0 Fast", provider="seedance",
