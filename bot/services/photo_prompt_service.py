@@ -1,4 +1,4 @@
-"""Photo to prompt service via Kie GPT 5.5 Responses API with Claude Haiku fallback."""
+"""Photo-to-prompt service via Kie GPT-5.4 with GPT-5.2 fallback."""
 
 import asyncio
 import base64
@@ -13,9 +13,10 @@ from bot.services.photo_analysis_media import image_source_to_analysis_input
 
 logger = logging.getLogger(__name__)
 
-GPT55_MAX_ATTEMPTS = 3
-GPT55_RETRYABLE_BODY_CODES = {429}
-CLAUDE_MAX_ATTEMPTS = 2
+PRIMARY_MODEL = "gpt-5-4"
+FALLBACK_MODEL = "gpt-5-2"
+GPT_MAX_ATTEMPTS = 3
+GPT_RETRYABLE_BODY_CODES = {429}
 
 
 SYSTEM_PROMPT = """
@@ -90,16 +91,6 @@ def _extract_output_text(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def _extract_claude_text(data: Dict[str, Any]) -> str:
-    parts: list[str] = []
-    for block in data.get("content", []) or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            text = block.get("text", "")
-            if text:
-                parts.append(str(text))
-    return "\n".join(parts).strip()
-
-
 def _parse_json_object(raw_text: str) -> Dict[str, Any]:
     raw_text = (raw_text or "").strip()
 
@@ -137,7 +128,11 @@ def _is_fast_fallback_application_error(data: Dict[str, Any]) -> bool:
         body_code = 0
 
     message = str(data.get("msg") or data.get("message") or "").lower()
-    return body_code >= 500 or "server exception" in message or "try again later" in message
+    return (
+        body_code >= 500
+        or "server exception" in message
+        or "try again later" in message
+    )
 
 
 def _build_result(parsed: Dict[str, Any], *, provider: str = "") -> Dict[str, Any]:
@@ -221,31 +216,24 @@ def _build_gpt_user_content(
     return content
 
 
-def _build_claude_image_source(image_url: str) -> dict[str, str]:
-    if image_url.startswith("data:image/") and "," in image_url:
-        header, encoded = image_url.split(",", 1)
-        media_type = header.removeprefix("data:").split(";", 1)[0]
-        return {
-            "type": "base64",
-            "media_type": media_type,
-            "data": encoded,
-        }
-    return {"type": "url", "url": image_url}
-
-
 class PhotoPromptService:
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        fallback_model: Optional[str] = None,
     ):
         self.api_key = api_key or config.KIE_AI_API_KEY
-        self.model = model or config.PHOTO_PROMPT_MODEL
+        # Keep this route deterministic: production .env must not silently switch
+        # the prompt-analysis model back to an older value.
+        self.model = model or PRIMARY_MODEL
+        self.fallback_model = fallback_model or FALLBACK_MODEL
         self.base_url = config.KIE_BASE_URL
 
-    async def _analyze_with_gpt55(
+    async def _analyze_with_gpt(
         self,
         *,
+        model: str,
         image_url: str,
         user_instruction: str,
         headers: Dict[str, str],
@@ -253,7 +241,7 @@ class PhotoPromptService:
         audio_format: str = "",
     ) -> Dict[str, Any]:
         payload = {
-            "model": self.model,
+            "model": model,
             "stream": False,
             "input": [
                 {
@@ -276,7 +264,7 @@ class PhotoPromptService:
         timeout = aiohttp.ClientTimeout(total=120)
         data: Optional[Dict[str, Any]] = None
 
-        for attempt in range(GPT55_MAX_ATTEMPTS):
+        for attempt in range(GPT_MAX_ATTEMPTS):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     f"{self.base_url}/codex/v1/responses",
@@ -287,36 +275,43 @@ class PhotoPromptService:
 
                     if response.status >= 500:
                         logger.info(
-                            "GPT-5.5 HTTP 5xx, fast fallback: status=%s body=%s",
-                            response.status,
-                            text[:500],
-                        )
-                        if audio_bytes and attempt < GPT55_MAX_ATTEMPTS - 1:
-                            await asyncio.sleep(2**attempt)
-                            continue
-                        raise RuntimeError(
-                            f"GPT-5.5 недоступен. Код: {response.status}"
-                        )
-
-                    if response.status == 429:
-                        logger.warning(
-                            "GPT-5.5 rate limited: status=%s body=%s attempt=%d",
+                            "%s HTTP 5xx: status=%s body=%s attempt=%d",
+                            model,
                             response.status,
                             text[:500],
                             attempt,
                         )
-                        if attempt < GPT55_MAX_ATTEMPTS - 1:
+                        if audio_bytes and attempt < GPT_MAX_ATTEMPTS - 1:
                             await asyncio.sleep(2**attempt)
                             continue
-                        raise RuntimeError("GPT-5.5 временно ограничил запросы")
+                        raise RuntimeError(
+                            f"{model} недоступен. Код: {response.status}"
+                        )
+
+                    if response.status == 429:
+                        logger.warning(
+                            "%s rate limited: status=%s body=%s attempt=%d",
+                            model,
+                            response.status,
+                            text[:500],
+                            attempt,
+                        )
+                        if attempt < GPT_MAX_ATTEMPTS - 1:
+                            await asyncio.sleep(2**attempt)
+                            continue
+                        raise RuntimeError(f"{model} временно ограничил запросы")
 
                     if response.status >= 400:
-                        raise RuntimeError(f"GPT-5.5 ошибка. Код: {response.status}")
+                        raise RuntimeError(
+                            f"{model} ошибка. Код: {response.status}"
+                        )
 
                     try:
                         data = json.loads(text)
-                    except Exception:
-                        raise RuntimeError("GPT-5.5 вернул некорректный JSON")
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"{model} вернул некорректный JSON"
+                        ) from exc
 
                     raw_body_code = data.get("code") if isinstance(data, dict) else None
                     try:
@@ -325,9 +320,10 @@ class PhotoPromptService:
                         body_code = 0
 
                     if _is_fast_fallback_application_error(data):
-                        if audio_bytes and attempt < GPT55_MAX_ATTEMPTS - 1:
+                        if audio_bytes and attempt < GPT_MAX_ATTEMPTS - 1:
                             logger.warning(
-                                "GPT-5.5 application upstream error for audio, retrying: %s attempt=%d",
+                                "%s application upstream error for audio, retrying: %s attempt=%d",
+                                model,
                                 data,
                                 attempt,
                             )
@@ -335,113 +331,38 @@ class PhotoPromptService:
                             data = None
                             continue
                         logger.info(
-                            "GPT-5.5 application upstream error, fast fallback: %s",
+                            "%s application upstream error, switching model: %s",
+                            model,
                             data,
                         )
-                        raise RuntimeError(f"GPT-5.5 upstream error: {body_code}")
+                        raise RuntimeError(f"{model} upstream error: {body_code}")
 
                     if body_code >= 400:
                         logger.warning(
-                            "GPT-5.5 application error in body: %s attempt=%d",
+                            "%s application error in body: %s attempt=%d",
+                            model,
                             data,
                             attempt,
                         )
                         if (
-                            body_code in GPT55_RETRYABLE_BODY_CODES
-                            and attempt < GPT55_MAX_ATTEMPTS - 1
+                            body_code in GPT_RETRYABLE_BODY_CODES
+                            and attempt < GPT_MAX_ATTEMPTS - 1
                         ):
                             await asyncio.sleep(2**attempt)
                             data = None
                             continue
-                        raise RuntimeError(f"GPT-5.5 вернул ошибку: {body_code}")
+                        raise RuntimeError(f"{model} вернул ошибку: {body_code}")
             break
 
         if data is None:
-            raise RuntimeError("GPT-5.5 не вернул данных после всех попыток")
+            raise RuntimeError(f"{model} не вернул данных после всех попыток")
 
         raw_output = _extract_output_text(data)
         parsed = _parse_json_object(raw_output)
-        return _build_result(parsed, provider="gpt-5.5")
-
-    async def _analyze_with_claude(
-        self,
-        *,
-        image_url: str,
-        user_instruction: str,
-        headers: Dict[str, str],
-    ) -> Dict[str, Any]:
-        payload = {
-            "model": "claude-haiku-4-5",
-            "stream": False,
-            "max_tokens": 2048,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": SYSTEM_PROMPT + "\n\n" + user_instruction,
-                        },
-                        {
-                            "type": "image",
-                            "source": _build_claude_image_source(image_url),
-                        },
-                    ],
-                }
-            ],
-        }
-
-        timeout = aiohttp.ClientTimeout(total=90)
-
-        data: Optional[Dict[str, Any]] = None
-        for attempt in range(CLAUDE_MAX_ATTEMPTS):
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"{self.base_url}/claude/v1/messages",
-                    json=payload,
-                    headers=headers,
-                ) as response:
-                    text = await response.text()
-
-                    if response.status >= 500:
-                        logger.warning(
-                            "Claude Haiku fallback HTTP 5xx: status=%s body=%s attempt=%d",
-                            response.status,
-                            text[:1000],
-                            attempt,
-                        )
-                        if attempt < CLAUDE_MAX_ATTEMPTS - 1:
-                            await asyncio.sleep(2**attempt)
-                            continue
-                        raise RuntimeError(
-                            f"Claude Haiku недоступен. Код: {response.status}"
-                        )
-
-                    if response.status >= 400:
-                        logger.error(
-                            "Claude Haiku fallback failed: status=%s body=%s",
-                            response.status,
-                            text[:2000],
-                        )
-                        raise RuntimeError(
-                            f"Claude Haiku недоступен. Код: {response.status}"
-                        )
-
-                    try:
-                        data = json.loads(text)
-                    except Exception:
-                        raise RuntimeError("Claude Haiku вернул некорректный JSON")
-            break
-
-        if data is None:
-            raise RuntimeError("Claude Haiku не вернул данных после всех попыток")
-
-        raw_output = _extract_claude_text(data)
-        if not raw_output:
-            raise RuntimeError("Claude Haiku вернул пустой ответ")
-
-        parsed = _parse_json_object(raw_output)
-        return _build_result(parsed, provider="claude-haiku-4-5")
+        # Existing Telegram formatter treats any non-empty provider as a fallback
+        # note. Keep the primary provider empty; expose only the actual fallback.
+        provider = "" if model == self.model else model
+        return _build_result(parsed, provider=provider)
 
     async def analyze_photo(
         self,
@@ -470,13 +391,13 @@ class PhotoPromptService:
         if audio_bytes:
             if has_image:
                 audio_instruction = (
-                    "Listen to the audio prompt directly in this same GPT-5.5 request. "
+                    "Listen to the audio prompt directly in this same request. "
                     "Use it as the user's creative direction, include its transcript/summary "
                     "in the JSON fields, and combine it with the reference photo."
                 )
             else:
                 audio_instruction = (
-                    "Listen to the audio prompt directly in this GPT-5.5 request. "
+                    "Listen to the audio prompt directly in this request. "
                     "Turn the spoken idea into a polished standalone generation prompt, "
                     "include its transcript/summary in the JSON fields, and create a useful "
                     "Gemini Omni prompt from the voice context."
@@ -524,9 +445,10 @@ class PhotoPromptService:
             "Content-Type": "application/json",
         }
 
-        gpt_error: Optional[Exception] = None
+        primary_error: Optional[Exception] = None
         try:
-            return await self._analyze_with_gpt55(
+            return await self._analyze_with_gpt(
+                model=self.model,
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
@@ -534,32 +456,43 @@ class PhotoPromptService:
                 audio_format=audio_format,
             )
         except Exception as exc:
-            gpt_error = exc
-            if audio_bytes:
-                failure_target = "фото и голос" if has_image else "голос"
-                raise RuntimeError(
-                    f"Не удалось разобрать {failure_target} через GPT-5.5: {exc}"
-                ) from exc
+            primary_error = exc
+            logger.warning(
+                "Photo prompt primary model %s failed; trying %s: %s",
+                self.model,
+                self.fallback_model,
+                exc,
+            )
+
+        if not self.fallback_model or self.fallback_model == self.model:
+            raise RuntimeError(
+                f"Не удалось разобрать запрос через {self.model}: {primary_error}"
+            ) from primary_error
 
         try:
-            result = await self._analyze_with_claude(
+            return await self._analyze_with_gpt(
+                model=self.fallback_model,
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
             )
-            logger.info(
-                "GPT-5.5 failed (%s); Claude Haiku fallback succeeded",
-                gpt_error,
-            )
-            return result
         except Exception as fallback_exc:
             logger.error(
-                "Claude Haiku fallback failed after GPT-5.5 failure (%s): %s",
-                gpt_error,
+                "Photo prompt fallback %s failed after %s failure (%s): %s",
+                self.fallback_model,
+                self.model,
+                primary_error,
                 fallback_exc,
             )
+            target = "фото и голос" if has_image and has_audio else (
+                "голос" if has_audio else "фото"
+            )
             raise RuntimeError(
-                f"Не удалось разобрать фото через fallback: {fallback_exc}"
+                f"Не удалось разобрать {target}: "
+                f"{self.model}: {primary_error}; "
+                f"{self.fallback_model}: {fallback_exc}"
             ) from fallback_exc
 
 
