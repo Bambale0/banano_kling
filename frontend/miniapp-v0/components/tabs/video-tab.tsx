@@ -24,7 +24,7 @@ export function VideoTab() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastРезультат, setLastРезультат] = useState<Task | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>('regular')
+  const [videoMode, setVideoMode] = useState<'regular' | 'seedance25'>('seedance25')
   const [seedanceQueued, setSeedanceQueued] = useState<Seedance25GenerateResponse | null>(null)
 
   const seedance25Model = useMemo(
@@ -142,30 +142,36 @@ export function VideoTab() {
       </div>
 
       {canUseSeedance25 ? (
-        <div className="mx-auto mb-4 grid max-w-xl grid-cols-2 gap-2 rounded-2xl border border-cyan/20 bg-background/40 p-1.5">
-          <button
-            type="button"
-            onClick={() => setVideoMode('regular')}
-            className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
-              effectiveMode === 'regular'
-                ? 'bg-secondary text-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Все модели
-          </button>
-          <button
-            type="button"
-            onClick={() => setVideoMode('seedance25')}
-            className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
-              effectiveMode === 'seedance25'
-                ? 'bg-cyan/15 text-cyan'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <span className="mr-1 rounded-full border border-gold/40 bg-gold/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-gold">NEW</span>
-            Seedance 2.5
-          </button>
+        <div className="mx-auto mb-4 max-w-xl space-y-2">
+          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Выберите модель
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-2xl border border-gold/25 bg-background/45 p-1.5">
+            <button
+              type="button"
+              onClick={() => setVideoMode('seedance25')}
+              className={`rounded-xl px-3 py-3 text-xs font-semibold transition ${
+                effectiveMode === 'seedance25'
+                  ? 'border border-gold/45 bg-gold/15 text-gold shadow-[0_0_18px_rgba(251,191,36,0.10)]'
+                  : 'border border-transparent text-muted-foreground hover:bg-gold/5 hover:text-foreground'
+              }`}
+            >
+              <span className="block text-[10px] font-black uppercase tracking-[0.16em]">🔥🆕 NEW</span>
+              <span className="mt-0.5 block text-sm">Seedance 2.5</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setVideoMode('regular')}
+              className={`rounded-xl px-3 py-3 text-xs font-medium transition ${
+                effectiveMode === 'regular'
+                  ? 'border border-border bg-secondary text-foreground'
+                  : 'border border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+              }`}
+            >
+              <span className="block text-[10px] uppercase tracking-[0.14em] opacity-70">Каталог</span>
+              <span className="mt-0.5 block text-sm">Другие модели</span>
+            </button>
+          </div>
         </div>
       ) : null}
 
