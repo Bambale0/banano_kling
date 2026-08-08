@@ -329,6 +329,112 @@ def _is_payment_path(path: Any) -> bool:
     return str(path or "").rstrip("/").endswith("/api/create-payment")
 
 
+def _is_partner_overview_path(path: Any) -> bool:
+    return str(path or "").rstrip("/").endswith("/api/partner-overview")
+
+
+def _is_action_path(path: Any) -> bool:
+    return str(path or "").rstrip("/").endswith("/api/action")
+
+
+async def _partner_overview_with_approval(
+    original_handler: RequestHandler,
+    request: web.Request,
+) -> web.StreamResponse:
+    response = await original_handler(request)
+    if not isinstance(response, web.Response) or response.status >= 400:
+        return response
+
+    try:
+        payload = json.loads(response.text)
+    except (TypeError, ValueError):
+        return response
+    if not isinstance(payload, dict):
+        return response
+
+    miniapp_module = _get_miniapp_module()
+    try:
+        body = await miniapp_module._miniapp_payload(request)
+        auth_payload = miniapp_module._validate_init_data(
+            str(body.get("init_data") or ""),
+            config.BOT_TOKEN,
+        )
+        telegram_id = int(auth_payload["user"]["id"])
+    except (KeyError, TypeError, ValueError):
+        return response
+
+    from bot.services.partner_approval_service import get_partner_application_state
+
+    approval = await get_partner_application_state(telegram_id)
+    approval_status = str(approval.get("status") or "available")
+    is_approved = bool(approval.get("is_partner"))
+
+    payload["application_status"] = approval_status
+    payload["application_id"] = approval.get("application_id")
+    payload["can_apply"] = bool(approval.get("can_apply"))
+    payload["is_partner"] = is_approved
+    payload["status"] = "partner" if is_approved else approval_status
+    if not is_approved:
+        # The user's profile code still exists for profile/feed addressing, but
+        # it must not be exposed as an active partner link before approval.
+        payload["referral_link"] = ""
+        payload["referral_bot_link"] = ""
+
+    headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "content-type"}
+    }
+    return web.json_response(payload, status=response.status, headers=headers)
+
+
+async def _partner_action_with_approval(
+    original_handler: RequestHandler,
+    request: web.Request,
+) -> web.StreamResponse:
+    miniapp_module = _get_miniapp_module()
+    body = await miniapp_module._miniapp_payload(request)
+    if str(body.get("action") or "").strip() != "partner_apply":
+        return await original_handler(request)
+
+    try:
+        telegram_id, _ctx = await miniapp_module._get_user_context(
+            request.app,
+            str(body.get("init_data") or ""),
+            body.get("start_param_fallback"),
+        )
+    except ValueError as error:
+        return web.json_response(
+            {"ok": False, "error": str(error) or "Telegram auth failed"},
+            status=401,
+        )
+
+    from bot.services.partner_approval_service import (
+        notify_admins_about_partner_application,
+        submit_partner_application,
+    )
+
+    result = await submit_partner_application(
+        telegram_id,
+        source="miniapp",
+    )
+    application_id = result.get("application_id")
+    if result.get("created") and application_id:
+        await notify_admins_about_partner_application(
+            request.app.get("bot"),
+            int(application_id),
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "status": result.get("status"),
+            "application_id": application_id,
+            "created": bool(result.get("created")),
+        }
+    )
+
+
 def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
     wrapped = handler
 
@@ -358,6 +464,24 @@ def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
             return await _secure_create_payment(original, request)
 
         wrapped = guarded_create_payment
+
+    if _is_partner_overview_path(path):
+        original = wrapped
+
+        @wraps(original)
+        async def guarded_partner_overview(request: web.Request) -> web.StreamResponse:
+            return await _partner_overview_with_approval(original, request)
+
+        wrapped = guarded_partner_overview
+
+    if _is_action_path(path):
+        original = wrapped
+
+        @wraps(original)
+        async def guarded_action(request: web.Request) -> web.StreamResponse:
+            return await _partner_action_with_approval(original, request)
+
+        wrapped = guarded_action
 
     if _is_miniapp_api_path(path):
         wrapped = _wrap_ban_guard(wrapped)
