@@ -4,7 +4,7 @@ import html
 import logging
 
 from aiogram import F, Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 
 from bot.config import config
@@ -110,7 +110,7 @@ async def _render_partner_entry(target: types.Message, telegram_id: int) -> None
     )
 
 
-@user_router.message(Command("ref", "earn", "partner"))
+@user_router.message(Command("ref", "earn", "partner"), StateFilter(None))
 async def partner_command(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     await _render_partner_entry(message, message.from_user.id)
