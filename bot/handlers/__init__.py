@@ -10,6 +10,7 @@ from bot.services.lava_binding_schema_compat import (
 )
 from bot.services.lava_invoice_compat import install_lava_invoice_compat
 from bot.services.lava_payment_safety import install_lava_payment_safety
+from bot.services.partner_approval_service import install_partner_referral_approval_guard
 from bot.services.prompt_fragment_coalescer import PromptFragmentCoalescingMiddleware
 from bot.services.publication_scope_postgres_compat import (
     install_publication_scope_postgres_compat,
@@ -56,6 +57,8 @@ from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
 from .image_analyzer import router as legacy_image_analyzer_router
 from .notification_campaigns import router as notification_campaigns_router
+from .partner_approval import admin_router as partner_approval_admin_router
+from .partner_approval import user_router as partner_approval_user_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
 from .repeat_result_compat import router as repeat_result_compat_router
@@ -79,9 +82,11 @@ from .seedance_multimodal_compat import (
 )
 from .support import router as support_router
 
-# User moderation handlers must run before the legacy admin router because they
-# replace only the existing waiting_user_id card and add ban/unban callbacks.
+# Partner applications and moderation handlers must run before the legacy admin
+# router. Existing partners continue to use partner_agreed_at as the financial
+# activation flag, while new applications are approved explicitly.
 admin_router = Router()
+admin_router.include_router(partner_approval_admin_router)
 admin_router.include_router(admin_user_ban_router)
 admin_router.include_router(admin_module.router)
 
@@ -154,8 +159,10 @@ install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
 install_own_profile_feed_compat()
+install_partner_referral_approval_guard()
 install_miniapp_regression_safety()
 common_router = Router()
+common_router.include_router(partner_approval_user_router)
 common_router.include_router(trend_video_compat_router)
 common_router.include_router(trend_text_upload_router)
 common_router.include_router(trends_compat_router)

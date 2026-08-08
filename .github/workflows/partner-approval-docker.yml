@@ -1,0 +1,54 @@
+name: Partner Approval Production Docker Validation
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'bot/services/partner_approval_service.py'
+      - 'bot/handlers/partner_approval.py'
+      - 'bot/handlers/miniapp_regression_safety.py'
+      - 'bot/handlers/__init__.py'
+      - 'Dockerfile'
+      - 'compose.backend.yml'
+      - '.github/workflows/partner-approval-docker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  production_image_partner_approval:
+    name: Production image — compile and import partner approval runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build production image
+        run: docker build --pull -t banano-kling-partner-approval:test .
+
+      - name: Compile Python inside production image
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            banano-kling-partner-approval:test \
+            -m compileall -q /app/bot
+
+      - name: Import production runtime modules
+        run: |
+          docker run --rm \
+            -e BOT_TOKEN=123456:TEST_TOKEN_FOR_CI_ONLY \
+            -e BANANO_SKIP_PROJECT_ENV=1 \
+            -e DATABASE_URL=sqlite:////tmp/partner-import.db \
+            --entrypoint python \
+            banano-kling-partner-approval:test \
+            -c "import bot.config, bot.database, bot.services.partner_approval_service, bot.handlers.partner_approval, bot.handlers, bot.miniapp, bot.main; print('production imports: ok')"
+
+      - name: Validate backend compose contract
+        run: |
+          # Production keeps secrets in a required local .env that is intentionally
+          # absent from git. Compose contract validation only needs the file to
+          # exist; service variables have safe defaults for rendering.
+          : > .env
+          docker compose -f compose.backend.yml config >/tmp/compose.backend.rendered.yml

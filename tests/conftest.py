@@ -3,11 +3,18 @@ import os
 # This must be set while pytest loads conftest, before test modules import
 # bot.config. Unit and integration tests must never read production .env files.
 os.environ["BANANO_SKIP_PROJECT_ENV"] = "1"
+_PARTNER_POSTGRES_TEST = str(os.getenv("PARTNER_POSTGRES_TEST", "")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # A developer may run pytest from a production-like shell where values from
 # `.env` are already exported. Skipping dotenv loading alone is insufficient in
 # that case, so remove every application setting present in the production env
-# contract before bot modules are imported.
+# contract before bot modules are imported. The dedicated partner PostgreSQL
+# job is the only exception: it must preserve its explicit ephemeral CI DSN.
 for _name in (
     "ALLOW_NSFW", "CRYPTOBOT_API_TOKEN", "DATABASE_URL", "DEBUG",
     "DOWNLOAD_EXTERNAL_IMAGES", "FREEKASSA_API_KEY", "FREEKASSA_CURRENCY",
@@ -29,6 +36,8 @@ for _name in (
     "WEBHOOK_HOST", "WEBHOOK_PATH", "WEBHOOK_PORT", "YOOKASSA_RETURN_URL",
     "YOOKASSA_SECRET_KEY", "YOOKASSA_SHOP_ID", "YOOKASSA_WEBHOOK_URL",
 ):
+    if _PARTNER_POSTGRES_TEST and _name == "DATABASE_URL":
+        continue
     os.environ.pop(_name, None)
 
 os.environ["BOT_TOKEN"] = "test:fake-bot-token"
@@ -66,7 +75,17 @@ def temp_db_path(tmp_path):
 
 @pytest.fixture(autouse=True)
 async def isolated_database(tmp_path, monkeypatch):
-    """Run every test against a fresh SQLite database, never the live bot.db."""
+    """Use SQLite by default; dedicated partner CI may opt into ephemeral PostgreSQL."""
+    if _PARTNER_POSTGRES_TEST:
+        from bot import db as db_backend
+
+        assert db_backend.is_postgres()
+        # Production PostgreSQL already has the legacy base schema. The focused
+        # partner test bootstraps that minimal schema directly before exercising
+        # the normal postgres_aiosqlite runtime adapter.
+        yield
+        return
+
     db_path = tmp_path / "test.db"
     sqlite_url = f"sqlite:///{db_path}"
     monkeypatch.setenv("DATABASE_URL", sqlite_url)

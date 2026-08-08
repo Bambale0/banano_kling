@@ -1,0 +1,57 @@
+name: Partner Approval Python Regression
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'bot/services/partner_approval_service.py'
+      - 'bot/handlers/partner_approval.py'
+      - 'bot/handlers/miniapp_regression_safety.py'
+      - 'bot/handlers/__init__.py'
+      - 'tests/test_partner_approval_workflow.py'
+      - 'tests/test_partner_approval_miniapp.py'
+      - 'tests/test_partner_approval_handlers.py'
+      - 'tests/test_partner_approval_notifications.py'
+      - 'tests/test_referral_system.py'
+      - 'tests/test_miniapp_ban_guard.py'
+      - '.github/workflows/partner-approval-python.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  partner_python_regression:
+    name: Python — partner workflow plus legacy referral and Mini App guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BOT_TOKEN: 123456:TEST_TOKEN_FOR_CI_ONLY
+      BANANO_SKIP_PROJECT_ENV: '1'
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio pytest-mock
+          pip install --quiet -r requirements.txt
+          python -m pip check
+
+      - name: Run partner and legacy referral regression suite
+        run: |
+          pytest -vv --tb=short \
+            tests/test_partner_approval_workflow.py \
+            tests/test_partner_approval_miniapp.py \
+            tests/test_partner_approval_handlers.py \
+            tests/test_partner_approval_notifications.py \
+            tests/test_referral_system.py \
+            tests/test_miniapp_ban_guard.py

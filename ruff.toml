@@ -3,6 +3,8 @@
 # adapters; changed-line linting remains enabled for the rest of the project.
 
 [lint.per-file-ignores]
+"bot/handlers/__init__.py" = ["I001"]
+"bot/services/partner_approval_service.py" = ["SIM117"]
 "bot/handlers/seedance_25_fullstack.py" = [
   "BLE001",
   "F841",
