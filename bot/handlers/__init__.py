@@ -20,6 +20,8 @@ from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
 from .miniapp_regression_safety import install_miniapp_regression_safety
+from .nexus_admin_test import install_admin_test_menu_button
+from .nexus_admin_test import router as nexus_admin_test_router
 from .own_profile_feed_compat import install_own_profile_feed_compat
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 
@@ -40,6 +42,9 @@ from .trends_compat import router as trends_compat_router
 
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
+# Nexus is test-only and must patch the keyboard before common.py imports the
+# production get_main_menu_keyboard by name. The sandbox itself remains admin-only.
+install_admin_test_menu_button()
 
 from . import admin as admin_module
 from . import common as common_module
@@ -163,6 +168,7 @@ install_partner_referral_approval_guard()
 install_miniapp_regression_safety()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
+common_router.include_router(nexus_admin_test_router)
 common_router.include_router(trend_video_compat_router)
 common_router.include_router(trend_text_upload_router)
 common_router.include_router(trends_compat_router)
@@ -181,6 +187,7 @@ __all__ = [
     "generation_router",
     "image_analyzer_router",
     "lava_checkout_router",
+    "nexus_admin_test_router",
     "notification_campaigns_router",
     "payments_router",
     "prompt_analyzer_v2_router",
