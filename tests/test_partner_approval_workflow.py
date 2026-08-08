@@ -301,6 +301,7 @@ def test_telegram_legacy_entry_points_are_intercepted_before_common_router():
     assert 'Command("ref", "earn", "partner")' in approval_source
     assert 'F.data.in_({"menu_referrals", "menu_partner"})' in approval_source
     assert 'F.data == "partner_accept"' in approval_source
+    assert 'F.data == "partner_stats"' in approval_source
 
 
 def test_miniapp_partner_ui_requires_explicit_application_action():
