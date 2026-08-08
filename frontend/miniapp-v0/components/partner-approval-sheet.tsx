@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BriefcaseBusiness, CheckCircle2, Copy, Loader2, RefreshCw, Send, ShieldCheck, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -40,7 +40,7 @@ export function PartnerApprovalSheet() {
   const isPending = status === 'pending'
   const isRejected = status === 'rejected'
 
-  async function loadPartnerData() {
+  const loadPartnerData = useCallback(async () => {
     setIsLoading(true)
     try {
       const data = await fetchPartnerOverview()
@@ -51,7 +51,7 @@ export function PartnerApprovalSheet() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [])
 
   async function submitApplication() {
     if (isSubmitting) return
@@ -73,7 +73,7 @@ export function PartnerApprovalSheet() {
   useEffect(() => {
     if (!isOpen) return
     void loadPartnerData()
-  }, [isOpen])
+  }, [isOpen, loadPartnerData])
 
   const referralLink = isApproved ? partner?.referral_link || '' : ''
 
