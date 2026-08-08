@@ -47,7 +47,7 @@ async def _bootstrap_production_like_partner_schema() -> None:
                     partner_tier TEXT DEFAULT 'basic',
                     channel_url TEXT,
                     photo_url TEXT,
-                    is_banned BOOLEAN DEFAULT FALSE,
+                    is_banned INTEGER DEFAULT 0,
                     banned_at TIMESTAMP,
                     banned_by_telegram_id BIGINT
                 )
