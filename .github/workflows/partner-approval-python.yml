@@ -11,6 +11,7 @@ on:
       - 'tests/test_partner_approval_workflow.py'
       - 'tests/test_partner_approval_miniapp.py'
       - 'tests/test_partner_approval_handlers.py'
+      - 'tests/test_partner_approval_notifications.py'
       - 'tests/test_referral_system.py'
       - 'tests/test_miniapp_ban_guard.py'
       - '.github/workflows/partner-approval-python.yml'
@@ -51,5 +52,6 @@ jobs:
             tests/test_partner_approval_workflow.py \
             tests/test_partner_approval_miniapp.py \
             tests/test_partner_approval_handlers.py \
+            tests/test_partner_approval_notifications.py \
             tests/test_referral_system.py \
             tests/test_miniapp_ban_guard.py
