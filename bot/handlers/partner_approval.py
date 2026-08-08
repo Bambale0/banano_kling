@@ -110,7 +110,7 @@ async def _render_partner_entry(target: types.Message, telegram_id: int) -> None
     )
 
 
-@user_router.message(Command("partner"))
+@user_router.message(Command("ref", "earn", "partner"))
 async def partner_command(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     await _render_partner_entry(message, message.from_user.id)
