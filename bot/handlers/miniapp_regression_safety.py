@@ -26,6 +26,7 @@ _REQUEST_LAVA_EMAIL: ContextVar[str | None] = ContextVar(
 )
 
 _INSTALLED = False
+_ORIGINAL_ADD_GET: Callable[..., Any] | None = None
 _ORIGINAL_ADD_POST: Callable[..., Any] | None = None
 _ORIGINAL_LAVA_CREATE_INVOICE: Callable[..., Awaitable[dict[str, Any]]] | None = None
 _PAYMENT_EMAIL_SCHEMA_READY = False
@@ -254,6 +255,67 @@ async def _create_invoice_with_request_email(*args: Any, **kwargs: Any) -> dict[
     return await _ORIGINAL_LAVA_CREATE_INVOICE(*args, **kwargs)
 
 
+def _miniapp_api_root() -> str:
+    value = str(getattr(config, "MINI_APP_PATH", "") or "/mini-app").strip()
+    if not value.startswith("/"):
+        value = f"/{value}"
+    return value.rstrip("/") or "/mini-app"
+
+
+def _is_miniapp_api_path(path: Any) -> bool:
+    normalized = str(path or "")
+    return normalized.startswith(f"{_miniapp_api_root()}/api/") or normalized.startswith(
+        "/api/v1/"
+    )
+
+
+async def _banned_miniapp_response(request: web.Request) -> web.Response | None:
+    """Return 403 for an authenticated banned Mini App user.
+
+    Missing or invalid initData is deliberately left to the original route so
+    existing authentication/error semantics do not change.
+    """
+
+    miniapp_module = _get_miniapp_module()
+    try:
+        body = await miniapp_module._miniapp_payload(request)
+        init_data = str(body.get("init_data") or "")
+        if not init_data:
+            return None
+        auth_payload = miniapp_module._validate_init_data(init_data, config.BOT_TOKEN)
+        telegram_id = int(auth_payload["user"]["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    if config.is_admin(telegram_id):
+        return None
+
+    from bot.database import is_user_banned
+
+    if not await is_user_banned(telegram_id):
+        return None
+
+    return web.json_response(
+        {
+            "ok": False,
+            "error": "⛔ Доступ к сервису ограничен.",
+            "code": "user_banned",
+        },
+        status=403,
+    )
+
+
+def _wrap_ban_guard(handler: RequestHandler) -> RequestHandler:
+    @wraps(handler)
+    async def guarded(request: web.Request) -> web.StreamResponse:
+        blocked = await _banned_miniapp_response(request)
+        if blocked is not None:
+            return blocked
+        return await handler(request)
+
+    return guarded
+
+
 def _is_trend_submit_path(path: Any) -> bool:
     normalized = str(path or "").rstrip("/")
     return normalized.endswith("/api/prompts/submit") or normalized in _TREND_SUBMIT_PATHS
@@ -268,28 +330,59 @@ def _is_payment_path(path: Any) -> bool:
 
 
 def _wrap_post_handler(path: Any, handler: RequestHandler) -> RequestHandler:
-    if _is_trend_submit_path(path):
-        @wraps(handler)
-        async def guarded_trend_submit(request: web.Request) -> web.StreamResponse:
-            return await _secure_prompt_submit(handler, request)
+    wrapped = handler
 
-        return guarded_trend_submit
+    if _is_trend_submit_path(path):
+        original = wrapped
+
+        @wraps(original)
+        async def guarded_trend_submit(request: web.Request) -> web.StreamResponse:
+            return await _secure_prompt_submit(original, request)
+
+        wrapped = guarded_trend_submit
 
     if _is_bootstrap_path(path):
-        @wraps(handler)
-        async def guarded_bootstrap(request: web.Request) -> web.StreamResponse:
-            return await _secure_bootstrap(handler, request)
+        original = wrapped
 
-        return guarded_bootstrap
+        @wraps(original)
+        async def guarded_bootstrap(request: web.Request) -> web.StreamResponse:
+            return await _secure_bootstrap(original, request)
+
+        wrapped = guarded_bootstrap
 
     if _is_payment_path(path):
-        @wraps(handler)
+        original = wrapped
+
+        @wraps(original)
         async def guarded_create_payment(request: web.Request) -> web.StreamResponse:
-            return await _secure_create_payment(handler, request)
+            return await _secure_create_payment(original, request)
 
-        return guarded_create_payment
+        wrapped = guarded_create_payment
 
-    return handler
+    if _is_miniapp_api_path(path):
+        wrapped = _wrap_ban_guard(wrapped)
+
+    return wrapped
+
+
+def _wrap_get_handler(path: Any, handler: RequestHandler) -> RequestHandler:
+    return _wrap_ban_guard(handler) if _is_miniapp_api_path(path) else handler
+
+
+def _guarded_add_get(
+    dispatcher: web.UrlDispatcher,
+    path: Any,
+    handler: RequestHandler,
+    **kwargs: Any,
+) -> Any:
+    if _ORIGINAL_ADD_GET is None:
+        raise RuntimeError("Mini App route safety is not installed")
+    return _ORIGINAL_ADD_GET(
+        dispatcher,
+        path,
+        _wrap_get_handler(path, handler),
+        **kwargs,
+    )
 
 
 def _guarded_add_post(
@@ -312,15 +405,18 @@ def install_miniapp_regression_safety() -> None:
     """Install import-safe route guards before Mini App routes are registered."""
 
     global _INSTALLED
+    global _ORIGINAL_ADD_GET
     global _ORIGINAL_ADD_POST
     global _ORIGINAL_LAVA_CREATE_INVOICE
 
     if _INSTALLED:
         return
 
+    _ORIGINAL_ADD_GET = web.UrlDispatcher.add_get
     _ORIGINAL_ADD_POST = web.UrlDispatcher.add_post
     _ORIGINAL_LAVA_CREATE_INVOICE = lava_service.create_invoice
 
+    web.UrlDispatcher.add_get = _guarded_add_get
     web.UrlDispatcher.add_post = _guarded_add_post
     lava_service.create_invoice = _create_invoice_with_request_email
 
