@@ -133,6 +133,25 @@ async def partner_menu(callback: types.CallbackQuery, state: FSMContext) -> None
     await callback.answer()
 
 
+@user_router.callback_query(F.data == "partner_stats")
+async def partner_stats_gate(callback: types.CallbackQuery) -> None:
+    """Block stale legacy partner-stat buttons until admin approval."""
+
+    partner_state = await get_partner_application_state(callback.from_user.id)
+    if partner_state["status"] == PARTNER_APPLICATION_APPROVED:
+        from bot.handlers.common import partner_stats
+
+        await partner_stats(callback)
+        return
+
+    await callback.message.edit_text(
+        _preapproval_text(str(partner_state["status"])),
+        reply_markup=_preapproval_keyboard(str(partner_state["status"])),
+        parse_mode="HTML",
+    )
+    await callback.answer("Партнёрский кабинет ещё не активирован")
+
+
 @user_router.callback_query(F.data == "partner_accept")
 async def partner_application_submit(callback: types.CallbackQuery, state: FSMContext) -> None:
     await state.clear()
