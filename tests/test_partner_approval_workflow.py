@@ -335,6 +335,7 @@ def test_miniapp_backend_intercepts_partner_overview_and_action_server_side():
 
     assert 'endswith("/api/partner-overview")' in source
     assert 'endswith("/api/action")' in source
-    assert 'body.get("action") == "partner_apply"' in source
+    assert '"partner_apply"' in source
+    assert "_partner_action_with_approval" in source
     assert 'payload["referral_link"] = ""' in source
     assert 'payload["referral_bot_link"] = ""' in source
