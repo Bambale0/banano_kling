@@ -212,7 +212,7 @@ async def submit_partner_application(
     *,
     source: str,
 ) -> dict[str, Any]:
-    """Create or re-submit a partner application idempotently."""
+    """Create or re-submit a partner application idempotently and race-safely."""
 
     await ensure_partner_approval_schema()
     user = await get_or_create_user(int(telegram_id))
@@ -226,66 +226,59 @@ async def submit_partner_application(
         }
 
     clean_source = str(source or "unknown").strip()[:32] or "unknown"
+    created = False
     async with db_backend.connect(DATABASE_PATH, timeout=15) as db:
         db.row_factory = db_backend.Row
         await db.execute("BEGIN IMMEDIATE")
         try:
-            current_cursor = await db.execute(
+            # Re-submission is allowed only from rejected -> pending. The
+            # conditional update makes concurrent re-submits single-winner.
+            update_cursor = await db.execute(
+                """
+                UPDATE partner_applications
+                SET status = 'pending', source = ?, requested_at = CURRENT_TIMESTAMP,
+                    reviewed_at = NULL, reviewed_by_telegram_id = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND status = 'rejected'
+                """,
+                (clean_source, user.id),
+            )
+            if update_cursor.rowcount == 1:
+                created = True
+            else:
+                # Initial submission: only one concurrent request can insert.
+                insert_cursor = await db.execute(
+                    """
+                    INSERT INTO partner_applications (
+                        user_id, status, source, requested_at, reviewed_at,
+                        reviewed_by_telegram_id, updated_at
+                    )
+                    VALUES (?, 'pending', ?, CURRENT_TIMESTAMP, NULL, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id) DO NOTHING
+                    """,
+                    (user.id, clean_source),
+                )
+                created = insert_cursor.rowcount == 1
+
+            cursor = await db.execute(
                 "SELECT id, status FROM partner_applications WHERE user_id = ? LIMIT 1",
                 (user.id,),
             )
-            current = await current_cursor.fetchone()
-            if current and str(current["status"]) == PARTNER_APPLICATION_PENDING:
-                await db.rollback()
-                return {
-                    "ok": True,
-                    "created": False,
-                    "status": PARTNER_APPLICATION_PENDING,
-                    "is_partner": False,
-                    "application_id": int(current["id"]),
-                }
-            if current and str(current["status"]) == PARTNER_APPLICATION_APPROVED:
-                await db.rollback()
-                return {
-                    "ok": True,
-                    "created": False,
-                    "status": PARTNER_APPLICATION_APPROVED,
-                    "is_partner": True,
-                    "application_id": int(current["id"]),
-                }
-
-            await db.execute(
-                """
-                INSERT INTO partner_applications (
-                    user_id, status, source, requested_at, reviewed_at,
-                    reviewed_by_telegram_id, updated_at
-                )
-                VALUES (?, 'pending', ?, CURRENT_TIMESTAMP, NULL, NULL, CURRENT_TIMESTAMP)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    status = 'pending',
-                    source = excluded.source,
-                    requested_at = CURRENT_TIMESTAMP,
-                    reviewed_at = NULL,
-                    reviewed_by_telegram_id = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user.id, clean_source),
-            )
-            cursor = await db.execute(
-                "SELECT id FROM partner_applications WHERE user_id = ? LIMIT 1",
-                (user.id,),
-            )
             row = await cursor.fetchone()
+            if not row:
+                await db.rollback()
+                raise RuntimeError("Partner application row was not created")
             await db.commit()
         except Exception:
             await db.rollback()
             raise
 
+    status = str(row["status"] or PARTNER_APPLICATION_PENDING)
     return {
         "ok": True,
-        "created": True,
-        "status": PARTNER_APPLICATION_PENDING,
-        "is_partner": False,
+        "created": created,
+        "status": status,
+        "is_partner": status == PARTNER_APPLICATION_APPROVED,
         "application_id": int(row["id"]),
     }
 
@@ -497,6 +490,24 @@ async def notify_user_about_partner_review(
         logger.exception("Failed to notify user %s about partner review", telegram_id)
 
 
+async def _query_referrer_approval(connection: Any, code: str) -> bool:
+    connection.row_factory = db_backend.Row
+    cursor = await connection.execute(
+        """
+        SELECT telegram_id, partner_agreed_at
+        FROM users
+        WHERE referral_code = ?
+        LIMIT 1
+        """,
+        (code,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return True  # let the canonical referral service report code_not_found
+    telegram_id = int(row["telegram_id"])
+    return bool(row["partner_agreed_at"]) or config.is_admin(telegram_id)
+
+
 async def _referrer_is_approved_by_code(
     referral_code: str,
     *,
@@ -505,30 +516,10 @@ async def _referrer_is_approved_by_code(
     code = str(referral_code or "").strip().upper()
     if not code:
         return False
-
-    owns_connection = db is None
-    connection = db
-    if connection is None:
-        connection = await db_backend.connect(DATABASE_PATH).__aenter__()
-    try:
-        connection.row_factory = db_backend.Row
-        cursor = await connection.execute(
-            """
-            SELECT telegram_id, partner_agreed_at
-            FROM users
-            WHERE referral_code = ?
-            LIMIT 1
-            """,
-            (code,),
-        )
-        row = await cursor.fetchone()
-        if not row:
-            return True  # let the canonical referral service report code_not_found
-        telegram_id = int(row["telegram_id"])
-        return bool(row["partner_agreed_at"]) or config.is_admin(telegram_id)
-    finally:
-        if owns_connection:
-            await connection.close()
+    if db is not None:
+        return await _query_referrer_approval(db, code)
+    async with db_backend.connect(DATABASE_PATH) as connection:
+        return await _query_referrer_approval(connection, code)
 
 
 async def _blocked_referral_result(
