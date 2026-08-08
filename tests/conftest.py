@@ -77,11 +77,12 @@ def temp_db_path(tmp_path):
 async def isolated_database(tmp_path, monkeypatch):
     """Use SQLite by default; dedicated partner CI may opt into ephemeral PostgreSQL."""
     if _PARTNER_POSTGRES_TEST:
-        from bot import database
         from bot import db as db_backend
 
         assert db_backend.is_postgres()
-        await database.init_db()
+        # Production PostgreSQL already has the legacy base schema. The focused
+        # partner test bootstraps that minimal schema directly before exercising
+        # the normal postgres_aiosqlite runtime adapter.
         yield
         return
 
