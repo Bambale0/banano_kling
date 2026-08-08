@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { ClientErrorBoundary } from './client-error-boundary'
 import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
+import { PartnerApprovalSheet } from './partner-approval-sheet'
 
 const TaskDetailPanel = dynamic(() =>
   import('./task-detail-panel').then((module) => module.TaskDetailPanel),
@@ -26,7 +27,7 @@ interface MiniAppShellProps {
 }
 
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state } = useApp()
+  const { state, activeWorkspace } = useApp()
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
 
@@ -55,7 +56,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
 
           <TaskDetailPanel />
           <BalanceSheet />
-          <WorkspaceSheet />
+          {activeWorkspace === 'partners' ? <PartnerApprovalSheet /> : <WorkspaceSheet />}
         </>
       )}
       <Toaster richColors position="top-center" />
