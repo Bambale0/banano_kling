@@ -11,8 +11,8 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.asyncio
 async def test_partner_approval_state_machine_on_postgres():
-    from bot import db as db_backend
     from bot import database
+    from bot import db as db_backend
     from bot.services import partner_approval_service as approval
     from bot.services import referral_service
 
@@ -102,8 +102,8 @@ async def test_partner_approval_state_machine_on_postgres():
 
 @pytest.mark.asyncio
 async def test_legacy_partner_is_grandfathered_on_postgres():
-    from bot import db as db_backend
     from bot import database
+    from bot import db as db_backend
     from bot.services import partner_approval_service as approval
 
     assert db_backend.is_postgres() is True
