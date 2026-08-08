@@ -4,6 +4,20 @@ import { PartnerApprovalSheet } from '@/components/partner-approval-sheet'
 import { executeMiniAppAction, fetchPartnerOverview } from '@/lib/api'
 import { useApp } from '@/lib/app-context'
 
+jest.mock('lucide-react', () => {
+  const Icon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />
+  return {
+    BriefcaseBusiness: Icon,
+    CheckCircle2: Icon,
+    Copy: Icon,
+    Loader2: Icon,
+    RefreshCw: Icon,
+    Send: Icon,
+    ShieldCheck: Icon,
+    XCircle: Icon,
+  }
+})
+
 jest.mock('@/lib/api', () => ({
   executeMiniAppAction: jest.fn(),
   fetchPartnerOverview: jest.fn(),
