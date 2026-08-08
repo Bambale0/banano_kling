@@ -60,7 +60,37 @@ tail -f /root/tanya/banano_kling/logs/bot.log
 
 Не отправлять логи целиком без очистки tokens, URLs с signatures, user data и payment payloads.
 
-## 4. Безопасное обновление backend
+## 4. Burst-autoban anti-fraud
+
+Партнёрский антифрод теперь автоматически банит владельца рефкода, если по нему за короткое окно приходит аномально плотная пачка новых рефералов.
+
+Текущие runtime-пороги задаются env-переменными:
+
+```text
+REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS
+REFERRAL_ANTIFRAUD_BURST_MAX
+```
+
+По умолчанию production считает suspicious burst как `6` привязок за `10` секунд.
+
+Что проверять оператору:
+
+1. открыть админку `Партнёры -> Burst autobans`;
+2. открыть карточку партнёра по кнопке из списка;
+3. сверить `referral_code`, `visitor_telegram_id`, `source`, `start_param`;
+4. при необходимости выгрузить deeper evidence через SQL по `referral_events`.
+
+Быстрый SQL:
+
+```sql
+SELECT created_at, visitor_telegram_id, clicked_code, source, start_param
+FROM referral_events
+WHERE reason = 'burst_autoban'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+## 5. Безопасное обновление backend
 
 ```bash
 cd /root/tanya/banano_kling
@@ -95,7 +125,7 @@ curl -fsS http://127.0.0.1:1888/health
 journalctl -u banano-kling.service -n 100 --no-pager
 ```
 
-## 5. Frontend deploy
+## 6. Frontend deploy
 
 ### Deploy
 
@@ -148,7 +178,7 @@ curl -i -X POST \
 - HTML вместо JSON — неверный route;
 - redirect loop — ошибка Nginx/base path.
 
-## 6. Frontend deploy logs
+## 7. Frontend deploy logs
 
 На операторском/backend host:
 
@@ -166,7 +196,7 @@ ssh root@91.200.84.187 '
 '
 ```
 
-## 7. Media checks
+## 8. Media checks
 
 Найти реальный публичный файл в `static/uploads/feed` и проверить:
 
@@ -192,7 +222,7 @@ curl -sSI https://media.chillcreative.ru/uploads/feed/<real-file.webp>
 - `cf-ray` присутствует;
 - `alt-svc` не рекламирует h3, если HTTP/3 временно отключён.
 
-## 8. Проверка bind mount media
+## 9. Проверка bind mount media
 
 ```bash
 findmnt /var/www/media.chillcreative.ru/uploads
@@ -209,7 +239,7 @@ sudo -u www-data test -r /var/www/media.chillcreative.ru/uploads
 
 Не менять права `/root` ради Nginx. Использовать bind mount.
 
-## 9. Nginx checks
+## 10. Nginx checks
 
 ### Backend/media host
 

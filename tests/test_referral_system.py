@@ -185,6 +185,52 @@ def test_process_referral_click_autobans_referrer_on_burst(tmp_path, monkeypatch
     asyncio.run(run())
 
 
+def test_get_admin_referral_burst_autobans_returns_recent_events(tmp_path, monkeypatch):
+    async def run():
+        monkeypatch.setenv("REFERRAL_ANTIFRAUD_BURST_MAX", "3")
+        monkeypatch.setenv("REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS", "60")
+        db = _reload_database(monkeypatch, tmp_path / "referral_burst_report.db")
+        from bot.services import referral_service as referral_service_module
+
+        referral_service = importlib.reload(referral_service_module)
+        monkeypatch.setattr(
+            referral_service,
+            "_notify_admins_about_referral_burst_autoban",
+            AsyncMock(),
+        )
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(6101)
+        await db.get_or_create_user(6102)
+        await db.get_or_create_user(6103)
+        trigger = await db.get_or_create_user(6104)
+
+        await referral_service.process_referral_click(6102, referrer.referral_code, source="test")
+        await referral_service.process_referral_click(6103, referrer.referral_code, source="test")
+        result = await referral_service.process_referral_click(
+            trigger.telegram_id,
+            referrer.referral_code,
+            source="start",
+            start_param=f"ref_{referrer.referral_code}",
+        )
+
+        assert result.reason == "burst_autoban"
+
+        report = await db.get_admin_referral_burst_autobans(limit=5)
+
+        assert report["total"] >= 1
+        assert report["last_24h"] >= 1
+        assert report["items"]
+        assert report["items"][0]["referrer_telegram_id"] == referrer.telegram_id
+        assert report["items"][0]["referral_code"] == referrer.referral_code
+        assert report["items"][0]["visitor_telegram_id"] == trigger.telegram_id
+        assert report["items"][0]["source"] == "start"
+        assert report["items"][0]["referrer_is_banned"] is True
+
+    asyncio.run(run())
+
+
 @pytest.mark.asyncio
 async def test_referral_notification_uses_username_not_telegram_id():
     from bot.handlers.common import _notify_partner_about_new_referral

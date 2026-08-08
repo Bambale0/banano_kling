@@ -25,6 +25,7 @@ from bot.database import (
     deduct_credits,
     export_users_for_admin,
     get_admin_finance_report,
+    get_admin_referral_burst_autobans,
     get_admin_partner_details,
     get_admin_partner_payment_report,
     get_admin_partner_stats,
@@ -696,6 +697,12 @@ def _admin_partners_keyboard(top_partners: list[dict]) -> types.InlineKeyboardMa
         ],
         [
             types.InlineKeyboardButton(
+                text="🚨 Burst autobans",
+                callback_data="admin_partner_burst_autobans",
+            )
+        ],
+        [
+            types.InlineKeyboardButton(
                 text="🔎 Открыть по Telegram ID",
                 callback_data="admin_partner_lookup",
             )
@@ -745,6 +752,37 @@ def _admin_partner_detail_keyboard(telegram_id: int) -> types.InlineKeyboardMark
             ],
         ]
     )
+
+
+def _admin_partner_burst_autobans_keyboard(items: list[dict]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = [
+        [
+            types.InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data="admin_partner_burst_autobans",
+            )
+        ]
+    ]
+
+    for item in items[:10]:
+        referrer_telegram_id = item.get("referrer_telegram_id")
+        if not referrer_telegram_id:
+            continue
+        rows.append(
+            [
+                types.InlineKeyboardButton(
+                    text=(
+                        f"ID {referrer_telegram_id} • "
+                        f"{item.get('referral_code') or '—'} • "
+                        f"{'бан' if item.get('referrer_is_banned') else 'нет бана'}"
+                    ),
+                    callback_data=f"admin_partner_view_{referrer_telegram_id}",
+                )
+            ]
+        )
+
+    rows.append([types.InlineKeyboardButton(text="🔙 К партнёрам", callback_data="admin_partners")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _admin_withdrawals_keyboard(withdrawals: list[dict]) -> types.InlineKeyboardMarkup:
@@ -1132,6 +1170,8 @@ def _format_admin_partners_text(stats: dict) -> str:
         f"• На балансах: <code>{stats['total_balance_rub']:.2f}</code> ₽",
         f"• Выведено: <code>{stats['total_withdrawn_rub']:.2f}</code> ₽",
         f"• Оборот рефералок: <code>{stats['total_partner_revenue_rub']:.2f}</code> ₽",
+        f"• Burst autobans за 24ч: <code>{stats.get('burst_autobans_24h', 0)}</code>",
+        f"• Burst autobans всего: <code>{stats.get('burst_autobans_total', 0)}</code>",
         "",
         "<b>Топ партнёров:</b>",
     ]
@@ -1148,6 +1188,38 @@ def _format_admin_partners_text(stats: dict) -> str:
             )
 
     lines.extend(["", "Можно открыть карточку партнёра по кнопке или ввести Telegram ID."])
+    return "\n".join(lines)
+
+
+def _format_admin_partner_burst_autobans_text(report: dict) -> str:
+    lines = [
+        "🚨 <b>Burst autobans</b>",
+        "",
+        f"• Всего событий: <code>{report.get('total', 0)}</code>",
+        f"• За 24 часа: <code>{report.get('last_24h', 0)}</code>",
+        f"• Последнее событие: <code>{report.get('latest_created_at') or '—'}</code>",
+        "",
+        "<b>Последние срабатывания:</b>",
+    ]
+
+    items = report.get("items") or []
+    if not items:
+        lines.append("• Нет событий burst_autoban")
+    else:
+        for item in items[:10]:
+            lines.append(
+                f"• <code>{item.get('referrer_telegram_id') or '—'}</code> "
+                f"(user_id <code>{item.get('referrer_user_id') or '—'}</code>) "
+                f"• код <code>{item.get('referral_code') or '—'}</code> "
+                f"• visitor <code>{item.get('visitor_telegram_id') or '—'}</code> "
+                f"• source <code>{html_utils.escape(item.get('source') or '—')}</code>"
+            )
+            lines.append(
+                f"  <code>{item.get('created_at') or '—'}</code> "
+                f"• start_param <code>{html_utils.escape(item.get('start_param') or '—')}</code> "
+                f"• статус <code>{'banned' if item.get('referrer_is_banned') else 'not banned'}</code>"
+            )
+
     return "\n".join(lines)
 
 
@@ -3473,6 +3545,24 @@ async def admin_partner_withdrawals(callback: types.CallbackQuery, state: FSMCon
         callback,
         _format_admin_withdrawals_text(withdrawals),
         reply_markup=_admin_withdrawals_keyboard(withdrawals),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_partner_burst_autobans")
+async def admin_partner_burst_autobans(callback: types.CallbackQuery, state: FSMContext):
+    """Показывает отдельный экран со срабатываниями burst_autoban."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+
+    await state.clear()
+    report = await get_admin_referral_burst_autobans()
+    await _safe_admin_edit(
+        callback,
+        _format_admin_partner_burst_autobans_text(report),
+        reply_markup=_admin_partner_burst_autobans_keyboard(report.get("items", [])),
         parse_mode="HTML",
     )
     await callback.answer()

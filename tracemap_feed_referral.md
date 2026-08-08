@@ -82,6 +82,9 @@ Prompt-related counters/events:
 `/start ref_CODE` or `?startapp=ref_CODE`
 -> referral code parsed
 -> user binding / attribution saved
+-> referral anti-fraud checks hourly, daily and burst thresholds
+-> suspicious burst may emit `referral_events.reason = burst_autoban`
+-> admin partner screen `Burst autobans` shows latest incidents
 -> later successful payment may trigger referral revenue path
 
 ## 6. Profile/channel flow

@@ -2555,6 +2555,22 @@ async def get_admin_partner_stats(limit: int = 10) -> dict:
         cursor = await db.execute(
             """
             SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(
+                    CASE
+                        WHEN datetime(created_at) >= datetime('now', '-1 day') THEN 1
+                        ELSE 0
+                    END
+                ), 0) AS last_24h
+            FROM referral_events
+            WHERE reason = 'burst_autoban'
+            """
+        )
+        burst_row = await cursor.fetchone()
+
+        cursor = await db.execute(
+            """
+            SELECT
                 u.telegram_id,
                 u.referral_code,
                 u.partner_balance_rub,
@@ -2605,6 +2621,8 @@ async def get_admin_partner_stats(limit: int = 10) -> dict:
                 summary_row["total_partner_revenue_rub"] or 0, 2
             ),
             "total_withdrawn_rub": round(withdrawn_row["total"] or 0, 2),
+            "burst_autobans_total": burst_row["total"] or 0,
+            "burst_autobans_24h": burst_row["last_24h"] or 0,
             "top_partners": [
                 {
                     "telegram_id": row["telegram_id"],
@@ -2618,6 +2636,72 @@ async def get_admin_partner_stats(limit: int = 10) -> dict:
                     "level2_count": row["level2_count"] or 0,
                 }
                 for row in partner_rows
+            ],
+        }
+
+
+async def get_admin_referral_burst_autobans(limit: int = 20) -> dict:
+    """Возвращает список последних autoban-событий по burst-антифроду."""
+    safe_limit = max(1, min(int(limit or 20), 100))
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+
+        summary_cursor = await db.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(
+                    CASE
+                        WHEN datetime(created_at) >= datetime('now', '-1 day') THEN 1
+                        ELSE 0
+                    END
+                ), 0) AS last_24h,
+                MAX(created_at) AS latest_created_at
+            FROM referral_events
+            WHERE reason = 'burst_autoban'
+            """
+        )
+        summary_row = await summary_cursor.fetchone()
+
+        events_cursor = await db.execute(
+            """
+            SELECT
+                re.id,
+                re.created_at,
+                re.clicked_referrer_id,
+                re.clicked_code,
+                re.visitor_telegram_id,
+                re.source,
+                re.start_param,
+                u.telegram_id AS referrer_telegram_id,
+                COALESCE(u.is_banned, 0) AS referrer_is_banned
+            FROM referral_events re
+            LEFT JOIN users u ON u.id = re.clicked_referrer_id
+            WHERE re.reason = 'burst_autoban'
+            ORDER BY re.created_at DESC, re.id DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+        event_rows = await events_cursor.fetchall()
+
+        return {
+            "total": summary_row["total"] or 0,
+            "last_24h": summary_row["last_24h"] or 0,
+            "latest_created_at": summary_row["latest_created_at"],
+            "items": [
+                {
+                    "id": row["id"],
+                    "created_at": row["created_at"],
+                    "referrer_user_id": row["clicked_referrer_id"],
+                    "referrer_telegram_id": row["referrer_telegram_id"],
+                    "referral_code": row["clicked_code"] or "",
+                    "visitor_telegram_id": row["visitor_telegram_id"],
+                    "source": row["source"] or "",
+                    "start_param": row["start_param"] or "",
+                    "referrer_is_banned": bool(row["referrer_is_banned"]),
+                }
+                for row in event_rows
             ],
         }
 
@@ -6791,6 +6875,7 @@ async def get_user_stats(telegram_id: int) -> dict:
             "generations": gen_row["count"] or 0,
             "total_spent": cost_row["total"] or 0,
             "member_since": user.created_at.strftime("%d.%m.%Y"),
+            "username": user.username or "",
             "referral_code": referral_stats["referral_code"],
             "referrals_count": referral_stats["referrals_count"],
             "referral_earned": referral_stats["referral_earned"],

@@ -30,6 +30,15 @@ def _user_status_text(is_banned: bool) -> str:
     return "🔴 Заблокирован" if is_banned else "🟢 Активен"
 
 
+def _user_profile_link(telegram_id: int, stats: dict) -> str:
+    username = str(stats.get("username") or "").strip().lstrip("@")
+    if username:
+        url = f"https://t.me/{username}"
+    else:
+        url = f"tg://user?id={telegram_id}"
+    return f'<a href="{html.escape(url, quote=True)}">{html.escape(url)}</a>'
+
+
 def _user_card_text(telegram_id: int, stats: dict) -> str:
     is_banned = bool(stats.get("is_banned"))
     return "\n".join(
@@ -37,6 +46,7 @@ def _user_card_text(telegram_id: int, stats: dict) -> str:
             "👤 <b>Пользователь</b>",
             "",
             f"🆔 Telegram ID: <code>{telegram_id}</code>",
+            f"🔗 Ссылка: {_user_profile_link(telegram_id, stats)}",
             f"🚦 Статус: <b>{_user_status_text(is_banned)}</b>",
             f"💰 Кредитов: <code>{html.escape(str(stats.get('credits', 0)))}</code>",
             f"📊 Генераций: <code>{html.escape(str(stats.get('generations', 0)))}</code>",

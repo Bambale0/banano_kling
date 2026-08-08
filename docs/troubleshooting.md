@@ -219,6 +219,43 @@ journalctl -u banano-kling.service -n 200 --no-pager
 
 ## 8. Bootstrap возвращает 401
 
+## 9. Подозрение на реферальную накрутку
+
+### Симптом
+
+- у партнёра пачками появляются рефералы за секунды;
+- в логах появляются `reason=hourly_limit`, `reason=daily_limit` или `reason=burst_autoban`;
+- админы получают alert `Автобан по реферальному антифроду`.
+
+### Что смотреть
+
+1. Telegram admin UI: `Партнёры -> Burst autobans`;
+2. карточку партнёра и его `referral_code`;
+3. последние события в `referral_events`;
+4. связанный `source` и `start_param`.
+
+### Проверка в БД
+
+```sql
+SELECT created_at, visitor_telegram_id, clicked_referrer_id, clicked_code, reason, source, start_param
+FROM referral_events
+WHERE clicked_referrer_id = <user_id>
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+### Интерпретация
+
+- `source=start` и `start_param=ref_CODE` обычно означает прямой deep link `/start ref_CODE`;
+- `burst_autoban` означает, что партнёр уже автоматически заблокирован;
+- `blocked_referrer` после этого означает повторные попытки по уже забаненному партнёру.
+
+### Дальше
+
+- проверить, не попал ли под бан честный burst из внешней рекламы;
+- если это false positive, снять бан вручную через админку пользователя;
+- если это накрутка, оставить бан и при необходимости добавить код в `REFERRAL_ANTIFRAUD_BLOCK_CODES`.
+
 ### Нормально
 
 - запрос сделан через curl без Telegram `initData`;
