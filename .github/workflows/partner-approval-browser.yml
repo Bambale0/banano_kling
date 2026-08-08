@@ -1,0 +1,75 @@
+name: Partner Approval Browser Smoke
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'frontend/miniapp-v0/components/partner-approval-sheet.tsx'
+      - 'frontend/miniapp-v0/components/mini-app-shell.tsx'
+      - 'frontend/miniapp-v0/scripts/partner-approval-browser-smoke.mjs'
+      - '.github/workflows/partner-approval-browser.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  browser_partner_approval:
+    name: Chromium — partner approval available → pending → approved
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked application dependencies
+        run: npm ci
+
+      # The repository's standard browser gate intentionally runs npm audit and
+      # remains authoritative for dependency security. This focused workflow
+      # skips only that duplicate gate so the feature's actual browser behavior
+      # is still exercised when baseline dependency advisories block E2E.
+      - name: Build production Mini App
+        run: npm run build
+
+      - name: Install Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare basePath static root
+        run: |
+          rm -rf /tmp/banano-partner-browser
+          mkdir -p /tmp/banano-partner-browser/mini-app
+          cp -R out/. /tmp/banano-partner-browser/mini-app/
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --directory /tmp/banano-partner-browser >/tmp/partner-browser-http.log 2>&1 &
+          echo $! >/tmp/partner-browser-http.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/mini-app/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/partner-browser-http.log
+          exit 1
+
+      - name: Run partner approval Chromium flow
+        env:
+          PARTNER_BROWSER_URL: http://127.0.0.1:4173/mini-app/
+        run: node scripts/partner-approval-browser-smoke.mjs
+
+      - name: Show static server log on failure
+        if: failure()
+        run: cat /tmp/partner-browser-http.log || true
