@@ -51,6 +51,7 @@ from . import (
 from . import (
     payments as payments_module,
 )
+from .admin_user_ban import router as admin_user_ban_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
 from .image_analyzer import router as legacy_image_analyzer_router
@@ -78,7 +79,11 @@ from .seedance_multimodal_compat import (
 )
 from .support import router as support_router
 
-admin_router = admin_module.router
+# User moderation handlers must run before the legacy admin router because they
+# replace only the existing waiting_user_id card and add ban/unban callbacks.
+admin_router = Router()
+admin_router.include_router(admin_user_ban_router)
+admin_router.include_router(admin_module.router)
 
 # Keep payment safety fixes without changing the established user-facing flow.
 install_lava_binding_schema_compat()
