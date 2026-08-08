@@ -9,6 +9,105 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+async def _bootstrap_production_like_partner_schema() -> None:
+    """Create only the legacy tables required by the partner/referral runtime.
+
+    Production PostgreSQL is an existing schema. The compatibility adapter does
+    not support cold-starting the entire SQLite DDL on an empty PostgreSQL DB,
+    so this focused CI job recreates the pre-existing contract explicitly and
+    then exercises all feature operations through db_backend.connect().
+    """
+
+    import psycopg
+
+    dsn = os.environ["DATABASE_URL"]
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    telegram_id BIGINT UNIQUE NOT NULL,
+                    credits DOUBLE PRECISION DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    referral_code TEXT UNIQUE,
+                    referred_by BIGINT REFERENCES users(id),
+                    referral_earned DOUBLE PRECISION DEFAULT 0,
+                    has_paid BOOLEAN DEFAULT FALSE,
+                    partner_agreed_at TIMESTAMP,
+                    partner_total_revenue_rub DOUBLE PRECISION DEFAULT 0,
+                    partner_balance_rub DOUBLE PRECISION DEFAULT 0,
+                    partner_withdrawn_rub DOUBLE PRECISION DEFAULT 0,
+                    prompt_repeat_balance_rub DOUBLE PRECISION DEFAULT 0,
+                    prompt_repeat_total_rub DOUBLE PRECISION DEFAULT 0,
+                    partner_tier TEXT DEFAULT 'basic',
+                    channel_url TEXT,
+                    photo_url TEXT,
+                    is_banned BOOLEAN DEFAULT FALSE,
+                    banned_at TIMESTAMP,
+                    banned_by_telegram_id BIGINT
+                )
+                """
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id),
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS referrals (
+                    id BIGSERIAL PRIMARY KEY,
+                    referrer_id BIGINT NOT NULL REFERENCES users(id),
+                    referred_id BIGINT NOT NULL REFERENCES users(id),
+                    bonus_credits DOUBLE PRECISION DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(referrer_id, referred_id)
+                )
+                """
+            )
+
+            # postgres_aiosqlite's compatibility bootstrap expects these legacy
+            # tables to exist before its first connection and normalizes costs.
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_tasks (
+                    id BIGSERIAL PRIMARY KEY,
+                    cost DOUBLE PRECISION DEFAULT 0,
+                    is_public_feed BOOLEAN DEFAULT FALSE,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_history (
+                    id BIGSERIAL PRIMARY KEY,
+                    cost DOUBLE PRECISION DEFAULT 0
+                )
+                """
+            )
+            await cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS batch_jobs (
+                    id BIGSERIAL PRIMARY KEY,
+                    total_cost DOUBLE PRECISION DEFAULT 0
+                )
+                """
+            )
+        await conn.commit()
+
+
 @pytest.mark.asyncio
 async def test_partner_approval_state_machine_on_postgres():
     from bot import database
@@ -17,7 +116,7 @@ async def test_partner_approval_state_machine_on_postgres():
     from bot.services import referral_service
 
     assert db_backend.is_postgres() is True
-    await database.init_db()
+    await _bootstrap_production_like_partner_schema()
     await approval.ensure_partner_approval_schema()
 
     referrer = await database.get_or_create_user(98100001)
@@ -45,9 +144,8 @@ async def test_partner_approval_state_machine_on_postgres():
     assert blocked.attached is False
     assert blocked.reason == "blocked_referrer"
 
-    # Competing terminal decisions must have a single winner. Whichever update
-    # gets status=pending first wins; the other one must not perform a second
-    # terminal transition.
+    # Competing terminal decisions must have a single winner. PostgreSQL
+    # re-evaluates the conditional UPDATE after a concurrent updater commits.
     decisions = await asyncio.gather(
         approval.review_partner_application(
             application_id,
@@ -107,7 +205,7 @@ async def test_legacy_partner_is_grandfathered_on_postgres():
     from bot.services import partner_approval_service as approval
 
     assert db_backend.is_postgres() is True
-    await database.init_db()
+    await _bootstrap_production_like_partner_schema()
     await approval.ensure_partner_approval_schema()
 
     user = await database.get_or_create_user(98100003)
