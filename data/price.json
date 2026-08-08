@@ -241,6 +241,16 @@
           "5": 25,
           "10": 40
         }
+      },
+      "seedance_2_5": {
+        "base": 20,
+        "default_duration": 5,
+        "duration_min": 4,
+        "duration_max": 30,
+        "quality_costs": {
+          "480p": 4,
+          "720p": 6
+        }
       }
     },
     "video_duration_costs": {

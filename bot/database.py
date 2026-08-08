@@ -19,6 +19,12 @@ MASTER_PARTNER_TELEGRAM_ID = int(os.getenv("MASTER_PARTNER_TELEGRAM_ID", "339795
 SAVED_REFERENCES_MAX_PER_KIND = int(os.getenv("SAVED_REFERENCES_MAX_PER_KIND", "3"))
 REFERRAL_ANTIFRAUD_MAX_PER_HOUR = int(os.getenv("REFERRAL_ANTIFRAUD_MAX_PER_HOUR", "30"))
 REFERRAL_ANTIFRAUD_MAX_PER_DAY = int(os.getenv("REFERRAL_ANTIFRAUD_MAX_PER_DAY", "120"))
+REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS = int(
+    os.getenv("REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS", "10")
+)
+REFERRAL_ANTIFRAUD_BURST_MAX = int(
+    os.getenv("REFERRAL_ANTIFRAUD_BURST_MAX", "6")
+)
 REFERRAL_ANTIFRAUD_BLOCK_CODES = {
     code.strip().upper()
     for code in os.getenv("REFERRAL_ANTIFRAUD_BLOCK_CODES", "").split(",")
@@ -1739,7 +1745,7 @@ async def process_referral(
         db.row_factory = db_backend.Row
 
         referrer_cursor = await db.execute(
-            "SELECT id FROM users WHERE referral_code = ?",
+            "SELECT id, COALESCE(is_banned, 0) AS is_banned FROM users WHERE referral_code = ?",
             (referral_code,),
         )
         referrer = await referrer_cursor.fetchone()
@@ -1748,6 +1754,14 @@ async def process_referral(
                 "Referral skipped: code not found referred_telegram_id=%s code=%s",
                 referred_telegram_id,
                 referral_code,
+            )
+            return False
+        if referrer["is_banned"]:
+            logger.warning(
+                "Referral blocked: referrer already banned referred_telegram_id=%s code=%s referrer_id=%s",
+                referred_telegram_id,
+                referral_code,
+                referrer["id"],
             )
             return False
 
@@ -1846,6 +1860,42 @@ async def process_referral(
                 REFERRAL_ANTIFRAUD_MAX_PER_DAY,
             )
             return False
+        if (
+            REFERRAL_ANTIFRAUD_BURST_MAX > 0
+            and REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS > 0
+        ):
+            burst_cursor = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', ?)",
+                (
+                    referrer["id"],
+                    f"-{REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS} seconds",
+                ),
+            )
+            burst_count = int((await burst_cursor.fetchone())["cnt"])
+            if burst_count >= REFERRAL_ANTIFRAUD_BURST_MAX - 1:
+                await db.execute(
+                    """
+                    UPDATE users
+                    SET is_banned = 1,
+                        banned_at = CURRENT_TIMESTAMP,
+                        banned_by_telegram_id = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (referrer["id"],),
+                )
+                await db.commit()
+                logger.warning(
+                    "Referral autoban triggered by burst: referred_telegram_id=%s code=%s referrer_id=%s referred_id=%s burst_count=%s window_seconds=%s threshold=%s",
+                    referred_telegram_id,
+                    referral_code,
+                    referrer["id"],
+                    referred["id"],
+                    burst_count + 1,
+                    REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS,
+                    REFERRAL_ANTIFRAUD_BURST_MAX,
+                )
+                return False
         if await _referral_chain_contains(
             db,
             start_user_id=referrer["id"],

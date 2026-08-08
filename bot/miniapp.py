@@ -196,6 +196,15 @@ def _miniapp_expected_error_response(error: Exception) -> web.Response | None:
                 {"ok": False, "error": _MINIAPP_INIT_DATA_ERRORS[message]},
                 status=401,
             )
+        if (
+            "Could not find starting boundary" in message
+            or "Invalid boundary" in message
+            or "multipart" in message.lower()
+        ):
+            return web.json_response(
+                {"ok": False, "error": "Загрузка была прервана. Повторите попытку."},
+                status=400,
+            )
 
     if isinstance(error, TimeoutError):
         return web.json_response(

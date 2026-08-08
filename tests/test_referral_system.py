@@ -106,6 +106,85 @@ def test_process_referral_click_records_attached_event(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
+def test_process_referral_click_autobans_referrer_on_burst(tmp_path, monkeypatch):
+    async def run():
+        monkeypatch.setenv("REFERRAL_ANTIFRAUD_BURST_MAX", "3")
+        monkeypatch.setenv("REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS", "60")
+        db = _reload_database(monkeypatch, tmp_path / "referral_burst.db")
+        from bot.services import referral_service as referral_service_module
+
+        referral_service = importlib.reload(referral_service_module)
+        notify_admins = AsyncMock()
+        monkeypatch.setattr(
+            referral_service,
+            "_notify_admins_about_referral_burst_autoban",
+            notify_admins,
+        )
+
+        await db.init_db()
+
+        referrer = await db.get_or_create_user(5101)
+        first = await db.get_or_create_user(5102)
+        second = await db.get_or_create_user(5103)
+        third = await db.get_or_create_user(5104)
+        fourth = await db.get_or_create_user(5105)
+
+        assert (
+            await referral_service.process_referral_click(
+                first.telegram_id, referrer.referral_code, source="test"
+            )
+        ).attached is True
+        assert (
+            await referral_service.process_referral_click(
+                second.telegram_id, referrer.referral_code, source="test"
+            )
+        ).attached is True
+
+        burst_result = await referral_service.process_referral_click(
+            third.telegram_id, referrer.referral_code, source="test"
+        )
+        blocked_result = await referral_service.process_referral_click(
+            fourth.telegram_id, referrer.referral_code, source="test"
+        )
+
+        assert burst_result.attached is False
+        assert burst_result.reason == "burst_autoban"
+        assert blocked_result.attached is False
+        assert blocked_result.reason == "blocked_referrer"
+
+        updated_third = await db.get_or_create_user(third.telegram_id)
+        assert updated_third.referred_by is None
+
+        async with db_backend.connect(db.DATABASE_PATH) as conn:
+            conn.row_factory = db_backend.Row
+            user_cursor = await conn.execute(
+                "SELECT COALESCE(is_banned, 0) AS is_banned FROM users WHERE telegram_id = ?",
+                (referrer.telegram_id,),
+            )
+            event_cursor = await conn.execute(
+                """
+                SELECT reason
+                FROM referral_events
+                WHERE visitor_telegram_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (third.telegram_id,),
+            )
+            user_row = await user_cursor.fetchone()
+            event_row = await event_cursor.fetchone()
+
+        assert user_row is not None
+        assert user_row["is_banned"] in (1, True)
+        assert event_row is not None
+        assert event_row["reason"] == "burst_autoban"
+        notify_admins.assert_awaited_once()
+        assert notify_admins.await_args.kwargs["referrer_id"] == referrer.id
+        assert notify_admins.await_args.kwargs["visitor_telegram_id"] == third.telegram_id
+
+    asyncio.run(run())
+
+
 @pytest.mark.asyncio
 async def test_referral_notification_uses_username_not_telegram_id():
     from bot.handlers.common import _notify_partner_about_new_referral

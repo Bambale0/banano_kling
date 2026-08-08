@@ -6,9 +6,12 @@
 """
 
 import logging
+import html
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+import aiohttp
 
 from bot import db as db_backend
 from bot.config import config
@@ -57,6 +60,8 @@ from bot.database import (
     PARTNER_INVITER_BONUS,
     REFERRAL_ANTIFRAUD_BLOCK_CODES,
     REFERRAL_ANTIFRAUD_BLOCK_REFERRER_IDS,
+    REFERRAL_ANTIFRAUD_BURST_MAX,
+    REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS,
     REFERRAL_ANTIFRAUD_MAX_PER_HOUR,
     REFERRAL_ANTIFRAUD_MAX_PER_DAY,
 )
@@ -81,6 +86,7 @@ VALID_REASONS = frozenset(
         "blocked_referrer",
         "hourly_limit",
         "daily_limit",
+        "burst_autoban",
         "cycle_detected",
         "db_race_lost",
         "invalid_state",
@@ -127,6 +133,92 @@ async def _referral_chain_contains(
     return await _chain_fn(
         db, start_user_id=start_user_id, target_user_id=target_user_id
     )
+
+
+async def _is_referral_burst_limit_reached(
+    db: db_backend.Connection,
+    referrer_id: int,
+) -> bool:
+    if REFERRAL_ANTIFRAUD_BURST_MAX <= 0 or REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS <= 0:
+        return False
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM referrals WHERE referrer_id = ? AND created_at >= datetime('now', ?)",
+        (referrer_id, f"-{REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS} seconds"),
+    )
+    count = int((await cursor.fetchone())["cnt"])
+    return count >= REFERRAL_ANTIFRAUD_BURST_MAX - 1
+
+
+async def _autoban_referrer_for_burst(
+    db: db_backend.Connection,
+    referrer_id: int,
+) -> None:
+    await db.execute(
+        """
+        UPDATE users
+        SET is_banned = 1,
+            banned_at = CURRENT_TIMESTAMP,
+            banned_by_telegram_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (referrer_id,),
+    )
+
+
+async def _notify_admins_about_referral_burst_autoban(
+    *,
+    referrer_id: int,
+    referrer_telegram_id: int | None,
+    referral_code: str,
+    burst_count: int,
+    window_seconds: int,
+    visitor_telegram_id: int,
+    source: str | None,
+    start_param: str | None,
+) -> None:
+    admin_ids = config.admin_ids
+    bot_token = (config.BOT_TOKEN or "").strip()
+    if not admin_ids or not bot_token:
+        return
+
+    text = (
+        "🚨 <b>Автобан по реферальному антифроду</b>\n\n"
+        f"Партнёр user_id: <code>{referrer_id}</code>\n"
+        f"Telegram ID: <code>{referrer_telegram_id or '—'}</code>\n"
+        f"Рефкод: <code>{html.escape(referral_code)}</code>\n"
+        f"Сработавший порог: <code>{burst_count}</code> за <code>{window_seconds}</code> сек.\n"
+        f"Последний visitor Telegram ID: <code>{visitor_telegram_id}</code>\n"
+        f"Источник: <code>{html.escape(source or '—')}</code>\n"
+        f"start_param: <code>{html.escape(start_param or '—')}</code>"
+    )
+    timeout = aiohttp.ClientTimeout(total=15)
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for admin_id in admin_ids:
+            try:
+                async with session.post(
+                    url,
+                    json={
+                        "chat_id": admin_id,
+                        "text": text,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                    },
+                ) as response:
+                    await response.read()
+                    if response.status >= 400:
+                        logger.warning(
+                            "Failed to notify admin about referral burst autoban: admin_id=%s status=%s",
+                            admin_id,
+                            response.status,
+                        )
+            except Exception:
+                logger.exception(
+                    "Failed to notify admin about referral burst autoban admin_id=%s",
+                    admin_id,
+                )
 
 
 async def _ensure_referral_events_table(db: db_backend.Connection) -> None:
@@ -410,7 +502,7 @@ async def process_referral_click(
 
         # 1. Ищем реферера по коду
         referrer_cursor = await db.execute(
-            "SELECT id, telegram_id, referral_code FROM users WHERE referral_code = ?",
+            "SELECT id, telegram_id, referral_code, COALESCE(is_banned, 0) AS is_banned FROM users WHERE referral_code = ?",
             (code,),
         )
         referrer_row = await referrer_cursor.fetchone()
@@ -426,6 +518,16 @@ async def process_referral_click(
 
         referrer_id = int(referrer_row["id"])
         referrer_telegram_id = int(referrer_row["telegram_id"])
+        if referrer_row["is_banned"]:
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                referrer_telegram_id=referrer_telegram_id,
+                reason="blocked_referrer",
+                source=source,
+                start_param=start_param,
+            )
+            return await _record_and_commit(result)
 
         # 2. Ищем посетителя
         visitor_cursor = await db.execute(
@@ -594,6 +696,31 @@ async def process_referral_click(
             )
             return await _record_and_commit(result, visitor_user_id)
 
+        if await _is_referral_burst_limit_reached(db, referrer_id):
+            await _autoban_referrer_for_burst(db, referrer_id)
+            burst_count = REFERRAL_ANTIFRAUD_BURST_MAX
+            result = ReferralResult(
+                clicked_code=code,
+                clicked_referrer_id=referrer_id,
+                existing_referrer_id=existing_referrer_id,
+                referred_user_id=visitor_user_id,
+                referrer_telegram_id=referrer_telegram_id,
+                reason="burst_autoban",
+                source=source,
+                start_param=start_param,
+            )
+            await _notify_admins_about_referral_burst_autoban(
+                referrer_id=referrer_id,
+                referrer_telegram_id=referrer_telegram_id,
+                referral_code=code,
+                burst_count=burst_count,
+                window_seconds=REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS,
+                visitor_telegram_id=visitor_telegram_id,
+                source=source,
+                start_param=start_param,
+            )
+            return await _record_and_commit(result, visitor_user_id)
+
         # 9. Cycle detection
         if await _referral_chain_contains(db, start_user_id=referrer_id, target_user_id=visitor_user_id):
             result = ReferralResult(
@@ -717,7 +844,7 @@ async def attach_referral_in_transaction(
 
     # Ищем реферера (без фильтра telegram_id — self-ref проверяем ниже)
     referrer_cursor = await db.execute(
-        "SELECT id, telegram_id FROM users WHERE referral_code = ?",
+        "SELECT id, telegram_id, COALESCE(is_banned, 0) AS is_banned FROM users WHERE referral_code = ?",
         (code,),
     )
     referrer_row = await referrer_cursor.fetchone()
@@ -735,6 +862,18 @@ async def attach_referral_in_transaction(
 
     referrer_id = int(referrer_row["id"])
     referrer_telegram_id = int(referrer_row["telegram_id"])
+    if referrer_row["is_banned"]:
+        result = ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            referrer_telegram_id=referrer_telegram_id,
+            reason="blocked_referrer",
+            source=source,
+            start_param=start_param,
+        )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+        return result
 
     # Self-ref
     if referrer_telegram_id == visitor_telegram_id:
@@ -805,6 +944,31 @@ async def attach_referral_in_transaction(
             clicked_referrer_id=referrer_id,
             referred_user_id=visitor_user_id,
             reason="daily_limit",
+            source=source,
+            start_param=start_param,
+        )
+        await record_referral_event(result, visitor_telegram_id, visitor_user_id, db=db)
+        return result
+
+    if await _is_referral_burst_limit_reached(db, referrer_id):
+        await _autoban_referrer_for_burst(db, referrer_id)
+        burst_count = REFERRAL_ANTIFRAUD_BURST_MAX
+        result = ReferralResult(
+            clicked_code=code,
+            clicked_referrer_id=referrer_id,
+            referred_user_id=visitor_user_id,
+            referrer_telegram_id=referrer_telegram_id,
+            reason="burst_autoban",
+            source=source,
+            start_param=start_param,
+        )
+        await _notify_admins_about_referral_burst_autoban(
+            referrer_id=referrer_id,
+            referrer_telegram_id=referrer_telegram_id,
+            referral_code=code,
+            burst_count=burst_count,
+            window_seconds=REFERRAL_ANTIFRAUD_BURST_WINDOW_SECONDS,
+            visitor_telegram_id=visitor_telegram_id,
             source=source,
             start_param=start_param,
         )
