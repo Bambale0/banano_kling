@@ -1,0 +1,76 @@
+name: Partner Approval PostgreSQL Regression
+
+on:
+  pull_request:
+    branches: [tanyapi]
+    paths:
+      - 'bot/services/partner_approval_service.py'
+      - 'bot/handlers/partner_approval.py'
+      - 'bot/handlers/miniapp_regression_safety.py'
+      - 'bot/handlers/__init__.py'
+      - 'tests/test_partner_approval_workflow.py'
+      - 'tests/test_partner_approval_postgres.py'
+      - '.github/workflows/partner-approval-postgres.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  postgres_partner_approval:
+    name: PostgreSQL — partner approval concurrency and legacy compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banano_partner_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d banano_partner_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BOT_TOKEN: 123456:TEST_TOKEN_FOR_CI_ONLY
+      BANANO_SKIP_PROJECT_ENV: '1'
+      PYTHONPATH: ${{ github.workspace }}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/banano_partner_test
+      PARTNER_POSTGRES_TEST: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio
+          pip install --quiet -r requirements.txt
+          python -m pip check
+
+      - name: Verify PostgreSQL is ready
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect('postgresql://postgres:postgres@127.0.0.1:5432/banano_partner_test') as conn:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT 1')
+                  assert cur.fetchone()[0] == 1
+          print('postgres: ready')
+          PY
+
+      - name: Run focused PostgreSQL regression tests
+        run: |
+          pytest tests/test_partner_approval_postgres.py -vv --tb=short
