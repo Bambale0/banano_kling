@@ -46,4 +46,9 @@ jobs:
             -c "import bot.config, bot.database, bot.services.partner_approval_service, bot.handlers.partner_approval, bot.handlers, bot.miniapp, bot.main; print('production imports: ok')"
 
       - name: Validate backend compose contract
-        run: docker compose -f compose.backend.yml config >/tmp/compose.backend.rendered.yml
+        run: |
+          # Production keeps secrets in a required local .env that is intentionally
+          # absent from git. Compose contract validation only needs the file to
+          # exist; service variables have safe defaults for rendering.
+          : > .env
+          docker compose -f compose.backend.yml config >/tmp/compose.backend.rendered.yml
