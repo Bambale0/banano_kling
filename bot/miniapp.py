@@ -1427,7 +1427,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                    source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, created_at, request_data
+                   feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -3677,6 +3677,31 @@ async def miniapp_generation_remove_library(request: web.Request) -> web.Respons
         return _miniapp_error_response(e, log_message="Mini App remove library failed")
 
 
+async def _get_feed_remix_source_card(
+    gen_id: Any,
+    *,
+    viewer_user_id: int,
+    allow_profile: bool = False,
+) -> dict[str, Any] | None:
+    if allow_profile:
+        return await get_profile_generation_card(
+            gen_id,
+            viewer_user_id=viewer_user_id,
+        )
+
+    source = await get_feed_generation_card(
+        gen_id,
+        viewer_user_id=viewer_user_id,
+    )
+    if source:
+        return source
+
+    return await get_profile_generation_card(
+        gen_id,
+        viewer_user_id=viewer_user_id,
+    )
+
+
 async def miniapp_feed_remix(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
@@ -3686,8 +3711,11 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         user = ctx["user"]
         allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
 
-        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
-        source = await getter(gen_id, viewer_user_id=user.id)
+        source = await _get_feed_remix_source_card(
+            gen_id,
+            viewer_user_id=user.id,
+            allow_profile=allow_profile,
+        )
         if not source or source.get("gen_type") != "image":
             return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
 
