@@ -2,6 +2,7 @@ from pathlib import Path
 
 PROFILE_PATH = Path("frontend/miniapp-v0/components/tabs/profile-tab.tsx")
 EVENTS_PATH = Path("frontend/miniapp-v0/lib/feed-events.ts")
+MINIAPP_PATH = Path("bot/miniapp.py")
 
 
 def test_profile_uses_publication_event_payload_directly() -> None:
@@ -34,3 +35,14 @@ def test_pending_publication_is_not_injected_into_another_users_profile() -> Non
     )[0]
     assert "setItems(result.feed)" in foreign_profile_block
     assert "mergePendingPublication(result.feed, 'profile')" not in foreign_profile_block
+
+
+def test_private_profile_repeat_restores_owner_references_only() -> None:
+    source = MINIAPP_PATH.read_text(encoding="utf-8")
+
+    assert "def _can_restore_private_profile_references" in source
+    assert 'source_card.get("is_mine")' in source
+    assert 'source_card.get("publication_scope") == "profile"' in source
+    assert 'source_card.get("references_hidden")' in source
+    assert "if not references and _can_restore_private_profile_references(source):" in source
+    assert "references = _source_image_references_from_task_payload(source_task)" in source

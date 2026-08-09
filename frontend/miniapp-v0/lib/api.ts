@@ -589,6 +589,55 @@ function uploadFileWithXhr(
   })
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл для загрузки.'))
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const [, encoded = ''] = result.split(',', 2)
+      if (!encoded) {
+        reject(new Error('Не удалось подготовить файл для загрузки.'))
+        return
+      }
+      resolve(encoded)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+async function uploadFileAsJson(
+  fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
+  file: File,
+  initData: string,
+  logPayload: Record<string, unknown>,
+  startedAt: number,
+) {
+  sendMiniAppClientLog('upload-json-fallback-start', logPayload)
+  const response = await fetch(getUploadApiUrl(), {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      init_data: initData,
+      file_kind: fileKind,
+      filename: file.name,
+      content_type: file.type,
+      data_base64: await fileToBase64(file),
+    }),
+    cache: 'no-store',
+    credentials: 'same-origin',
+  })
+  sendMiniAppClientLog('upload-json-fallback-response', {
+    ...logPayload,
+    duration_ms: Date.now() - startedAt,
+    status: response.status,
+  })
+  return parseUploadJson(await response.text(), response.status)
+}
+
 export async function uploadFile(
   fileKind: 'image_reference' | 'video_reference' | 'audio_reference' | 'assistant_audio' | 'trend_video_preview',
   file: File
@@ -613,7 +662,12 @@ export async function uploadFile(
   formData.append('file', normalizedFile)
 
   if (typeof XMLHttpRequest !== 'undefined') {
-    const data = await uploadFileWithXhr(formData, uploadLogPayload, startedAt)
+    let data: Awaited<ReturnType<typeof uploadFileWithXhr>>
+    try {
+      data = await uploadFileWithXhr(formData, uploadLogPayload, startedAt)
+    } catch (error) {
+      data = await uploadFileAsJson(fileKind, normalizedFile, initData, uploadLogPayload, startedAt)
+    }
     return {
       id: `file_${Date.now()}_${Math.random().toString(36).slice(2)}`,
       name: data.filename,
