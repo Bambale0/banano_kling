@@ -3,6 +3,7 @@ from pathlib import Path
 PROFILE_PATH = Path("frontend/miniapp-v0/components/tabs/profile-tab.tsx")
 EVENTS_PATH = Path("frontend/miniapp-v0/lib/feed-events.ts")
 MINIAPP_PATH = Path("bot/miniapp.py")
+MAIN_PATH = Path("bot/main.py")
 
 
 def test_profile_uses_publication_event_payload_directly() -> None:
@@ -46,3 +47,10 @@ def test_private_profile_repeat_restores_owner_references_only() -> None:
     assert 'source_card.get("references_hidden")' in source
     assert "if not references and _can_restore_private_profile_references(source):" in source
     assert "references = _source_image_references_from_task_payload(source_task)" in source
+
+
+def test_result_caption_does_not_reveal_feed_repeat_prompt() -> None:
+    source = MAIN_PATH.read_text(encoding="utf-8")
+
+    assert 'getattr(task, "source_feed_gen_id", None)' in source
+    assert 'return "<b>Промпт скрыт</b>", "Промпт"' in source
