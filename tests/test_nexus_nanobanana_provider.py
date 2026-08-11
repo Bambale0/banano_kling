@@ -1,4 +1,5 @@
 import base64
+import importlib
 from pathlib import Path
 
 import pytest
@@ -149,7 +150,7 @@ class _FakeKie:
 
 @pytest.mark.asyncio
 async def test_nano_banana_2_falls_back_to_existing_kie_task_flow(monkeypatch) -> None:
-    import bot.services.nano_banana_2_service as module
+    module = importlib.import_module("bot.services.nano_banana_2_service")
 
     async def _upload(sources):
         return list(sources)
@@ -172,7 +173,7 @@ async def test_nano_banana_2_falls_back_to_existing_kie_task_flow(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_nano_banana_pro_falls_back_to_existing_kie_task_flow(monkeypatch) -> None:
-    import bot.services.nano_banana_pro_service as module
+    module = importlib.import_module("bot.services.nano_banana_pro_service")
 
     async def _upload(sources):
         return list(sources)
