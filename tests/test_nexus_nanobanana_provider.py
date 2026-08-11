@@ -5,7 +5,10 @@ import pytest
 
 from bot.services.nano_banana_2_service import NanoBanana2Service
 from bot.services.nano_banana_pro_service import NanoBananaProService
-from bot.services.nexus_image_provider import NexusImageProvider, build_nexus_image_params
+from bot.services.nexus_image_provider import (
+    NexusImageProvider,
+    build_nexus_image_params,
+)
 
 
 @pytest.mark.parametrize("model_name", ["nano-banana-2", "nano-banana-pro"])
