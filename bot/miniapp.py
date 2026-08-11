@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import html
@@ -74,7 +75,6 @@ from bot.database import (
     update_user_profile,
     use_prompt,
 )
-from bot.handlers.batch_generation import get_batch_upload_keyboard
 from bot.handlers.common import (
     AI_ASSISTANT_AUDIO_FORMATS,
     AIAssistantStates,
@@ -141,6 +141,7 @@ from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
 from bot.services.ai_assistant_service import ai_assistant_service
 from bot.services.lava_service import lava_service
 from bot.services.media_input_utils import (
+    is_reference_contact_sheet_url,
     missing_local_upload_sources,
     resolve_local_upload_path,
 )
@@ -1167,6 +1168,37 @@ def _browser_local_reference_urls(urls: list[str]) -> list[str]:
     return [url for url in urls if url.strip().lower().startswith(("blob:", "data:"))]
 
 
+def _source_image_references_from_task_payload(task_payload: dict[str, Any]) -> list[str]:
+    request_data = task_payload.get("request_data") or {}
+    if not isinstance(request_data, dict):
+        return []
+
+    raw_refs = request_data.get("source_reference_images")
+    if not isinstance(raw_refs, list):
+        raw_refs = request_data.get("reference_images", [])
+    if not isinstance(raw_refs, list):
+        return []
+
+    references: list[str] = []
+    for item in raw_refs:
+        url = str(item or "").strip()
+        if (
+            url
+            and url not in references
+            and not is_reference_contact_sheet_url(url)
+        ):
+            references.append(url)
+    return references
+
+
+def _can_restore_private_profile_references(source_card: dict[str, Any]) -> bool:
+    return bool(
+        source_card.get("is_mine")
+        and source_card.get("publication_scope") == "profile"
+        and source_card.get("references_hidden")
+    )
+
+
 async def _get_repeat_source_card(
     gen_id: int,
     *,
@@ -1427,7 +1459,7 @@ async def _fetch_task_detail(telegram_id: int, task_id: str) -> dict[str, Any] |
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
                    result_url, result_urls, is_public_feed, is_prompt_library,
                    source_feed_gen_id, feed_prompt_visible, feed_references_visible,
-                   feed_blurred, created_at, request_data
+                   feed_blurred, is_profile_visible, is_adult_content, created_at, request_data
             FROM generation_tasks
             WHERE telegram_id = ? AND task_id = ?
             LIMIT 1
@@ -2179,6 +2211,8 @@ async def _send_history(app: web.Application, telegram_id: int):
 
 
 async def _send_batch_edit(app: web.Application, telegram_id: int):
+    from bot.handlers.batch_generation import get_batch_upload_keyboard
+
     state = await _get_state(app, telegram_id)
     await state.clear()
     await state.update_data(
@@ -2611,10 +2645,28 @@ async def miniapp_action(request: web.Request) -> web.Response:
 
 async def miniapp_upload(request: web.Request) -> web.Response:
     try:
-        data = await asyncio.wait_for(request.post(), timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS)
-        init_data = str(data.get("init_data", ""))
-        file_kind = str(data.get("file_kind", "image_reference"))
-        upload = data.get("file")
+        upload = None
+        raw: bytes | None = None
+        filename = ""
+        declared_content_type = ""
+        if request.content_type == "application/json":
+            body = await request.json()
+            init_data = str(body.get("init_data", ""))
+            file_kind = str(body.get("file_kind", "image_reference"))
+            filename = str(body.get("filename", "") or "")
+            declared_content_type = str(body.get("content_type", "") or "")
+            encoded_data = str(body.get("data_base64", "") or "")
+            try:
+                raw = base64.b64decode(encoded_data, validate=True)
+            except (TypeError, ValueError):
+                raw = None
+        else:
+            data = await asyncio.wait_for(request.post(), timeout=MINIAPP_UPLOAD_TIMEOUT_SECONDS)
+            init_data = str(data.get("init_data", ""))
+            file_kind = str(data.get("file_kind", "image_reference"))
+            upload = data.get("file")
+            filename = getattr(upload, "filename", "") or ""
+            declared_content_type = getattr(upload, "content_type", "") or ""
 
         telegram_id, _ctx = await _get_user_context(request.app, init_data)
         _ = telegram_id
@@ -2624,13 +2676,14 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 {"ok": False, "error": f"Unsupported file_kind: {file_kind}"},
                 status=400,
             )
-        if upload is None or not getattr(upload, "file", None):
+        if raw is None and (upload is None or not getattr(upload, "file", None)):
             return web.json_response(
                 {"ok": False, "error": "Файл не был передан"}, status=400
             )
 
         config_entry = FILE_KIND_MAP[file_kind]
-        raw = upload.file.read()
+        if raw is None:
+            raw = upload.file.read()
         if not isinstance(raw, (bytes, bytearray)) or not raw:
             return web.json_response(
                 {"ok": False, "error": "Не удалось прочитать файл"}, status=400
@@ -2638,8 +2691,8 @@ async def miniapp_upload(request: web.Request) -> web.Response:
 
         content_type = _normalize_miniapp_upload_content_type(
             file_kind,
-            getattr(upload, "filename", "") or "",
-            getattr(upload, "content_type", "") or "",
+            filename,
+            declared_content_type,
             bytes(raw),
         )
         if not content_type:
@@ -2676,7 +2729,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 bytes(raw),
                 file_ext=extension,
                 kind=config_entry["group"],
-                original_filename=getattr(upload, "filename", "") or None,
+                original_filename=filename or None,
                 content_type=content_type or None,
                 source=str(config_entry.get("source") or "miniapp"),
             )
@@ -2692,7 +2745,7 @@ async def miniapp_upload(request: web.Request) -> web.Response:
                 "ok": True,
                 "url": public_url,
                 "kind": config_entry["group"],
-                "filename": getattr(upload, "filename", "") or Path(public_url).name,
+                "filename": filename or Path(public_url).name,
                 "content_type": content_type,
                 "reference": (
                     _saved_reference_payload(saved_reference) if saved_reference else None
@@ -3677,6 +3730,31 @@ async def miniapp_generation_remove_library(request: web.Request) -> web.Respons
         return _miniapp_error_response(e, log_message="Mini App remove library failed")
 
 
+async def _get_feed_remix_source_card(
+    gen_id: Any,
+    *,
+    viewer_user_id: int,
+    allow_profile: bool = False,
+) -> dict[str, Any] | None:
+    if allow_profile:
+        return await get_profile_generation_card(
+            gen_id,
+            viewer_user_id=viewer_user_id,
+        )
+
+    source = await get_feed_generation_card(
+        gen_id,
+        viewer_user_id=viewer_user_id,
+    )
+    if source:
+        return source
+
+    return await get_profile_generation_card(
+        gen_id,
+        viewer_user_id=viewer_user_id,
+    )
+
+
 async def miniapp_feed_remix(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
@@ -3686,8 +3764,11 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         user = ctx["user"]
         allow_profile = str(body.get("surface", "feed") or "feed").strip().lower() == "profile"
 
-        getter = get_profile_generation_card if allow_profile else get_feed_generation_card
-        source = await getter(gen_id, viewer_user_id=user.id)
+        source = await _get_feed_remix_source_card(
+            gen_id,
+            viewer_user_id=user.id,
+            allow_profile=allow_profile,
+        )
         if not source or source.get("gen_type") != "image":
             return web.json_response({"ok": False, "error": "Публикация не найдена"}, status=404)
 
@@ -3702,6 +3783,8 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         img_service = str(body.get("img_service") or body.get("model") or source.get("model") or "banana_pro")
         img_ratio = str(body.get("img_ratio") or source.get("aspect_ratio") or "1:1")
         references = [str(item) for item in list(body.get("reference_images", []) or []) if str(item).strip()]
+        if not references and _can_restore_private_profile_references(source):
+            references = _source_image_references_from_task_payload(source_task)
         img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))

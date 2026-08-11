@@ -772,6 +772,8 @@ def _normalize_user_prompt(candidate: str) -> str:
     return text
 
 def _extract_used_prompt(task) -> str:
+    if getattr(task, "source_feed_gen_id", None):
+        return ""
     request_data = _extract_task_request_data(task)
     for candidate in (
         request_data.get("user_prompt"),
@@ -786,6 +788,8 @@ def _extract_used_prompt(task) -> str:
     return ""
 
 def _get_result_prompt_caption(task) -> tuple[str, str]:
+    if getattr(task, "source_feed_gen_id", None):
+        return "<b>Промпт скрыт</b>", "Промпт"
     used_prompt = _extract_used_prompt(task)
     if not used_prompt:
         return "<pre>—</pre>", "Промпт"

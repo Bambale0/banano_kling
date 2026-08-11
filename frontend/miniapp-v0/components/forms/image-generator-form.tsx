@@ -64,7 +64,7 @@ export function ImageGeneratorForm({
   const cost = unitCost * selectedCount
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
-  const needsReference = (model?.requires_reference || isFeedRemix) && references.length === 0
+  const needsReference = Boolean(model?.requires_reference) && references.length === 0
   const referencesUploading = references.some((reference) => reference.uploading)
   const hasPrompt = prompt.trim().length > 0 || isFeedRemix
   const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
@@ -339,7 +339,7 @@ export function ImageGeneratorForm({
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
             Референсы
-            {(model?.requires_reference || isFeedRemix) && (
+            {model?.requires_reference && (
               <span className="text-destructive ml-1">*</span>
             )}
           </label>
@@ -348,7 +348,7 @@ export function ImageGeneratorForm({
             onFilesChange={handleReferencesChange}
             maxFiles={model?.max_references || 4}
             accept="image/*"
-            required={model?.requires_reference || isFeedRemix}
+            required={model?.requires_reference}
             onUpload={onUploadReference}
             libraryFiles={savedReferences.filter((item) => item.type === 'image')}
             libraryLabel="Сохранённые фото-референсы"
@@ -356,17 +356,12 @@ export function ImageGeneratorForm({
           <p className="text-xs text-muted-foreground">
             {isFeedRemix
               ? references.length > 0
-                ? 'Старые референсы уже подтянуты. Можно удалить фото человека, оставить вещь/образ и загрузить своё фото.'
-                : 'Добавьте своё фото или референс. Промпт из ленты подставлен ниже.'
+                ? 'Выбранные файлы заменят или дополнят исходные референсы перед повтором.'
+                : 'Можно запустить без нового файла: исходные приватные референсы восстановятся автоматически.'
               : model?.requires_reference
                 ? 'Для этой модели нужен хотя бы один исходник или референс.'
                 : 'Можно добавить референсы для стиля, композиции или сохранения деталей.'}
           </p>
-          {isFeedRemix && references.length === 0 ? (
-            <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Фото в блоке «Сохранённые фото-референсы» ещё не выбрано. Нажмите «+» — в сводке должно стать «Файлы 1/8».
-            </p>
-          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -456,7 +451,7 @@ export function ImageGeneratorForm({
             <p className="text-muted-foreground mb-1">Файлы</p>
             <p className="text-foreground font-medium">{references.length} / {model?.max_references || 0}</p>
             <p className="text-muted-foreground mt-1">
-              {model?.requires_reference || isFeedRemix ? 'Минимум 1 обязателен' : 'Опционально'}
+              {model?.requires_reference ? 'Минимум 1 обязателен' : 'Опционально'}
             </p>
           </div>
         </div>
@@ -482,7 +477,7 @@ export function ImageGeneratorForm({
           <div className="flex items-center gap-2 p-3 rounded-xl bg-gold/10 border border-gold/30">
             <AlertCircle className="w-4 h-4 text-gold flex-shrink-0" />
             <p className="text-xs text-gold">
-              {isFeedRemix ? 'Добавьте своё фото для повтора из ленты' : 'Загрузите референс для этой модели'}
+              Загрузите референс для этой модели
             </p>
           </div>
         )}
@@ -513,7 +508,7 @@ export function ImageGeneratorForm({
           ) : (
             <>
               <Sparkles className="w-5 h-5 mr-2" />
-              {isFeedRemix ? 'Повторить с моим фото' : 'Запустить фото'}
+              {isFeedRemix ? 'Повторить образ' : 'Запустить фото'}
             </>
           )}
         </Button>

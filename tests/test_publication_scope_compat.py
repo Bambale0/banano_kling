@@ -252,3 +252,77 @@ async def test_profile_only_publication_lifecycle(tmp_path, monkeypatch):
         user.id,
         limit=20,
     ) == []
+
+
+@pytest.mark.asyncio
+async def test_miniapp_task_detail_keeps_profile_only_scope(monkeypatch):
+    if db_backend.is_postgres():
+        pytest.skip("SQLite compatibility lifecycle test")
+
+    from bot import miniapp
+    monkeypatch.setattr(miniapp, "DATABASE_PATH", database.DATABASE_PATH)
+
+    async def keep_result_urls(urls, **_kwargs):
+        return list(urls)
+
+    monkeypatch.setattr(feed_persist, "persist_feed_result_urls", keep_result_urls)
+
+    user = await database.get_or_create_user(700002)
+    await database.add_generation_task(
+        user.id,
+        user.telegram_id,
+        "scope-detail-1",
+        "image",
+        "miniapp_image",
+        model="banana_pro",
+        aspect_ratio="1:1",
+        prompt="Profile-only task detail test",
+        cost=2,
+    )
+    await database.complete_video_task(
+        "scope-detail-1",
+        "https://example.com/profile-only-detail.png",
+    )
+
+    profile_card = await database.share_to_feed(
+        "scope-detail-1",
+        user.id,
+        publication_scope="profile",
+    )
+    assert profile_card is not None
+
+    detail = await miniapp._fetch_task_detail(user.telegram_id, "scope-detail-1")
+
+    assert detail is not None
+    assert detail["publication_scope"] == "profile"
+    assert detail["is_profile_visible"] is True
+    assert detail["is_public_feed"] is False
+    assert detail["feed_interactions_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_miniapp_feed_remix_falls_back_to_profile_only_source(monkeypatch):
+    from bot import miniapp
+
+    profile_card = {
+        "id": 42,
+        "gen_type": "image",
+        "publication_scope": "profile",
+        "is_profile_visible": True,
+        "is_public_feed": False,
+    }
+    public_lookup = AsyncMock(return_value=None)
+    profile_lookup = AsyncMock(return_value=profile_card)
+
+    monkeypatch.setattr(miniapp, "get_feed_generation_card", public_lookup)
+    monkeypatch.setattr(miniapp, "get_profile_generation_card", profile_lookup)
+
+    card = await miniapp._get_feed_remix_source_card(
+        42,
+        viewer_user_id=7,
+        allow_profile=False,
+    )
+
+    assert card == profile_card
+    public_lookup.assert_awaited_once_with(42, viewer_user_id=7)
+    profile_lookup.assert_awaited_once_with(42, viewer_user_id=7)
