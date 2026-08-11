@@ -4,7 +4,8 @@ import asyncio
 import base64
 import logging
 import uuid
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import aiohttp
 
@@ -130,7 +131,7 @@ class NexusImageProvider:
         self.timeout_seconds = max(30, int(timeout_seconds))
         self.poll_interval_seconds = max(0.5, float(poll_interval_seconds))
         self.max_references = max(1, int(max_references))
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -162,7 +163,7 @@ class NexusImageProvider:
                     return None
                 try:
                     payload = await response.json(content_type=None)
-                except Exception:
+                except (ValueError, UnicodeDecodeError):
                     logger.warning("Nexus %s start response is not JSON", self.model_name)
                     return None
                 task_id = str(payload.get("task_id") or "").strip() if isinstance(payload, dict) else ""
