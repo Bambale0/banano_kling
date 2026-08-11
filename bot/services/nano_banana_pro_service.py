@@ -13,6 +13,7 @@ from bot.services.kie_file_upload_service import kie_file_upload_service
 
 logger = logging.getLogger(__name__)
 MAX_IMAGE_INPUTS = 8
+VIP_MAX_IMAGE_INPUTS = 14
 RESOLUTION_ALIASES = {
     "BASIC": "2K",
     "HIGH": "4K",
@@ -197,13 +198,27 @@ class NanoBananaProService:
         resolution: str = "2K",
         output_format: str = "png",
         callback_url: str = None,
+        model: str = "nano-banana-pro",
     ) -> Optional[str]:
         if not prompt and not image_input:
             logger.warning("Nano Banana Pro create_task: no prompt and no image_input")
             return None
 
+        provider_model = str(model or "nano-banana-pro").strip() or "nano-banana-pro"
+        max_inputs = VIP_MAX_IMAGE_INPUTS if provider_model == "nano-banana-pro-vip" else MAX_IMAGE_INPUTS
+
+        image_input = list(image_input or [])
+        if len(image_input) > max_inputs:
+            logger.info(
+                "Nano Banana Pro create_task: trimming refs from %s to %s for model=%s",
+                len(image_input),
+                max_inputs,
+                provider_model,
+            )
+            image_input = image_input[:max_inputs]
+
         uploaded_image_urls = await kie_file_upload_service.upload_local_image_sources(
-            image_input or []
+            image_input
         )
         supported_image_urls = image_sources_to_supported_image_urls(uploaded_image_urls)
 
@@ -215,8 +230,14 @@ class NanoBananaProService:
             normalized_image_input = []
 
         normalized_resolution = _normalize_resolution(resolution)
+        if provider_model == "nano-banana-pro-vip" and normalized_resolution == "4K":
+            logger.info(
+                "Nano Banana Pro VIP resolution normalized: %s -> 2K",
+                resolution,
+            )
+            normalized_resolution = "2K"
         payload = {
-            "model": "nano-banana-pro",
+            "model": provider_model,
             "input": {
                 "prompt": prompt,
                 "aspect_ratio": aspect_ratio,
@@ -274,6 +295,7 @@ class NanoBananaProService:
         image_input: List[str] = None,
         output_format: str = "png",
         callback_url: str = None,
+        model: str = "nano-banana-pro",
     ) -> Optional[Dict]:
         if hasattr(self.primary_provider, "generate_image"):
             result = await self.primary_provider.generate_image(
@@ -288,7 +310,13 @@ class NanoBananaProService:
             )
 
         task_id = await self.create_task(
-            prompt, image_input, aspect_ratio, resolution, output_format, callback_url
+            prompt,
+            image_input,
+            aspect_ratio,
+            resolution,
+            output_format,
+            callback_url,
+            model,
         )
         if task_id:
             return {"task_id": task_id}

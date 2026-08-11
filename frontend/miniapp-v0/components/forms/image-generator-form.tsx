@@ -11,6 +11,8 @@ import { QualitySelect } from './quality-select'
 import { UploadArea } from './upload-area'
 import { Banana, Sparkles, Loader2, AlertCircle, Palette, Shirt, Mountain, Sparkle, ScanFace } from 'lucide-react'
 
+const FULL_QUALITY_MODELS = new Set(['banana_pro', 'banana_2'])
+
 interface ImageGeneratorFormProps {
   models: ImageModel[]
   onSubmit: (data: {
@@ -129,13 +131,17 @@ export function ImageGeneratorForm({
     if (!model.ratios.includes(selectedRatio)) {
       setSelectedRatio(model.ratios[0] || '1:1')
     }
-    const bananaQualities = ['1K', '2K', '4K']
+    const availableQualities = FULL_QUALITY_MODELS.has(model.id)
+        ? ['1K', '2K', '4K']
+        : model.qualities || []
     if (
       (model.qualities?.length && !model.qualities.includes(selectedQuality)) ||
-      ((model.id === 'banana_pro' || model.id === 'banana_2') &&
-        !bananaQualities.includes(selectedQuality))
+      (FULL_QUALITY_MODELS.has(model.id) &&
+        !availableQualities.includes(selectedQuality))
     ) {
-      const q = model.id === 'banana_pro' || model.id === 'banana_2' ? '2K' : model.qualities![0]
+      const q = FULL_QUALITY_MODELS.has(model.id)
+        ? '2K'
+        : model.qualities![0]
       setSelectedQuality(q)
     }
     if (!(model.supports_nsfw_checker || model.id === 'seedream_edit' || model.id === 'flux_pro')) {
@@ -226,7 +232,7 @@ export function ImageGeneratorForm({
               onChange={setSelectedRatio}
             />
           </div>
-          {(model?.id === 'banana_pro' || model?.id === 'banana_2') ? (
+          {(model && FULL_QUALITY_MODELS.has(model.id)) ? (
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Качество</label>
               <QualitySelect

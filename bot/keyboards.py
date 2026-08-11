@@ -248,6 +248,7 @@ VIDEO_MODEL_LABELS = {
 IMAGE_MODEL_LABELS = {
     "flux_pro": "GPT Image 2",
     "banana_pro": "Nano Banana Pro",
+    "banana_pro_vip": "Nano Banana Pro VIP",
     "banana_2": "Nano Banana 2",
     "nano-banana-2-lite": "Nano Banana 2 Lite 🔥 НОВИНКА",
     "seedream_edit": "Seedream 4.5",
@@ -691,7 +692,10 @@ def get_saved_reference_picker_keyboard(reference_id: int, current_index: int, t
     return builder.as_markup()
 
 
-def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
+def get_image_model_selection_keyboard(
+    current_service: str = "banana_pro",
+    user_id: int | None = None,
+):
     builder = InlineKeyboardBuilder()
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
@@ -703,10 +707,16 @@ def get_image_model_selection_keyboard(current_service: str = "banana_pro"):
         ("wan_27", "model_wan_27", "🧪 Wan 2.7 Pro", preset_manager.get_generation_cost("wan_27")),
         ("flux_pro", "model_flux_pro", "🧩 GPT Image 2", preset_manager.get_generation_cost("flux_pro")),
     ]
+    if user_id is not None and config.is_admin(int(user_id)):
+        model_rows.insert(
+            3,
+            ("banana_pro_vip", "model_banana_pro_vip", "👑 Nano Banana Pro VIP", 0),
+        )
     for model_row in model_rows:
         model_key, callback_data, label, cost = model_row[:4]
         check = "✅ " if current_service == model_key else ""
-        builder.row(InlineKeyboardButton(text=f"{check}{label} • {cost}🍌", callback_data=callback_data))
+        suffix = " • бесплатно" if model_key == "banana_pro_vip" else f" • {cost}🍌"
+        builder.row(InlineKeyboardButton(text=f"{check}{label}{suffix}", callback_data=callback_data))
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_main"))
     return builder.as_markup()
 
@@ -734,13 +744,17 @@ def get_create_image_keyboard(
         builder.row(*ratio_buttons[:3]); builder.row(*ratio_buttons[3:])
     else:
         builder.row(*ratio_buttons[:3]); builder.row(*ratio_buttons[3:6]); builder.row(*ratio_buttons[6:])
-    if current_service in {"banana_pro", "banana_2", "nanobanana", "nano_banana_pro", "nano-banana-pro"}:
+    if current_service in {"banana_pro", "banana_2", "banana_pro_vip", "nanobanana", "nano_banana_pro", "nano-banana-pro", "nano_banana_pro_vip", "nano-banana-pro-vip"}:
         q = str(img_quality or "2K").upper()
-        builder.row(
+        quality_buttons = [
             InlineKeyboardButton(text=("◉ 1K" if q == "1K" else "○ 1K"), callback_data="img_quality_1k"),
             InlineKeyboardButton(text=("◉ 2K" if q == "2K" else "○ 2K"), callback_data="img_quality_2k"),
-            InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k"),
-        )
+        ]
+        if current_service != "banana_pro_vip":
+            quality_buttons.append(
+                InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k")
+            )
+        builder.row(*quality_buttons)
     count_buttons = []
     for count in [1, 2, 4, 6]:
         marker = "◉" if current_count == count else "○"

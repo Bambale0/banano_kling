@@ -74,12 +74,13 @@ export function TrendsTab() {
     : state.imageModels
   const selectedTrendImageModel = state.imageModels.find((item) => item.id === model)
   const selectedTrendVideoModel = state.videoModels.find((item) => item.id === model)
-  const trendImageQualities =
+  const trendImageQualities = useMemo(() => (
     selectedTrendImageModel?.id === 'banana_pro' || selectedTrendImageModel?.id === 'banana_2'
-      ? ['1K', '2K', '4K']
-      : selectedTrendImageModel?.qualities?.length
-        ? selectedTrendImageModel.qualities
-        : ['basic']
+        ? ['1K', '2K', '4K']
+        : selectedTrendImageModel?.qualities?.length
+          ? selectedTrendImageModel.qualities
+          : ['basic']
+  ), [selectedTrendImageModel])
 
   const videoModelIds = useMemo(
     () => new Set(state.videoModels.map((item) => item.id)),

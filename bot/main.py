@@ -601,6 +601,7 @@ def _get_task_model_label(model: str | None, task_type: str | None = None) -> st
         "gemini_omni_audio": "Gemini Omni Audio",
         "gemini_omni_character": "Gemini Omni Character",
         "banana_pro": "Banana Pro",
+        "banana_pro_vip": "Banana Pro VIP",
         "banana_2": "Banana 2",
         "nano-banana-2-lite": "Nano Banana 2 Lite 🔥",
         "seedream_edit": "Seedream 4.5",
@@ -1383,6 +1384,7 @@ def _is_retryable_kie_timeout_failure(task, fail_code, fail_msg) -> bool:
     model_name = str(getattr(task, "model", "") or "").strip()
     if model_name not in {
         "banana_pro",
+        "banana_pro_vip",
         "nanobanana",
         "banana_2",
         "nano-banana-2-lite",
@@ -1565,6 +1567,7 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
     ).strip()
     if runtime_img_service not in {
         "banana_pro",
+        "banana_pro_vip",
         "nanobanana",
         "banana_2",
         "nano-banana-2-lite",
@@ -1643,6 +1646,11 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
             resolution=str(request_data.get("img_quality") or "2K").upper(),
             image_input=reference_images,
             callback_url=callback_url,
+            model=(
+                "nano-banana-pro-vip"
+                if runtime_img_service == "banana_pro_vip"
+                else "nano-banana-pro"
+            ),
         )
 
     new_task_id = result.get("task_id") if isinstance(result, dict) else None

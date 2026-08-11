@@ -136,7 +136,7 @@ async def check_task_with_provider(
                     return "completed"
                 if status and str(status).lower() in ("failed", "error", "rejected", "fail"):
                     return "failed"
-        elif normalized_service in {"banana_pro", "nanobanana", "nano-banana-pro", "nano_banana_pro"}:
+        elif normalized_service in {"banana_pro", "banana_pro_vip", "nanobanana", "nano-banana-pro", "nano_banana_pro", "nano-banana-pro-vip", "nano_banana_pro_vip"}:
             from bot.services.nano_banana_pro_service import nano_banana_pro_service
             result = await nano_banana_pro_service.get_task_status(external_task_id)
             if result:

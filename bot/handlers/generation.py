@@ -411,6 +411,7 @@ SENSITIVE_FASHION_KEYWORDS = {
 
 BANANA_IMAGE_SERVICES = {
     "banana_pro",
+    "banana_pro_vip",
     "banana_2",
     "nanobanana",
     "nano-banana-2-lite",
@@ -423,6 +424,8 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
         return "nano-banana-2-lite"
     if img_service == "banana_2":
         return "nano-banana-2"
+    if img_service == "banana_pro_vip":
+        return "nano-banana-pro-vip"
     if img_service in {"banana_pro", "nanobanana"}:
         return "nano-banana-pro"
     if img_service == "seedream_edit":
@@ -485,6 +488,8 @@ def _resolve_image_aspect_ratio(img_service: str, img_ratio: str, prompt: str) -
 
 
 def _get_max_image_references(img_service: str | None) -> int:
+    if img_service == "banana_pro_vip":
+        return 14
     # Product rule: users may attach up to 8 reference images before generation.
     # Saved-reference library is limited separately in storage.
     return 8
@@ -1069,6 +1074,8 @@ def _prepare_banana_reference_images(
 def _resolve_image_unit_cost(img_service: str, img_quality: str) -> float:
     quality_value = str(img_quality or "").strip()
     quality_upper = quality_value.upper()
+    if img_service in {"banana_pro_vip", "nano_banana_pro_vip", "nano-banana-pro-vip"}:
+        return 0
     if img_service in {
         "banana_pro",
         "nano_banana_pro",
@@ -1220,13 +1227,14 @@ async def _start_image_generation_task(
             callback_url=image_callback_url,
             model=_get_image_provider_model(runtime_img_service, reference_images),
         )
-    elif runtime_img_service in {"banana_pro", "nanobanana"}:
+    elif runtime_img_service in {"banana_pro", "banana_pro_vip", "nanobanana"}:
         result = await nano_banana_pro_service.generate_image(
             prompt=banana_provider_prompt,
             aspect_ratio=img_ratio,
             resolution=img_quality.upper(),
             image_input=reference_images,
             callback_url=callback_url,
+            model=_get_image_provider_model(runtime_img_service, reference_images),
         )
     elif runtime_img_service in {"seedream_edit", "seedream_5_pro"}:
         if runtime_img_service == "seedream_edit" or reference_images:
@@ -1305,6 +1313,7 @@ async def _start_image_generation_task(
             resolution=img_quality.upper(),
             image_input=reference_images,
             callback_url=callback_url,
+            model=_get_image_provider_model(runtime_img_service, reference_images),
         )
 
     result_status, error_message = _classify_image_generation_result(result)
@@ -1410,7 +1419,7 @@ async def show_create_image_menu(callback: types.CallbackQuery, state: FSMContex
         "• сохранить внешность человека или предмета\n"
         "• повторить стиль и детали\n"
         "• опираться на конкретный исходник\n\n"
-        "<i>Можно загрузить до 9 фото.</i>\n"
+        f"<i>Можно загрузить до {_get_max_image_references('banana_pro')} фото.</i>\n"
         "Когда всё готово, нажмите <b>▶️ Продолжить</b>.\n"
         "Если референсы не нужны — выберите <b>⏭ Пропустить</b>."
     )
@@ -1463,7 +1472,7 @@ async def select_model_wan_27(callback: types.CallbackQuery, state: FSMContext):
         f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
         "<b>Шаг 1. Референсы</b>\n"
         "Загрузите фото, если хотите проверить редактирование или генерацию по исходнику.\n"
-        "Можно загрузить до 9 фото.\n\n"
+        f"Можно загрузить до {_get_max_image_references('wan_27')} фото.\n\n"
         "Если референсы не нужны — нажмите <b>⏭ Пропустить</b>.\n"
         "Когда всё готово — нажмите <b>✅ Продолжить</b>."
     )
@@ -2868,6 +2877,11 @@ async def show_main_img_banana_pro(callback: types.CallbackQuery, state: FSMCont
     await _open_image_model_from_main(callback, state, model="banana_pro")
 
 
+@router.callback_query(F.data == "main_img_banana_pro_vip")
+async def show_main_img_banana_pro_vip(callback: types.CallbackQuery, state: FSMContext):
+    await _open_image_model_from_main(callback, state, model="banana_pro_vip")
+
+
 @router.callback_query(F.data == "main_img_banana_2")
 async def show_main_img_banana_2(callback: types.CallbackQuery, state: FSMContext):
     await _open_image_model_from_main(callback, state, model="banana_2")
@@ -3132,7 +3146,7 @@ async def handle_img_ref_upload_new(callback: types.CallbackQuery, state: FSMCon
     await callback.message.edit_text(
         "📎 <b>Загрузка референсов</b>\n"
         "Добавьте фото, если хотите точнее передать стиль, человека или объект.\n\n"
-        "<i>Можно загрузить до 9 фото.</i>\n"
+        f"<i>Можно загрузить до {max_refs} фото.</i>\n"
         "Когда всё готово, нажмите <b>Продолжить</b> или <b>Пропустить</b>.",
         reply_markup=get_reference_images_upload_keyboard(
             current_refs, max_refs, "new"
@@ -3857,7 +3871,14 @@ async def _show_image_model_selection_screen(
         "Сначала выберите модель.\n"
         "После этого бот покажет следующий шаг: референсы или настройки."
     )
-    keyboard = get_image_model_selection_keyboard(current_service)
+    keyboard = get_image_model_selection_keyboard(
+        current_service,
+        user_id=(
+            message_or_callback.from_user.id
+            if getattr(message_or_callback, "from_user", None)
+            else None
+        ),
+    )
 
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
@@ -5191,6 +5212,22 @@ async def handle_model_banana_pro(callback: types.CallbackQuery, state: FSMConte
     await callback.answer()
 
 
+@router.callback_query(F.data == "model_banana_pro_vip")
+async def handle_model_banana_pro_vip(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор модели Banana Pro VIP."""
+    await state.update_data(
+        img_service="banana_pro_vip",
+        img_quality="2K",
+    )
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "model_banana_2")
 async def handle_model_banana_2(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Banana 2."""
@@ -5556,7 +5593,7 @@ async def start_image_generation(callback: types.CallbackQuery, state: FSMContex
         f"Загрузите изображения для:\n"
         f"• Точного сходства с объектом\n"
         f"• Сохранения стиля\n"
-        f"• Персонажей (до 4 фото)"
+        f"• Персонажей (до {_get_max_image_references('banana_pro')} фото)"
         f"После загрузки нажмите ▶️ Продолжить\n"
         f"Или ⏭ Пропустить, если референсы не нужны",
         reply_markup=get_reference_images_upload_keyboard(0, _get_max_image_references("banana_pro"), "generate_image"),
@@ -9158,6 +9195,12 @@ async def set_image_quality_2k(callback: types.CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data == "img_quality_4k")
 async def set_image_quality_4k(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if data.get("img_service") == "banana_pro_vip":
+        await state.update_data(img_quality="2K")
+        await callback.answer("Для VIP доступны только 1K и 2K")
+        await _show_image_creation_screen(callback, state)
+        return
     await state.update_data(img_quality="4K")
     await callback.answer("Выбрано 4K")
     await _show_image_creation_screen(callback, state)
