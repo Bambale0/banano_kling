@@ -19,6 +19,9 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot.config import config
+
+FILE_KIND_MAP: dict[str, dict[str, Any]] = {}
+
 from bot.database import (
     DATABASE_PATH,
     MAX_ACTIVE_PROMPTS_PER_USER,
@@ -706,7 +709,7 @@ def _validate_gemini_omni_video_inputs(
     return None
 
 
-FILE_KIND_MAP = {
+FILE_KIND_MAP.update({
     "image_reference": {"prefix": "image/", "fallback_ext": "png", "group": "image"},
     "video_reference": {"prefix": "video/", "fallback_ext": "mp4", "group": "video"},
     "audio_reference": {"prefix": "audio/", "fallback_ext": "mp3", "group": "audio"},
@@ -719,7 +722,7 @@ FILE_KIND_MAP = {
         "durable_reference": True,
         "source": "miniapp_trend",
     },
-}
+})
 
 
 def _normalize_miniapp_upload_content_type(
@@ -1189,6 +1192,56 @@ def _source_image_references_from_task_payload(task_payload: dict[str, Any]) -> 
         ):
             references.append(url)
     return references
+
+
+def _reference_upload_owner_telegram_id(url: str) -> int | None:
+    try:
+        path = urlparse(str(url or "").strip()).path
+    except Exception:
+        return None
+    match = re.search(r"/uploads/refs/(?:image|video|audio)/(\d+)/", path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_foreign_feed_source_references(
+    source_card: dict[str, Any],
+    task_payload: dict[str, Any],
+    references: list[str],
+    *,
+    viewer_telegram_id: int | None = None,
+) -> list[str]:
+    if not references or source_card.get("is_mine"):
+        return references
+
+    source_references = set(_source_image_references_from_task_payload(task_payload))
+    filtered: list[str] = []
+    for item in references:
+        url = str(item or "").strip()
+        if not url or url in filtered:
+            continue
+        owner_telegram_id = _reference_upload_owner_telegram_id(url)
+        if url in source_references:
+            continue
+        if (
+            owner_telegram_id is not None
+            and viewer_telegram_id is not None
+            and owner_telegram_id != int(viewer_telegram_id)
+        ):
+            continue
+        if (
+            owner_telegram_id is None
+            and source_references
+            and any(url == source_url for source_url in source_references)
+        ):
+            continue
+        if url not in filtered:
+            filtered.append(url)
+    return filtered
 
 
 def _can_restore_private_profile_references(source_card: dict[str, Any]) -> bool:
@@ -3785,6 +3838,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
         references = [str(item) for item in list(body.get("reference_images", []) or []) if str(item).strip()]
         if not references and _can_restore_private_profile_references(source):
             references = _source_image_references_from_task_payload(source_task)
+        references = _filter_foreign_feed_source_references(
+            source,
+            source_task,
+            references,
+            viewer_telegram_id=telegram_id,
+        )
         img_quality = str(body.get("img_quality", "2K"))
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
@@ -3947,6 +4006,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 )
             if not prompt:
                 prompt = source_prompt
+            references = _filter_foreign_feed_source_references(
+                source_feed_task,
+                source_feed_payload,
+                references,
+                viewer_telegram_id=telegram_id,
+            )
             if not references:
                 return web.json_response(
                     {"ok": False, "error": "Добавьте своё фото или референс для remix"},

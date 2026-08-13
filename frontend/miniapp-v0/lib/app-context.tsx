@@ -361,9 +361,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ratio: item.aspect_ratio || '1:1',
       sourceFeedGenId: item.id,
       promptHidden: item.prompt_hidden,
-      initialReferences: item.references_hidden
-        ? []
-        : (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index)),
+      initialReferences: item.is_mine && !item.references_hidden
+        ? (item.reference_images || []).map((url, index) => feedReferenceToUploadedFile(url, index))
+        : [],
     })
     setActiveTabState(1)
   }, [state.imageModels, state.videoModels])

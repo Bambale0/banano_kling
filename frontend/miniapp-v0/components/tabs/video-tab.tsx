@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { VideoGeneratorForm } from '../forms/video-generator-form'
 import { Seedance25PublicForm } from '../forms/seedance25-public-form'
@@ -37,6 +37,11 @@ export function VideoTab() {
   )
   const canUseSeedance25 = Boolean(seedance25Model)
   const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
+
+  useEffect(() => {
+    if (!canUseSeedance25 || !videoPromptPreset) return
+    setVideoMode(videoPromptPreset.model === 'seedance_2_5' ? 'seedance25' : 'regular')
+  }, [canUseSeedance25, videoPromptPreset])
 
   const handleSubmit = async (data: {
     model: string

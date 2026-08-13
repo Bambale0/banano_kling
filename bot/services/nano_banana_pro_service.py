@@ -4,12 +4,14 @@ from typing import Dict, List, Optional
 
 import aiohttp
 
+from bot.config import config
 from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
     is_local_upload_source,
 )
 from bot.services.kie_file_upload_service import kie_file_upload_service
+from bot.services.nexus_image_provider import NexusImageProvider
 
 logger = logging.getLogger(__name__)
 MAX_IMAGE_INPUTS = 8
@@ -257,6 +259,10 @@ class NanoBananaProService:
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
+        if hasattr(self.primary_provider, "get_task_status"):
+            primary_status = await self.primary_provider.get_task_status(task_id)
+            if primary_status is not None:
+                return primary_status
         resp = await self._get("/api/v1/jobs/recordInfo", params={"taskId": task_id})
         if not resp or not isinstance(resp, dict):
             return None
@@ -282,6 +288,8 @@ class NanoBananaProService:
             if result is not None:
                 if isinstance(result, (bytes, bytearray)):
                     return {"image_bytes": bytes(result)}
+                if isinstance(result, dict) and result.get("task_id"):
+                    return result
                 return result
             logger.info(
                 "Nano Banana Pro: primary sync provider failed, trying queued provider path"
@@ -340,9 +348,6 @@ class NanoBananaProService:
         await self.primary_provider.close()
         if self.fallback_provider is not None:
             await self.fallback_provider.close()
-
-
-from bot.config import config
 
 
 class NanoBananaProGeminiProvider:
@@ -484,30 +489,35 @@ ULTRA DETAIL & QUALITY BOOST:
             await self._session.close()
 
 
-# --- Инициализация: prefer Gemini-compatible APIYI, fallback to kie.ai ---
+# --- Инициализация: prefer Nexus, fallback to kie.ai ---
 
 _kie_provider = ProviderClient(
     api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
     base_url="https://api.kie.ai",
 )
 
-_gemini_provider = None
-if config.NANO_BANANA_PRO_FALLBACK_API_KEY and config.NANO_BANANA_PRO_FALLBACK_BASE_URL:
-    _gemini_provider = NanoBananaProGeminiProvider(
-        api_key=config.NANO_BANANA_PRO_FALLBACK_API_KEY,
-        base_url=config.NANO_BANANA_PRO_FALLBACK_BASE_URL,
+nexus_api_key = str(getattr(config, "NEXUS_API_KEY", "") or "").strip()
+_nexus_provider = (
+    NexusImageProvider(
+        api_key=nexus_api_key,
+        model_name="nano-banana-pro",
+        base_url=getattr(config, "NEXUS_API_BASE_URL", "https://nexusapi.dev"),
+        timeout_seconds=getattr(config, "NEXUS_API_TIMEOUT_SECONDS", 600),
+        poll_interval_seconds=getattr(config, "NEXUS_API_POLL_INTERVAL_SECONDS", 5),
+        max_references=4,
     )
+    if nexus_api_key
+    else None
+)
 
-if _gemini_provider:
-    logger.info(
-        "Nano Banana Pro: using APIYI Gemini-compatible provider as primary, kie.ai as fallback"
-    )
+if _nexus_provider:
+    logger.info("Nano Banana Pro: using Nexus as primary, kie.ai as fallback")
     nano_banana_pro_service = NanoBananaProService(
-        primary_provider=_gemini_provider,
+        primary_provider=_nexus_provider,
         fallback_provider=_kie_provider,
     )
 else:
-    logger.info("Nano Banana Pro: using kie.ai as primary")
+    logger.info("Nano Banana Pro: Nexus is not configured; using kie.ai as primary")
     nano_banana_pro_service = NanoBananaProService(
         primary_provider=_kie_provider,
         fallback_provider=None,

@@ -5962,6 +5962,7 @@ def _generation_row_to_card(
     author = _author_display_name(row)
     request_data = _parse_json_dict(row["request_data"] if "request_data" in row.keys() else None)
     prompt_hidden = generation_prompt_hidden(row)
+    viewer_is_owner = bool(viewer_user_id and row["user_id"] == viewer_user_id)
     references_visible = generation_references_visible(row)
     all_reference_images = _feed_reference_images(row, request_data)
     all_reference_videos = _feed_reference_videos(row, request_data)
@@ -6008,7 +6009,7 @@ def _generation_row_to_card(
             if "author_photo_url" in row.keys() and row["author_photo_url"]
             else None
         ),
-        "is_mine": bool(viewer_user_id and row["user_id"] == viewer_user_id),
+        "is_mine": viewer_is_owner,
         "remixes": remix_count,
         "score": _calculate_feed_score(row),
         "created_at": row["created_at"],

@@ -101,6 +101,7 @@ DB_BACKUP_TIMEOUT_SECONDS = 30 * 60
 _TELEGRAM_WEBHOOK_TASKS: set[asyncio.Task] = set()
 TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT = 8
 _TELEGRAM_WEBHOOK_SEMAPHORE = asyncio.Semaphore(TELEGRAM_WEBHOOK_CONCURRENCY_LIMIT)
+_NEXUS_POLL_IN_FLIGHT: set[str] = set()
 
 USER_BOT_COMMANDS = [
     BotCommand(command="start", description="Текстовый бот и главное меню"),
@@ -1347,6 +1348,331 @@ async def _send_plain_result_link(
         disable_web_page_preview=False,
     )
 
+async def _send_polled_nexus_image_result(
+    bot_instance: Bot,
+    task,
+    result_url: str,
+    *,
+    provider_task_id: str | None = None,
+    service_name: str = "Nano Banana",
+) -> bool:
+    from bot.database import complete_video_task
+    from bot.keyboards import get_image_result_keyboard
+
+    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
+    if not telegram_id:
+        logger.error(
+            "Nexus poller: cannot resolve telegram_id for task %s",
+            getattr(task, "task_id", None),
+        )
+        return False
+
+    persisted_url = await _persist_result_url_if_needed(result_url, task_type="image")
+    reference_preview_urls = _extract_reference_image_urls(task)
+    model_label = _get_task_model_label(getattr(task, "model", None), getattr(task, "type", None))
+    task_lookup_id = provider_task_id or getattr(task, "task_id", "")
+    display_task_id = _public_task_id(task, task_lookup_id)
+    full_caption = (
+        "✅ <b>Изображение готово</b>\n"
+        f"• Модель: <code>{_html_fragment(model_label)}</code>\n"
+        f"• ID: <code>{_html_fragment(display_task_id)}</code>"
+        f"{_provider_task_id_line(task, task_lookup_id)}"
+    )
+    if getattr(task, "cost", None):
+        full_caption += f"\n• Стоимость: <code>{_html_fragment(task.cost)}🍌</code>"
+    if getattr(task, "aspect_ratio", None):
+        full_caption += (
+            f"\n• Формат: <code>{_html_fragment(str(task.aspect_ratio).replace(':', '∶'))}</code>"
+        )
+    preview_caption = _build_single_result_caption(
+        _with_original_link(full_caption, persisted_url),
+        task,
+        reference_preview_urls,
+    )
+    keyboard = get_image_result_keyboard(
+        persisted_url,
+        task_id=_task_callback_id(task, task_lookup_id),
+    )
+
+    sent_media = False
+    image_bytes = await _download_remote_bytes(persisted_url, timeout_seconds=30)
+    preview_sent = False
+    if image_bytes:
+        preview_bytes = _build_preview_photo_bytes(image_bytes)
+        if preview_bytes:
+            try:
+                photo = types.BufferedInputFile(
+                    preview_bytes,
+                    filename="generated_preview.jpg",
+                )
+                await bot_instance.send_photo(
+                    chat_id=telegram_id,
+                    photo=photo,
+                    caption=preview_caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+                preview_sent = True
+                logger.info(
+                    "Nexus poller: %s image preview sent as file-photo to user %s",
+                    service_name,
+                    telegram_id,
+                )
+            except Exception as exc:
+                logger.info(
+                    "Nexus poller: preview file-photo send failed for task %s (%s)",
+                    task_lookup_id,
+                    exc,
+                )
+
+    if not preview_sent:
+        try:
+            await bot_instance.send_photo(
+                chat_id=telegram_id,
+                photo=persisted_url,
+                caption=preview_caption,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+            preview_sent = True
+            logger.info(
+                "Nexus poller: %s image preview sent via URL to user %s",
+                service_name,
+                telegram_id,
+            )
+        except Exception as exc:
+            logger.info(
+                "Nexus poller: image URL send failed for task %s (%s)",
+                task_lookup_id,
+                exc,
+            )
+
+    original_sent = await _send_original_file(
+        bot_instance,
+        telegram_id,
+        persisted_url,
+        image_bytes,
+    )
+    if preview_sent or original_sent:
+        await complete_video_task(task_lookup_id, persisted_url)
+        sent_media = True
+        if _should_send_prompt_followup(task):
+            try:
+                await _send_used_prompt_message(
+                    bot_instance,
+                    telegram_id,
+                    task,
+                    persisted_url,
+                )
+            except Exception:
+                logger.exception(
+                    "Nexus poller: failed to send prompt follow-up for task %s",
+                    task_lookup_id,
+                )
+        return True
+
+    await _send_plain_result_link(
+        bot_instance,
+        telegram_id,
+        media_label="Изображение",
+        model_label=model_label,
+        task_id=display_task_id,
+        result_url=persisted_url,
+        reply_markup=keyboard,
+        notice="Telegram не смог отправить превью автоматически.",
+    )
+    await complete_video_task(task_lookup_id, persisted_url)
+    logger.info(
+        "Nexus poller: fallback text sent for task %s to user %s",
+        task_lookup_id,
+        telegram_id,
+    )
+    return True
+
+async def _fail_polled_nexus_image_task(
+    bot_instance: Bot,
+    task,
+    *,
+    provider_task_id: str | None = None,
+    service_name: str = "Nano Banana",
+    reason: str | None = None,
+) -> bool:
+    from bot.database import add_credits, complete_video_task
+    from bot.keyboards import get_failed_image_retry_keyboard
+
+    task_lookup_id = provider_task_id or getattr(task, "task_id", "")
+    telegram_id = await _resolve_task_telegram_id(task, context="nexus_poller")
+    if telegram_id and getattr(task, "cost", None):
+        try:
+            await add_credits(telegram_id, task.cost)
+        except Exception:
+            logger.exception(
+                "Nexus poller: failed to refund credits for task %s",
+                task_lookup_id,
+            )
+
+    await complete_video_task(task_lookup_id, None)
+
+    if not telegram_id:
+        return False
+
+    try:
+        await bot_instance.send_message(
+            chat_id=telegram_id,
+            text=_build_failure_notification_text(
+                service_name=service_name,
+                task_id=_public_task_id(task, task_lookup_id),
+                reason=reason,
+                media_kind="результата",
+                refund_text=(
+                    "\n\nБананы за эту попытку уже возвращены."
+                    if getattr(task, "cost", None)
+                    else "\n\nПопробуйте повторить попытку немного позже."
+                ),
+            ),
+            parse_mode="HTML",
+            reply_markup=get_failed_image_retry_keyboard(_task_callback_id(task, task_lookup_id)),
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "Nexus poller: failed to notify user about task failure %s",
+            task_lookup_id,
+        )
+        return False
+
+async def _poll_single_nexus_image_task(bot_instance: Bot, task_row: dict[str, Any]) -> None:
+    from bot.database import get_task_by_id
+    from bot.handlers.generation import save_uploaded_file
+    from bot.services.nano_banana_2_service import nano_banana_2_service
+    from bot.services.nano_banana_pro_service import nano_banana_pro_service
+
+    request_data = task_row.get("request_data") or {}
+    provider_task_id = str(
+        request_data.get("provider_task_id") or task_row.get("task_id") or ""
+    ).strip()
+    if not provider_task_id or provider_task_id in _NEXUS_POLL_IN_FLIGHT:
+        return
+
+    _NEXUS_POLL_IN_FLIGHT.add(provider_task_id)
+    try:
+        task = await get_task_by_id(provider_task_id)
+        if not task or getattr(task, "status", "") == "completed":
+            return
+
+        provider_model = str(
+            request_data.get("provider_model") or getattr(task, "model", "") or ""
+        ).strip().lower()
+        if provider_model == "nano-banana-pro":
+            service = nano_banana_pro_service
+            service_name = "Nano Banana Pro"
+        else:
+            service = nano_banana_2_service
+            service_name = "Nano Banana 2"
+
+        payload = await service.get_task_status(provider_task_id)
+        if not payload:
+            return
+
+        status = str(payload.get("status") or payload.get("state") or "").strip().lower()
+        if status in {"pending", "processing", "running", "queued", "accepted"}:
+            return
+
+        if status == "completed":
+            provider = getattr(service, "primary_provider", None)
+            if not provider or not hasattr(provider, "get_completed_result"):
+                logger.error(
+                    "Nexus poller: provider for task %s cannot resolve completed result",
+                    provider_task_id,
+                )
+                return
+            result = await provider.get_completed_result(provider_task_id, payload)
+            if not result:
+                retried_task_id = await _retry_nexus_banana_image_failure(
+                    task,
+                    provider_task_id,
+                    reason="Nexus completed task without a usable image result",
+                )
+                if retried_task_id:
+                    return
+                await _fail_polled_nexus_image_task(
+                    bot_instance,
+                    task,
+                    provider_task_id=provider_task_id,
+                    service_name=service_name,
+                    reason="Nexus completed task without a usable image result",
+                )
+                return
+            result_url = str(result.get("result_url") or "").strip()
+            if not result_url and result.get("image_bytes"):
+                result_url = save_uploaded_file(result["image_bytes"], "png")
+            if not result_url:
+                retried_task_id = await _retry_nexus_banana_image_failure(
+                    task,
+                    provider_task_id,
+                    reason="Nexus returned an empty image payload",
+                )
+                if retried_task_id:
+                    return
+                await _fail_polled_nexus_image_task(
+                    bot_instance,
+                    task,
+                    provider_task_id=provider_task_id,
+                    service_name=service_name,
+                    reason="Nexus returned an empty image payload",
+                )
+                return
+            await _send_polled_nexus_image_result(
+                bot_instance,
+                task,
+                result_url,
+                provider_task_id=provider_task_id,
+                service_name=service_name,
+            )
+            return
+
+        if status == "failed":
+            retried_task_id = await _retry_nexus_banana_image_failure(
+                task,
+                provider_task_id,
+                reason=str(payload.get("error") or "unknown provider failure"),
+            )
+            if retried_task_id:
+                return
+            await _fail_polled_nexus_image_task(
+                bot_instance,
+                task,
+                provider_task_id=provider_task_id,
+                service_name=service_name,
+                reason=str(payload.get("error") or "unknown provider failure"),
+            )
+    finally:
+        _NEXUS_POLL_IN_FLIGHT.discard(provider_task_id)
+
+async def _nexus_image_poller_loop(bot_instance: Bot) -> None:
+    from bot.services.nexus_task_poller import (
+        NEXUS_POLL_BATCH_SIZE,
+        NEXUS_POLL_INTERVAL_SECONDS,
+        get_pending_nexus_image_tasks,
+    )
+
+    await asyncio.sleep(5)
+    logger.info(
+        "Nexus image poller started: interval=%ss batch_size=%s",
+        NEXUS_POLL_INTERVAL_SECONDS,
+        NEXUS_POLL_BATCH_SIZE,
+    )
+    while True:
+        try:
+            pending_tasks = await get_pending_nexus_image_tasks(
+                limit=NEXUS_POLL_BATCH_SIZE,
+            )
+            for task_row in pending_tasks:
+                await _poll_single_nexus_image_task(bot_instance, task_row)
+        except Exception:
+            logger.exception("Nexus image poller cycle error")
+        await asyncio.sleep(NEXUS_POLL_INTERVAL_SECONDS)
+
 def _build_failure_notification_text(
     *,
     service_name: str,
@@ -1667,6 +1993,110 @@ async def _retry_transient_kie_image_failure(task, failed_task_id: str) -> str |
         new_task_id,
         runtime_img_service,
         retry_attempt + 1,
+    )
+    return new_task_id
+
+
+async def _retry_nexus_banana_image_failure(
+    task,
+    failed_task_id: str,
+    *,
+    reason: str | None = None,
+) -> str | None:
+    if not task or getattr(task, "type", None) != "image":
+        return None
+
+    request_data = _extract_task_request_data(task)
+    runtime_img_service = (
+        request_data.get("img_service") or getattr(task, "model", None) or ""
+    ).strip()
+    if runtime_img_service not in {"banana_pro", "banana_2"}:
+        return None
+
+    if str(request_data.get("provider") or "").strip().lower() != "nexus":
+        return None
+
+    retry_attempt = int(request_data.get("auto_retry_attempt") or 0)
+    if retry_attempt >= 1:
+        return None
+
+    prompt = (
+        request_data.get("effective_prompt")
+        or request_data.get("prompt")
+        or getattr(task, "prompt", None)
+    )
+    if not prompt:
+        return None
+
+    reference_images = (
+        request_data.get("source_reference_images")
+        or request_data.get("reference_images")
+        or []
+    )
+    img_ratio = (
+        request_data.get("img_ratio")
+        or getattr(task, "aspect_ratio", None)
+        or "1:1"
+    )
+    resolution = str(request_data.get("img_quality") or "2K").upper()
+    callback_url = config.kie_notification_url if config.WEBHOOK_HOST else None
+
+    if runtime_img_service == "banana_2":
+        from bot.services.nano_banana_2_service import nano_banana_2_service
+
+        new_task_id = await nano_banana_2_service.create_task(
+            prompt=prompt,
+            image_input=reference_images,
+            aspect_ratio=img_ratio,
+            resolution=resolution,
+            callback_url=callback_url,
+            model="nano-banana-2",
+        )
+        provider_model = "nano-banana-2"
+    else:
+        from bot.services.nano_banana_pro_service import nano_banana_pro_service
+
+        new_task_id = await nano_banana_pro_service.create_task(
+            prompt=prompt,
+            image_input=reference_images,
+            aspect_ratio=img_ratio,
+            resolution=resolution,
+            callback_url=callback_url,
+        )
+        provider_model = "nano-banana-pro"
+
+    if not new_task_id or new_task_id == failed_task_id:
+        return None
+
+    retry_request_data = dict(request_data)
+    retry_request_data["auto_retry_attempt"] = retry_attempt + 1
+    retry_request_data["last_auto_retry_from_task_id"] = failed_task_id
+    retry_request_data["provider"] = "kie"
+    retry_request_data["provider_model"] = provider_model
+    retry_request_data["provider_task_id"] = new_task_id
+    retry_request_data = _merge_task_id_aliases(
+        retry_request_data, failed_task_id, new_task_id
+    )
+
+    async with db_backend.connect() as db:
+        await db.execute(
+            "UPDATE generation_tasks SET task_id = ?, request_data = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND user_id = ?",
+            (
+                new_task_id,
+                json.dumps(retry_request_data, ensure_ascii=False),
+                failed_task_id,
+                task.user_id,
+            ),
+        )
+        await db.commit()
+
+    logger.warning(
+        "Auto-retried Nexus image failure via KIE fallback: old_task_id=%s new_task_id=%s model=%s attempt=%s reason=%s",
+        failed_task_id,
+        new_task_id,
+        runtime_img_service,
+        retry_attempt + 1,
+        str(reason or "")[:500],
     )
     return new_task_id
 
@@ -4192,6 +4622,12 @@ async def main():
     bot = Bot(
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+
+    try:
+        asyncio.create_task(_nexus_image_poller_loop(bot))
+        logger.info("Nexus image poller started")
+    except Exception:
+        logger.exception("Failed to start Nexus image poller")
 
     # Настраиваем диспатчер
     dp = setup_dispatcher()

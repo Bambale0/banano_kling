@@ -13,6 +13,7 @@ from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
 )
+from bot.services.nexus_image_provider import NexusImageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +444,10 @@ class NanoBanana2Service:
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Dict]:
+        if hasattr(self.primary_provider, "get_task_status"):
+            primary_status = await self.primary_provider.get_task_status(task_id)
+            if primary_status is not None:
+                return primary_status
         response = await self._get(
             "/api/v1/jobs/recordInfo",
             params={"taskId": task_id},
@@ -503,6 +508,8 @@ class NanoBanana2Service:
             if isinstance(raw_result, dict):
                 primary_result = raw_result
                 if raw_result.get("image_bytes"):
+                    return raw_result
+                if raw_result.get("task_id"):
                     return raw_result
                 if not raw_result.get("retryable", True):
                     # A completed provider response (for example a model policy
@@ -851,31 +858,34 @@ class NanoBanana2GeminiProvider:
             await self._session.close()
 
 
-# APIYI remains the preferred provider by product decision. Existing environment
-# variable names are retained for deployment compatibility.
+# Nexus remains the preferred provider by product decision.
 _kie_provider = ProviderClient(
     api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
     base_url="https://api.kie.ai",
 )
 
-_apiyi_provider = None
-if config.NANOBANANA2_FALLBACK_API_KEY and config.NANOBANANA2_FALLBACK_BASE_URL:
-    _apiyi_provider = NanoBanana2GeminiProvider(
-        api_key=config.NANOBANANA2_FALLBACK_API_KEY,
-        base_url=config.NANOBANANA2_FALLBACK_BASE_URL,
+nexus_api_key = str(getattr(config, "NEXUS_API_KEY", "") or "").strip()
+_nexus_provider = (
+    NexusImageProvider(
+        api_key=nexus_api_key,
+        model_name="nano-banana-2",
+        base_url=getattr(config, "NEXUS_API_BASE_URL", "https://nexusapi.dev"),
+        timeout_seconds=getattr(config, "NEXUS_API_TIMEOUT_SECONDS", 600),
+        poll_interval_seconds=getattr(config, "NEXUS_API_POLL_INTERVAL_SECONDS", 5),
+        max_references=4,
     )
+    if nexus_api_key
+    else None
+)
 
-if _apiyi_provider:
-    logger.info(
-        "Nano Banana 2: using APIYI model %s as primary, Kie.ai as technical fallback",
-        APIYI_MODEL,
-    )
+if _nexus_provider:
+    logger.info("Nano Banana 2: using Nexus as primary, Kie.ai as technical fallback")
     nano_banana_2_service = NanoBanana2Service(
-        primary_provider=_apiyi_provider,
+        primary_provider=_nexus_provider,
         fallback_provider=_kie_provider,
     )
 else:
-    logger.info("Nano Banana 2: APIYI is not configured; using Kie.ai")
+    logger.info("Nano Banana 2: Nexus is not configured; using Kie.ai")
     nano_banana_2_service = NanoBanana2Service(
         primary_provider=_kie_provider,
         fallback_provider=None,

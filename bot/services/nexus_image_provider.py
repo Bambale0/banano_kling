@@ -13,9 +13,32 @@ from bot.services.media_input_utils import image_sources_to_data_uris
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_ASPECT_RATIOS = {"1:1", "16:9", "9:16", "4:3", "3:4"}
+_SUPPORTED_ASPECT_RATIOS = {
+    "auto",
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "5:4",
+    "4:5",
+    "21:9",
+}
 _TERMINAL_STATUSES = {"completed", "failed"}
 _MAX_RESULT_BYTES = 25 * 1024 * 1024
+_SUPPORTED_IMAGE_SIZES = {"1K", "2K", "4K"}
+
+
+def _normalize_image_size(resolution: str) -> str:
+    raw = str(resolution or "2K").strip().upper()
+    if raw in {"BASIC", "HIGH"}:
+        raw = {"BASIC": "2K", "HIGH": "4K"}[raw]
+    if raw not in _SUPPORTED_IMAGE_SIZES:
+        logger.warning("Nexus %s unsupported image_size=%s; fallback to 2K", "adapter", resolution)
+        return "2K"
+    return raw
 
 
 def build_nexus_image_params(
@@ -23,14 +46,14 @@ def build_nexus_image_params(
     model_name: str,
     prompt: str,
     aspect_ratio: str,
+    image_size: str | None = None,
     image_input: Iterable[str | bytes | bytearray] | None = None,
     max_references: int = 4,
 ) -> dict[str, Any]:
     """Build the documented Nexus image-generation params payload.
 
-    Nexus' public Nano Banana schema exposes model_name, prompt, aspect_ratio and
-    image references. Resolution/output-format controls are intentionally not
-    sent because they are not part of the published Nano Banana Nexus contract.
+    Nexus' public Nano Banana schema exposes model_name, prompt, image_urls and,
+    for Nano Banana 2 / Pro, supports image_size and aspect_ratio.
     """
 
     params: dict[str, Any] = {
@@ -39,7 +62,7 @@ def build_nexus_image_params(
     }
 
     ratio = str(aspect_ratio or "").strip()
-    if ratio and ratio.lower() != "auto" and ratio in _SUPPORTED_ASPECT_RATIOS:
+    if ratio and ratio in _SUPPORTED_ASPECT_RATIOS:
         params["aspect_ratio"] = ratio
 
     references = [
@@ -48,10 +71,12 @@ def build_nexus_image_params(
         if isinstance(value, str) and value.strip()
     ][: max(0, int(max_references))]
 
-    if len(references) == 1:
-        params["image_url"] = references[0]
-    elif references:
+    if references:
         params["image_urls"] = references
+
+    normalized_size = str(image_size or "").strip().upper()
+    if normalized_size in _SUPPORTED_IMAGE_SIZES:
+        params["image_size"] = normalized_size
 
     return params
 
@@ -113,7 +138,7 @@ def _decode_base64_image(value: str) -> tuple[bytes, str]:
 
 
 class NexusImageProvider:
-    """Synchronous adapter over Nexus' async /generate + /tasks flow."""
+    """Async adapter over Nexus' /generate + /tasks flow."""
 
     def __init__(
         self,
@@ -175,22 +200,17 @@ class NexusImageProvider:
             logger.warning("Nexus %s start transport failure: %s", self.model_name, exc)
             return None
 
-    async def _wait_for_result(
-        self,
-        session: aiohttp.ClientSession,
-        task_id: str,
-    ) -> dict[str, Any] | None:
-        deadline = asyncio.get_running_loop().time() + self.timeout_seconds
+    async def get_task_status(self, task_id: str) -> dict[str, Any] | None:
+        session = await self._get_session()
         headers = {"Authorization": f"Bearer {self.api_key}"}
-
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                async with session.get(
-                    f"{self.base_url}/tasks/{task_id}",
-                    headers=headers,
-                ) as response:
-                    if response.status != 200:
-                        body = await response.text()
+        try:
+            async with session.get(
+                f"{self.base_url}/tasks/{task_id}",
+                headers=headers,
+            ) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    if response.status != 404:
                         logger.warning(
                             "Nexus %s task %s status failed: HTTP %s body=%s",
                             self.model_name,
@@ -198,18 +218,28 @@ class NexusImageProvider:
                             response.status,
                             body[:1000],
                         )
-                        return None
-                    payload = await response.json(content_type=None)
-            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-                logger.warning(
-                    "Nexus %s task %s polling failure: %s",
-                    self.model_name,
-                    task_id,
-                    exc,
-                )
-                return None
+                    return None
+                payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            logger.warning(
+                "Nexus %s task %s polling failure: %s",
+                self.model_name,
+                task_id,
+                exc,
+            )
+            return None
 
-            if not isinstance(payload, dict):
+        return payload if isinstance(payload, dict) else None
+
+    async def _wait_for_result(
+        self,
+        session: aiohttp.ClientSession,
+        task_id: str,
+    ) -> dict[str, Any] | None:
+        deadline = asyncio.get_running_loop().time() + self.timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            payload = await self.get_task_status(task_id)
+            if not payload:
                 return None
             status = str(payload.get("status") or "").strip().lower()
             if status == "completed":
@@ -261,6 +291,53 @@ class NexusImageProvider:
             logger.warning("Nexus %s result download failure: %s", self.model_name, exc)
             return None
 
+    async def get_completed_result(
+        self,
+        task_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        completed_payload = payload or await self.get_task_status(task_id)
+        if not isinstance(completed_payload, dict):
+            return None
+
+        status = str(completed_payload.get("status") or "").strip().lower()
+        if status != "completed":
+            return None
+
+        source = _extract_result_source(completed_payload)
+        if source is None:
+            logger.warning(
+                "Nexus %s task %s completed without image result",
+                self.model_name,
+                task_id,
+            )
+            return None
+
+        source_type, value = source
+        if source_type == "url":
+            return {
+                "result_url": value,
+                "provider": "nexus",
+                "provider_model": self.model_name,
+                "provider_task_id": task_id,
+                "status": status,
+            }
+
+        try:
+            image_bytes, mime_type = _decode_base64_image(value)
+        except (ValueError, TypeError, base64.binascii.Error) as exc:
+            logger.warning("Nexus %s returned invalid image data: %s", self.model_name, exc)
+            return None
+
+        return {
+            "image_bytes": image_bytes,
+            "mime_type": mime_type,
+            "provider": "nexus",
+            "provider_model": self.model_name,
+            "provider_task_id": task_id,
+            "status": status,
+        }
+
     async def generate_image(
         self,
         prompt: str,
@@ -280,59 +357,49 @@ class NexusImageProvider:
             return None
 
         ratio = str(aspect_ratio or "").strip()
-        if ratio and ratio.lower() != "auto" and ratio not in _SUPPORTED_ASPECT_RATIOS:
+        if ratio and ratio not in _SUPPORTED_ASPECT_RATIOS:
             logger.info(
                 "Nexus %s skipped unsupported aspect_ratio=%s; using fallback",
                 self.model_name,
                 ratio,
             )
             return None
+        reference_count = len(image_input or [])
+        if reference_count > self.max_references:
+            logger.info(
+                "Nexus %s skipped: refs=%s exceed provider max=%s; using fallback",
+                self.model_name,
+                reference_count,
+                self.max_references,
+            )
+            return None
+
+        normalized_resolution = _normalize_image_size(resolution)
 
         params = build_nexus_image_params(
             model_name=self.model_name,
             prompt=clean_prompt,
             aspect_ratio=ratio,
+            image_size=normalized_resolution,
             image_input=image_input,
             max_references=self.max_references,
         )
-        session = await self._get_session()
         logger.info(
             "Nexus image request: model=%s refs=%s aspect_ratio=%s requested_resolution=%s requested_format=%s",
             self.model_name,
-            len(params.get("image_urls") or ([params["image_url"]] if params.get("image_url") else [])),
+            len(params.get("image_urls") or []),
             params.get("aspect_ratio", "provider_default"),
-            resolution,
+            params.get("image_size", normalized_resolution),
             output_format,
         )
 
+        session = await self._get_session()
         task_id = await self._start_task(session, params)
         if not task_id:
             return None
-        payload = await self._wait_for_result(session, task_id)
-        if not payload:
-            return None
-
-        source = _extract_result_source(payload)
-        if source is None:
-            logger.warning("Nexus %s task %s completed without image result", self.model_name, task_id)
-            return None
-
-        source_type, value = source
-        try:
-            if source_type == "url":
-                downloaded = await self._download_image(session, value)
-                if downloaded is None:
-                    return None
-                image_bytes, mime_type = downloaded
-            else:
-                image_bytes, mime_type = _decode_base64_image(value)
-        except (ValueError, TypeError, base64.binascii.Error) as exc:
-            logger.warning("Nexus %s returned invalid image data: %s", self.model_name, exc)
-            return None
 
         return {
-            "image_bytes": image_bytes,
-            "mime_type": mime_type,
+            "task_id": task_id,
             "provider": "nexus",
             "provider_model": self.model_name,
             "provider_task_id": task_id,

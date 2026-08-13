@@ -11,7 +11,7 @@ import subprocess
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from aiogram import Bot, F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -493,10 +493,10 @@ def _get_max_image_references(img_service: str | None) -> int:
 def _classify_image_generation_result(result) -> tuple[str, Optional[str]]:
     """Normalize provider responses into queued/done/failed states."""
     if isinstance(result, dict):
-        if result.get("task_id"):
-            return "queued", None
         if result.get("image_bytes"):
             return "done", None
+        if result.get("task_id"):
+            return "queued", None
         error_message = result.get("message") or result.get("error") or str(result)
         return "failed", make_user_friendly_generation_error(error_message)
     if isinstance(result, (bytes, bytearray)):
@@ -1021,6 +1021,18 @@ def _source_reference_images_from_request(request_data: dict) -> list[str]:
     ]
 
 
+def _can_inherit_repeat_source_references(task: Any, viewer_user_id: int | None) -> bool:
+    try:
+        owner_id = int(getattr(task, "user_id", None) or 0)
+    except (TypeError, ValueError):
+        owner_id = 0
+    try:
+        viewer_id = int(viewer_user_id or 0)
+    except (TypeError, ValueError):
+        viewer_id = 0
+    return bool(owner_id and viewer_id and owner_id == viewer_id)
+
+
 def _is_identity_sensitive_prompt(prompt: str) -> bool:
     text = f" {(prompt or '').lower()} "
     keywords = (
@@ -1311,6 +1323,11 @@ async def _start_image_generation_task(
 
     if result_status == "queued":
         api_task_id = result["task_id"]
+        provider_name = str(result.get("provider") or "").strip()
+        provider_model_name = str(result.get("provider_model") or provider_model).strip()
+        provider_task_id = str(
+            result.get("provider_task_id") or api_task_id or ""
+        ).strip()
 
         async with db_backend.connect() as db:
             db.row_factory = db_backend.Row
@@ -1325,7 +1342,18 @@ async def _start_image_generation_task(
                     request_data = json.loads(row["request_data"])
                 except Exception:
                     request_data = {}
-            request_data = _merge_task_id_aliases(request_data, local_task_id, api_task_id)
+            request_data = _merge_task_id_aliases(
+                request_data,
+                local_task_id,
+                api_task_id,
+                provider_task_id,
+            )
+            if provider_name:
+                request_data["provider"] = provider_name
+            if provider_model_name:
+                request_data["provider_model"] = provider_model_name
+            if provider_task_id:
+                request_data["provider_task_id"] = provider_task_id
             await db.execute(
                 "UPDATE generation_tasks SET task_id = ?, request_data = ? WHERE task_id = ? AND user_id = ?",
                 (api_task_id, json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
@@ -1337,7 +1365,7 @@ async def _start_image_generation_task(
             api_task_id,
             img_service,
             runtime_img_service,
-            provider_model,
+            provider_model_name,
         )
         return {
             "status": "queued",
@@ -1349,13 +1377,42 @@ async def _start_image_generation_task(
     if result_status == "done":
         if isinstance(result, dict) and "image_bytes" in result:
             result_bytes = result["image_bytes"]
+            provider_task_id = str(
+                result.get("provider_task_id") or result.get("task_id") or ""
+            ).strip()
+            if provider_task_id:
+                async with db_backend.connect() as db:
+                    db.row_factory = db_backend.Row
+                    cursor = await db.execute(
+                        "SELECT request_data FROM generation_tasks WHERE task_id = ? AND user_id = ?",
+                        (local_task_id, user.id),
+                    )
+                    row = await cursor.fetchone()
+                    request_data = {}
+                    if row and row["request_data"]:
+                        try:
+                            request_data = json.loads(row["request_data"])
+                        except Exception:
+                            request_data = {}
+                    request_data = _merge_task_id_aliases(
+                        request_data,
+                        local_task_id,
+                        provider_task_id,
+                    )
+                    await db.execute(
+                        "UPDATE generation_tasks SET request_data = ? WHERE task_id = ? AND user_id = ?",
+                        (json.dumps(request_data, ensure_ascii=False), local_task_id, user.id),
+                    )
+                    await db.commit()
         else:
             result_bytes = bytes(result)
+            provider_task_id = ""
         saved_url = save_uploaded_file(result_bytes, "png")
         await complete_video_task(local_task_id, saved_url)
         return {
             "status": "done",
             "task_id": local_task_id,
+            "provider_task_id": provider_task_id,
             "result_bytes": result_bytes,
             "saved_url": saved_url,
             "runtime_img_service": runtime_img_service,
@@ -2235,12 +2292,10 @@ async def repeat_image_generation(callback: types.CallbackQuery, state: FSMConte
     user = await get_or_create_user(callback.from_user.id)
 
     hide_prompt = bool(task and task.is_public_feed and task.user_id != user.id)
-    # Если референсы скрыты — не подтягиваем их при повторе
-    refs_hidden = bool(task and task.is_public_feed and task.user_id != user.id and not task.feed_references_visible)
     restored, error_message = await _restore_image_task_to_state(
         task,
         state,
-        include_references=not refs_hidden,
+        include_references=_can_inherit_repeat_source_references(task, user.id),
         repeat_source_task_id=task_id,
         hide_prompt=hide_prompt,
     )
