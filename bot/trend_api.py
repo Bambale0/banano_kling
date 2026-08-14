@@ -47,6 +47,58 @@ class TrustedTrendRun:
     settings: dict[str, Any]
 
 
+def _fallback_trend_settings(trend: Mapping[str, Any]) -> dict[str, Any]:
+    tags = {
+        str(tag or "").strip().lower()
+        for tag in list(trend.get("tags") or [])
+        if str(tag or "").strip()
+    }
+    model = str(trend.get("model") or "").strip()
+    is_video = (
+        str(trend.get("category") or "").strip().lower() == "video"
+        or "trend-video" in tags
+    )
+    if not is_video:
+        return {
+            "kind": "image",
+            "user_input": "photo",
+            "model": model or "banana_pro",
+            "ratio": "1:1",
+            "quality": "2K" if model in {"banana_pro", "banana_2"} else "basic",
+            "count": 1,
+            "nsfw_checker": False,
+            "nsfw_enabled": False,
+        }
+
+    return {
+        "kind": "video",
+        "user_input": "photo",
+        "model": model or "v3_pro",
+        "scenario": "imgtxt",
+        "ratio": "16:9",
+        "duration": 5,
+        "grok_mode": "normal",
+        "grok_resolution": "480p",
+        "veo_generation_type": "IMAGE_2_VIDEO",
+        "veo_translation": True,
+        "veo_resolution": "720p",
+        "veo_seed": None,
+        "veo_watermark": "",
+        "kling_negative_prompt": "",
+        "kling_cfg_scale": 0.5,
+        "omni_resolution": "720p",
+        "omni_seed": None,
+        "omni_audio_ids": [],
+        "omni_character_ids": [],
+        "omni_base_voice": "achernar",
+        "omni_voice_name": "",
+        "omni_voice_description": "",
+        "omni_example_dialogue": "",
+        "omni_character_name": "",
+        "omni_character_audio_ids": [],
+    }
+
+
 def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
     if not isinstance(raw_urls, list):
         raise TrendRunValidationError("Передайте список фото-референсов")
@@ -112,12 +164,15 @@ def trusted_trend_run(
         raise TrendRunValidationError("Выбранный шаблон не является трендом")
 
     stored_settings = trend.get("generation_settings")
-    if not isinstance(stored_settings, Mapping) or not stored_settings:
+    settings = (
+        dict(stored_settings)
+        if isinstance(stored_settings, Mapping) and stored_settings
+        else _fallback_trend_settings(trend)
+    )
+    if not settings:
         raise TrendRunValidationError(
             "Настройки тренда не сохранены. Администратору нужно пересоздать тренд"
         )
-
-    settings = dict(stored_settings)
     kind = str(settings.get("kind") or "").strip().lower()
     if kind not in {"image", "video"}:
         raise TrendRunValidationError("Неизвестный тип тренда")

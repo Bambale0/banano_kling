@@ -45,6 +45,21 @@ class TrendTextUploadStates(StatesGroup):
     confirming = State()
 
 
+def _build_image_generation_settings(model: str) -> dict[str, Any]:
+    normalized_model = str(model or "banana_pro").strip() or "banana_pro"
+    quality = "2K" if normalized_model in {"banana_pro", "banana_2"} else "basic"
+    return {
+        "kind": "image",
+        "user_input": "photo",
+        "model": normalized_model,
+        "ratio": "1:1",
+        "quality": quality,
+        "count": 1,
+        "nsfw_checker": False,
+        "nsfw_enabled": False,
+    }
+
+
 def _cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -501,6 +516,7 @@ async def publish_trend_from_text_bot(
         preview_url=str(data["preview_url"]),
         model=str(data["model"]),
         tags=[TREND_TAG],
+        generation_settings=_build_image_generation_settings(str(data["model"])),
         is_public=True,
     )
     if not prompt:

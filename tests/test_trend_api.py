@@ -62,13 +62,29 @@ def test_trusted_trend_run_uses_only_saved_admin_settings():
     assert run.settings["quality"] == "2K"
 
 
+def test_trusted_trend_run_falls_back_for_legacy_photo_trend():
+    run = trusted_trend_run(
+        _trend(
+            category="photo",
+            prompt_text="Studio portrait",
+            generation_settings={},
+        ),
+        ("https://example.test/reference.jpg",),
+    )
+
+    assert run.kind == "image"
+    assert run.model == "banana_pro"
+    assert run.ratio == "1:1"
+    assert run.settings["user_input"] == "photo"
+    assert run.settings["quality"] == "2K"
+
+
 @pytest.mark.parametrize(
     "trend",
     [
         _trend(status="pending"),
         _trend(is_public=False),
         _trend(tags=["portrait"]),
-        _trend(generation_settings={}),
         _trend(prompt_text=""),
     ],
 )

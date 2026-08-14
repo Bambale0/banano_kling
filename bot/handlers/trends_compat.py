@@ -22,6 +22,7 @@ from aiogram.types import (
 
 from bot import database
 from bot.config import config
+from bot.handlers.trend_text_upload import _build_image_generation_settings
 from bot.keyboards import _mini_app_url_with_start_param
 from bot.utils.validators import detect_explicit_prompt_policy_violation
 
@@ -353,6 +354,13 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                     status=400,
                 )
 
+            raw_generation_settings = body.get("generation_settings")
+            generation_settings = (
+                dict(raw_generation_settings)
+                if isinstance(raw_generation_settings, dict) and raw_generation_settings
+                else _build_image_generation_settings(model)
+            )
+
             prompt = await database.create_prompt(
                 author_id=ctx["user"].id,
                 prompt_text=prompt_text,
@@ -362,6 +370,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                 preview_url=preview_url,
                 model=model,
                 tags=[TREND_TAG],
+                generation_settings=generation_settings,
                 is_public=True,
             )
             if prompt:

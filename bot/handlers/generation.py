@@ -7798,8 +7798,27 @@ async def start_image_creation_from_idle_reference(
 ):
     """Start image creation from a photo sent while no flow is active."""
     user_id = message.from_user.id
+    intro_text = "✅ <b>Фото принято как референс.</b>\n\n"
     async with _get_reference_upload_lock(user_id):
-        await state.clear()
+        current_state = await state.get_state()
+        current_data = await state.get_data()
+        if (
+            current_state == GenerationStates.waiting_for_input
+            and current_data.get("generation_type") == "image"
+        ):
+            reference_images = list(current_data.get("reference_images") or [])
+            img_service = current_data.get("img_service", "banana_pro")
+            max_refs = _get_max_image_references(img_service)
+            if len(reference_images) >= max_refs:
+                await message.answer(
+                    f"❌ Можно загрузить максимум {max_refs} фото. Дальше нажмите «Продолжить» или очистите список.",
+                    parse_mode="HTML",
+                    reply_markup=get_main_menu_button_keyboard(),
+                )
+                return
+        else:
+            await state.clear()
+            reference_images = []
         image_url, error_message = await _save_reference_image_from_message(
             message,
             original_filename_prefix="quick_reference",
@@ -7811,18 +7830,26 @@ async def start_image_creation_from_idle_reference(
             )
             return
 
-        await state.update_data(
-            **_default_image_flow_data(
-                reference_images=[image_url],
+        if reference_images:
+            reference_images.append(image_url)
+            await state.update_data(
+                reference_images=reference_images,
                 img_flow_step="configure",
             )
-        )
+            intro_text = "✅ <b>Фото добавлено в текущие референсы.</b>\n\n"
+        else:
+            await state.update_data(
+                **_default_image_flow_data(
+                    reference_images=[image_url],
+                    img_flow_step="configure",
+                )
+            )
 
     await _show_image_creation_screen(
         message,
         state,
         edit=False,
-        intro_text="✅ <b>Фото принято как референс.</b>\n\n",
+        intro_text=intro_text,
     )
     logger.info(
         "Started image creation from idle reference: user_id=%s reference_url=%s",

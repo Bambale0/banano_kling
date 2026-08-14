@@ -1471,22 +1471,29 @@ async def _send_polled_nexus_image_result(
                 )
         return True
 
-    await _send_plain_result_link(
-        bot_instance,
-        telegram_id,
-        media_label="Изображение",
-        model_label=model_label,
-        task_id=display_task_id,
-        result_url=persisted_url,
-        reply_markup=keyboard,
-        notice="Telegram не смог отправить превью автоматически.",
-    )
-    await complete_video_task(task_lookup_id, persisted_url)
-    logger.info(
-        "Nexus poller: fallback text sent for task %s to user %s",
-        task_lookup_id,
-        telegram_id,
-    )
+    try:
+        await _send_plain_result_link(
+            bot_instance,
+            telegram_id,
+            media_label="Изображение",
+            model_label=model_label,
+            task_id=display_task_id,
+            result_url=persisted_url,
+            reply_markup=keyboard,
+            notice="Telegram не смог отправить превью автоматически.",
+        )
+        logger.info(
+            "Nexus poller: fallback text sent for task %s to user %s",
+            task_lookup_id,
+            telegram_id,
+        )
+    except Exception:
+        logger.exception(
+            "Nexus poller: all Telegram delivery attempts failed for task %s",
+            task_lookup_id,
+        )
+    finally:
+        await complete_video_task(task_lookup_id, persisted_url)
     return True
 
 async def _fail_polled_nexus_image_task(

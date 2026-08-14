@@ -54,6 +54,37 @@ class TrendVideoUploadStates(StatesGroup):
     confirming = State()
 
 
+def _build_video_generation_settings(model: str) -> dict[str, Any]:
+    normalized_model = str(model or "v3_pro").strip() or "v3_pro"
+    return {
+        "kind": "video",
+        "user_input": "photo",
+        "model": normalized_model,
+        "scenario": "imgtxt",
+        "ratio": "16:9",
+        "duration": 5,
+        "grok_mode": "normal",
+        "grok_resolution": "480p",
+        "veo_generation_type": "IMAGE_2_VIDEO",
+        "veo_translation": True,
+        "veo_resolution": "720p",
+        "veo_seed": None,
+        "veo_watermark": "",
+        "kling_negative_prompt": "",
+        "kling_cfg_scale": 0.5,
+        "omni_resolution": "720p",
+        "omni_seed": None,
+        "omni_audio_ids": [],
+        "omni_character_ids": [],
+        "omni_base_voice": "achernar",
+        "omni_voice_name": "",
+        "omni_voice_description": "",
+        "omni_example_dialogue": "",
+        "omni_character_name": "",
+        "omni_character_audio_ids": [],
+    }
+
+
 def is_video_trend(prompt: dict[str, Any] | None) -> bool:
     if not prompt:
         return False
@@ -522,6 +553,7 @@ async def publish_video_trend(
         preview_url=str(data["preview_url"]),
         model=str(data["model"]),
         tags=[TREND_TAG, TREND_VIDEO_TAG],
+        generation_settings=_build_video_generation_settings(str(data["model"])),
         is_public=True,
     )
     if not prompt:
@@ -626,6 +658,16 @@ def _install_miniapp_video_submit(miniapp_module: Any) -> None:
                 normalized_tag = str(tag or "").strip().lower()
                 if normalized_tag.startswith(("trend-scenario:", "trend-duration:")):
                     tags.append(normalized_tag)
+            raw_generation_settings = body.get("generation_settings")
+            generation_settings = (
+                dict(raw_generation_settings)
+                if isinstance(raw_generation_settings, dict) and raw_generation_settings
+                else (
+                    _build_video_generation_settings(model)
+                    if is_video
+                    else {}
+                )
+            )
             prompt = await database.create_prompt(
                 author_id=ctx["user"].id,
                 prompt_text=prompt_text,
@@ -635,6 +677,7 @@ def _install_miniapp_video_submit(miniapp_module: Any) -> None:
                 preview_url=preview_url,
                 model=model,
                 tags=tags,
+                generation_settings=generation_settings,
                 is_public=True,
             )
             if prompt:
