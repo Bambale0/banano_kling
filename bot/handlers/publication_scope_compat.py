@@ -263,7 +263,7 @@ async def share_to_feed_scoped(
     adult_content: bool = False,
 ) -> dict[str, Any] | None:
     await _ensure_publication_scope_schema()
-    return await _ORIGINAL_SHARE_TO_FEED(
+    legacy_card = await _ORIGINAL_SHARE_TO_FEED(
         gen_id,
         user_id,
         prompt_visible=prompt_visible,
@@ -272,6 +272,19 @@ async def share_to_feed_scoped(
         publication_scope=publication_scope,
         adult_content=adult_content,
     )
+    if not legacy_card:
+        return legacy_card
+
+    # The underlying database write still returns the pre-scope card shape.
+    # Re-read the row after publication so every caller receives authoritative
+    # profile/feed flags regardless of import order or compatibility wrappers.
+    identifier = legacy_card.get("id") or gen_id
+    scoped_card = await _profile_card(
+        identifier,
+        viewer_user_id=user_id,
+        require_visible=True,
+    )
+    return scoped_card or legacy_card
 
 
 async def share_to_profile(
