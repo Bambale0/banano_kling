@@ -102,8 +102,13 @@ def test_production_frontend_is_built_on_the_same_server() -> None:
     assert "--remote-deploy" not in deploy_workflow
     assert "branches: [main]" not in deploy_workflow
 
+    backend_script = read("scripts/deploy_backend_docker.sh")
+    assert "exec </dev/null" in backend_script
+    assert "false-green partial deployment" in backend_script
+
     deploy_script = read("scripts/deploy_miniapp_local.sh")
     assert 'DEFAULT_FRONTEND_DOMAIN="tanyapp.xn--e1aikcel5c5a.online"' in deploy_script
+    assert "exec </dev/null" in deploy_script
     assert 'npm ci' in deploy_script
     assert 'npm run lint' in deploy_script
     assert 'npm run build' in deploy_script
