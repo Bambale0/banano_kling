@@ -32,6 +32,7 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
+from .trend_seedance_25_compat import install_trend_seedance_25_compat
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
@@ -136,6 +137,7 @@ install_seedance_25_client_compat()
 install_seedance_25_telegram_compat()
 install_seedance_25_new_priority()
 install_miniapp_video_continuity_compat()
+install_trend_seedance_25_compat()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
 # Public first-frame photo handling goes before the older Seedance routers so
