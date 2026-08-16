@@ -47,6 +47,25 @@ def test_video_backfill_url_parsing_and_local_detection():
     )
 
 
+def test_video_backfill_requires_real_nonempty_file(tmp_path, monkeypatch):
+    upload_root = tmp_path / "uploads"
+    feed_dir = upload_root / "feed"
+    feed_dir.mkdir(parents=True)
+    monkeypatch.setattr(backfill, "UPLOAD_ROOT", upload_root)
+    monkeypatch.setattr(backfill, "MIN_VALID_VIDEO_BYTES", 8)
+
+    url = "https://tanyapi.chillcreative.ru/uploads/feed/video.mp4"
+    assert backfill._is_durable_feed_url(url)
+    assert not backfill._durable_feed_file_exists(url)
+
+    video = feed_dir / "video.mp4"
+    video.write_bytes(b"1234567")
+    assert not backfill._durable_feed_file_exists(url)
+
+    video.write_bytes(b"12345678")
+    assert backfill._durable_feed_file_exists(url)
+
+
 def test_feed_video_preview_uses_video_element_not_mp4_as_image():
     source = Path("frontend/miniapp-v0/components/tabs/feed-tab.tsx").read_text(
         encoding="utf-8"
