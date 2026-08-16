@@ -82,6 +82,7 @@ from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
 )
 from .support import router as support_router
+from .trend_route_compat import install_trend_route_compat
 from .trend_seedance_25_compat import install_trend_seedance_25_compat
 
 # Partner applications and moderation handlers must run before the legacy admin
@@ -166,6 +167,9 @@ install_feed_model_filter_compat(common_module)
 install_own_profile_feed_compat()
 install_partner_referral_approval_guard()
 install_miniapp_regression_safety()
+# Route safety must wrap add_post before trend/miniapp routes are registered.
+# The trend route itself must be inserted before Mini App's API catch-all.
+install_trend_route_compat()
 common_router = Router()
 common_router.include_router(partner_approval_user_router)
 common_router.include_router(trend_video_compat_router)
