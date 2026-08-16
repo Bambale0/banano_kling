@@ -69,20 +69,27 @@ def test_production_backend_deploy_remains_on_tanyapi() -> None:
     assert "branches: [main]" not in workflow
 
 
-def test_production_frontend_is_validated_on_tanyapi_without_remote_deploy() -> None:
+def test_production_frontend_is_validated_then_deployed_from_tanyapi() -> None:
     try:
         read(".github/workflows/deploy-frontend-production.yml")
     except FileNotFoundError:
         pass
     else:
-        raise AssertionError("Retired remote frontend deployment workflow still exists")
+        raise AssertionError("Retired standalone frontend deployment workflow still exists")
 
     workflow = read(".github/workflows/miniapp-ci.yml")
     assert "branches: [tanyapi]" in workflow
     assert "lib/__tests__/trend-api.test.ts" in workflow
+    assert "components/tabs/__tests__/video-tab-repeat.test.tsx" in workflow
     assert "npm run build" in workflow
+    assert "needs: test-and-build" in workflow
+    assert "runs-on: [self-hosted, linux, x64, nuromix]" in workflow
+    assert 'test "$current" = "$GITHUB_SHA"' in workflow
+    assert "cdn.sh --remote-deploy \"$remote_name\"" in workflow
+    assert "remote_name='tanyafrontend'" in workflow
+    assert "miniapp_http=200" in workflow
+    assert "cdn.chillcreative.ru/mini-app/" in workflow
     assert "FRONTEND_SSH_HOST" not in workflow
-    assert "cdn.chillcreative.ru" not in workflow
     assert "branches: [main]" not in workflow
 
 
