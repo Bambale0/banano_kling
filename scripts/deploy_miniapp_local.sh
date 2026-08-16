@@ -8,6 +8,10 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 
+# This script can run inside a streamed SSH deployment. npm and its child
+# processes must never inherit the caller's script stream as stdin.
+exec </dev/null
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 EXPECTED_SHA="${1:-$(git -C "$PROJECT_DIR" rev-parse HEAD)}"
