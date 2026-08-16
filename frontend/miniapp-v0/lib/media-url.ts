@@ -1,3 +1,12 @@
+function miniAppApiBasePath(): string {
+  if (typeof window === 'undefined') return '/mini-app/api'
+  const pathname = window.location.pathname || '/mini-app/'
+  const marker = '/mini-app'
+  const markerIndex = pathname.indexOf(marker)
+  const prefix = markerIndex >= 0 ? pathname.slice(0, markerIndex) : ''
+  return `${prefix}/mini-app/api`
+}
+
 export function normalizeMiniAppMediaUrl(value?: string | null): string {
   const raw = String(value || '').trim()
   if (!raw || typeof window === 'undefined') return raw
@@ -22,6 +31,18 @@ export function normalizeMiniAppMediaUrl(value?: string | null): string {
   } catch {
     return raw
   }
+}
+
+export function feedReferenceImageThumbnailUrl(feedId: number, index: number): string {
+  const safeFeedId = Math.max(0, Math.trunc(Number(feedId) || 0))
+  const safeIndex = Math.max(0, Math.trunc(Number(index) || 0))
+  return `${miniAppApiBasePath()}/feed/reference-image/${safeFeedId}/${safeIndex}/thumbnail`
+}
+
+export function feedReferenceImageFullUrl(feedId: number, index: number): string {
+  const safeFeedId = Math.max(0, Math.trunc(Number(feedId) || 0))
+  const safeIndex = Math.max(0, Math.trunc(Number(index) || 0))
+  return `${miniAppApiBasePath()}/feed/reference-image/${safeFeedId}/${safeIndex}/full`
 }
 
 export function mediaAspectRatio(value?: string | null, fallback = '16 / 9'): string {
