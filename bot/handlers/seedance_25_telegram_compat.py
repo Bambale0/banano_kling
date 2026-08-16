@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
@@ -15,6 +16,7 @@ from . import seedance_25_preview as preview_module
 
 router = Router(name="seedance_25_telegram_compat")
 MODEL_KEY = "seedance_2_5"
+_REPEAT_SCENARIOS = {"text", "first_frame", "first_last", "multimodal"}
 
 
 def _selected(active: bool, label: str) -> str:
@@ -151,6 +153,186 @@ async def _persist_image(message: types.Message, obj) -> str | None:
         kind="image",
         original_filename=f"seedance25_{obj.file_id}.{ext}",
         content_type=mime,
+    )
+
+
+def _repeat_urls(value, limit: int) -> list[str]:
+    values = [value] if isinstance(value, str) else list(value or [])
+    result: list[str] = []
+    for raw in values:
+        url = str(raw or "").strip()
+        if url and url not in result:
+            result.append(url)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _repeat_request_data(raw) -> dict:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("request_data is not an object")
+    return parsed
+
+
+def _repeat_scenario(request_data: dict) -> str:
+    scenario = str(
+        request_data.get("seedance25_scenario")
+        or request_data.get("scenario")
+        or ""
+    ).strip().lower()
+    if scenario in _REPEAT_SCENARIOS:
+        return scenario
+
+    first = request_data.get("first_frame_url") or request_data.get("seedance25_first_frame_url")
+    last = request_data.get("last_frame_url") or request_data.get("seedance25_last_frame_url")
+    images = request_data.get("reference_images") or request_data.get("reference_image_urls")
+    videos = (
+        request_data.get("v_reference_videos")
+        or request_data.get("reference_videos")
+        or request_data.get("reference_video_urls")
+    )
+    audios = request_data.get("reference_audios") or request_data.get("seedance25_reference_audio_urls")
+    if first and last:
+        return "first_last"
+    if first:
+        return "first_frame"
+    if images or videos or audios:
+        return "multimodal"
+    return "text"
+
+
+def _repeat_state_payload(task, request_data: dict, prompt: str) -> dict:
+    """Restore the exact Seedance 2.5 scenario instead of falling back to T2V."""
+    scenario = _repeat_scenario(request_data)
+    first_frame = (
+        request_data.get("first_frame_url")
+        or request_data.get("seedance25_first_frame_url")
+        or (request_data.get("v_image_url") if scenario in {"first_frame", "first_last"} else None)
+    )
+    last_frame = request_data.get("last_frame_url") or request_data.get("seedance25_last_frame_url")
+    image_refs = _repeat_urls(
+        request_data.get("reference_images")
+        or request_data.get("reference_image_urls")
+        or [],
+        30,
+    )
+    video_refs = _repeat_urls(
+        request_data.get("v_reference_videos")
+        or request_data.get("reference_videos")
+        or request_data.get("reference_video_urls")
+        or [],
+        10,
+    )
+    audio_refs = _repeat_urls(
+        request_data.get("reference_audios")
+        or request_data.get("seedance25_reference_audio_urls")
+        or request_data.get("reference_audio_urls")
+        or [],
+        10,
+    )
+
+    if scenario != "multimodal":
+        image_refs = []
+        video_refs = []
+        audio_refs = []
+    if scenario not in {"first_frame", "first_last"}:
+        first_frame = None
+        last_frame = None
+    elif scenario != "first_last":
+        last_frame = None
+
+    duration = int(request_data.get("v_duration", getattr(task, "duration", None) or 5))
+    ratio = str(request_data.get("v_ratio") or getattr(task, "aspect_ratio", None) or "adaptive")
+    resolution = str(
+        request_data.get("resolution")
+        or request_data.get("seedance25_resolution")
+        or "720p"
+    ).lower()
+
+    return {
+        "generation_type": "video",
+        "video_flow_step": "seedance25",
+        "v_model": MODEL_KEY,
+        "v_type": (
+            "text"
+            if scenario == "text"
+            else "imgtxt"
+            if scenario in {"first_frame", "first_last"}
+            else "video"
+        ),
+        "v_duration": duration,
+        "v_ratio": ratio,
+        "v_image_url": first_frame,
+        "reference_images": image_refs,
+        "v_reference_videos": video_refs,
+        "user_prompt": prompt,
+        "seedance25_scenario": scenario,
+        "seedance25_first_frame_url": first_frame,
+        "seedance25_last_frame_url": last_frame,
+        "seedance25_reference_audio_urls": audio_refs,
+        "seedance25_reference_video_durations": [],
+        "seedance25_resolution": resolution,
+        "seedance25_generate_audio": bool(request_data.get("generate_audio", True)),
+        "seedance25_return_last_frame": bool(request_data.get("return_last_frame", False)),
+        "seedance25_output_format": str(request_data.get("output_format") or "mp4").lower(),
+        "seedance25_web_search": bool(request_data.get("web_search", False)),
+        "seedance25_nsfw_checker": bool(request_data.get("nsfw_checker", False)),
+    }
+
+
+@router.callback_query(F.data.startswith("repeat_video_result_"))
+async def seedance25_repeat_video_result(callback: types.CallbackQuery, state: FSMContext):
+    """Repeat Seedance 2.5 through its own ref-aware launch/billing path."""
+    task_id = str(callback.data or "").replace("repeat_video_result_", "", 1)
+    task = await generation_module.get_task_by_id(task_id)
+    if not task or getattr(task, "type", None) != "video":
+        raise SkipHandler
+
+    try:
+        request_data = _repeat_request_data(getattr(task, "request_data", None))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        if str(getattr(task, "model", "") or "") != MODEL_KEY:
+            raise SkipHandler
+        await callback.answer("Данные исходной Seedance 2.5 задачи повреждены.", show_alert=True)
+        return
+
+    model = str(request_data.get("v_model") or getattr(task, "model", "") or "")
+    if model != MODEL_KEY:
+        raise SkipHandler
+
+    user = await generation_module.get_or_create_user(callback.from_user.id)
+    if getattr(task, "user_id", None) != user.id:
+        await callback.answer(
+            "Повтор Seedance 2.5 по исходным референсам доступен только владельцу генерации.",
+            show_alert=True,
+        )
+        return
+
+    prompt = str(
+        request_data.get("user_prompt")
+        or request_data.get("prompt")
+        or getattr(task, "prompt", "")
+        or ""
+    ).strip()
+    await state.update_data(**_repeat_state_payload(task, request_data, prompt))
+
+    # The public Seedance wrapper below owns balance checks, charging and refunds.
+    # Skipping the generic repeat handler also avoids its pre-charge/double-charge.
+    try:
+        await callback.answer("🔄 Повторяю Seedance 2.5 по референсам…")
+    except Exception:
+        pass
+    await generation_module.run_no_preset_video_from_callback(
+        callback,
+        state,
+        prompt,
+        float(getattr(task, "cost", 0) or 0),
+        generation_module.config.is_admin(callback.from_user.id),
     )
 
 
