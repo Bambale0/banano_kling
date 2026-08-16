@@ -11,11 +11,11 @@ describe('Mini App media UX contracts', () => {
     expect(source).toContain('normalizeMiniAppMediaUrl(previewTrend.preview_url)')
   })
 
-  it('lets users inspect public feed references instead of dead black thumbnails', () => {
+  it('uses lightweight thumbnails for public feed image references', () => {
     const source = read('components/tabs/feed-tab.tsx')
-    expect(source).toContain('setReferencePreview(reference)')
-    expect(source).toContain('videoPreviewFrameUrl(reference.url)')
-    expect(source).toContain('normalizeMiniAppMediaUrl(referencePreview.url)')
+    expect(source).toContain('feedReferenceImageThumbnailUrl(previewItem.id, index)')
+    expect(source).toContain('feedReferenceImageFullUrl(previewItem.id, index)')
+    expect(source).not.toContain('<img src={normalizeMiniAppMediaUrl(reference.url)}')
     expect(source).toContain('item.references_hidden || item.feed_references_visible === false')
   })
 
