@@ -436,7 +436,7 @@ class PhotoPromptService:
                 audio_bytes=audio_bytes,
                 audio_format=audio_format,
             )
-        except Exception as fallback_exc:  # noqa: BLE001 - provider fallback boundary
+        except Exception as fallback_exc:
             raise RuntimeError(
                 f"{self.model}: {primary_error}; "
                 f"{self.fallback_model}: {fallback_exc}"
@@ -559,7 +559,7 @@ class PhotoPromptService:
                 )
             else:
                 audio_instruction = (
-                    "Listen to the audio prompt directly in this request. "
+                    "Listen to the attached audio prompt directly in this request. "
                     "Turn the spoken idea into a polished standalone generation prompt, "
                     "include its transcript/summary in the JSON fields, and create a useful "
                     "Gemini Omni prompt from the voice context."
