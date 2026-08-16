@@ -1,0 +1,222 @@
+name: Deploy — Tanya Mini App production
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - frontend/miniapp-v0/**
+      - bot/miniapp.py
+      - bot/trend_api.py
+      - bot/handlers/miniapp_video_continuity_compat.py
+      - bot/handlers/trend_route_compat.py
+      - bot/handlers/trend_seedance_25_compat.py
+      - cdn.sh
+      - scripts/install_miniapp_frontend_https_host.sh
+      - .github/workflows/deploy-miniapp-production.yml
+      - .github/workflows/miniapp-ci.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: tanya-production-miniapp
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: GitHub runner — verify production Mini App
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+
+    steps:
+      - name: Require production branch
+        shell: bash
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          [ "$GITHUB_REF" = "refs/heads/tanyapi" ] || {
+            echo "::error::Mini App production deploy is allowed only from tanyapi"
+            exit 1
+          }
+
+      - name: Checkout exact commit
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run Mini App regression tests
+        run: >-
+          npm test -- --runInBand
+          lib/__tests__/trend-api.test.ts
+          components/tabs/__tests__/video-tab-repeat.test.tsx
+
+      - name: Build static Mini App
+        run: |
+          set -Eeuo pipefail
+          npm run build
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+  deploy:
+    name: GitHub runner — deploy Mini App through production SSH
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+
+    env:
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+      PROD_PROJECT_PATH: ${{ secrets.PROD_PROJECT_PATH }}
+
+    steps:
+      - name: Require current tanyapi head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/tanyapi" --jq '.object.sha')"
+          test "$current" = "$GITHUB_SHA" || {
+            echo "::error::Branch advanced before frontend deploy: workflow=$GITHUB_SHA current=$current"
+            exit 1
+          }
+
+      - name: Require SSH deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${PROD_SSH_HOST:-}" ] || missing+=(PROD_SSH_HOST)
+          [ -n "${PROD_SSH_PRIVATE_KEY:-}" ] || missing+=(PROD_SSH_PRIVATE_KEY)
+          [ -n "${PROD_SSH_KNOWN_HOSTS:-}" ] || missing+=(PROD_SSH_KNOWN_HOSTS)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing production SSH configuration: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Configure pinned production SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/production_key"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/production_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/production_key" >/dev/null
+
+      - name: Deploy exact Mini App commit through tanyafrontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deploy_user="${PROD_SSH_USER:-root}"
+          deploy_port="${PROD_SSH_PORT:-22}"
+          deploy_path="${PROD_PROJECT_PATH:-/root/tanya/banano_kling}"
+          printf -v quoted_path '%q' "$deploy_path"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+
+          ssh \
+            -i "$HOME/.ssh/production_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$PROD_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha" <<'REMOTE'
+          set -Eeuo pipefail
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          REMOTE_NAME='tanyafrontend'
+
+          command -v git >/dev/null
+          command -v curl >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/banano-kling-production-miniapp-deploy.lock
+          flock -w 900 9 || {
+            echo "Timed out waiting for Mini App deployment lock" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ]
+          git fetch --prune origin tanyapi
+          remote_sha="$(git rev-parse origin/tanyapi)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
+            exit 1
+          }
+
+          tmp_script="$(mktemp /tmp/banano-cdn.XXXXXX.sh)"
+          cleanup() { rm -f "$tmp_script"; }
+          trap cleanup EXIT
+          git show "$EXPECTED_SHA:cdn.sh" > "$tmp_script"
+          chmod 0700 "$tmp_script"
+
+          run_root() {
+            if [ "$(id -u)" -eq 0 ]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          run_root bash "$tmp_script" --remote-deploy "$REMOTE_NAME"
+          status="$(run_root bash "$tmp_script" --remote-status "$REMOTE_NAME")"
+          printf '%s\n' "$status"
+
+          expected_short="$(printf '%s' "$EXPECTED_SHA" | cut -c1-7)"
+          grep -F "commit=$expected_short" <<< "$status"
+          grep -F 'branch=tanyapi' <<< "$status"
+          grep -F 'profile=ok' <<< "$status"
+          grep -F 'health=' <<< "$status" | grep -v 'failed'
+          grep -F 'miniapp_http=200' <<< "$status"
+          REMOTE
+
+      - name: Verify live production Mini App assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='https://cdn.chillcreative.ru/mini-app/'
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          curl -fsS --retry 8 --retry-delay 3 --retry-all-errors \
+            -H 'Cache-Control: no-cache' \
+            "${base}?revision=${GITHUB_SHA}" > "$work/index.html"
+          grep -q '_next/static' "$work/index.html"
+          grep -oE '/mini-app/_next/static/[^" ]+\.js' "$work/index.html" \
+            | sort -u > "$work/assets.txt"
+          test -s "$work/assets.txt"
+
+          while IFS= read -r asset; do
+            curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
+              "https://cdn.chillcreative.ru${asset}?revision=${GITHUB_SHA}" >/dev/null
+          done < "$work/assets.txt"
+
+          echo "Production Mini App and referenced JS assets are live."
+
+      - name: Remove production SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/production_key"
