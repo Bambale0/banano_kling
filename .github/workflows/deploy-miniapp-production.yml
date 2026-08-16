@@ -1,5 +1,6 @@
 name: Deploy — Tanya Mini App production
 
+# Keep this workflow as the human-authored release trigger after lockfile refreshes.
 on:
   push:
     branches: [tanyapi]
