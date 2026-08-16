@@ -20,6 +20,7 @@ from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
 from .miniapp_regression_safety import install_miniapp_regression_safety
+from .miniapp_video_continuity_compat import install_miniapp_video_continuity_compat
 from .own_profile_feed_compat import install_own_profile_feed_compat
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 
@@ -122,7 +123,8 @@ image_analyzer_router.include_router(legacy_image_analyzer_router)
 # 2.5 is assembled from isolated compatibility layers so the production branch
 # remains untouched: provider/runtime -> chunk uploads -> preview UI -> pricing
 # -> public access/billing -> stale-client request compatibility -> Telegram UX
-# -> NEW priority.
+# -> NEW priority. Mini App continuity is installed last so repeat restoration
+# feeds the final Seedance/public wrapper as well as every legacy video model.
 install_seedance_multimodal_runtime_compat()
 install_seedance_25_upload_compat()
 install_seedance_25_fullstack()
@@ -133,6 +135,7 @@ install_seedance_25_public_release()
 install_seedance_25_client_compat()
 install_seedance_25_telegram_compat()
 install_seedance_25_new_priority()
+install_miniapp_video_continuity_compat()
 generation_router = Router()
 generation_router.include_router(publication_scope_compat_router)
 # Public first-frame photo handling goes before the older Seedance routers so
