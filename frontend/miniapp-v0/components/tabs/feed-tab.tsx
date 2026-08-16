@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
-import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import {
+  feedReferenceImageFullUrl,
+  feedReferenceImageThumbnailUrl,
+  normalizeMiniAppMediaUrl,
+  videoPreviewFrameUrl,
+} from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
@@ -831,14 +836,18 @@ export function FeedTab() {
                   <button
                     type="button"
                     key={`${reference.url}_${index}`}
-                    onClick={() => setReferencePreview(reference)}
+                    onClick={() => setReferencePreview(
+            reference.type === 'image'
+              ? { type: 'image', url: feedReferenceImageFullUrl(previewItem.id, index) }
+              : reference
+          )}
                     className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
                     aria-label={`Открыть референс ${index + 1}`}
                   >
                     {reference.type === 'video' ? (
                       <video src={videoPreviewFrameUrl(reference.url)} muted playsInline preload="metadata" className="h-full w-full object-cover" />
                     ) : (
-                      <img src={normalizeMiniAppMediaUrl(reference.url)} alt="" className="h-full w-full object-cover" />
+                      <img src={feedReferenceImageThumbnailUrl(previewItem.id, index)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                     )}
                   </button>
                 ))}
