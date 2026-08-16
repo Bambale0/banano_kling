@@ -16,8 +16,9 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from bot import db as db_backend
 from bot.database import DATABASE_PATH
@@ -26,6 +27,8 @@ from bot.services.feed_persist import FEED_MEDIA_MAX_BYTES, persist_feed_result_
 logger = logging.getLogger("feed-video-backfill")
 
 BACKFILL_LIMIT = max(1, int(os.getenv("FEED_VIDEO_BACKFILL_LIMIT", "50")))
+MIN_VALID_VIDEO_BYTES = max(1, int(os.getenv("FEED_VIDEO_MIN_VALID_BYTES", "1024")))
+UPLOAD_ROOT = Path("static/uploads")
 
 
 def _parse_result_urls(value: Any, fallback: str | None = None) -> list[str]:
@@ -55,19 +58,44 @@ def _parse_result_urls(value: Any, fallback: str | None = None) -> list[str]:
     return urls
 
 
-def _is_durable_feed_url(url: str) -> bool:
+def _durable_feed_path(url: str) -> Path | None:
     try:
         parsed = urlparse(str(url or ""))
     except ValueError:
+        return None
+    path = unquote(parsed.path if parsed.scheme else str(url or ""))
+    prefix = "/uploads/feed/"
+    if not path.startswith(prefix) or "/thumbs/" in path:
+        return None
+
+    relative = path[len("/uploads/") :].lstrip("/")
+    candidate = UPLOAD_ROOT / relative
+    try:
+        candidate.resolve().relative_to(UPLOAD_ROOT.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def _is_durable_feed_url(url: str) -> bool:
+    return _durable_feed_path(url) is not None
+
+
+def _durable_feed_file_exists(url: str) -> bool:
+    path = _durable_feed_path(url)
+    if not path:
         return False
-    path = parsed.path if parsed.scheme else str(url or "")
-    return path.startswith("/uploads/feed/") and "/thumbs/" not in path
+    try:
+        return path.is_file() and path.stat().st_size >= MIN_VALID_VIDEO_BYTES
+    except OSError:
+        return False
 
 
 async def backfill_feed_video_media(limit: int = BACKFILL_LIMIT) -> dict[str, int]:
     counters = {
         "scanned": 0,
         "already_local": 0,
+        "missing_local": 0,
         "repaired": 0,
         "failed": 0,
     }
@@ -96,13 +124,24 @@ async def backfill_feed_video_media(limit: int = BACKFILL_LIMIT) -> dict[str, in
             task_id = str(row["task_id"] or "")
             urls = _parse_result_urls(row["result_urls"], row["result_url"])
 
-            if urls and all(_is_durable_feed_url(url) for url in urls):
-                counters["already_local"] += 1
-                continue
             if not urls:
                 counters["failed"] += 1
                 logger.warning("row=%s task=%s has no usable result URLs", row_id, task_id)
                 continue
+
+            local_urls = [url for url in urls if _is_durable_feed_url(url)]
+            missing_local = [url for url in local_urls if not _durable_feed_file_exists(url)]
+            if local_urls and not missing_local and len(local_urls) == len(urls):
+                counters["already_local"] += 1
+                continue
+            if missing_local:
+                counters["missing_local"] += 1
+                logger.warning(
+                    "row=%s task=%s has %d durable URL(s) with missing/empty files",
+                    row_id,
+                    task_id,
+                    len(missing_local),
+                )
 
             try:
                 persisted = await persist_feed_result_urls(
@@ -115,10 +154,14 @@ async def backfill_feed_video_media(limit: int = BACKFILL_LIMIT) -> dict[str, in
                 logger.exception("row=%s task=%s localization crashed", row_id, task_id)
                 continue
 
-            if not persisted or len(persisted) != len(urls):
+            if (
+                not persisted
+                or len(persisted) != len(urls)
+                or not all(_durable_feed_file_exists(url) for url in persisted)
+            ):
                 counters["failed"] += 1
                 logger.warning(
-                    "row=%s task=%s could not localize all video URLs (%d/%d)",
+                    "row=%s task=%s could not produce valid local video files (%d/%d)",
                     row_id,
                     task_id,
                     len(persisted),
