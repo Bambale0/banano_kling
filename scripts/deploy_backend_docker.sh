@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# Deployment may be invoked from a streamed SSH heredoc. Never allow Docker,
+# backup helpers or other child processes to consume the caller's remaining
+# script from stdin and create a false-green partial deployment.
+exec </dev/null
+
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 COMPOSE_FILE="${COMPOSE_FILE:-${PROJECT_DIR}/compose.backend.yml}"
 SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-banano-kling}"
