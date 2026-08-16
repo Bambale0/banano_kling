@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tanya-production-backend
+  group: tanya-production
   cancel-in-progress: false
 
 jobs:
@@ -36,7 +36,6 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           deadline=$((SECONDS + 2700))
 
           while [ "$SECONDS" -lt "$deadline" ]; do
@@ -79,7 +78,7 @@ jobs:
     name: GitHub runner — SSH production deploy
     needs: ci_gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 70
     continue-on-error: true
     outputs:
       passed: ${{ steps.result.outputs.passed }}
@@ -99,12 +98,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           if [ -n "${PROD_SSH_HOST:-}" ] \
             && [ -n "${PROD_SSH_PRIVATE_KEY:-}" ] \
             && [ -n "${PROD_SSH_KNOWN_HOSTS:-}" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "GitHub-hosted SSH deployment is enabled"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::warning::SSH deploy is not fully configured; falling back to self-hosted nuromix."
@@ -121,13 +118,12 @@ jobs:
           chmod 0600 "$HOME/.ssh/production_key" "$HOME/.ssh/known_hosts"
           ssh-keygen -y -f "$HOME/.ssh/production_key" >/dev/null
 
-      - name: Deploy exact commit over SSH
+      - name: Deploy backend and Mini App exact commit over SSH
         id: deploy
         if: steps.gate.outputs.enabled == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
-
           deploy_user="${PROD_SSH_USER:-root}"
           deploy_port="${PROD_SSH_PORT:-22}"
           deploy_path="${PROD_PROJECT_PATH:-/root/tanya/banano_kling}"
@@ -146,7 +142,6 @@ jobs:
             "$deploy_user@$PROD_SSH_HOST" \
             "bash -s -- $quoted_path $quoted_sha" <<'REMOTE'
           set -Eeuo pipefail
-
           PROJECT_DIR="$1"
           EXPECTED_SHA="$2"
 
@@ -174,6 +169,12 @@ jobs:
           fi
 
           git fetch --prune origin tanyapi
+          remote_sha="$(git rev-parse origin/tanyapi)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
+            exit 1
+          }
+
           git switch tanyapi
           git reset --hard "$EXPECTED_SHA"
           [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
@@ -191,13 +192,24 @@ jobs:
 
           health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
           revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
+
+          # The Mini App is served by Nginx on this same production server.
+          # Build the exact checked-out commit locally and publish directly to
+          # the existing /var/www frontend root. No remote/CDN deploy hop.
+          run_root bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
+
+          live_frontend_revision="$(
+            curl -fsS --max-time 20 \
+              "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}"
+          )"
+          [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
           echo "deployed_sha=$(git rev-parse HEAD)"
           echo "container_revision=$revision"
           echo "container_health=$health"
-
-          [ "$health" = healthy ]
-          [ "$revision" = "$EXPECTED_SHA" ]
+          echo "miniapp_revision=$live_frontend_revision"
           REMOTE
 
       - name: Collect SSH deployment diagnostics
@@ -228,9 +240,8 @@ jobs:
           echo '=== compose ==='
           docker compose -f compose.backend.yml ps
           docker compose -f compose.backend.yml logs --tail=200 bot
-          echo '=== systemd ==='
-          systemctl is-active banano-kling
-          journalctl -u banano-kling -n 100 --no-pager
+          echo '=== Mini App ==='
+          curl -fsS --max-time 10 https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt || true
           REMOTE
 
       - name: Record GitHub SSH result
@@ -264,22 +275,20 @@ jobs:
         needs.github_ssh_deploy.outputs.passed != 'true'
       }}
     runs-on: [self-hosted, linux, x64, nuromix]
-    timeout-minutes: 55
+    timeout-minutes: 70
     env:
       NUROMIX_PROJECT_PATH: ${{ vars.NUROMIX_BACKEND_PROJECT_PATH }}
 
     steps:
-      - name: Deploy exact commit locally on nuromix
+      - name: Deploy backend and Mini App exact commit locally
         shell: bash
         run: |
           set -Eeuo pipefail
-
           project_dir="${NUROMIX_PROJECT_PATH:-/root/tanya/banano_kling}"
-          deploy_script="/tmp/neuromix-backend-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+          deploy_script="/tmp/nuromix-production-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
 
           cat > "$deploy_script" <<'LOCAL'
           set -Eeuo pipefail
-
           PROJECT_DIR="$1"
           EXPECTED_SHA="$2"
 
@@ -307,28 +316,37 @@ jobs:
           fi
 
           git fetch --prune origin tanyapi
-          git switch tanyapi
-          git reset --hard "$EXPECTED_SHA"
-
-          actual_sha="$(git rev-parse HEAD)"
-          [ "$actual_sha" = "$EXPECTED_SHA" ] || {
-            echo "Commit mismatch: expected=$EXPECTED_SHA actual=$actual_sha" >&2
+          remote_sha="$(git rev-parse origin/tanyapi)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Production branch moved: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
             exit 1
           }
+
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+          actual_sha="$(git rev-parse HEAD)"
+          [ "$actual_sha" = "$EXPECTED_SHA" ]
 
           bash scripts/deploy_backend_docker.sh deploy
           bash scripts/deploy_backend_docker.sh status
 
           health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' banano-kling-bot)"
           revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' banano-kling-bot)"
+          [ "$health" = healthy ]
+          [ "$revision" = "$EXPECTED_SHA" ]
+
+          bash scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"
+          live_frontend_revision="$(
+            curl -fsS --max-time 20 \
+              "https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt?revision=${EXPECTED_SHA}"
+          )"
+          [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
 
           echo "nuromix_host=$(hostname)"
           echo "deployed_sha=$actual_sha"
           echo "container_revision=$revision"
           echo "container_health=$health"
-
-          [ "$health" = healthy ]
-          [ "$revision" = "$EXPECTED_SHA" ]
+          echo "miniapp_revision=$live_frontend_revision"
           LOCAL
 
           chmod 0700 "$deploy_script"
@@ -358,9 +376,8 @@ jobs:
           echo "=== compose ==="
           docker compose -f compose.backend.yml ps
           docker compose -f compose.backend.yml logs --tail=200 bot
-          echo "=== systemd ==="
-          systemctl is-active banano-kling
-          journalctl -u banano-kling -n 100 --no-pager'
+          echo "=== Mini App ==="
+          curl -fsS --max-time 10 https://tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt || true'
 
           if [ "$(id -u)" -eq 0 ]; then
             bash -c "$diagnostic" -- "$project_dir"
@@ -383,14 +400,13 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-
           if [ "$GITHUB_SSH_PASSED" = true ]; then
-            echo "Production deployed through GitHub-hosted SSH runner"
+            echo "Production backend and Mini App deployed through GitHub-hosted SSH runner"
             exit 0
           fi
 
           if [ "$NUROMIX_RESULT" = success ]; then
-            echo "Production deployed through self-hosted nuromix runner"
+            echo "Production backend and Mini App deployed through self-hosted nuromix runner"
             exit 0
           fi
 
