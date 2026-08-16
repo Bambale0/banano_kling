@@ -15,8 +15,14 @@ describe('Mini App media UX contracts', () => {
     const source = read('components/tabs/feed-tab.tsx')
     expect(source).toContain('feedReferenceImageThumbnailUrl(previewItem.id, index)')
     expect(source).toContain('feedReferenceImageFullUrl(previewItem.id, index)')
+    expect(source).toContain('loading="lazy"')
+    expect(source).toContain('decoding="async"')
     expect(source).not.toContain('<img src={normalizeMiniAppMediaUrl(reference.url)}')
     expect(source).toContain('item.references_hidden || item.feed_references_visible === false')
+
+    const media = read('lib/media-url.ts')
+    expect(media).toContain('/thumbnail`')
+    expect(media).toContain('/full`')
   })
 
   it('normalizes old upload hosts onto the live Mini App origin', () => {
