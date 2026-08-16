@@ -10,6 +10,7 @@ on:
       - bot/handlers/miniapp_video_continuity_compat.py
       - bot/handlers/trend_route_compat.py
       - bot/handlers/trend_seedance_25_compat.py
+      - tests/test_development_release_flow.py
       - .github/workflows/miniapp-ci.yml
   push:
     branches: [tanyapi]
@@ -20,6 +21,7 @@ on:
       - bot/handlers/miniapp_video_continuity_compat.py
       - bot/handlers/trend_route_compat.py
       - bot/handlers/trend_seedance_25_compat.py
+      - tests/test_development_release_flow.py
       - .github/workflows/miniapp-ci.yml
 
 permissions:
