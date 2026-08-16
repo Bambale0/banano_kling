@@ -72,7 +72,7 @@ def _configure_nexus_nanobanana_routing() -> None:
         base_url=nexus_base_url,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
-        max_references=4,
+        max_references=8,
     )
     nano_banana_2_service.fallback_provider = banana2_kie
 
@@ -82,7 +82,7 @@ def _configure_nexus_nanobanana_routing() -> None:
         base_url=nexus_base_url,
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
-        max_references=4,
+        max_references=8,
     )
     nano_banana_pro_service.fallback_provider = banana_pro_kie
 

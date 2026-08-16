@@ -485,8 +485,11 @@ def _resolve_image_aspect_ratio(img_service: str, img_ratio: str, prompt: str) -
 
 
 def _get_max_image_references(img_service: str | None) -> int:
-    # Product rule: users may attach up to 8 reference images before generation.
-    # Saved-reference library is limited separately in storage.
+    normalized = str(img_service or "").strip()
+    if normalized == "seedream_5_pro":
+        return 5
+    if normalized in {"seedream_edit", "flux_pro", "wan_27", "grok_imagine_i2i"}:
+        return 9
     return 8
 
 
@@ -7856,64 +7859,6 @@ async def start_image_creation_from_idle_reference(
         user_id,
         image_url,
     )
-
-
-@router.message(GenerationStates.uploading_reference_images, F.photo)
-async def upload_reference_image_for_any_image_flow(
-    message: types.Message, state: FSMContext
-):
-    """Universal reference upload fallback for image flows, including Wan 2.7."""
-    async with _get_reference_upload_lock(message.from_user.id):
-        data = await state.get_data()
-        img_service = data.get("img_service", "banana_pro")
-        preset_id = data.get("preset_id", "new")
-        max_refs = _get_max_image_references(img_service)
-
-        reference_images = list(data.get("reference_images") or [])
-        if len(reference_images) >= max_refs:
-            await message.answer(
-                "❌ Достигнут лимит фото. Нажмите «Продолжить».",
-                reply_markup=get_main_menu_button_keyboard(),
-            )
-            return
-
-        try:
-            public_url, error_message = await _save_reference_image_from_message(
-                message,
-                original_filename_prefix="telegram_photo",
-            )
-            if not public_url:
-                await message.answer(
-                    error_message
-                    or "Не удалось сохранить фото. Попробуйте другое изображение.",
-                    reply_markup=get_main_menu_button_keyboard(),
-                )
-                return
-
-            if data.get("repeat_source_task_id"):
-                reference_images.append(public_url)
-                await state.update_data(reference_images=reference_images)
-                await _show_repeat_image_screen(message, state)
-                return
-
-            reference_images.append(public_url)
-            await state.update_data(reference_images=reference_images)
-
-            title = (
-                "🧪 Wan 2.7 Pro — тест" if img_service == "wan_27" else "🖼 Референсы"
-            )
-            await message.answer(
-                f"{title}\n\n"
-                f"✅ Фото добавлено: <code>{len(reference_images)}/{max_refs}</code>\n\n"
-                "Можете загрузить ещё фото или нажать <b>▶️ Продолжить</b>.",
-                reply_markup=get_reference_images_upload_keyboard(
-                    len(reference_images), max_refs, preset_id
-                ),
-                parse_mode="HTML",
-            )
-        except Exception:
-            logger.exception("Reference image upload failed")
-            await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
 
 
 def _motion_quality_per_second(model_key: str, quality: str) -> float:

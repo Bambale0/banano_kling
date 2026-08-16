@@ -1,6 +1,6 @@
 # NEUROMIX frontend auto deploy
 
-The workflow `.github/workflows/deploy-frontend.yml` validates and deploys the
+The workflow `.github/workflows/deploy-frontend-production.yml` validates and deploys the
 Mini App frontend when relevant files change on `tanyapi`.
 
 ## Execution order

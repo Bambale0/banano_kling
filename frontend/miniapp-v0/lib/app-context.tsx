@@ -5,6 +5,7 @@ import type { AppState, BootstrapResponse, FeedDeepLink, FeedItem, PromptItem, P
 import { mockAppState, mockImageModels, mockVideoModels } from './mock-data'
 import { bootstrapApp, fetchFeedItem, fetchPromptDetail, fetchTaskDetail, getInitData, getStartParamFallback, hasTelegramInitData, waitForTelegramInitData } from './api'
 import { parseMiniAppStartParam } from './start-params'
+import { isVideoTrendItem, resolveTrendSettings } from './trend-settings'
 
 interface AppContextType {
   state: AppState
@@ -417,35 +418,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const isTrend = (prompt.tags || []).some(
             (tag) => String(tag).toLowerCase() === 'trend',
           )
-          if (isTrend) {
-            setTrendToRun(prompt)
-            setActiveTabState(5)
-            return
-          }
-
-          const isVideoTrend =
-            prompt.category === 'video' ||
-            (prompt.tags || []).some((tag) => String(tag).toLowerCase() === 'trend-video') ||
-            state.videoModels.some((model) => model.id === prompt.model)
+          const isVideoTrend = isVideoTrendItem(prompt, state.videoModels)
 
           if (isVideoTrend) {
-            const videoModel = state.videoModels.find((model) => model.id === prompt.model)
-            const scenarioTag = (prompt.tags || []).find((tag) => String(tag).startsWith('trend-scenario:'))
-            const durationTag = (prompt.tags || []).find((tag) => String(tag).startsWith('trend-duration:'))
-            const configuredScenario = scenarioTag
-              ? normalizeVideoScenario(String(scenarioTag).split(':')[1])
-              : (videoModel?.supports.includes('imgtxt') ? 'imgtxt' : videoModel?.supports[0] || 'text')
-            const configuredDuration = Number(String(durationTag || '').split(':')[1]) || undefined
+            const settings = resolveTrendSettings(
+              prompt,
+              state.imageModels,
+              state.videoModels,
+            )
             setVideoPromptPreset({
               title: prompt.title,
               prompt: prompt.prompt_text,
-              model: videoModel?.id || state.videoModels[0]?.id || 'v3_pro',
-              scenario: videoModel?.supports.includes(configuredScenario)
-                ? configuredScenario
-                : videoModel?.supports[0] || 'text',
-              duration: configuredDuration,
+              model: settings.model || state.videoModels[0]?.id || 'v3_pro',
+              scenario: normalizeVideoScenario(settings.scenario),
+              ratio: settings.ratio || '16:9',
+              duration: settings.duration || undefined,
             })
             setActiveTabState(2)
+            return
+          }
+
+          if (isTrend) {
+            setTrendToRun(prompt)
+            setActiveTabState(5)
             return
           }
 

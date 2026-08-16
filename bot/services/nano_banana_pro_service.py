@@ -504,7 +504,7 @@ _nexus_provider = (
         base_url=getattr(config, "NEXUS_API_BASE_URL", "https://nexusapi.dev"),
         timeout_seconds=getattr(config, "NEXUS_API_TIMEOUT_SECONDS", 600),
         poll_interval_seconds=getattr(config, "NEXUS_API_POLL_INTERVAL_SECONDS", 5),
-        max_references=4,
+        max_references=MAX_IMAGE_INPUTS,
     )
     if nexus_api_key
     else None

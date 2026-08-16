@@ -1,0 +1,346 @@
+name: Deploy — NEUROMIX frontend
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - "frontend/**"
+      - "cdn.sh"
+      - "scripts/install_miniapp_frontend_https_host.sh"
+      - ".github/workflows/deploy-frontend-production.yml"
+      - ".github/workflows/miniapp-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: neuromix-production-frontend
+  cancel-in-progress: false
+
+env:
+  FRONTEND_DIR: frontend/miniapp-v0
+
+jobs:
+  ci_gate:
+    name: Wait for verified frontend and backend CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Require the production branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [ "$GITHUB_REF" = "refs/heads/tanyapi" ] || {
+            echo "::error::Production frontend deploy is allowed only from refs/heads/tanyapi, got $GITHUB_REF"
+            exit 1
+          }
+
+      - name: Wait for matching backend CI
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deadline=$((SECONDS + 4500))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -f event=push \
+                -f branch=tanyapi \
+                -F per_page=10
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "Backend CI for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "Backend CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Backend CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              break
+            fi
+
+            sleep 15
+          done
+
+          [ "$SECONDS" -lt "$deadline" ] || {
+            echo "::error::Timed out waiting for backend CI for $GITHUB_SHA"
+            exit 1
+          }
+
+      - name: Wait for matching Mini App CI
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          deadline=$((SECONDS + 4500))
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            payload="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/miniapp-ci.yml/runs" \
+                -f head_sha="$GITHUB_SHA" \
+                -f event=push \
+                -f branch=tanyapi \
+                -F per_page=10
+            )"
+
+            run_id="$(jq -r '.workflow_runs | sort_by(.created_at) | last | .id // empty' <<< "$payload")"
+            if [ -z "$run_id" ]; then
+              echo "Mini App CI for $GITHUB_SHA has not appeared yet"
+              sleep 10
+              continue
+            fi
+
+            status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$payload")"
+            conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$payload")"
+            echo "Mini App CI run $run_id: status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              [ "$conclusion" = success ] || {
+                echo "::error::Mini App CI finished with conclusion=$conclusion"
+                exit 1
+              }
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for Mini App CI for $GITHUB_SHA"
+          exit 1
+
+  deploy:
+    name: Deploy exact SHA to production Mini App
+    needs: ci_gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment: production
+
+    env:
+      FRONTEND_DOMAIN: ${{ vars.FRONTEND_DOMAIN }}
+      FRONTEND_PROJECT_PATH: ${{ vars.FRONTEND_PROJECT_PATH }}
+      FRONTEND_PROFILE: ${{ vars.FRONTEND_PROFILE }}
+      FRONTEND_SSH_HOST: ${{ secrets.FRONTEND_SSH_HOST }}
+      FRONTEND_SSH_USER: ${{ secrets.FRONTEND_SSH_USER }}
+      FRONTEND_SSH_PORT: ${{ secrets.FRONTEND_SSH_PORT }}
+      FRONTEND_SSH_PRIVATE_KEY: ${{ secrets.FRONTEND_SSH_PRIVATE_KEY }}
+      FRONTEND_SSH_KNOWN_HOSTS: ${{ secrets.FRONTEND_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Require complete production frontend configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${FRONTEND_DOMAIN:-}" ] || missing+=(FRONTEND_DOMAIN)
+          [ -n "${FRONTEND_PROJECT_PATH:-}" ] || missing+=(FRONTEND_PROJECT_PATH)
+          [ -n "${FRONTEND_SSH_HOST:-}" ] || missing+=(FRONTEND_SSH_HOST)
+          [ -n "${FRONTEND_SSH_PRIVATE_KEY:-}" ] || missing+=(FRONTEND_SSH_PRIVATE_KEY)
+          [ -n "${FRONTEND_SSH_KNOWN_HOSTS:-}" ] || missing+=(FRONTEND_SSH_KNOWN_HOSTS)
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Production frontend deployment is not configured. Missing: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout exact production commit
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked frontend dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Rebuild verified production static export
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          set -Eeuo pipefail
+          npm run lint
+          npm run build
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q '_next/static' out/index.html
+
+      - name: Configure pinned frontend SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$FRONTEND_SSH_PRIVATE_KEY" | tr -d '\r' > "$HOME/.ssh/production_frontend_key"
+          printf '%s\n' "$FRONTEND_SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/production_frontend_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/production_frontend_key" >/dev/null
+
+      - name: Deploy production frontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          deploy_user="${FRONTEND_SSH_USER:-root}"
+          deploy_port="${FRONTEND_SSH_PORT:-22}"
+          profile="${FRONTEND_PROFILE:-/etc/banano-miniapp/profiles/${FRONTEND_DOMAIN}.env}"
+
+          printf -v quoted_path '%q' "$FRONTEND_PROJECT_PATH"
+          printf -v quoted_sha '%q' "$GITHUB_SHA"
+          printf -v quoted_domain '%q' "$FRONTEND_DOMAIN"
+          printf -v quoted_profile '%q' "$profile"
+
+          ssh \
+            -i "$HOME/.ssh/production_frontend_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=6 \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$FRONTEND_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_sha $quoted_domain $quoted_profile" <<'REMOTE'
+          set -Eeuo pipefail
+
+          PROJECT_DIR="$1"
+          EXPECTED_SHA="$2"
+          DOMAIN="$3"
+          PROFILE="$4"
+          INSTALLER="$PROJECT_DIR/scripts/install_miniapp_frontend_https_host.sh"
+
+          command -v git >/dev/null
+          command -v curl >/dev/null
+          command -v flock >/dev/null
+
+          exec 9>/var/lock/neuromix-production-frontend-deploy.lock
+          flock -n 9 || {
+            echo "Another production frontend deployment is already running" >&2
+            exit 1
+          }
+
+          cd "$PROJECT_DIR"
+          [ -d .git ] || {
+            echo "Production frontend repository not found: $PROJECT_DIR" >&2
+            exit 1
+          }
+          [ -f "$PROFILE" ] || {
+            echo "Production frontend profile is missing: $PROFILE" >&2
+            exit 1
+          }
+          [ -f "$INSTALLER" ] || {
+            echo "Production frontend installer is missing: $INSTALLER" >&2
+            exit 1
+          }
+
+          git update-index -q --refresh || true
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Tracked local changes block production frontend deployment:" >&2
+            git status --short >&2
+            exit 1
+          fi
+
+          git fetch --prune origin tanyapi
+          remote_sha="$(git rev-parse origin/tanyapi)"
+          [ "$remote_sha" = "$EXPECTED_SHA" ] || {
+            echo "Production head moved or SHA is not current: expected=$EXPECTED_SHA origin/tanyapi=$remote_sha" >&2
+            exit 1
+          }
+          git switch tanyapi
+          git reset --hard "$EXPECTED_SHA"
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+
+          # shellcheck disable=SC1090
+          source "$PROFILE"
+          [ "${REPO_BRANCH:-}" = tanyapi ] || {
+            echo "Production frontend profile must use REPO_BRANCH=tanyapi" >&2
+            exit 1
+          }
+          [ "${FRONTEND_DOMAIN:-}" = "$DOMAIN" ] || {
+            echo "Production frontend profile domain mismatch" >&2
+            exit 1
+          }
+
+          if [ "$(id -u)" -eq 0 ]; then
+            bash "$INSTALLER" --config "$PROFILE" --deploy-only
+          else
+            sudo -n bash "$INSTALLER" --config "$PROFILE" --deploy-only
+          fi
+
+          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+
+          source_index="$PROJECT_DIR/frontend/miniapp-v0/out/index.html"
+          deployed_index="${MINIAPP_ROOT:?MINIAPP_ROOT is missing in profile}/index.html"
+          [ -s "$source_index" ]
+          [ -s "$deployed_index" ]
+          cmp -s "$source_index" "$deployed_index"
+
+          health="$(curl -fsS --max-time 20 "https://${DOMAIN}/frontend-health")"
+          http_code="$(curl -fsS -o /tmp/neuromix-prod-index.html -w '%{http_code}' --max-time 20 "https://${DOMAIN}/mini-app/?sha=${EXPECTED_SHA}")"
+          [ "$http_code" = 200 ]
+          grep -q '_next/static' /tmp/neuromix-prod-index.html
+
+          echo "production_frontend_host=$(hostname)"
+          echo "production_frontend_sha=$(git rev-parse HEAD)"
+          echo "production_frontend_health=$health"
+          echo "production_frontend_http=$http_code"
+          REMOTE
+
+      - name: Collect production frontend diagnostics on failure
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          deploy_user="${FRONTEND_SSH_USER:-root}"
+          deploy_port="${FRONTEND_SSH_PORT:-22}"
+          profile="${FRONTEND_PROFILE:-/etc/banano-miniapp/profiles/${FRONTEND_DOMAIN}.env}"
+          printf -v quoted_path '%q' "$FRONTEND_PROJECT_PATH"
+          printf -v quoted_profile '%q' "$profile"
+
+          ssh \
+            -i "$HOME/.ssh/production_frontend_key" \
+            -p "$deploy_port" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$deploy_user@$FRONTEND_SSH_HOST" \
+            "bash -s -- $quoted_path $quoted_profile" <<'REMOTE'
+          set +e
+          cd "$1" || exit 0
+          echo '=== git ==='
+          git status --short
+          git log -1 --oneline
+          echo '=== profile ==='
+          cat "$2"
+          # shellcheck disable=SC1090
+          source "$2"
+          echo '=== frontend health ==='
+          curl -fsS --max-time 20 "https://${FRONTEND_DOMAIN}/frontend-health" || true
+          REMOTE
+
+      - name: Remove production frontend SSH key
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.ssh/production_frontend_key"
