@@ -23,7 +23,7 @@ def load_project_env(project_root: Path | None = None) -> None:
     """Load project env files with Postgres overriding local SQLite defaults.
 
     Real process environment variables keep highest priority, except for the
-    public Mini App URL which is pinned to the production CDN above.
+    public Mini App URL which is pinned to the production frontend host above.
     """
 
     if os.getenv(SKIP_PROJECT_ENV_VAR, "").strip().lower() in {
