@@ -35,7 +35,7 @@ def _parse_result_urls(value: Any, fallback: str | None = None) -> list[str]:
         if raw:
             try:
                 parsed = json.loads(raw)
-            except (TypeError, ValueError, json.JSONDecodeError):
+            except (TypeError, ValueError):
                 parsed = [raw]
         else:
             parsed = []
