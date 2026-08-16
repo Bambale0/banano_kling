@@ -5,11 +5,21 @@ on:
     branches: [tanyapi]
     paths:
       - frontend/miniapp-v0/**
+      - bot/miniapp.py
+      - bot/trend_api.py
+      - bot/handlers/miniapp_video_continuity_compat.py
+      - bot/handlers/trend_route_compat.py
+      - bot/handlers/trend_seedance_25_compat.py
       - .github/workflows/miniapp-ci.yml
   push:
     branches: [tanyapi]
     paths:
       - frontend/miniapp-v0/**
+      - bot/miniapp.py
+      - bot/trend_api.py
+      - bot/handlers/miniapp_video_continuity_compat.py
+      - bot/handlers/trend_route_compat.py
+      - bot/handlers/trend_seedance_25_compat.py
       - .github/workflows/miniapp-ci.yml
 
 permissions:
