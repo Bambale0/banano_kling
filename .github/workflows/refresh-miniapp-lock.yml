@@ -1,0 +1,79 @@
+name: Maintenance — Refresh Mini App lockfile
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - .github/workflows/refresh-miniapp-lock.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-miniapp-lock-tanyapi
+  cancel-in-progress: true
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Regenerate lockfile from package overrides
+        run: npm install --package-lock-only --ignore-scripts --no-audit
+
+      - name: Verify locked install and production audit
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm audit --omit=dev --audit-level=high
+
+      - name: Verify Mini App after dependency override
+        run: |
+          set -Eeuo pipefail
+          npm test -- --runInBand lib/__tests__/trend-api.test.ts components/tabs/__tests__/video-tab-repeat.test.tsx
+          npm run build
+
+      - name: Commit regenerated lockfile
+        shell: bash
+        working-directory: .
+        run: |
+          set -Eeuo pipefail
+          git diff --check
+          git diff --exit-code -- frontend/miniapp-v0/package.json || {
+            echo "::error::Lock refresh unexpectedly modified package.json"
+            exit 1
+          }
+          if git diff --quiet -- frontend/miniapp-v0/package-lock.json; then
+            echo "::error::package-lock.json did not change after nanoid override"
+            exit 1
+          fi
+
+          git fetch origin tanyapi
+          current="$(git rev-parse origin/tanyapi)"
+          test "$current" = "$GITHUB_SHA" || {
+            echo "::error::Branch advanced before lockfile commit: workflow=$GITHUB_SHA current=$current"
+            exit 1
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/miniapp-v0/package-lock.json
+          git commit -m 'fix(miniapp): refresh lockfile for nanoid security override'
+          git push origin HEAD:tanyapi
