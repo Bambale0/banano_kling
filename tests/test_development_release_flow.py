@@ -75,22 +75,29 @@ def test_production_frontend_is_validated_then_deployed_from_tanyapi() -> None:
     except FileNotFoundError:
         pass
     else:
-        raise AssertionError("Retired standalone frontend deployment workflow still exists")
+        raise AssertionError("Retired frontend deployment workflow still exists")
 
-    workflow = read(".github/workflows/miniapp-ci.yml")
-    assert "branches: [tanyapi]" in workflow
-    assert "lib/__tests__/trend-api.test.ts" in workflow
-    assert "components/tabs/__tests__/video-tab-repeat.test.tsx" in workflow
-    assert "npm run build" in workflow
-    assert "needs: test-and-build" in workflow
-    assert "runs-on: [self-hosted, linux, x64, nuromix]" in workflow
-    assert 'test "$current" = "$GITHUB_SHA"' in workflow
-    assert "cdn.sh --remote-deploy \"$remote_name\"" in workflow
-    assert "remote_name='tanyafrontend'" in workflow
-    assert "miniapp_http=200" in workflow
-    assert "cdn.chillcreative.ru/mini-app/" in workflow
-    assert "FRONTEND_SSH_HOST" not in workflow
-    assert "branches: [main]" not in workflow
+    ci_workflow = read(".github/workflows/miniapp-ci.yml")
+    assert "branches: [tanyapi]" in ci_workflow
+    assert "lib/__tests__/trend-api.test.ts" in ci_workflow
+    assert "components/tabs/__tests__/video-tab-repeat.test.tsx" in ci_workflow
+    assert "npm run build" in ci_workflow
+    assert "self-hosted" not in ci_workflow
+    assert "branches: [main]" not in ci_workflow
+
+    deploy_workflow = read(".github/workflows/deploy-miniapp-production.yml")
+    assert "branches: [tanyapi]" in deploy_workflow
+    assert "runs-on: ubuntu-24.04" in deploy_workflow
+    assert "PROD_SSH_HOST" in deploy_workflow
+    assert "PROD_SSH_PRIVATE_KEY" in deploy_workflow
+    assert 'test "$current" = "$GITHUB_SHA"' in deploy_workflow
+    assert "git fetch --prune origin tanyapi" in deploy_workflow
+    assert 'REMOTE_NAME=\'tanyafrontend\'' in deploy_workflow
+    assert '--remote-deploy "$REMOTE_NAME"' in deploy_workflow
+    assert '--remote-status "$REMOTE_NAME"' in deploy_workflow
+    assert "miniapp_http=200" in deploy_workflow
+    assert "cdn.chillcreative.ru/mini-app/" in deploy_workflow
+    assert "branches: [main]" not in deploy_workflow
 
 
 def test_compose_supports_parallel_dev_and_production_projects() -> None:
