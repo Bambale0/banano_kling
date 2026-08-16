@@ -92,7 +92,7 @@ def _extract_output_text(data: Dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def _extract_claude_text(data: Dict[str, Any]) -> str:
+def _extract_claude_text(data: dict[str, Any]) -> str:
     parts: list[str] = []
     for block in data.get("content", []) or []:
         if isinstance(block, dict) and block.get("type") == "text":
@@ -393,17 +393,17 @@ class PhotoPromptService:
         *,
         image_url: str,
         user_instruction: str,
-        headers: Dict[str, str],
+        headers: dict[str, str],
         audio_bytes: bytes | None = None,
         audio_format: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compatibility entrypoint that now runs GPT-5.4 -> GPT-5.2.
 
         Older callers/tests use the historical method name. Keeping the seam
         avoids bypassing mocks and integrations while preserving the current
         production model order.
         """
-        primary_error: Optional[Exception] = None
+        primary_error: Exception | None = None
         try:
             return await self._analyze_with_gpt(
                 model=self.model,
@@ -413,7 +413,7 @@ class PhotoPromptService:
                 audio_bytes=audio_bytes,
                 audio_format=audio_format,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider fallback boundary
             primary_error = exc
             logger.warning(
                 "Photo prompt primary model %s failed; trying %s: %s",
@@ -436,7 +436,7 @@ class PhotoPromptService:
                 audio_bytes=audio_bytes,
                 audio_format=audio_format,
             )
-        except Exception as fallback_exc:
+        except Exception as fallback_exc:  # noqa: BLE001 - provider fallback boundary
             raise RuntimeError(
                 f"{self.model}: {primary_error}; "
                 f"{self.fallback_model}: {fallback_exc}"
@@ -447,8 +447,8 @@ class PhotoPromptService:
         *,
         image_url: str,
         user_instruction: str,
-        headers: Dict[str, str],
-    ) -> Dict[str, Any]:
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
         """Final image-only fallback after both GPT models fail."""
         payload = {
             "model": "claude-haiku-4-5",
@@ -472,46 +472,48 @@ class PhotoPromptService:
         }
 
         timeout = aiohttp.ClientTimeout(total=90)
-        data: Optional[Dict[str, Any]] = None
+        data: dict[str, Any] | None = None
         for attempt in range(CLAUDE_MAX_ATTEMPTS):
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.post(
                     f"{self.base_url}/claude/v1/messages",
                     json=payload,
                     headers=headers,
-                ) as response:
-                    text = await response.text()
+                ) as response,
+            ):
+                text = await response.text()
 
-                    if response.status >= 500:
-                        logger.warning(
-                            "Claude Haiku fallback HTTP 5xx: status=%s body=%s attempt=%d",
-                            response.status,
-                            text[:1000],
-                            attempt,
-                        )
-                        if attempt < CLAUDE_MAX_ATTEMPTS - 1:
-                            await asyncio.sleep(2**attempt)
-                            continue
-                        raise RuntimeError(
-                            f"Claude Haiku недоступен. Код: {response.status}"
-                        )
+                if response.status >= 500:
+                    logger.warning(
+                        "Claude Haiku fallback HTTP 5xx: status=%s body=%s attempt=%d",
+                        response.status,
+                        text[:1000],
+                        attempt,
+                    )
+                    if attempt < CLAUDE_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2**attempt)
+                        continue
+                    raise RuntimeError(
+                        f"Claude Haiku недоступен. Код: {response.status}"
+                    )
 
-                    if response.status >= 400:
-                        logger.error(
-                            "Claude Haiku fallback failed: status=%s body=%s",
-                            response.status,
-                            text[:2000],
-                        )
-                        raise RuntimeError(
-                            f"Claude Haiku недоступен. Код: {response.status}"
-                        )
+                if response.status >= 400:
+                    logger.error(
+                        "Claude Haiku fallback failed: status=%s body=%s",
+                        response.status,
+                        text[:2000],
+                    )
+                    raise RuntimeError(
+                        f"Claude Haiku недоступен. Код: {response.status}"
+                    )
 
-                    try:
-                        data = json.loads(text)
-                    except Exception as exc:
-                        raise RuntimeError(
-                            "Claude Haiku вернул некорректный JSON"
-                        ) from exc
+                try:
+                    data = json.loads(text)
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Claude Haiku вернул некорректный JSON"
+                    ) from exc
             break
 
         if data is None:
@@ -605,7 +607,7 @@ class PhotoPromptService:
             "Content-Type": "application/json",
         }
 
-        gpt_error: Optional[Exception] = None
+        gpt_error: Exception | None = None
         try:
             return await self._analyze_with_gpt55(
                 image_url=image_url,
