@@ -32,7 +32,6 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
-from .trend_seedance_25_compat import install_trend_seedance_25_compat
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
@@ -83,6 +82,7 @@ from .seedance_multimodal_compat import (
     router as seedance_multimodal_compat_router,
 )
 from .support import router as support_router
+from .trend_seedance_25_compat import install_trend_seedance_25_compat
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
