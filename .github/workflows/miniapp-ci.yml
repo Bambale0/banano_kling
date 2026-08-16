@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    name: GitHub runner — Trend contract and Mini App build
+    name: GitHub runner — Mini App tests and static build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -43,8 +43,76 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run server-authoritative trend contract tests
-        run: npm test -- --runInBand lib/__tests__/trend-api.test.ts
+      - name: Run Mini App regression tests
+        run: >-
+          npm test -- --runInBand
+          lib/__tests__/trend-api.test.ts
+          components/tabs/__tests__/video-tab-repeat.test.tsx
 
       - name: Build static Mini App
         run: npm run build
+
+  deploy-production:
+    name: nuromix — Deploy verified Mini App to production CDN
+    if: github.event_name == 'push'
+    needs: test-and-build
+    runs-on: [self-hosted, linux, x64, nuromix]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Require current tanyapi head
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch origin tanyapi
+          current="$(git rev-parse origin/tanyapi)"
+          test "$current" = "$GITHUB_SHA" || {
+            echo "::error::Branch advanced before Mini App deploy: workflow=$GITHUB_SHA current=$current"
+            exit 1
+          }
+
+      - name: Deploy exact frontend to tanyafrontend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          remote_name='tanyafrontend'
+          if [ "$(id -u)" -eq 0 ]; then
+            bash cdn.sh --remote-deploy "$remote_name"
+            status="$(bash cdn.sh --remote-status "$remote_name")"
+          else
+            sudo -n bash cdn.sh --remote-deploy "$remote_name"
+            status="$(sudo -n bash cdn.sh --remote-status "$remote_name")"
+          fi
+          printf '%s\n' "$status"
+          expected_short="$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          grep -F "commit=$expected_short" <<< "$status"
+          grep -F 'health=' <<< "$status" | grep -v 'failed'
+          grep -F 'miniapp_http=200' <<< "$status"
+
+      - name: Verify live Mini App entrypoint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='https://cdn.chillcreative.ru/mini-app/'
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          curl -fsS --retry 8 --retry-delay 3 --retry-all-errors \
+            -H 'Cache-Control: no-cache' \
+            "${base}?revision=${GITHUB_SHA}" > "$work/index.html"
+
+          grep -oE '/mini-app/_next/static/[^" ]+\.js' "$work/index.html" \
+            | sort -u > "$work/assets.txt"
+          test -s "$work/assets.txt"
+
+          while IFS= read -r asset; do
+            curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
+              "https://cdn.chillcreative.ru${asset}?revision=${GITHUB_SHA}" >/dev/null
+          done < "$work/assets.txt"
+
+          echo "Mini App production CDN is serving the verified static export."
