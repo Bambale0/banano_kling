@@ -10,6 +10,7 @@ on:
       - bot/handlers/miniapp_video_continuity_compat.py
       - bot/handlers/trend_route_compat.py
       - bot/handlers/trend_seedance_25_compat.py
+      - tests/test_development_release_flow.py
       - cdn.sh
       - scripts/install_miniapp_frontend_https_host.sh
       - .github/workflows/deploy-miniapp-production.yml
