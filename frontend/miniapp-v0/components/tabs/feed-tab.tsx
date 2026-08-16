@@ -55,6 +55,24 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
+function feedMediaUrl(value?: string | null): string {
+  const raw = String(value || '').trim()
+  if (!raw || typeof window === 'undefined') return raw
+  try {
+    const url = new URL(raw, window.location.origin)
+    const host = url.hostname.toLowerCase()
+    if (
+      (host === 'tanyapi.chillcreative.ru' || host === 'cdn.chillcreative.ru')
+      && url.pathname.startsWith('/uploads/')
+    ) {
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
+    }
+    return url.toString()
+  } catch {
+    return raw
+  }
+}
+
 function getPinAspectRatio(
   value?: string | null,
   genType: FeedItem['gen_type'] = 'image'
@@ -134,8 +152,8 @@ function FeedImage({ src, fallbackSrc, alt, priority, onError, style, className 
   )
 }
 
-function FeedVideoPreview({ poster, aspectRatio, blurred, onError }: {
-  poster?: string | null
+function FeedVideoPreview({ src, aspectRatio, blurred, onError }: {
+  src?: string | null
   aspectRatio?: string | null
   blurred?: boolean
   onError?: () => void
@@ -144,7 +162,7 @@ function FeedVideoPreview({ poster, aspectRatio, blurred, onError }: {
 
   useEffect(() => {
     setLoaded(false)
-  }, [poster])
+  }, [src])
 
   return (
     <div
@@ -154,17 +172,18 @@ function FeedVideoPreview({ poster, aspectRatio, blurred, onError }: {
         blurred && 'scale-[1.04] blur-xl'
       )}
     >
-      {poster ? (
+      {src ? (
         <>
           {!loaded ? (
             <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
           ) : null}
-          <img
-            src={poster}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            onLoad={() => setLoaded(true)}
+          <video
+            src={src}
+            muted
+            playsInline
+            preload="metadata"
+            onLoadedData={() => setLoaded(true)}
+            onLoadedMetadata={() => setLoaded(true)}
             onError={onError}
             className={cn(
               'relative z-10 h-full w-full object-cover transition-opacity duration-500',
@@ -566,7 +585,10 @@ export function FeedTab() {
                 key={columnIndex}
                 className={cn('flex min-w-0 flex-col gap-3', columnIndex === 1 && 'pt-8')}
               >
-                {column.map((item) => (
+                {column.map((item) => {
+                  const mediaUrl = feedMediaUrl(item.result_url)
+                  const previewUrl = feedMediaUrl(item.preview_url || item.result_url)
+                  return (
                 <article
                   key={item.id}
                   className="min-w-0 overflow-hidden rounded-2xl border border-border/45 bg-card/45 shadow-sm shadow-background/30"
@@ -586,18 +608,18 @@ export function FeedTab() {
                         >
                           <ImageOff className="h-8 w-8" />
                         </div>
-                      ) : isHttpUrl(item.result_url) ? (
+                      ) : isHttpUrl(mediaUrl) ? (
                         item.gen_type === 'video' ? (
                           <FeedVideoPreview
-                            poster={item.preview_url}
+                            src={previewUrl}
                             aspectRatio={item.aspect_ratio}
                             blurred={item.feed_blurred}
                             onError={() => handleMediaError(item)}
                           />
                         ) : (
                           <FeedImage
-                            src={item.preview_url || item.result_url}
-                            fallbackSrc={item.result_url}
+                            src={previewUrl}
+                            fallbackSrc={mediaUrl}
                             alt=""
                             priority={priorityImageIds.has(item.id)}
                             onError={() => handleMediaError(item)}
@@ -722,7 +744,8 @@ export function FeedTab() {
                     </div>
                   </div>
                 </article>
-                ))}
+                  )
+                })}
               </div>
             ))}
           </div>
@@ -758,10 +781,10 @@ export function FeedTab() {
           >
             <X className="h-5 w-5" />
           </button>
-          {isHttpUrl(previewItem.result_url) ? (
+          {isHttpUrl(feedMediaUrl(previewItem.result_url)) ? (
             previewItem.gen_type === 'video' ? (
               <video
-                src={previewItem.result_url}
+                src={feedMediaUrl(previewItem.result_url)}
                 className={cn(
                   'max-h-full w-auto max-w-full object-contain',
                   previewBlurActive && 'blur-xl'
@@ -769,6 +792,7 @@ export function FeedTab() {
                 controls
                 autoPlay
                 playsInline
+                preload="auto"
                 onError={() => {
                   handleMediaError(previewItem)
                   setPreviewItem(null)
@@ -776,7 +800,7 @@ export function FeedTab() {
               />
             ) : (
               <img
-                src={previewItem.result_url}
+                src={feedMediaUrl(previewItem.result_url)}
                 alt=""
                 onError={() => {
                   handleMediaError(previewItem)
