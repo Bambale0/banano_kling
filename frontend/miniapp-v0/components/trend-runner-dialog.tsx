@@ -5,6 +5,7 @@ import { ImagePlus, Loader2, RefreshCcw, Sparkles } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import { runTrend } from '@/lib/trend-api'
+import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -121,16 +122,19 @@ export function TrendRunnerDialog({
         {trend?.preview_url ? (
           isVideoTrend ? (
             <video
-              src={trend.preview_url}
+              src={videoPreviewFrameUrl(trend.preview_url)}
               muted
               loop
               autoPlay
+              controls
               playsInline
-              className="max-h-[42vh] w-full rounded-2xl bg-black object-contain"
+              preload="metadata"
+              style={{ aspectRatio: mediaAspectRatio(trend.generation_settings?.ratio) }}
+              className="mx-auto max-h-[42vh] max-w-full rounded-2xl bg-black object-contain"
             />
           ) : (
             <img
-              src={trend.preview_url}
+              src={normalizeMiniAppMediaUrl(trend.preview_url)}
               alt={trend.title}
               className="max-h-[42vh] w-full rounded-2xl object-contain"
             />

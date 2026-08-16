@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
+import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
@@ -56,21 +57,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 function feedMediaUrl(value?: string | null): string {
-  const raw = String(value || '').trim()
-  if (!raw || typeof window === 'undefined') return raw
-  try {
-    const url = new URL(raw, window.location.origin)
-    const host = url.hostname.toLowerCase()
-    if (
-      (host === 'tanyapi.chillcreative.ru' || host === 'cdn.chillcreative.ru')
-      && url.pathname.startsWith('/uploads/')
-    ) {
-      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
-    }
-    return url.toString()
-  } catch {
-    return raw
-  }
+  return normalizeMiniAppMediaUrl(value)
 }
 
 function getPinAspectRatio(
@@ -95,11 +82,11 @@ function getPinHeightWeight(value?: string | null, genType: FeedItem['gen_type']
 }
 
 function getPublicReferences(item: FeedItem | null) {
-  if (!item) return []
+  if (!item || item.references_hidden || item.feed_references_visible === false) return []
   return [
     ...(item.reference_images || []).map((url) => ({ type: 'image' as const, url })),
     ...(item.reference_videos || []).map((url) => ({ type: 'video' as const, url })),
-  ].filter((item) => isHttpUrl(item.url))
+  ].filter((item) => Boolean(String(item.url || '').trim()))
 }
 
 function FeedImage({ src, fallbackSrc, alt, priority, onError, style, className }: {
@@ -178,7 +165,7 @@ function FeedVideoPreview({ src, aspectRatio, blurred, onError }: {
             <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
           ) : null}
           <video
-            src={src}
+            src={videoPreviewFrameUrl(src)}
             muted
             playsInline
             preload="metadata"
@@ -219,6 +206,7 @@ export function FeedTab() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const [referencePreview, setReferencePreview] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [revealedPreviewIds, setRevealedPreviewIds] = useState<Set<number>>(() => new Set())
   const [commentsItem, setCommentsItem] = useState<FeedItem | null>(null)
   const [comments, setComments] = useState<FeedComment[]>([])
@@ -840,19 +828,19 @@ export function FeedTab() {
             <div className="absolute bottom-[4.5rem] left-3 right-3 flex justify-center">
               <div className="flex max-w-full gap-2 overflow-x-auto rounded-xl border border-border/60 bg-background/80 p-2 backdrop-blur">
                 {previewReferences.map((reference, index) => (
-                  <a
+                  <button
+                    type="button"
                     key={`${reference.url}_${index}`}
-                    href={reference.url}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => setReferencePreview(reference)}
                     className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"
+                    aria-label={`Открыть референс ${index + 1}`}
                   >
                     {reference.type === 'video' ? (
-                      <video src={reference.url} muted playsInline preload="none" className="h-full w-full object-cover" />
+                      <video src={videoPreviewFrameUrl(reference.url)} muted playsInline preload="metadata" className="h-full w-full object-cover" />
                     ) : (
-                      <img src={reference.url} alt="" className="h-full w-full object-cover" />
+                      <img src={normalizeMiniAppMediaUrl(reference.url)} alt="" className="h-full w-full object-cover" />
                     )}
-                  </a>
+                  </button>
                 ))}
               </div>
             </div>
@@ -879,6 +867,35 @@ export function FeedTab() {
             </Button>
 
           </div>
+        </div>
+      ) : null}
+
+      {referencePreview ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-background/95 px-3 py-6">
+          <button
+            type="button"
+            onClick={() => setReferencePreview(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/85 text-foreground"
+            aria-label="Закрыть референс"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {referencePreview.type === 'video' ? (
+            <video
+              src={normalizeMiniAppMediaUrl(referencePreview.url)}
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              className="max-h-full max-w-full rounded-xl bg-black object-contain"
+            />
+          ) : (
+            <img
+              src={normalizeMiniAppMediaUrl(referencePreview.url)}
+              alt="Референс"
+              className="max-h-full max-w-full rounded-xl object-contain"
+            />
+          )}
         </div>
       ) : null}
 

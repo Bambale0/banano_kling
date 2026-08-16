@@ -7,6 +7,7 @@ import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -375,18 +376,18 @@ export function TrendsTab() {
                   {trend.preview_url ? videoSection ? (
                     <button type="button" className="block w-full" onClick={() => setPreviewTrend(trend)} aria-label={`Открыть видео ${trend.title}`}>
                       <video
-                        src={trend.preview_url}
+                        src={videoPreviewFrameUrl(trend.preview_url)}
                         muted
                         playsInline
                         preload="metadata"
                         onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
-                        style={{ aspectRatio: videoAspectRatios[trend.id] || '16 / 9' }}
+                        style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
                         className="w-full bg-black object-contain"
                       />
                       <span className="absolute inset-0 grid place-items-center bg-black/10"><Film className="h-8 w-8 rounded-full bg-black/55 p-1.5 text-white" /></span>
                     </button>
                   ) : (
-                    <img src={trend.preview_url} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />
+                    <img src={normalizeMiniAppMediaUrl(trend.preview_url)} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />
                   ) : (
                     <div className={videoSection ? 'flex aspect-video items-center justify-center' : 'flex aspect-square items-center justify-center'}><Sparkles className="h-8 w-8 text-gold" /></div>
                   )}
@@ -672,13 +673,13 @@ export function TrendsTab() {
           <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Видео-тренд'}</DialogTitle>
           {previewTrend?.preview_url ? (
             <video
-              src={previewTrend.preview_url}
+              src={normalizeMiniAppMediaUrl(previewTrend.preview_url)}
               controls
               autoPlay
               playsInline
               onLoadedMetadata={(event) => rememberVideoAspectRatio(previewTrend.id, event.currentTarget)}
-              style={{ aspectRatio: videoAspectRatios[previewTrend.id] || '16 / 9' }}
-              className="max-h-[78vh] w-full rounded-xl bg-black object-contain"
+              style={{ aspectRatio: videoAspectRatios[previewTrend.id] || mediaAspectRatio(previewTrend.generation_settings?.ratio) }}
+              className="mx-auto max-h-[78vh] max-w-full rounded-xl bg-black object-contain"
             />
           ) : null}
         </DialogContent>
