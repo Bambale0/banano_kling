@@ -69,13 +69,17 @@ def test_production_backend_deploy_remains_on_tanyapi() -> None:
     assert "branches: [main]" not in workflow
 
 
-def test_production_frontend_is_validated_then_deployed_from_tanyapi() -> None:
-    try:
-        read(".github/workflows/deploy-frontend-production.yml")
-    except FileNotFoundError:
-        pass
-    else:
-        raise AssertionError("Retired frontend deployment workflow still exists")
+def test_production_frontend_is_built_on_the_same_server() -> None:
+    for retired in (
+        ".github/workflows/deploy-frontend-production.yml",
+        ".github/workflows/deploy-miniapp-production.yml",
+    ):
+        try:
+            read(retired)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"Retired standalone frontend deploy still exists: {retired}")
 
     ci_workflow = read(".github/workflows/miniapp-ci.yml")
     assert "branches: [tanyapi]" in ci_workflow
@@ -85,19 +89,27 @@ def test_production_frontend_is_validated_then_deployed_from_tanyapi() -> None:
     assert "self-hosted" not in ci_workflow
     assert "branches: [main]" not in ci_workflow
 
-    deploy_workflow = read(".github/workflows/deploy-miniapp-production.yml")
+    deploy_workflow = read(".github/workflows/deploy-production.yml")
     assert "branches: [tanyapi]" in deploy_workflow
-    assert "runs-on: ubuntu-24.04" in deploy_workflow
     assert "PROD_SSH_HOST" in deploy_workflow
     assert "PROD_SSH_PRIVATE_KEY" in deploy_workflow
-    assert 'test "$current" = "$GITHUB_SHA"' in deploy_workflow
-    assert "git fetch --prune origin tanyapi" in deploy_workflow
-    assert 'REMOTE_NAME=\'tanyafrontend\'' in deploy_workflow
-    assert '--remote-deploy "$REMOTE_NAME"' in deploy_workflow
-    assert '--remote-status "$REMOTE_NAME"' in deploy_workflow
-    assert "miniapp_http=200" in deploy_workflow
-    assert "cdn.chillcreative.ru/mini-app/" in deploy_workflow
+    assert 'remote_sha="$(git rev-parse origin/tanyapi)"' in deploy_workflow
+    assert '"$remote_sha" = "$EXPECTED_SHA"' in deploy_workflow
+    assert 'scripts/deploy_miniapp_local.sh "$EXPECTED_SHA"' in deploy_workflow
+    assert "tanyapp.xn--e1aikcel5c5a.online/mini-app/revision.txt" in deploy_workflow
+    assert "tanyafrontend" not in deploy_workflow
+    assert "cdn.chillcreative.ru" not in deploy_workflow
+    assert "--remote-deploy" not in deploy_workflow
     assert "branches: [main]" not in deploy_workflow
+
+    deploy_script = read("scripts/deploy_miniapp_local.sh")
+    assert 'DEFAULT_FRONTEND_DOMAIN="tanyapp.xn--e1aikcel5c5a.online"' in deploy_script
+    assert 'npm ci' in deploy_script
+    assert 'npm run lint' in deploy_script
+    assert 'npm run build' in deploy_script
+    assert 'rsync -a' in deploy_script
+    assert 'revision.txt' in deploy_script
+    assert 'cdn.chillcreative.ru' not in deploy_script
 
 
 def test_compose_supports_parallel_dev_and_production_projects() -> None:
