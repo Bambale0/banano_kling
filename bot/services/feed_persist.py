@@ -419,7 +419,10 @@ async def persist_feed_result_urls(
         )
         should_download = _is_external_http_url(url) or is_ephemeral or require_local
         if should_download:
-            local = await download_to_local(url, max_size_bytes=max_size_bytes)
+            if max_size_bytes == FEED_MEDIA_MAX_BYTES:
+                local = await download_to_local(url)
+            else:
+                local = await download_to_local(url, max_size_bytes=max_size_bytes)
             if local:
                 ensure_feed_thumbnail(local)
                 persisted.append(local)
