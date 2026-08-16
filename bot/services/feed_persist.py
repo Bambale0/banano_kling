@@ -1,6 +1,7 @@
 """
-Скачивание результатов генерации с временных хостов
-на backend в static/uploads/feed, чтобы они не удалялись по TTL.
+Скачивание результатов генерации с внешних хостов
+на backend в static/uploads/feed, чтобы публичная лента не зависела
+от TTL, CORS/Range-поведения и доступности хоста провайдера.
 
 Вызывается из share_to_feed() при публикации в ленту.
 """
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 FEED_STORAGE_DIR = Path("static/uploads/feed")
 FEED_THUMB_STORAGE_DIR = FEED_STORAGE_DIR / "thumbs"
+FEED_MEDIA_MAX_BYTES = int(os.getenv("FEED_MEDIA_MAX_BYTES", str(200 * 1024 * 1024)))
+FEED_DOWNLOAD_TIMEOUT_SECONDS = int(os.getenv("FEED_DOWNLOAD_TIMEOUT_SECONDS", "180"))
 FEED_THUMB_MAX_SIDE = 768
 FEED_THUMB_MIN_BYTES = 50 * 1024
 FEED_THUMB_MAX_BYTES = 200 * 1024
@@ -31,17 +34,28 @@ FEED_THUMB_MAX_QUALITY = 90
 FEED_THUMB_BACKGROUND = (255, 255, 255)
 
 
-async def download_to_local(url: str, max_size_bytes: int = 50 * 1024 * 1024) -> str | None:
+async def download_to_local(url: str, max_size_bytes: int = FEED_MEDIA_MAX_BYTES) -> str | None:
     """
     Скачивает файл по URL в static/uploads/feed/<uuid>.<ext>.
     Возвращает локальный URL (STATIC_BASE_URL/uploads/feed/<filename>),
     который обслуживается Nginx/aiohttp.
     """
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+        timeout = aiohttp.ClientTimeout(total=FEED_DOWNLOAD_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, allow_redirects=True) as resp:
                 if resp.status != 200:
                     logger.warning("Feed persist: HTTP %s for %s", resp.status, url)
+                    return None
+
+                content_length = resp.headers.get("Content-Length", "").strip()
+                if content_length.isdigit() and int(content_length) > max_size_bytes:
+                    logger.warning(
+                        "Feed persist: content-length too large (%s > %d) for %s",
+                        content_length,
+                        max_size_bytes,
+                        url,
+                    )
                     return None
 
                 content_type = resp.headers.get("Content-Type", "")
@@ -355,25 +369,36 @@ def _remove_new_feed_files(urls: list[str]) -> None:
             continue
         try:
             path.unlink(missing_ok=True)
-            webp_thumb, legacy_jpg_thumb = _thumbnail_paths(path)
-            webp_thumb.unlink(missing_ok=True)
-            legacy_jpg_thumb.unlink(missing_ok=True)
+            jpg_thumb, legacy_webp_thumb = _thumbnail_paths(path)
+            jpg_thumb.unlink(missing_ok=True)
+            legacy_webp_thumb.unlink(missing_ok=True)
         except OSError:
             logger.exception("Feed persist: failed to remove orphaned file %s", path)
+
+
+def _is_external_http_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or ""))
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname)
+    except ValueError:
+        return False
 
 
 async def persist_feed_result_urls(
     result_urls: list[str],
     *,
     require_local: bool = False,
+    max_size_bytes: int = FEED_MEDIA_MAX_BYTES,
 ) -> list[str]:
     """
     Принимает список URL результатов генерации.
-    Если URL ведёт на эфемерный хост — скачивает локально.
-    Если URL уже ведёт на локальный /uploads, копирует в durable feed storage.
-    При require_local=True скачивает любой внешний URL и возвращает пустой
-    список, если хотя бы один файл сохранить не удалось.
-    Возвращает список URL (некоторые могут быть заменены на локальные).
+
+    Локальные /uploads копируются в durable feed storage. Любой внешний HTTP(S)
+    результат сначала локализуется на backend: публичная лента не должна
+    зависеть от срока жизни URL провайдера, его CORS/Range или геодоступности.
+    При require_local=True возвращает пустой список, если хотя бы один файл
+    сохранить не удалось. Для require_local=False внешний URL остаётся только
+    как аварийный fallback, если скачивание провайдера временно недоступно.
     """
     from bot.database import FEED_EPHEMERAL_RESULT_HOSTS, _feed_result_host
 
@@ -392,8 +417,9 @@ async def persist_feed_result_urls(
             host == ephemeral or host.endswith(f".{ephemeral}")
             for ephemeral in FEED_EPHEMERAL_RESULT_HOSTS
         )
-        if is_ephemeral or require_local:
-            local = await download_to_local(url)
+        should_download = _is_external_http_url(url) or is_ephemeral or require_local
+        if should_download:
+            local = await download_to_local(url, max_size_bytes=max_size_bytes)
             if local:
                 ensure_feed_thumbnail(local)
                 persisted.append(local)
@@ -402,6 +428,10 @@ async def persist_feed_result_urls(
                 if require_local:
                     _remove_new_feed_files(created_urls)
                     return []
+                logger.warning(
+                    "Feed persist: keeping external fallback because localization failed: %s",
+                    url,
+                )
                 persisted.append(url)
         else:
             persisted.append(url)
