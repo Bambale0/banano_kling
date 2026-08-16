@@ -26,6 +26,7 @@ from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 # Publication scope must be installed before generation/common/miniapp import
 # their database and keyboard functions. This keeps the established flow while
 # adding a separate "profile only" state next to the public discovery feed.
+from .publication_scope_card_compat import install_publication_scope_card_compat
 from .publication_scope_compat import (
     install_common_publication_scope_compat,
     install_publication_scope_compat,
@@ -40,6 +41,7 @@ from .trends_compat import router as trends_compat_router
 
 install_publication_scope_postgres_compat()
 install_publication_scope_compat()
+install_publication_scope_card_compat()
 
 from . import admin as admin_module
 from . import common as common_module

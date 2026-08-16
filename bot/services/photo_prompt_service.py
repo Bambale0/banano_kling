@@ -1,4 +1,4 @@
-"""Photo-to-prompt service via Kie GPT-5.4 with GPT-5.2 fallback."""
+"""Photo-to-prompt service via Kie GPT-5.4 with GPT-5.2 and Claude fallback."""
 
 import asyncio
 import base64
@@ -17,6 +17,7 @@ PRIMARY_MODEL = "gpt-5-4"
 FALLBACK_MODEL = "gpt-5-2"
 GPT_MAX_ATTEMPTS = 3
 GPT_RETRYABLE_BODY_CODES = {429}
+CLAUDE_MAX_ATTEMPTS = 2
 
 
 SYSTEM_PROMPT = """
@@ -89,6 +90,16 @@ def _extract_output_text(data: Dict[str, Any]) -> str:
         return data["text"].strip()
 
     return json.dumps(data, ensure_ascii=False)
+
+
+def _extract_claude_text(data: Dict[str, Any]) -> str:
+    parts: list[str] = []
+    for block in data.get("content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text", "")
+            if text:
+                parts.append(str(text))
+    return "\n".join(parts).strip()
 
 
 def _parse_json_object(raw_text: str) -> Dict[str, Any]:
@@ -214,6 +225,19 @@ def _build_gpt_user_content(
         )
 
     return content
+
+
+def _build_claude_image_source(image_url: str) -> dict[str, str]:
+    """Build Claude image input for the final image-only fallback."""
+    if image_url.startswith("data:image/") and "," in image_url:
+        header, encoded = image_url.split(",", 1)
+        media_type = header.removeprefix("data:").split(";", 1)[0]
+        return {
+            "type": "base64",
+            "media_type": media_type,
+            "data": encoded,
+        }
+    return {"type": "url", "url": image_url}
 
 
 class PhotoPromptService:
@@ -364,6 +388,142 @@ class PhotoPromptService:
         provider = "" if model == self.model else model
         return _build_result(parsed, provider=provider)
 
+    async def _analyze_with_gpt55(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: Dict[str, str],
+        audio_bytes: bytes | None = None,
+        audio_format: str = "",
+    ) -> Dict[str, Any]:
+        """Compatibility entrypoint that now runs GPT-5.4 -> GPT-5.2.
+
+        Older callers/tests use the historical method name. Keeping the seam
+        avoids bypassing mocks and integrations while preserving the current
+        production model order.
+        """
+        primary_error: Optional[Exception] = None
+        try:
+            return await self._analyze_with_gpt(
+                model=self.model,
+                image_url=image_url,
+                user_instruction=user_instruction,
+                headers=headers,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+            )
+        except Exception as exc:
+            primary_error = exc
+            logger.warning(
+                "Photo prompt primary model %s failed; trying %s: %s",
+                self.model,
+                self.fallback_model,
+                exc,
+            )
+
+        if not self.fallback_model or self.fallback_model == self.model:
+            raise RuntimeError(
+                f"Не удалось разобрать запрос через {self.model}: {primary_error}"
+            ) from primary_error
+
+        try:
+            return await self._analyze_with_gpt(
+                model=self.fallback_model,
+                image_url=image_url,
+                user_instruction=user_instruction,
+                headers=headers,
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+            )
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"{self.model}: {primary_error}; "
+                f"{self.fallback_model}: {fallback_exc}"
+            ) from fallback_exc
+
+    async def _analyze_with_claude(
+        self,
+        *,
+        image_url: str,
+        user_instruction: str,
+        headers: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Final image-only fallback after both GPT models fail."""
+        payload = {
+            "model": "claude-haiku-4-5",
+            "stream": False,
+            "max_tokens": 2048,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": SYSTEM_PROMPT + "\n\n" + user_instruction,
+                        },
+                        {
+                            "type": "image",
+                            "source": _build_claude_image_source(image_url),
+                        },
+                    ],
+                }
+            ],
+        }
+
+        timeout = aiohttp.ClientTimeout(total=90)
+        data: Optional[Dict[str, Any]] = None
+        for attempt in range(CLAUDE_MAX_ATTEMPTS):
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{self.base_url}/claude/v1/messages",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    text = await response.text()
+
+                    if response.status >= 500:
+                        logger.warning(
+                            "Claude Haiku fallback HTTP 5xx: status=%s body=%s attempt=%d",
+                            response.status,
+                            text[:1000],
+                            attempt,
+                        )
+                        if attempt < CLAUDE_MAX_ATTEMPTS - 1:
+                            await asyncio.sleep(2**attempt)
+                            continue
+                        raise RuntimeError(
+                            f"Claude Haiku недоступен. Код: {response.status}"
+                        )
+
+                    if response.status >= 400:
+                        logger.error(
+                            "Claude Haiku fallback failed: status=%s body=%s",
+                            response.status,
+                            text[:2000],
+                        )
+                        raise RuntimeError(
+                            f"Claude Haiku недоступен. Код: {response.status}"
+                        )
+
+                    try:
+                        data = json.loads(text)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "Claude Haiku вернул некорректный JSON"
+                        ) from exc
+            break
+
+        if data is None:
+            raise RuntimeError("Claude Haiku не вернул данных после всех попыток")
+
+        raw_output = _extract_claude_text(data)
+        if not raw_output:
+            raise RuntimeError("Claude Haiku вернул пустой ответ")
+
+        parsed = _parse_json_object(raw_output)
+        return _build_result(parsed, provider="claude-haiku-4-5")
+
     async def analyze_photo(
         self,
         *,
@@ -445,10 +605,9 @@ class PhotoPromptService:
             "Content-Type": "application/json",
         }
 
-        primary_error: Optional[Exception] = None
+        gpt_error: Optional[Exception] = None
         try:
-            return await self._analyze_with_gpt(
-                model=self.model,
+            return await self._analyze_with_gpt55(
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
@@ -456,43 +615,32 @@ class PhotoPromptService:
                 audio_format=audio_format,
             )
         except Exception as exc:
-            primary_error = exc
-            logger.warning(
-                "Photo prompt primary model %s failed; trying %s: %s",
-                self.model,
-                self.fallback_model,
-                exc,
-            )
-
-        if not self.fallback_model or self.fallback_model == self.model:
-            raise RuntimeError(
-                f"Не удалось разобрать запрос через {self.model}: {primary_error}"
-            ) from primary_error
+            gpt_error = exc
+            if has_audio:
+                target = "фото и голос" if has_image else "голос"
+                raise RuntimeError(
+                    f"Не удалось разобрать {target} через GPT-цепочку: {exc}"
+                ) from exc
 
         try:
-            return await self._analyze_with_gpt(
-                model=self.fallback_model,
+            result = await self._analyze_with_claude(
                 image_url=image_url,
                 user_instruction=user_instruction,
                 headers=headers,
-                audio_bytes=audio_bytes,
-                audio_format=audio_format,
             )
+            logger.info(
+                "Photo prompt GPT chain failed (%s); Claude Haiku fallback succeeded",
+                gpt_error,
+            )
+            return result
         except Exception as fallback_exc:
             logger.error(
-                "Photo prompt fallback %s failed after %s failure (%s): %s",
-                self.fallback_model,
-                self.model,
-                primary_error,
+                "Claude Haiku fallback failed after GPT chain failure (%s): %s",
+                gpt_error,
                 fallback_exc,
             )
-            target = "фото и голос" if has_image and has_audio else (
-                "голос" if has_audio else "фото"
-            )
             raise RuntimeError(
-                f"Не удалось разобрать {target}: "
-                f"{self.model}: {primary_error}; "
-                f"{self.fallback_model}: {fallback_exc}"
+                f"Не удалось разобрать фото через fallback: {fallback_exc}"
             ) from fallback_exc
 
 

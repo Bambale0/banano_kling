@@ -362,7 +362,8 @@ def test_route_wrapping_targets_all_trend_bootstrap_and_payment_endpoints():
     assert safety._wrap_post_handler(
         "/mini-app/api/create-payment", handler
     ) is not handler
-    assert safety._wrap_post_handler("/mini-app/api/feed", handler) is handler
+    # Every Mini App API route is now also wrapped by the account ban guard.
+    assert safety._wrap_post_handler("/mini-app/api/feed", handler) is not handler
 
 
 def test_installation_is_import_safe_and_patches_route_registration():

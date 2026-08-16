@@ -33,7 +33,7 @@ def test_nexus_payload_uses_documented_model_and_reference_fields(model_name: st
     assert "output_format" not in params
 
 
-def test_nexus_payload_uses_singular_image_url_for_one_reference() -> None:
+def test_nexus_payload_uses_image_urls_for_one_reference() -> None:
     params = build_nexus_image_params(
         model_name="nano-banana-pro",
         prompt="edit",
@@ -41,8 +41,8 @@ def test_nexus_payload_uses_singular_image_url_for_one_reference() -> None:
         image_input=["https://example.com/source.png"],
     )
 
-    assert params["image_url"] == "https://example.com/source.png"
-    assert "image_urls" not in params
+    assert params["image_urls"] == ["https://example.com/source.png"]
+    assert "image_url" not in params
 
 
 class _FakeResponse:
@@ -86,7 +86,7 @@ class _FakeSession:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model_name", ["nano-banana-2", "nano-banana-pro"])
-async def test_nexus_provider_runs_generate_poll_and_returns_image_bytes(
+async def test_nexus_provider_queues_task_and_decodes_completed_result(
     monkeypatch,
     model_name: str,
 ) -> None:
@@ -105,7 +105,7 @@ async def test_nexus_provider_runs_generate_poll_and_returns_image_bytes(
 
     monkeypatch.setattr(provider, "_get_session", _session)
 
-    result = await provider.generate_image(
+    queued = await provider.generate_image(
         "draw a banana",
         "1:1",
         "4K",
@@ -113,15 +113,30 @@ async def test_nexus_provider_runs_generate_poll_and_returns_image_bytes(
         "png",
     )
 
-    assert result is not None
-    assert result["image_bytes"] == raw
-    assert result["provider"] == "nexus"
-    assert result["provider_model"] == model_name
-    assert result["provider_task_id"] == "nexus-task-1"
+    assert queued == {
+        "task_id": "nexus-task-1",
+        "provider": "nexus",
+        "provider_model": model_name,
+        "provider_task_id": "nexus-task-1",
+        "retryable": False,
+    }
     assert fake_session.start_json["params"]["model_name"] == model_name
-    assert fake_session.start_json["params"]["image_url"] == "https://example.com/ref.png"
+    assert fake_session.start_json["params"]["image_urls"] == [
+        "https://example.com/ref.png"
+    ]
+    assert fake_session.start_json["params"]["image_size"] == "4K"
     assert "resolution" not in fake_session.start_json["params"]
     assert len(fake_session.start_headers["Idempotency-Key"]) >= 8
+
+    completed = await provider.get_completed_result(
+        "nexus-task-1",
+        fake_session.completed_payload,
+    )
+    assert completed is not None
+    assert completed["image_bytes"] == raw
+    assert completed["provider"] == "nexus"
+    assert completed["provider_model"] == model_name
+    assert completed["provider_task_id"] == "nexus-task-1"
 
 
 class _FailingNexus:
