@@ -1,0 +1,250 @@
+name: Hotfix Mini App media UX
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - '.github/workflows/hotfix-media-ux.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - name: Apply targeted media UX patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          trends = root / 'frontend/miniapp-v0/components/tabs/trends-tab.tsx'
+          runner = root / 'frontend/miniapp-v0/components/trend-runner-dialog.tsx'
+          feed = root / 'frontend/miniapp-v0/components/tabs/feed-tab.tsx'
+          media = root / 'frontend/miniapp-v0/lib/media-url.ts'
+          test = root / 'frontend/miniapp-v0/__tests__/media-ux-contract.test.ts'
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              return text.replace(old, new, 1)
+
+          media.write_text("""export function normalizeMiniAppMediaUrl(value?: string | null): string {
+            const raw = String(value || '').trim()
+            if (!raw || typeof window === 'undefined') return raw
+            if (raw.startsWith('blob:') || raw.startsWith('data:')) return raw
+
+            try {
+              const url = new URL(raw, window.location.origin)
+              const host = url.hostname.toLowerCase()
+              const localUploadHosts = new Set([
+                'tanyapi.chillcreative.ru',
+                'cdn.chillcreative.ru',
+                'tanyapp.chillcreative.ru',
+                'tanyapp.xn--e1aikcel5c5a.online',
+              ])
+              if (
+                url.pathname.startsWith('/uploads/')
+                && (url.origin === window.location.origin || localUploadHosts.has(host))
+              ) {
+                return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
+              }
+              return url.toString()
+            } catch {
+              return raw
+            }
+          }
+
+          export function mediaAspectRatio(value?: string | null, fallback = '16 / 9'): string {
+            const match = String(value || '').match(/^(\\d+(?:\\.\\d+)?):(\\d+(?:\\.\\d+)?)$/)
+            if (!match) return fallback
+            const width = Number(match[1])
+            const height = Number(match[2])
+            if (!width || !height) return fallback
+            return `${width} / ${height}`
+          }
+
+          export function videoPreviewFrameUrl(value?: string | null): string {
+            const normalized = normalizeMiniAppMediaUrl(value)
+            if (!normalized || typeof window === 'undefined' || normalized.startsWith('blob:')) return normalized
+            try {
+              const url = new URL(normalized, window.location.origin)
+              if (!url.hash && /\\.(mp4|m4v|mov|webm)$/i.test(url.pathname)) {
+                url.hash = 't=0.001'
+              }
+              return url.toString()
+            } catch {
+              return normalized
+            }
+          }
+          """, encoding='utf-8')
+
+          text = trends.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              "import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'\n",
+              "import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'\nimport { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'\n",
+              'trends import',
+          )
+          text = replace_once(
+              text,
+              '                        src={trend.preview_url}\n                        muted',
+              '                        src={videoPreviewFrameUrl(trend.preview_url)}\n                        muted',
+              'trend card video src',
+          )
+          text = replace_once(
+              text,
+              "                        style={{ aspectRatio: videoAspectRatios[trend.id] || '16 / 9' }}",
+              "                        style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}",
+              'trend card aspect',
+          )
+          text = replace_once(
+              text,
+              '                    <img src={trend.preview_url} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />',
+              '                    <img src={normalizeMiniAppMediaUrl(trend.preview_url)} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />',
+              'trend image src',
+          )
+          text = replace_once(
+              text,
+              '              src={previewTrend.preview_url}\n              controls',
+              '              src={normalizeMiniAppMediaUrl(previewTrend.preview_url)}\n              controls',
+              'trend modal video src',
+          )
+          text = replace_once(
+              text,
+              "              style={{ aspectRatio: videoAspectRatios[previewTrend.id] || '16 / 9' }}\n              className=\"max-h-[78vh] w-full rounded-xl bg-black object-contain\"",
+              "              style={{ aspectRatio: videoAspectRatios[previewTrend.id] || mediaAspectRatio(previewTrend.generation_settings?.ratio) }}\n              className=\"mx-auto max-h-[78vh] max-w-full rounded-xl bg-black object-contain\"",
+              'trend modal aspect',
+          )
+          trends.write_text(text, encoding='utf-8')
+
+          text = runner.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              "import { runTrend } from '@/lib/trend-api'\n",
+              "import { runTrend } from '@/lib/trend-api'\nimport { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'\n",
+              'runner import',
+          )
+          text = replace_once(
+              text,
+              '              src={trend.preview_url}\n              muted\n              loop\n              autoPlay\n              playsInline\n              className="max-h-[42vh] w-full rounded-2xl bg-black object-contain"',
+              '              src={videoPreviewFrameUrl(trend.preview_url)}\n              muted\n              loop\n              autoPlay\n              controls\n              playsInline\n              preload="metadata"\n              style={{ aspectRatio: mediaAspectRatio(trend.generation_settings?.ratio) }}\n              className="mx-auto max-h-[42vh] max-w-full rounded-2xl bg-black object-contain"',
+              'runner video preview',
+          )
+          text = replace_once(
+              text,
+              '              src={trend.preview_url}\n              alt={trend.title}',
+              '              src={normalizeMiniAppMediaUrl(trend.preview_url)}\n              alt={trend.title}',
+              'runner image src',
+          )
+          runner.write_text(text, encoding='utf-8')
+
+          text = feed.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              "import { cn, isHttpUrl } from '@/lib/utils'\n",
+              "import { cn, isHttpUrl } from '@/lib/utils'\nimport { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'\n",
+              'feed import',
+          )
+          pattern = re.compile(r"function feedMediaUrl\(value\?: string \| null\): string \{.*?\n\}\n\nfunction getPinAspectRatio", re.S)
+          text, count = pattern.subn(
+              "function feedMediaUrl(value?: string | null): string {\n  return normalizeMiniAppMediaUrl(value)\n}\n\nfunction getPinAspectRatio",
+              text,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'feed media helper: expected one match, found {count}')
+          text = replace_once(
+              text,
+              "function getPublicReferences(item: FeedItem | null) {\n  if (!item) return []",
+              "function getPublicReferences(item: FeedItem | null) {\n  if (!item || item.references_hidden || item.feed_references_visible === false) return []",
+              'feed reference visibility',
+          )
+          text = replace_once(
+              text,
+              "].filter((item) => isHttpUrl(item.url))",
+              "].filter((item) => Boolean(String(item.url || '').trim()))",
+              'feed relative references',
+          )
+          text = replace_once(
+              text,
+              '            src={src}\n            muted',
+              '            src={videoPreviewFrameUrl(src)}\n            muted',
+              'feed card first frame',
+          )
+          text = replace_once(
+              text,
+              "  const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)\n",
+              "  const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)\n  const [referencePreview, setReferencePreview] = useState<{ type: 'image' | 'video'; url: string } | null>(null)\n",
+              'feed reference preview state',
+          )
+          old_refs = '''                {previewReferences.map((reference, index) => (\n                  <a\n                    key={`${reference.url}_${index}`}\n                    href={reference.url}\n                    target="_blank"\n                    rel="noreferrer"\n                    className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"\n                  >\n                    {reference.type === 'video' ? (\n                      <video src={reference.url} muted playsInline preload="none" className="h-full w-full object-cover" />\n                    ) : (\n                      <img src={reference.url} alt="" className="h-full w-full object-cover" />\n                    )}\n                  </a>\n                ))}'''
+          new_refs = '''                {previewReferences.map((reference, index) => (\n                  <button\n                    type="button"\n                    key={`${reference.url}_${index}`}\n                    onClick={() => setReferencePreview(reference)}\n                    className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-secondary"\n                    aria-label={`Открыть референс ${index + 1}`}\n                  >\n                    {reference.type === 'video' ? (\n                      <video src={videoPreviewFrameUrl(reference.url)} muted playsInline preload="metadata" className="h-full w-full object-cover" />\n                    ) : (\n                      <img src={normalizeMiniAppMediaUrl(reference.url)} alt="" className="h-full w-full object-cover" />\n                    )}\n                  </button>\n                ))}'''
+          text = replace_once(text, old_refs, new_refs, 'feed reference thumbnails')
+          overlay = '''\n      {referencePreview ? (\n        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-background/95 px-3 py-6">\n          <button\n            type="button"\n            onClick={() => setReferencePreview(null)}\n            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/85 text-foreground"\n            aria-label="Закрыть референс"\n          >\n            <X className="h-5 w-5" />\n          </button>\n          {referencePreview.type === 'video' ? (\n            <video\n              src={normalizeMiniAppMediaUrl(referencePreview.url)}\n              controls\n              autoPlay\n              playsInline\n              preload="auto"\n              className="max-h-full max-w-full rounded-xl bg-black object-contain"\n            />\n          ) : (\n            <img\n              src={normalizeMiniAppMediaUrl(referencePreview.url)}\n              alt="Референс"\n              className="max-h-full max-w-full rounded-xl object-contain"\n            />\n          )}\n        </div>\n      ) : null}\n\n'''
+          text = replace_once(text, "\n      {commentsItem ? (\n", overlay + "      {commentsItem ? (\n", 'feed reference overlay')
+          feed.write_text(text, encoding='utf-8')
+
+          test.write_text("""import fs from 'node:fs'
+          import path from 'node:path'
+
+          const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8')
+
+          describe('Mini App media UX contracts', () => {
+            it('preserves configured vertical ratio and iOS first-frame previews for trends', () => {
+              const source = read('components/tabs/trends-tab.tsx')
+              expect(source).toContain('mediaAspectRatio(trend.generation_settings?.ratio)')
+              expect(source).toContain('videoPreviewFrameUrl(trend.preview_url)')
+              expect(source).toContain('normalizeMiniAppMediaUrl(previewTrend.preview_url)')
+            })
+
+            it('lets users inspect public feed references instead of dead black thumbnails', () => {
+              const source = read('components/tabs/feed-tab.tsx')
+              expect(source).toContain('setReferencePreview(reference)')
+              expect(source).toContain('videoPreviewFrameUrl(reference.url)')
+              expect(source).toContain('normalizeMiniAppMediaUrl(referencePreview.url)')
+              expect(source).toContain('item.references_hidden || item.feed_references_visible === false')
+            })
+
+            it('normalizes old upload hosts onto the live Mini App origin', () => {
+              const source = read('lib/media-url.ts')
+              expect(source).toContain("'tanyapi.chillcreative.ru'")
+              expect(source).toContain("url.pathname.startsWith('/uploads/')")
+              expect(source).toContain("url.hash = 't=0.001'")
+            })
+          })
+          """, encoding='utf-8')
+          PY
+      - name: Verify Mini App
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci
+          npm test -- --runInBand __tests__/media-ux-contract.test.ts
+          npm run lint
+          npm run build
+      - name: Commit hotfix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/miniapp-v0/components/tabs/trends-tab.tsx \
+                  frontend/miniapp-v0/components/trend-runner-dialog.tsx \
+                  frontend/miniapp-v0/components/tabs/feed-tab.tsx \
+                  frontend/miniapp-v0/lib/media-url.ts \
+                  frontend/miniapp-v0/__tests__/media-ux-contract.test.ts
+          git diff --cached --quiet && { echo 'No patch produced'; exit 1; }
+          git commit -m 'fix(miniapp): render trend media and references correctly'
+          git push origin HEAD:tanyapi
