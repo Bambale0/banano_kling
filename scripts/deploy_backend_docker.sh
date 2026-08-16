@@ -136,7 +136,7 @@ wait_for_health() {
 
 backfill_public_feed_videos() {
     log "Backfilling durable public feed videos"
-    if ! compose exec -T bot python scripts/backfill_feed_video_media.py; then
+    if ! compose exec -T bot python -m scripts.backfill_feed_video_media; then
         warn "Public feed video backfill failed; deployment continues and runtime URLs remain available"
     fi
 }
