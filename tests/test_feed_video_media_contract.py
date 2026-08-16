@@ -67,4 +67,6 @@ def test_production_deploy_runs_video_backfill_after_health_gate():
     health_index = source.index("if ! wait_for_health; then")
     backfill_index = source.index("backfill_public_feed_videos", health_index)
     assert backfill_index > health_index
-    assert "compose exec -T bot python scripts/backfill_feed_video_media.py" in source
+    assert (
+        "compose exec -T bot python -m scripts.backfill_feed_video_media" in source
+    )
