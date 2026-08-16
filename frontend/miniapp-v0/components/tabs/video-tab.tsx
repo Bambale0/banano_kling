@@ -31,16 +31,29 @@ export function VideoTab() {
     () => state.videoModels.find((item) => item.id === 'seedance_2_5'),
     [state.videoModels],
   )
+  const isSeedanceRepeat = Boolean(
+    videoPromptPreset?.model === 'seedance_2_5' && videoPromptPreset.sourceFeedGenId,
+  )
   const regularVideoModels = useMemo(
     () => state.videoModels.filter((item) => item.id !== 'seedance_2_5'),
     [state.videoModels],
   )
+  const formVideoModels = isSeedanceRepeat ? state.videoModels : regularVideoModels
   const canUseSeedance25 = Boolean(seedance25Model)
   const effectiveMode = canUseSeedance25 ? videoMode : 'regular'
 
   useEffect(() => {
     if (!canUseSeedance25 || !videoPromptPreset) return
-    setVideoMode(videoPromptPreset.model === 'seedance_2_5' ? 'seedance25' : 'regular')
+    // A remix preset must keep sourceFeedGenId all the way to generateVideo().
+    // The dedicated Seedance form is for fresh generations and intentionally has
+    // no feed-repeat contract, so use the generic form only for this repeat case.
+    setVideoMode(
+      videoPromptPreset.model === 'seedance_2_5' && videoPromptPreset.sourceFeedGenId
+        ? 'regular'
+        : videoPromptPreset.model === 'seedance_2_5'
+          ? 'seedance25'
+          : 'regular',
+    )
   }, [canUseSeedance25, videoPromptPreset])
 
   const handleSubmit = async (data: {
@@ -156,7 +169,7 @@ export function VideoTab() {
               type="button"
               onClick={() => setVideoMode('seedance25')}
               className={`rounded-xl px-3 py-3 text-xs font-semibold transition ${
-                effectiveMode === 'seedance25'
+                effectiveMode === 'seedance25' && !isSeedanceRepeat
                   ? 'border border-gold/45 bg-gold/15 text-gold shadow-[0_0_18px_rgba(251,191,36,0.10)]'
                   : 'border border-transparent text-muted-foreground hover:bg-gold/5 hover:text-foreground'
               }`}
@@ -168,7 +181,7 @@ export function VideoTab() {
               type="button"
               onClick={() => setVideoMode('regular')}
               className={`rounded-xl px-3 py-3 text-xs font-medium transition ${
-                effectiveMode === 'regular'
+                effectiveMode === 'regular' || isSeedanceRepeat
                   ? 'border border-border bg-secondary text-foreground'
                   : 'border border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
@@ -181,7 +194,7 @@ export function VideoTab() {
       ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:gap-6">
-        {effectiveMode === 'seedance25' && seedance25Model ? (
+        {effectiveMode === 'seedance25' && seedance25Model && !isSeedanceRepeat ? (
           <Seedance25PublicForm
             model={seedance25Model}
             credits={state.user.credits}
@@ -191,7 +204,7 @@ export function VideoTab() {
           />
         ) : (
           <VideoGeneratorForm
-            models={regularVideoModels}
+            models={formVideoModels}
             onSubmit={handleSubmit}
             onUploadImageReference={handleUploadImageReference}
             onUploadVideoReference={handleUploadVideoReference}
@@ -207,13 +220,13 @@ export function VideoTab() {
         )}
 
         <div className="space-y-4">
-          {error && effectiveMode === 'regular' ? (
+          {error && (effectiveMode === 'regular' || isSeedanceRepeat) ? (
             <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/30">
               <p className="text-sm text-destructive">{error}</p>
             </div>
           ) : null}
 
-          {effectiveMode === 'seedance25' ? (
+          {effectiveMode === 'seedance25' && !isSeedanceRepeat ? (
             <div className="glass rounded-2xl border border-cyan/20 p-5">
               <p className="text-xs uppercase tracking-[0.18em] text-cyan/80 mb-2">Seedance queue</p>
               <h3 className="font-serif text-lg text-foreground mb-2">Seedance 2.5</h3>
