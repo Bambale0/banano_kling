@@ -134,6 +134,13 @@ wait_for_health() {
     return 1
 }
 
+backfill_public_feed_videos() {
+    log "Backfilling durable public feed videos"
+    if ! compose exec -T bot python scripts/backfill_feed_video_media.py; then
+        warn "Public feed video backfill failed; deployment continues and runtime URLs remain available"
+    fi
+}
+
 rollback_to_systemd() {
     warn "Rolling back to systemd service"
     compose down --remove-orphans || true
@@ -174,6 +181,8 @@ deploy() {
         [ "$systemd_was_active" = "1" ] && rollback_to_systemd
         die "Docker backend failed health check"
     fi
+
+    backfill_public_feed_videos
 
     if service_exists; then
         systemctl disable "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
@@ -217,6 +226,7 @@ Environment overrides:
   SKIP_BACKUP=1
   PULL_IMAGE=1 BANANO_IMAGE=ghcr.io/bambale0/banano-kling-bot:tanyapi
   HEALTH_TIMEOUT_SECONDS=180
+  FEED_VIDEO_BACKFILL_LIMIT=50
 USAGE
 }
 
