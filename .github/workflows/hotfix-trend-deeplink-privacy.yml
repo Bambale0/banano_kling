@@ -1,0 +1,440 @@
+name: Hotfix trend deeplink privacy
+
+on:
+  push:
+    branches: [tanyapi]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Apply trend privacy fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              return text.replace(old, new, 1)
+
+          def patch_function(text: str, name: str, old: str, new: str) -> str:
+              marker = f'async def {name}('
+              start = text.index(marker)
+              next_async = text.find('\n\nasync def ', start + len(marker))
+              next_def = text.find('\n\ndef ', start + len(marker))
+              candidates = [pos for pos in (next_async, next_def) if pos != -1]
+              end = min(candidates) if candidates else len(text)
+              segment = text[start:end]
+              segment = replace_once(segment, old, new, name)
+              return text[:start] + segment + text[end:]
+
+          visibility = '''from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+
+def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
+    if not prompt:
+        return False
+    return any(
+        str(tag or "").strip().lower() == "trend"
+        for tag in list(prompt.get("tags") or [])
+    )
+
+
+def _same_user(author_id: Any, viewer_user_id: int) -> bool:
+    try:
+        return int(author_id) == int(viewer_user_id)
+    except (TypeError, ValueError):
+        return False
+
+
+def _public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
+    raw_settings = prompt.get("generation_settings")
+    settings = raw_settings if isinstance(raw_settings, Mapping) else {}
+    tags = {
+        str(tag or "").strip().lower()
+        for tag in list(prompt.get("tags") or [])
+        if str(tag or "").strip()
+    }
+
+    kind = str(settings.get("kind") or "").strip().lower()
+    if kind not in {"image", "video"}:
+        kind = (
+            "video"
+            if str(prompt.get("category") or "").strip().lower() == "video"
+            or "trend-video" in tags
+            else "image"
+        )
+
+    ratio = str(settings.get("ratio") or "").strip()
+    if not ratio:
+        ratio = "16:9" if kind == "video" else "1:1"
+
+    return {"kind": kind, "ratio": ratio}
+
+
+def sanitize_prompt_for_viewer(
+    prompt: Mapping[str, Any] | None,
+    *,
+    viewer_user_id: int,
+    viewer_is_admin: bool,
+) -> dict[str, Any] | None:
+    """Hide executable trend recipe from ordinary Mini App viewers.
+
+    Public trend cards need only metadata plus kind/ratio for their preview and
+    runner. Prompt text, provider/model choice and all remaining generation
+    settings stay server-side and are loaded by /api/trends/run from the DB.
+    """
+
+    if prompt is None:
+        return None
+
+    payload = dict(prompt)
+    if not is_trend_prompt(payload):
+        return payload
+    if viewer_is_admin or _same_user(payload.get("author_id"), viewer_user_id):
+        return payload
+
+    payload["prompt_text"] = ""
+    payload["model"] = None
+    payload["generation_settings"] = _public_trend_settings(payload)
+    payload["prompt_hidden"] = True
+    payload["prompt_actions_allowed"] = False
+    return payload
+'''
+          Path('bot/trend_visibility.py').write_text(visibility, encoding='utf-8')
+
+          miniapp_path = Path('bot/miniapp.py')
+          miniapp = miniapp_path.read_text(encoding='utf-8')
+          miniapp = replace_once(
+              miniapp,
+              'from bot.config import config\n',
+              'from bot.config import config\nfrom bot.trend_visibility import sanitize_prompt_for_viewer\n',
+              'miniapp import',
+          )
+
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompts',
+              '''        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+              '''        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+          )
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompts',
+              '''        return web.json_response({"ok": True, "prompts": prompts})
+''',
+              '''        prompts = [
+            sanitize_prompt_for_viewer(
+                prompt,
+                viewer_user_id=user.id,
+                viewer_is_admin=config.is_admin(telegram_id),
+            )
+            for prompt in prompts
+        ]
+        return web.json_response({"ok": True, "prompts": prompts})
+''',
+          )
+
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompt_detail',
+              '''        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+              '''        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+          )
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompt_detail',
+              '''        return web.json_response({"ok": True, "prompt": prompt})
+''',
+              '''        prompt = sanitize_prompt_for_viewer(
+            prompt,
+            viewer_user_id=user.id,
+            viewer_is_admin=config.is_admin(telegram_id),
+        )
+        return web.json_response({"ok": True, "prompt": prompt})
+''',
+          )
+
+          for name in ('miniapp_prompt_like', 'miniapp_prompt_use'):
+              miniapp = patch_function(
+                  miniapp,
+                  name,
+                  '''        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+''',
+                  '''        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+''',
+              )
+              miniapp = patch_function(
+                  miniapp,
+                  name,
+                  '''        return web.json_response({"ok": True, "prompt": prompt})
+''',
+                  '''        prompt = sanitize_prompt_for_viewer(
+            prompt,
+            viewer_user_id=ctx["user"].id,
+            viewer_is_admin=config.is_admin(telegram_id),
+        )
+        return web.json_response({"ok": True, "prompt": prompt})
+''',
+              )
+
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompt_link',
+              '''        _telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+              '''        telegram_id, ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        user = ctx["user"]
+''',
+          )
+          miniapp = patch_function(
+              miniapp,
+              'miniapp_prompt_link',
+              '''        link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
+        return web.json_response({"ok": True, "prompt": prompt, "link": link})
+''',
+              '''        link = build_prompt_link(me.username, prompt_id) if me.username else config.mini_app_url
+        prompt = sanitize_prompt_for_viewer(
+            prompt,
+            viewer_user_id=user.id,
+            viewer_is_admin=config.is_admin(telegram_id),
+        )
+        return web.json_response({"ok": True, "prompt": prompt, "link": link})
+''',
+          )
+          miniapp_path.write_text(miniapp, encoding='utf-8')
+
+          context_path = Path('frontend/miniapp-v0/lib/app-context.tsx')
+          context = context_path.read_text(encoding='utf-8')
+          context = replace_once(
+              context,
+              '''          const isVideoTrend = isVideoTrendItem(prompt, state.videoModels)
+
+          if (isVideoTrend) {
+''',
+              '''          if (isTrend) {
+            setTrendToRun(prompt)
+            setActiveTabState(5)
+            return
+          }
+
+          const isVideoTrend = isVideoTrendItem(prompt, state.videoModels)
+
+          if (isVideoTrend) {
+''',
+              'trend deeplink order insert',
+          )
+          context = replace_once(
+              context,
+              '''
+          if (isTrend) {
+            setTrendToRun(prompt)
+            setActiveTabState(5)
+            return
+          }
+
+          setPromptPreset({
+''',
+              '''
+          setPromptPreset({
+''',
+              'trend deeplink order remove old branch',
+          )
+          context_path.write_text(context, encoding='utf-8')
+
+          backend_test = '''from pathlib import Path
+
+from bot.trend_visibility import sanitize_prompt_for_viewer
+
+
+def _trend() -> dict:
+    return {
+        "id": 1126,
+        "author_id": 10,
+        "title": "Закрытый тренд",
+        "description": "Публичное описание",
+        "category": "video",
+        "tags": ["trend", "trend-video"],
+        "preview_url": "/uploads/trend.mp4",
+        "prompt_text": "SECRET PROMPT",
+        "model": "seedance_2",
+        "generation_settings": {
+            "kind": "video",
+            "user_input": "photo",
+            "model": "seedance_2",
+            "ratio": "9:16",
+            "duration": 10,
+            "quality": "4K",
+            "kling_negative_prompt": "SECRET NEGATIVE",
+        },
+    }
+
+
+def test_public_viewer_gets_only_safe_trend_metadata() -> None:
+    payload = sanitize_prompt_for_viewer(
+        _trend(), viewer_user_id=99, viewer_is_admin=False
+    )
+    assert payload is not None
+    assert payload["prompt_text"] == ""
+    assert payload["model"] is None
+    assert payload["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert payload["prompt_hidden"] is True
+    assert payload["prompt_actions_allowed"] is False
+    assert payload["title"] == "Закрытый тренд"
+    assert payload["preview_url"] == "/uploads/trend.mp4"
+    assert payload["tags"] == ["trend", "trend-video"]
+
+
+def test_admin_and_author_keep_full_trend_recipe() -> None:
+    trend = _trend()
+    admin = sanitize_prompt_for_viewer(
+        trend, viewer_user_id=99, viewer_is_admin=True
+    )
+    author = sanitize_prompt_for_viewer(
+        trend, viewer_user_id=10, viewer_is_admin=False
+    )
+    assert admin is not None and admin["prompt_text"] == "SECRET PROMPT"
+    assert author is not None and author["prompt_text"] == "SECRET PROMPT"
+    assert admin["generation_settings"]["duration"] == 10
+    assert author["generation_settings"]["model"] == "seedance_2"
+
+
+def test_regular_prompt_is_not_redacted() -> None:
+    prompt = {
+        "id": 5,
+        "author_id": 10,
+        "tags": ["portrait"],
+        "prompt_text": "visible prompt",
+        "model": "banana_pro",
+        "generation_settings": {},
+    }
+    payload = sanitize_prompt_for_viewer(
+        prompt, viewer_user_id=99, viewer_is_admin=False
+    )
+    assert payload == prompt
+
+
+def test_legacy_trend_still_exposes_only_preview_kind_and_ratio() -> None:
+    trend = _trend()
+    trend["generation_settings"] = {}
+    payload = sanitize_prompt_for_viewer(
+        trend, viewer_user_id=99, viewer_is_admin=False
+    )
+    assert payload is not None
+    assert payload["generation_settings"] == {"kind": "video", "ratio": "16:9"}
+
+
+def test_all_public_prompt_endpoints_apply_viewer_sanitizer() -> None:
+    source = Path("bot/miniapp.py").read_text(encoding="utf-8")
+    assert "from bot.trend_visibility import sanitize_prompt_for_viewer" in source
+    assert source.count("sanitize_prompt_for_viewer(") >= 5
+'''
+          Path('tests/test_trend_visibility.py').write_text(backend_test, encoding='utf-8')
+
+          frontend_test = '''import fs from 'node:fs'
+import path from 'node:path'
+
+const read = (file: string) => fs.readFileSync(path.join(process.cwd(), file), 'utf8')
+
+describe('trend deeplink privacy contract', () => {
+  it('routes every trend deep link to the locked runner before generic video repeat', () => {
+    const source = read('lib/app-context.tsx')
+    const promptBranch = source.indexOf("if (startTarget.kind === 'prompt')")
+    const trendBranch = source.indexOf('if (isTrend)', promptBranch)
+    const videoBranch = source.indexOf('if (isVideoTrend)', promptBranch)
+
+    expect(promptBranch).toBeGreaterThanOrEqual(0)
+    expect(trendBranch).toBeGreaterThan(promptBranch)
+    expect(videoBranch).toBeGreaterThan(trendBranch)
+
+    const lockedPath = source.slice(trendBranch, videoBranch)
+    expect(lockedPath).toContain('setTrendToRun(prompt)')
+    expect(lockedPath).toContain('setActiveTabState(5)')
+    expect(lockedPath).not.toContain('setVideoPromptPreset({')
+  })
+})
+'''
+          Path('frontend/miniapp-v0/__tests__/trend-deeplink-security.test.ts').write_text(
+              frontend_test, encoding='utf-8'
+          )
+          PY
+
+      - name: Run backend regression tests
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio ruff
+          pip install --quiet -r requirements.txt
+          python -m pytest tests/test_trend_visibility.py tests/test_trend_one_tap_contract.py tests/test_trend_api.py -q
+          python -m py_compile bot/trend_visibility.py bot/miniapp.py
+          ruff check bot/trend_visibility.py tests/test_trend_visibility.py
+
+      - name: Run Mini App regression and build
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci
+          npm test -- --runTestsByPath __tests__/trend-deeplink-security.test.ts __tests__/media-ux-contract.test.ts
+          npm run build
+
+      - name: Verify no secret trend path remains before commit
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('frontend/miniapp-v0/lib/app-context.tsx').read_text(encoding='utf-8')
+          start = source.index("if (startTarget.kind === 'prompt')")
+          trend = source.index('if (isTrend)', start)
+          video = source.index('if (isVideoTrend)', start)
+          if not start < trend < video:
+              raise SystemExit('trend deeplink still routes through generic video flow')
+          miniapp = Path('bot/miniapp.py').read_text(encoding='utf-8')
+          if miniapp.count('sanitize_prompt_for_viewer(') < 5:
+              raise SystemExit('not all public prompt endpoints sanitize trend secrets')
+          PY
+
+      - name: Commit hotfix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/miniapp.py \
+            bot/trend_visibility.py \
+            frontend/miniapp-v0/lib/app-context.tsx \
+            frontend/miniapp-v0/__tests__/trend-deeplink-security.test.ts \
+            tests/test_trend_visibility.py
+          git diff --cached --check
+          git commit -m 'fix(trends): keep shared templates private'
+          git push origin HEAD:tanyapi
