@@ -10,6 +10,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.trend_api import setup_trend_routes
+from bot.trend_visibility import sanitize_prompt_api_payload, telegram_id_from_init_data
 
 _LOGIN_MAX_AGE_SECONDS = 10 * 60
 _BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -145,11 +146,64 @@ async def browser_telegram_auth(request: web.Request) -> web.Response:
         )
 
 
+@web.middleware
+async def trend_prompt_privacy_middleware(
+    request: web.Request,
+    handler,
+) -> web.StreamResponse:
+    """Keep public trend recipes out of prompt API responses and browser caches."""
+
+    miniapp_root = str(request.app.get("trend_prompt_privacy_root") or "")
+    prompt_api_root = f"{miniapp_root}/api/prompts"
+    is_prompt_api = bool(miniapp_root) and (
+        request.path == prompt_api_root or request.path.startswith(prompt_api_root + "/")
+    )
+    if not is_prompt_api:
+        return await handler(request)
+
+    viewer_is_admin = False
+    try:
+        body = await request.json()
+        telegram_id = telegram_id_from_init_data(body.get("init_data", ""))
+        viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        # The endpoint itself validates initData. Privacy middleware fails closed.
+        viewer_is_admin = False
+
+    response = await handler(request)
+    response.headers["Cache-Control"] = "no-store"
+
+    if viewer_is_admin or response.status >= 400 or not isinstance(response, web.Response):
+        return response
+    if response.content_type != "application/json" or not response.body:
+        return response
+
+    try:
+        payload = json.loads(response.body.decode(response.charset or "utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return response
+
+    sanitized = sanitize_prompt_api_payload(payload)
+    response.body = json.dumps(
+        sanitized,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return response
+
+
 def setup_browser_auth_routes(app: web.Application) -> None:
     miniapp_path = config.MINI_APP_PATH or "/mini-app"
     if not miniapp_path.startswith("/"):
         miniapp_path = f"/{miniapp_path}"
     miniapp_root = miniapp_path.rstrip("/")
+
+    # Install before setup_miniapp_routes freezes the application. The prompt
+    # endpoints themselves still perform the authoritative initData checks.
+    app["trend_prompt_privacy_root"] = miniapp_root
+    if not app.get("trend_prompt_privacy_middleware_installed"):
+        app.middlewares.append(trend_prompt_privacy_middleware)
+        app["trend_prompt_privacy_middleware_installed"] = True
 
     # Exact routes must be registered before setup_miniapp_routes adds its
     # catch-all /mini-app/api/{tail:.*} handler.

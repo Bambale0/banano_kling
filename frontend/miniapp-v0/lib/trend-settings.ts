@@ -41,9 +41,17 @@ export function isVideoTrendItem(
   trend: PromptItem,
   videoModels: VideoModel[],
 ): boolean {
+  const tags = new Set((trend.tags || []).map((tag) => String(tag).toLowerCase()))
+
+  // Public shared trend payloads deliberately carry no executable prompt/model.
+  // Treat those as templates so app-context falls through to the locked trend
+  // runner instead of opening the generic video repeat form.
+  if (tags.has('trend') && !String(trend.prompt_text || '').trim() && !trend.model) {
+    return false
+  }
+
   const settings = trend.generation_settings
   if (settings?.kind === 'video') return true
-  const tags = new Set((trend.tags || []).map((tag) => String(tag).toLowerCase()))
   return (
     trend.category === 'video' ||
     tags.has('trend-video') ||
