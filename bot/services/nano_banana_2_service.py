@@ -544,6 +544,27 @@ class NanoBanana2Service:
                 "provider": "kie",
                 "provider_model": "nano-banana-2",
             }
+
+        if self.fallback_provider is not None and hasattr(
+            self.fallback_provider, "generate_image"
+        ):
+            logger.info(
+                "Nano Banana 2: Kie primary failed; trying Nexus fallback"
+            )
+            fallback_result = await self.fallback_provider.generate_image(
+                clean_prompt,
+                aspect_ratio,
+                resolution,
+                image_input,
+                output_format,
+            )
+            if isinstance(fallback_result, dict):
+                return fallback_result
+            if isinstance(fallback_result, (bytes, bytearray)):
+                return {"image_bytes": bytes(fallback_result)}
+            if fallback_result is not None:
+                return fallback_result
+
         return primary_result
 
     async def wait_for_completion(
@@ -858,7 +879,7 @@ class NanoBanana2GeminiProvider:
             await self._session.close()
 
 
-# Nexus remains the preferred provider by product decision.
+# Kie.ai stays primary. Nexus is a technical fallback only.
 _kie_provider = ProviderClient(
     api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
     base_url="https://api.kie.ai",
@@ -879,13 +900,13 @@ _nexus_provider = (
 )
 
 if _nexus_provider:
-    logger.info("Nano Banana 2: using Nexus as primary, Kie.ai as technical fallback")
+    logger.info("Nano Banana 2: using Kie.ai as primary, Nexus as technical fallback")
     nano_banana_2_service = NanoBanana2Service(
-        primary_provider=_nexus_provider,
-        fallback_provider=_kie_provider,
+        primary_provider=_kie_provider,
+        fallback_provider=_nexus_provider,
     )
 else:
-    logger.info("Nano Banana 2: Nexus is not configured; using Kie.ai")
+    logger.info("Nano Banana 2: Nexus is not configured; using Kie.ai only")
     nano_banana_2_service = NanoBanana2Service(
         primary_provider=_kie_provider,
         fallback_provider=None,

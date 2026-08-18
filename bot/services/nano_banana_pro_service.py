@@ -309,8 +309,12 @@ class NanoBananaProService:
             result = await self.fallback_provider.generate_image(
                 prompt, aspect_ratio, resolution, image_input, output_format
             )
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, (bytes, bytearray)):
+                return {"image_bytes": bytes(result)}
             if result is not None:
-                return {"image_bytes": result}
+                return result
         return None
 
     async def wait_for_completion(
@@ -489,7 +493,7 @@ ULTRA DETAIL & QUALITY BOOST:
             await self._session.close()
 
 
-# --- Инициализация: prefer Nexus, fallback to kie.ai ---
+# --- Инициализация: Kie.ai primary, Nexus fallback ---
 
 _kie_provider = ProviderClient(
     api_key=config.KIE_AI_API_KEY or config.NANOBANANA_API_KEY,
@@ -511,13 +515,13 @@ _nexus_provider = (
 )
 
 if _nexus_provider:
-    logger.info("Nano Banana Pro: using Nexus as primary, kie.ai as fallback")
+    logger.info("Nano Banana Pro: using Kie.ai as primary, Nexus as fallback")
     nano_banana_pro_service = NanoBananaProService(
-        primary_provider=_nexus_provider,
-        fallback_provider=_kie_provider,
+        primary_provider=_kie_provider,
+        fallback_provider=_nexus_provider,
     )
 else:
-    logger.info("Nano Banana Pro: Nexus is not configured; using kie.ai as primary")
+    logger.info("Nano Banana Pro: Nexus is not configured; using Kie.ai only")
     nano_banana_pro_service = NanoBananaProService(
         primary_provider=_kie_provider,
         fallback_provider=None,

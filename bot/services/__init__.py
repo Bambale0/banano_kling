@@ -13,7 +13,7 @@ from bot.config import config
 logger = logging.getLogger(__name__)
 
 # Legacy APIYI routing stays disabled for Nano Banana 2. This feature branch
-# explicitly owns provider selection below: Nexus primary -> Kie fallback.
+# explicitly owns provider selection below: Kie primary -> Nexus fallback.
 config.NANOBANANA2_FALLBACK_API_KEY = ""
 config.NANOBANANA2_FALLBACK_BASE_URL = ""
 
@@ -31,7 +31,7 @@ from .photo_prompt_vk_compat import install_vk_photo_prompt_instructions
 
 
 def _configure_nexus_nanobanana_routing() -> None:
-    """Use Nexus for Nano Banana 2/Pro while preserving Kie as fallback.
+    """Keep Kie.ai primary and use Nexus only as Nano Banana 2/Pro fallback.
 
     Nano Banana 2 Lite is intentionally untouched and keeps its dedicated Kie
     Market route inside NanoBanana2Service.
@@ -48,25 +48,31 @@ def _configure_nexus_nanobanana_routing() -> None:
     except ValueError:
         poll_interval_seconds = 1.0
 
-    # Nano Banana 2 arrives here with Kie as primary because the legacy APIYI
-    # environment route is disabled above. Keep that exact instance as fallback.
-    banana2_kie = nano_banana_2_service.fallback_provider or nano_banana_2_service.primary_provider
+    # Module-level services may already carry the old Nexus-primary wiring.
+    # Preserve the known Kie client and make it primary again.
+    banana2_kie = nano_banana_2_service.primary_provider
+    if isinstance(banana2_kie, NexusImageProvider):
+        banana2_kie = nano_banana_2_service.fallback_provider
 
-    # Nano Banana Pro may still have legacy APIYI credentials in production env.
-    # Its configured fallback is Kie; if no legacy provider exists, primary is Kie.
-    banana_pro_kie = nano_banana_pro_service.fallback_provider or nano_banana_pro_service.primary_provider
+    banana_pro_kie = nano_banana_pro_service.primary_provider
+    if isinstance(banana_pro_kie, NexusImageProvider):
+        banana_pro_kie = nano_banana_pro_service.fallback_provider
+
+    if banana2_kie is None or banana_pro_kie is None:
+        raise RuntimeError("Kie.ai Nano Banana provider wiring is unavailable")
+
+    nano_banana_2_service.primary_provider = banana2_kie
+    nano_banana_pro_service.primary_provider = banana_pro_kie
 
     if not nexus_api_key:
-        nano_banana_2_service.primary_provider = banana2_kie
         nano_banana_2_service.fallback_provider = None
-        nano_banana_pro_service.primary_provider = banana_pro_kie
         nano_banana_pro_service.fallback_provider = None
         logger.warning(
-            "NEXUS_API_KEY is not configured; Nano Banana 2/Pro remain on Kie.ai"
+            "NEXUS_API_KEY is not configured; Nano Banana 2/Pro use Kie.ai only"
         )
         return
 
-    nano_banana_2_service.primary_provider = NexusImageProvider(
+    nano_banana_2_service.fallback_provider = NexusImageProvider(
         api_key=nexus_api_key,
         model_name="nano-banana-2",
         base_url=nexus_base_url,
@@ -74,9 +80,7 @@ def _configure_nexus_nanobanana_routing() -> None:
         poll_interval_seconds=poll_interval_seconds,
         max_references=8,
     )
-    nano_banana_2_service.fallback_provider = banana2_kie
-
-    nano_banana_pro_service.primary_provider = NexusImageProvider(
+    nano_banana_pro_service.fallback_provider = NexusImageProvider(
         api_key=nexus_api_key,
         model_name="nano-banana-pro",
         base_url=nexus_base_url,
@@ -84,10 +88,9 @@ def _configure_nexus_nanobanana_routing() -> None:
         poll_interval_seconds=poll_interval_seconds,
         max_references=8,
     )
-    nano_banana_pro_service.fallback_provider = banana_pro_kie
 
     logger.info(
-        "Nano Banana routing: Nexus primary (2 + Pro), Kie.ai fallback; Lite unchanged"
+        "Nano Banana routing: Kie.ai primary (2 + Pro), Nexus fallback; Lite unchanged"
     )
 
 

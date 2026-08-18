@@ -205,11 +205,81 @@ async def test_nano_banana_pro_falls_back_to_existing_kie_task_flow(monkeypatch)
     assert kie.posts[0][1]["input"]["resolution"] == "2K"
 
 
-def test_branch_routing_keeps_nexus_primary_and_kie_fallback_for_2_and_pro() -> None:
+class _FailingKie:
+    async def _post(self, endpoint: str, payload: dict):
+        return None
+
+    async def _get(self, endpoint: str, params: dict | None = None):
+        return None
+
+    async def close(self):
+        return None
+
+
+class _FakeNexusFallback:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self.calls = 0
+
+    async def generate_image(self, *args, **kwargs):
+        self.calls += 1
+        return {
+            "task_id": f"nexus-{self.model_name}",
+            "provider": "nexus",
+            "provider_model": self.model_name,
+            "provider_task_id": f"nexus-{self.model_name}",
+            "retryable": False,
+        }
+
+    async def close(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_nano_banana_2_uses_nexus_only_after_kie_create_fails(monkeypatch) -> None:
+    module = importlib.import_module("bot.services.nano_banana_2_service")
+
+    async def _upload(sources):
+        return list(sources)
+
+    monkeypatch.setattr(module.kie_file_upload_service, "upload_local_image_sources", _upload)
+    nexus = _FakeNexusFallback("nano-banana-2")
+    service = NanoBanana2Service(primary_provider=_FailingKie(), fallback_provider=nexus)
+
+    result = await service.generate_image("prompt", aspect_ratio="1:1", resolution="4K")
+
+    assert result is not None
+    assert result["task_id"] == "nexus-nano-banana-2"
+    assert result["provider"] == "nexus"
+    assert nexus.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_nano_banana_pro_preserves_nexus_task_after_kie_create_fails(monkeypatch) -> None:
+    module = importlib.import_module("bot.services.nano_banana_pro_service")
+
+    async def _upload(sources):
+        return list(sources)
+
+    monkeypatch.setattr(module.kie_file_upload_service, "upload_local_image_sources", _upload)
+    nexus = _FakeNexusFallback("nano-banana-pro")
+    service = NanoBananaProService(primary_provider=_FailingKie(), fallback_provider=nexus)
+
+    result = await service.generate_image("prompt", aspect_ratio="1:1", resolution="2K")
+
+    assert result is not None
+    assert result["task_id"] == "nexus-nano-banana-pro"
+    assert result["provider"] == "nexus"
+    assert nexus.calls == 1
+
+
+def test_branch_routing_keeps_kie_primary_and_nexus_fallback_for_2_and_pro() -> None:
     source = Path("bot/services/__init__.py").read_text(encoding="utf-8")
 
     assert 'model_name="nano-banana-2"' in source
     assert 'model_name="nano-banana-pro"' in source
-    assert "nano_banana_2_service.fallback_provider = banana2_kie" in source
-    assert "nano_banana_pro_service.fallback_provider = banana_pro_kie" in source
+    assert "nano_banana_2_service.primary_provider = banana2_kie" in source
+    assert "nano_banana_pro_service.primary_provider = banana_pro_kie" in source
+    assert "nano_banana_2_service.fallback_provider = NexusImageProvider(" in source
+    assert "nano_banana_pro_service.fallback_provider = NexusImageProvider(" in source
     assert "Nano Banana 2 Lite is intentionally untouched" in source
