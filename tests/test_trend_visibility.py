@@ -102,3 +102,14 @@ def test_browser_auth_installs_prompt_privacy_middleware() -> None:
     assert "verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)" in source
     assert "app.middlewares.append(trend_prompt_privacy_middleware)" in source
     assert 'response.headers["Cache-Control"] = "no-store"' in source
+
+
+def test_prompt_privacy_middleware_does_not_consume_body_before_handler() -> None:
+    source = Path("bot/browser_auth.py").read_text(encoding="utf-8")
+    start = source.index("async def trend_prompt_privacy_middleware")
+    end = source.index("\n\ndef setup_browser_auth_routes", start)
+    middleware = source[start:end]
+
+    handler_call = middleware.index("response = await handler(request)")
+    json_read = middleware.index("body = await request.json()")
+    assert handler_call < json_read
