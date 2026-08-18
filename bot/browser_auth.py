@@ -10,6 +10,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.trend_api import setup_trend_routes
+from bot.trend_task_privacy import sanitize_task_api_payload
 from bot.trend_visibility import (
     sanitize_prompt_api_payload,
     verified_telegram_id_from_init_data,
@@ -154,20 +155,25 @@ async def trend_prompt_privacy_middleware(
     request: web.Request,
     handler,
 ) -> web.StreamResponse:
-    """Keep public trend recipes out of prompt API responses and browser caches.
+    """Keep curated trend recipes out of shared links, task details and history.
 
-    The handler must consume and validate Mini App initData first. Reading the
-    JSON body before the catch-all Mini App handler can interfere with request
-    parsing in production proxies, so admin detection is deliberately done only
-    after the endpoint has completed successfully.
+    The handler consumes and validates Mini App initData first. Privacy filtering
+    happens only after a successful endpoint response, so request-body parsing
+    cannot interfere with the catch-all Mini App handler.
     """
 
     miniapp_root = str(request.app.get("trend_prompt_privacy_root") or "")
     prompt_api_root = f"{miniapp_root}/api/prompts"
+    task_detail_path = f"{miniapp_root}/api/task-detail"
+    bootstrap_path = f"{miniapp_root}/api/bootstrap"
     is_prompt_api = bool(miniapp_root) and (
         request.path == prompt_api_root or request.path.startswith(prompt_api_root + "/")
     )
-    if not is_prompt_api:
+    is_task_api = bool(miniapp_root) and request.path in {
+        task_detail_path,
+        bootstrap_path,
+    }
+    if not is_prompt_api and not is_task_api:
         return await handler(request)
 
     response = await handler(request)
@@ -178,26 +184,36 @@ async def trend_prompt_privacy_middleware(
     if response.content_type != "application/json" or not response.body:
         return response
 
+    request_body: dict[str, Any] = {}
     viewer_is_admin = False
     try:
-        body = await request.json()
-        init_data = body.get("init_data", "") if isinstance(body, dict) else ""
+        raw_body = await request.json()
+        request_body = raw_body if isinstance(raw_body, dict) else {}
+        init_data = request_body.get("init_data", "")
         telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
         viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
     except Exception:  # noqa: BLE001 - privacy middleware must fail closed
         viewer_is_admin = False
-
-    if viewer_is_admin:
-        return response
 
     try:
         payload = json.loads(response.body.decode(response.charset or "utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return response
 
-    sanitized = sanitize_prompt_api_payload(payload)
+    if is_prompt_api:
+        start_param = str(request_body.get("start_param_fallback") or "").strip()
+        shared_prompt_detail = (
+            request.path == f"{prompt_api_root}/detail"
+            and start_param.startswith("prompt_")
+        )
+        if not viewer_is_admin or shared_prompt_detail:
+            payload = sanitize_prompt_api_payload(payload)
+
+    if is_task_api:
+        payload = await sanitize_task_api_payload(payload)
+
     response.body = json.dumps(
-        sanitized,
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
