@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
 from bot import db as db_backend
 from bot.database import DATABASE_PATH, get_prompts_by_tag
 
+logger = logging.getLogger(__name__)
+
 
 async def _protected_task_ids(task_ids: list[str]) -> set[str]:
-    normalized = [str(task_id or "").strip() for task_id in task_ids if str(task_id or "").strip()]
+    normalized = [
+        str(task_id or "").strip()
+        for task_id in task_ids
+        if str(task_id or "").strip()
+    ]
     if not normalized:
         return set()
 
@@ -36,7 +43,10 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         task_id = str(row["task_id"] or "").strip()
         action_type = str(row["action_type"] or "").strip().lower()
         prompt = str(row["prompt"] or "").strip()
-        if row["source_feed_gen_id"] or action_type == "trend" or (prompt and prompt in trend_prompts):
+        inherited_prompt = bool(row["source_feed_gen_id"])
+        curated_trend = action_type == "trend"
+        legacy_trend = bool(prompt and prompt in trend_prompts)
+        if inherited_prompt or curated_trend or legacy_trend:
             protected.add(task_id)
     return protected
 
@@ -67,9 +77,13 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
     if not tasks:
         return result
 
-    protected = await _protected_task_ids(
-        [str(task.get("task_id") or "") for task in tasks]
-    )
+    task_ids = [str(task.get("task_id") or "").strip() for task in tasks]
+    try:
+        protected = await _protected_task_ids(task_ids)
+    except Exception:  # noqa: BLE001 - privacy must fail closed without breaking Mini App
+        logger.exception("Unable to resolve protected trend task prompts")
+        protected = {task_id for task_id in task_ids if task_id}
+
     if not protected:
         return result
 
