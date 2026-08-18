@@ -4,7 +4,7 @@ import json
 import secrets
 import time
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
 from aiohttp import web
 
@@ -186,14 +186,20 @@ async def trend_prompt_privacy_middleware(
 
     request_body: dict[str, Any] = {}
     viewer_is_admin = False
+    signed_start_param = ""
     try:
         raw_body = await request.json()
         request_body = raw_body if isinstance(raw_body, dict) else {}
-        init_data = request_body.get("init_data", "")
+        init_data = str(request_body.get("init_data") or "")
         telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
         viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
+        if telegram_id:
+            signed_start_param = str(
+                dict(parse_qsl(init_data, keep_blank_values=True)).get("start_param") or ""
+            ).strip()
     except Exception:  # noqa: BLE001 - privacy middleware must fail closed
         viewer_is_admin = False
+        signed_start_param = ""
 
     try:
         payload = json.loads(response.body.decode(response.charset or "utf-8"))
@@ -201,7 +207,9 @@ async def trend_prompt_privacy_middleware(
         return response
 
     if is_prompt_api:
-        start_param = str(request_body.get("start_param_fallback") or "").strip()
+        start_param = str(
+            request_body.get("start_param_fallback") or signed_start_param or ""
+        ).strip()
         shared_prompt_detail = (
             request.path == f"{prompt_api_root}/detail"
             and start_param.startswith("prompt_")
