@@ -154,7 +154,13 @@ async def trend_prompt_privacy_middleware(
     request: web.Request,
     handler,
 ) -> web.StreamResponse:
-    """Keep public trend recipes out of prompt API responses and browser caches."""
+    """Keep public trend recipes out of prompt API responses and browser caches.
+
+    The handler must consume and validate Mini App initData first. Reading the
+    JSON body before the catch-all Mini App handler can interfere with request
+    parsing in production proxies, so admin detection is deliberately done only
+    after the endpoint has completed successfully.
+    """
 
     miniapp_root = str(request.app.get("trend_prompt_privacy_root") or "")
     prompt_api_root = f"{miniapp_root}/api/prompts"
@@ -163,6 +169,14 @@ async def trend_prompt_privacy_middleware(
     )
     if not is_prompt_api:
         return await handler(request)
+
+    response = await handler(request)
+    response.headers["Cache-Control"] = "no-store"
+
+    if response.status >= 400 or not isinstance(response, web.Response):
+        return response
+    if response.content_type != "application/json" or not response.body:
+        return response
 
     viewer_is_admin = False
     try:
@@ -173,12 +187,7 @@ async def trend_prompt_privacy_middleware(
     except Exception:  # noqa: BLE001 - privacy middleware must fail closed
         viewer_is_admin = False
 
-    response = await handler(request)
-    response.headers["Cache-Control"] = "no-store"
-
-    if viewer_is_admin or response.status >= 400 or not isinstance(response, web.Response):
-        return response
-    if response.content_type != "application/json" or not response.body:
+    if viewer_is_admin:
         return response
 
     try:
