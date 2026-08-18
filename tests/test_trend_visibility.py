@@ -1,11 +1,13 @@
+import hashlib
+import hmac
+import json
 from pathlib import Path
 from urllib.parse import urlencode
-import json
 
 from bot.trend_visibility import (
     sanitize_prompt_api_payload,
     sanitize_prompt_for_public,
-    telegram_id_from_init_data,
+    verified_telegram_id_from_init_data,
 )
 
 
@@ -30,6 +32,26 @@ def _trend() -> dict:
             "kling_negative_prompt": "SECRET NEGATIVE",
         },
     }
+
+
+def _signed_init_data(telegram_id: int, bot_token: str) -> str:
+    fields = {
+        "auth_date": "1776200000",
+        "query_id": "test-query",
+        "user": json.dumps({"id": telegram_id, "first_name": "Test"}, separators=(",", ":")),
+    }
+    data_check_string = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
+    secret_key = hmac.new(
+        b"WebAppData",
+        bot_token.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    fields["hash"] = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return urlencode(fields)
 
 
 def test_public_trend_keeps_only_runner_metadata() -> None:
@@ -66,14 +88,17 @@ def test_prompt_api_payload_redacts_lists_and_details() -> None:
     assert listing["prompts"][0]["generation_settings"] == {"kind": "video", "ratio": "9:16"}
 
 
-def test_init_data_reader_extracts_telegram_user_id() -> None:
-    init_data = urlencode({"user": json.dumps({"id": 123456, "first_name": "Test"})})
-    assert telegram_id_from_init_data(init_data) == 123456
-    assert telegram_id_from_init_data("broken") is None
+def test_admin_bypass_requires_valid_telegram_signature() -> None:
+    token = "123456:TEST_TOKEN"
+    init_data = _signed_init_data(123456, token)
+    assert verified_telegram_id_from_init_data(init_data, token) == 123456
+    assert verified_telegram_id_from_init_data(init_data, "wrong-token") is None
+    assert verified_telegram_id_from_init_data("user=%7B%22id%22%3A123456%7D", token) is None
 
 
 def test_browser_auth_installs_prompt_privacy_middleware() -> None:
     source = Path("bot/browser_auth.py").read_text(encoding="utf-8")
     assert "trend_prompt_privacy_middleware" in source
+    assert "verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)" in source
     assert "app.middlewares.append(trend_prompt_privacy_middleware)" in source
     assert 'response.headers["Cache-Control"] = "no-store"' in source

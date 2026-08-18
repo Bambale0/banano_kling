@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -81,12 +83,32 @@ def sanitize_prompt_api_payload(payload: Any) -> Any:
     return result
 
 
-def telegram_id_from_init_data(init_data: Any) -> int | None:
-    """Read the Telegram user id from already-validated Mini App initData."""
+def verified_telegram_id_from_init_data(init_data: Any, bot_token: str) -> int | None:
+    """Return Telegram id only when Mini App initData has a valid bot signature."""
 
     try:
-        fields = dict(parse_qsl(str(init_data or ""), keep_blank_values=True))
-        raw_user = fields.get("user")
+        parsed = dict(parse_qsl(str(init_data or ""), keep_blank_values=True))
+        their_hash = str(parsed.pop("hash", "") or "")
+        if not their_hash or not bot_token:
+            return None
+
+        data_check_string = "\n".join(
+            f"{key}={value}" for key, value in sorted(parsed.items())
+        )
+        secret_key = hmac.new(
+            b"WebAppData",
+            bot_token.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        expected_hash = hmac.new(
+            secret_key,
+            data_check_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected_hash, their_hash):
+            return None
+
+        raw_user = parsed.get("user")
         if not raw_user:
             return None
         user = json.loads(raw_user)

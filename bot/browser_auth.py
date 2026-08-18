@@ -10,7 +10,10 @@ from aiohttp import web
 
 from bot.config import config
 from bot.trend_api import setup_trend_routes
-from bot.trend_visibility import sanitize_prompt_api_payload, telegram_id_from_init_data
+from bot.trend_visibility import (
+    sanitize_prompt_api_payload,
+    verified_telegram_id_from_init_data,
+)
 
 _LOGIN_MAX_AGE_SECONDS = 10 * 60
 _BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
@@ -164,10 +167,10 @@ async def trend_prompt_privacy_middleware(
     viewer_is_admin = False
     try:
         body = await request.json()
-        telegram_id = telegram_id_from_init_data(body.get("init_data", ""))
+        init_data = body.get("init_data", "") if isinstance(body, dict) else ""
+        telegram_id = verified_telegram_id_from_init_data(init_data, config.BOT_TOKEN)
         viewer_is_admin = bool(telegram_id and config.is_admin(telegram_id))
-    except (json.JSONDecodeError, TypeError, ValueError):
-        # The endpoint itself validates initData. Privacy middleware fails closed.
+    except Exception:  # noqa: BLE001 - privacy middleware must fail closed
         viewer_is_admin = False
 
     response = await handler(request)
