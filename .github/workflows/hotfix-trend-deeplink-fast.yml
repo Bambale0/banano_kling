@@ -1,0 +1,71 @@
+name: Fast trend deeplink hotfix runner
+
+on:
+  push:
+    branches: [tanyapi]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+
+      - name: Apply patch embedded in validated hotfix workflow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/hotfix-trend-deeplink-privacy.yml').read_text(encoding='utf-8')
+          marker = "      - name: Apply trend privacy fix\n        run: |\n          python - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          block = workflow[start:end]
+          script_lines = []
+          for line in block.splitlines():
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              else:
+                  script_lines.append(line)
+          script = '\n'.join(script_lines) + '\n'
+          exec(compile(script, '<trend-hotfix>', 'exec'), {'__name__': '__main__'})
+          PY
+
+      - name: Fast structural verification
+        run: |
+          python -m py_compile bot/trend_visibility.py bot/miniapp.py
+          python - <<'PY'
+          from pathlib import Path
+          context = Path('frontend/miniapp-v0/lib/app-context.tsx').read_text(encoding='utf-8')
+          start = context.index("if (startTarget.kind === 'prompt')")
+          trend = context.index('if (isTrend)', start)
+          video = context.index('if (isVideoTrend)', start)
+          assert start < trend < video
+          assert 'setTrendToRun(prompt)' in context[trend:video]
+          miniapp = Path('bot/miniapp.py').read_text(encoding='utf-8')
+          assert miniapp.count('sanitize_prompt_for_viewer(') >= 5
+          visibility = Path('bot/trend_visibility.py').read_text(encoding='utf-8')
+          assert 'payload["prompt_text"] = ""' in visibility
+          assert 'payload["model"] = None' in visibility
+          PY
+
+      - name: Commit hotfix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/miniapp.py \
+            bot/trend_visibility.py \
+            frontend/miniapp-v0/lib/app-context.tsx \
+            frontend/miniapp-v0/__tests__/trend-deeplink-security.test.ts \
+            tests/test_trend_visibility.py
+          git diff --cached --check
+          git commit -m 'fix(trends): keep shared templates private'
+          git push origin HEAD:tanyapi
