@@ -1,0 +1,107 @@
+name: CI — HappyFox
+
+on:
+  push:
+    branches: [happyfox]
+  pull_request:
+    branches: [happyfox]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: happyfox-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PRODUCT_ID: happyfox
+  NEXT_PUBLIC_PRODUCT_ID: happyfox
+  BOT_TOKEN: ${{ secrets.HAPPYFOX_BOT_TOKEN || '123456:TEST_TOKEN_FOR_CI_ONLY' }}
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  backend:
+    name: Backend regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio pytest-mock ruff
+          pip install --quiet -r requirements.txt
+          python -m pip check
+      - name: Compile Python
+        run: python -m compileall -q bot scripts tests
+      - name: Run safe regression suite
+        run: pytest tests/ --ignore=tests/live -m 'not live_smoke' -q --tb=short
+
+  frontend:
+    name: Mini App build and browser E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+      - name: Lint
+        run: npm run lint
+      - name: Build static export
+        run: npm run build
+      - name: Verify HappyFox brand in export
+        run: |
+          test -s out/index.html
+          test -d out/_next/static
+          grep -q 'HappyFox' out/index.html
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Prepare E2E export
+        run: |
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+      - name: Run critical browser flows
+        run: node e2e/critical-flows.mjs
+
+  docker:
+    name: Production Docker image
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          push: false
+          tags: happyfox-ci:${{ github.sha }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+      - name: Verify image imports
+        run: |
+          docker run --rm \
+            -e PRODUCT_ID=happyfox \
+            -e BOT_TOKEN='123456:TEST_TOKEN_FOR_CI_ONLY' \
+            -e BANANO_SKIP_PROJECT_ENV=1 \
+            -e BANANO_LOG_TO_STDOUT=1 \
+            --entrypoint python happyfox-ci:${{ github.sha }} \
+            -c 'import bot.product, bot.config, bot.database, bot.main, bot.miniapp; assert bot.product.product.product_id == "happyfox"; print("happyfox image: ok")'
