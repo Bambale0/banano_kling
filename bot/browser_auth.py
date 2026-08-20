@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -9,9 +10,11 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
+from bot.services.trend_preview_service import ensure_lightweight_trend_preview_url
 from bot.trend_api import setup_trend_routes
 from bot.trend_task_privacy import sanitize_task_api_payload
 from bot.trend_visibility import (
+    is_trend_prompt,
     sanitize_prompt_api_payload,
     verified_telegram_id_from_init_data,
 )
@@ -150,6 +153,43 @@ async def browser_telegram_auth(request: web.Request) -> web.Response:
         )
 
 
+async def _with_compatible_trend_previews(payload: Any) -> Any:
+    """Use cached H.264/fast-start copies for trend video previews.
+
+    Phone uploads can be HEVC/MOV or other formats that Telegram WebView renders
+    as a black tile. The original preview remains untouched; only the prompt API
+    response is rewritten to the short 480px compatibility copy.
+    """
+
+    if not isinstance(payload, dict):
+        return payload
+
+    semaphore = asyncio.Semaphore(2)
+
+    async def optimize(item: Any) -> Any:
+        if not isinstance(item, dict) or not is_trend_prompt(item):
+            return item
+        preview_url = str(item.get("preview_url") or "").strip()
+        if not preview_url:
+            return item
+        async with semaphore:
+            optimized_url = await ensure_lightweight_trend_preview_url(preview_url)
+        if not optimized_url or optimized_url == preview_url:
+            return item
+        patched = dict(item)
+        patched["preview_url"] = optimized_url
+        return patched
+
+    result = dict(payload)
+    if isinstance(result.get("prompt"), dict):
+        result["prompt"] = await optimize(result["prompt"])
+    if isinstance(result.get("prompts"), list):
+        result["prompts"] = await asyncio.gather(
+            *(optimize(item) for item in result["prompts"])
+        )
+    return result
+
+
 @web.middleware
 async def trend_prompt_privacy_middleware(
     request: web.Request,
@@ -207,6 +247,7 @@ async def trend_prompt_privacy_middleware(
         return response
 
     if is_prompt_api:
+        payload = await _with_compatible_trend_previews(payload)
         start_param = str(
             request_body.get("start_param_fallback") or signed_start_param or ""
         ).strip()
