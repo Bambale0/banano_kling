@@ -60,7 +60,9 @@ export function videoPreviewFrameUrl(value?: string | null): string {
   try {
     const url = new URL(normalized, window.location.origin)
     if (!url.hash && /\.(mp4|m4v|mov|webm)$/i.test(url.pathname)) {
-      url.hash = 't=0.001'
+      // A tiny non-zero seek forces Telegram/iOS/Android WebViews to decode an
+      // actual video frame instead of leaving the poster surface black.
+      url.hash = 't=0.12'
     }
     return url.toString()
   } catch {
