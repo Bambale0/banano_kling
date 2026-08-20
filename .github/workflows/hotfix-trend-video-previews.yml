@@ -1,0 +1,98 @@
+name: Hotfix trend video previews
+
+on:
+  push:
+    branches: [tanyapi]
+
+concurrency:
+  group: trend-video-preview-hotfix
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Wire compatible cached MP4 previews into trend prompt API
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('bot/browser_auth.py')
+          source = path.read_text(encoding='utf-8')
+
+          if not source.startswith('import asyncio\n'):
+              source = source.replace('import hashlib\n', 'import asyncio\nimport hashlib\n', 1)
+
+          service_import = 'from bot.services.trend_preview_service import ensure_lightweight_trend_preview_url\n'
+          if service_import not in source:
+              source = source.replace(
+                  'from bot.config import config\n',
+                  'from bot.config import config\n' + service_import,
+                  1,
+              )
+
+          old_visibility_import = '''from bot.trend_visibility import (\n    sanitize_prompt_api_payload,\n    verified_telegram_id_from_init_data,\n)\n'''
+          new_visibility_import = '''from bot.trend_visibility import (\n    is_trend_prompt,\n    sanitize_prompt_api_payload,\n    verified_telegram_id_from_init_data,\n)\n'''
+          if old_visibility_import in source:
+              source = source.replace(old_visibility_import, new_visibility_import, 1)
+          elif '    is_trend_prompt,\n' not in source:
+              raise SystemExit('trend_visibility import block changed unexpectedly')
+
+          marker = '\n\n@web.middleware\nasync def trend_prompt_privacy_middleware('
+          helper = '''\n\nasync def _with_compatible_trend_previews(payload: Any) -> Any:\n    \"\"\"Replace local trend videos with cached H.264 fast-start previews.\n\n    Phone uploads may be HEVC/MOV or otherwise unsupported by Telegram WebView.\n    The original video remains untouched and is still used when the user opens\n    the full preview; the grid receives a short 480px H.264 compatibility copy.\n    \"\"\"\n\n    if not isinstance(payload, dict):\n        return payload\n\n    semaphore = asyncio.Semaphore(2)\n\n    async def optimize(item: Any) -> Any:\n        if not isinstance(item, dict) or not is_trend_prompt(item):\n            return item\n        preview_url = str(item.get(\"preview_url\") or \"\").strip()\n        if not preview_url:\n            return item\n        async with semaphore:\n            optimized_url = await ensure_lightweight_trend_preview_url(preview_url)\n        if not optimized_url or optimized_url == preview_url:\n            return item\n        patched = dict(item)\n        patched[\"preview_url\"] = optimized_url\n        return patched\n\n    result = dict(payload)\n    if isinstance(result.get(\"prompt\"), dict):\n        result[\"prompt\"] = await optimize(result[\"prompt\"])\n    if isinstance(result.get(\"prompts\"), list):\n        result[\"prompts\"] = await asyncio.gather(\n            *(optimize(item) for item in result[\"prompts\"])\n        )\n    return result\n'''
+          if 'async def _with_compatible_trend_previews(' not in source:
+              if marker not in source:
+                  raise SystemExit('middleware marker missing')
+              source = source.replace(marker, helper + marker, 1)
+
+          prompt_block = '''    if is_prompt_api:\n        start_param = str(\n'''
+          replacement = '''    if is_prompt_api:\n        payload = await _with_compatible_trend_previews(payload)\n        start_param = str(\n'''
+          if prompt_block in source:
+              source = source.replace(prompt_block, replacement, 1)
+          elif 'payload = await _with_compatible_trend_previews(payload)' not in source:
+              raise SystemExit('prompt API block changed unexpectedly')
+
+          path.write_text(source, encoding='utf-8')
+
+          Path('tests/test_trend_video_preview_delivery.py').write_text('''import pytest\n\nfrom bot import browser_auth\n\n\n@pytest.mark.asyncio\nasync def test_public_trend_video_uses_compatible_preview(monkeypatch) -> None:\n    calls: list[str] = []\n\n    async def fake_preview(url: str | None) -> str | None:\n        calls.append(str(url or \"\"))\n        return \"https://example.test/uploads/trend-previews/compatible.mp4\"\n\n    monkeypatch.setattr(\n        browser_auth,\n        \"ensure_lightweight_trend_preview_url\",\n        fake_preview,\n    )\n    payload = {\n        \"prompts\": [\n            {\n                \"id\": 1126,\n                \"tags\": [\"trend\", \"trend-video\"],\n                \"preview_url\": \"/uploads/refs/video/source.mov\",\n            },\n            {\n                \"id\": 7,\n                \"tags\": [\"portrait\"],\n                \"preview_url\": \"/uploads/ordinary.mp4\",\n            },\n        ]\n    }\n\n    result = await browser_auth._with_compatible_trend_previews(payload)\n\n    assert calls == [\"/uploads/refs/video/source.mov\"]\n    assert result[\"prompts\"][0][\"preview_url\"].endswith(\"compatible.mp4\")\n    assert result[\"prompts\"][1][\"preview_url\"] == \"/uploads/ordinary.mp4\"\n\n\n@pytest.mark.asyncio\nasync def test_trend_without_preview_is_left_untouched(monkeypatch) -> None:\n    async def should_not_run(url: str | None) -> str | None:\n        raise AssertionError(\"preview service should not run\")\n\n    monkeypatch.setattr(\n        browser_auth,\n        \"ensure_lightweight_trend_preview_url\",\n        should_not_run,\n    )\n    payload = {\"prompt\": {\"id\": 1, \"tags\": [\"trend\"], \"preview_url\": \"\"}}\n    assert await browser_auth._with_compatible_trend_previews(payload) == payload\n''', encoding='utf-8')
+          PY
+
+      - name: Verify hotfix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt >/dev/null
+          python -m py_compile bot/browser_auth.py bot/services/trend_preview_service.py
+          python -m pytest -q \
+            tests/test_trend_video_preview_delivery.py \
+            tests/test_trend_visibility.py \
+            tests/test_trend_task_privacy.py
+
+      - name: Commit verified hotfix and remove staging workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add bot/browser_auth.py tests/test_trend_video_preview_delivery.py
+          git commit -m 'fix(trends): serve compatible video previews in grid'
+          git rm .github/workflows/hotfix-trend-video-previews.yml
+          git rm -f .github/hotfix-trend-video-previews.trigger || true
+          git commit -m 'chore: remove trend video preview hotfix workflow'
+          git push origin HEAD:tanyapi
