@@ -1,0 +1,389 @@
+name: Apply trends/profile/reference hotfix
+
+on:
+  push:
+    branches: [tanyapi]
+    paths:
+      - '.github/workflows/_apply_trends_profile_refs_hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: tanyapi
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Apply four user-facing fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          # 1a. Trend preview: keep the full source duration while retaining the
+          # lightweight H.264 transcode. Version the cache so old 6s clips rebuild.
+          path = 'bot/services/trend_preview_service.py'
+          s = read(path)
+          s = s.replace(
+              'TREND_PREVIEW_MAX_SECONDS = int(os.getenv("TREND_PREVIEW_MAX_SECONDS", "6"))\n',
+              'TREND_PREVIEW_VERSION = "full-v2"\n',
+          )
+          s = s.replace(
+              'payload = f"{public_url}|{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"',
+              'payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"',
+          )
+          s = s.replace(
+              'payload = f"{public_url}|{source}"',
+              'payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source}"',
+          )
+          s = s.replace('    max_seconds = _safe_int(TREND_PREVIEW_MAX_SECONDS, minimum=1, maximum=15)\n', '')
+          s = s.replace('        "-t",\n        str(max_seconds),\n', '')
+          s = s.replace('    subprocess.run(command, check=True, timeout=60)\n', '    subprocess.run(command, check=True, timeout=120)\n')
+          write(path, s)
+
+          # 1b. Trend runner: selecting files only uploads/collects them. Starting
+          # generation is an explicit second action so users can add 2+ photos in
+          # separate picker passes.
+          path = 'frontend/miniapp-v0/components/trend-runner-dialog.tsx'
+          s = read(path)
+          s = s.replace(
+              "import type { PromptItem } from '@/lib/types'",
+              "import type { PromptItem, UploadedFile } from '@/lib/types'",
+          )
+          s = s.replace(
+              '  const [previewUrls, setPreviewUrls] = useState<string[]>([])\n',
+              '  const [previewUrls, setPreviewUrls] = useState<string[]>([])\n  const [uploadedReferences, setUploadedReferences] = useState<UploadedFile[]>([])\n',
+          )
+          s = s.replace(
+              "    clearPreviews()\n    if (inputRef.current) inputRef.current.value = ''\n",
+              "    clearPreviews()\n    setUploadedReferences([])\n    if (inputRef.current) inputRef.current.value = ''\n",
+          )
+          start = s.index('  const handlePhotos = async (selectedFiles: File[]) => {')
+          end = s.index('\n\n  return (', start)
+          new_handlers = '''  const handlePhotos = async (selectedFiles: File[]) => {
+    if (!trend || busy || !selectedFiles.length) return
+    if (uploadedReferences.length + selectedFiles.length > MAX_REFERENCES) {
+      setPhase('error')
+      setError(`Можно загрузить максимум ${MAX_REFERENCES} фото`)
+      return
+    }
+
+    const invalidFile = selectedFiles.find((file) => {
+      const extension = file.name.split('.').pop()?.toLowerCase() || ''
+      return !file.type.startsWith('image/') && !IMAGE_EXTENSIONS.has(extension)
+    })
+    if (invalidFile) {
+      setPhase('error')
+      setError(`Файл «${invalidFile.name}» не является изображением`)
+      return
+    }
+
+    const localPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
+    previewRefs.current = [...previewRefs.current, ...localPreviews]
+    setPreviewUrls((current) => [...current, ...localPreviews])
+    setError(null)
+    setPhase('uploading')
+
+    try {
+      const uploaded = await Promise.all(
+        selectedFiles.map((file) => uploadFile('image_reference', file)),
+      )
+      for (const reference of uploaded) addSavedReference(reference)
+      setUploadedReferences((current) => [...current, ...uploaded])
+      setPhase('idle')
+    } catch (cause) {
+      for (const previewUrl of localPreviews) URL.revokeObjectURL(previewUrl)
+      previewRefs.current = previewRefs.current.filter((url) => !localPreviews.includes(url))
+      setPreviewUrls((current) => current.filter((url) => !localPreviews.includes(url)))
+      setPhase('error')
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фото')
+    }
+  }
+
+  const handleGenerate = async () => {
+    if (!trend || busy || !uploadedReferences.length) return
+    setError(null)
+    setPhase('generating')
+    try {
+      const result = await runTrend(
+        trend.id,
+        uploadedReferences.map((reference) => reference.url),
+      )
+      addTask(result.task)
+      setCredits(result.credits)
+      if (result.detail) setTaskDetail(result.detail)
+      selectTask(result.task)
+      onOpenChange(false)
+    } catch (cause) {
+      setPhase('error')
+      setError(cause instanceof Error ? cause.message : 'Не удалось запустить тренд')
+    }
+  }'''
+          s = s[:start] + new_handlers + s[end:]
+          s = s.replace(
+              '            После загрузки генерация начнётся сразу. Модель, промпт, формат,\n            качество и остальные параметры уже настроены администратором.',
+              '            Добавьте все нужные фото — можно по одному или несколькими заходами.\n            Генерация начнётся только после нажатия кнопки «Сгенерировать».',
+          )
+          s = s.replace(
+              "                : phase === 'error'\n                  ? 'Выбрать фото заново'\n                  : 'Выбрать фото'}",
+              "                : phase === 'error'\n                  ? 'Добавить фото ещё раз'\n                  : uploadedReferences.length\n                    ? 'Добавить ещё фото'\n                    : 'Выбрать фото'}",
+          )
+          s = s.replace(
+              '              До {MAX_REFERENCES} изображений\n',
+              '              Выбрано {uploadedReferences.length} из {MAX_REFERENCES}\n',
+          )
+          close_button = '''        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => onOpenChange(false)}
+        >
+          Закрыть
+        </Button>'''
+          generate_and_close = '''        <Button
+          type="button"
+          disabled={busy || uploadedReferences.length === 0}
+          onClick={() => void handleGenerate()}
+        >
+          {phase === 'generating' ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4" />
+          )}
+          {phase === 'generating'
+            ? 'Генерирую…'
+            : `Сгенерировать · ${uploadedReferences.length} фото`}
+        </Button>
+
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => onOpenChange(false)}
+        >
+          Закрыть
+        </Button>'''
+          if close_button not in s:
+              raise SystemExit('trend runner close button marker not found')
+          s = s.replace(close_button, generate_and_close, 1)
+          write(path, s)
+
+          # 2. Profile grid must render videos as videos, not <img src="*.mp4">.
+          # Reuse the same non-zero preview seek strategy that already works in Feed.
+          path = 'frontend/miniapp-v0/components/tabs/profile-tab.tsx'
+          s = read(path)
+          s = s.replace(
+              "import { cn, isHttpUrl } from '@/lib/utils'\n",
+              "import { cn, isHttpUrl } from '@/lib/utils'\nimport { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'\n",
+          )
+          marker = '\nfunction profileInteractionsEnabled(item: FeedItem | null | undefined) {'
+          if marker not in s:
+              raise SystemExit('profile component insertion marker not found')
+          video_component = '''
+function ProfileFeedVideo({ src, blurred, onError }: {
+  src: string
+  blurred?: boolean
+  onError: () => void
+}) {
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setLoaded(false)
+  }, [src])
+
+  return (
+    <>
+      {!loaded ? (
+        <span className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
+      ) : null}
+      <video
+        src={videoPreviewFrameUrl(src)}
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedData={() => setLoaded(true)}
+        onLoadedMetadata={() => setLoaded(true)}
+        onError={onError}
+        className={cn(
+          'relative z-10 h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
+          loaded ? 'opacity-100' : 'opacity-0',
+          blurred && 'scale-110 blur-xl'
+        )}
+      />
+    </>
+  )
+}
+'''
+          s = s.replace(marker, video_component + marker, 1)
+          old_grid = '''                  item.gen_type === 'video' ? (
+                    isHttpUrl(item.preview_url) ? (
+                      <img
+                        src={item.preview_url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        onError={() => handleMediaError(item)}
+                        className={cn(
+                          'h-full w-full object-cover opacity-80 transition-all duration-500 group-hover:scale-[1.04]',
+                          item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
+                        )}
+                      />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+                        <Play className="h-6 w-6 fill-current" />
+                      </span>
+                    )
+                  ) : ('''
+          new_grid = '''                  item.gen_type === 'video' ? (
+                    <ProfileFeedVideo
+                      src={item.preview_url || item.result_url}
+                      blurred={item.feed_blurred && !revealedIds.has(item.id)}
+                      onError={() => handleMediaError(item)}
+                    />
+                  ) : ('''
+          if old_grid not in s:
+              raise SystemExit('profile video grid marker not found')
+          s = s.replace(old_grid, new_grid, 1)
+          s = s.replace(
+              '                src={previewItem.result_url}\n                className="max-h-full w-auto max-w-full object-contain"\n                controls\n                autoPlay\n                playsInline\n                onError={() => {\n                  handleMediaError(previewItem)\n                  setPreviewItem(null)\n                }}',
+              '                src={normalizeMiniAppMediaUrl(previewItem.result_url)}\n                className="max-h-full w-auto max-w-full object-contain"\n                controls\n                autoPlay\n                muted\n                playsInline\n                preload="metadata"\n                onError={() => handleMediaError(previewItem)}',
+              1,
+          )
+          write(path, s)
+
+          # 3. Do not silently drop a selected video reference merely because the
+          # current UI scenario is image-led. Capable multimodal models (Seedance,
+          # Omni, motion models) must receive the uploaded video URLs.
+          path = 'frontend/miniapp-v0/components/forms/video-generator-form.tsx'
+          s = read(path)
+          old = "      videoReferences: isOmniVideo || selectedScenario === 'video' ? videoReferences.map(r => r.url) : [],"
+          new = "      videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],"
+          if old not in s:
+              raise SystemExit('video reference forwarding marker not found')
+          s = s.replace(old, new, 1)
+          write(path, s)
+
+          # 4. Trends are the default landing tab (index 5). Explicit deep links
+          # still override this later in the router.
+          path = 'frontend/miniapp-v0/lib/app-context.tsx'
+          s = read(path)
+          old = '  const [activeTab, setActiveTabState] = useState(0)'
+          if old not in s:
+              raise SystemExit('active tab initial marker not found')
+          s = s.replace(old, '  const [activeTab, setActiveTabState] = useState(5)', 1)
+          s = s.replace('    setActiveTabState(0)\n    setState(createLockedState(message, false))', '    setActiveTabState(5)\n    setState(createLockedState(message, false))', 1)
+          write(path, s)
+
+          # Regression contract for all four requested behaviours.
+          test = r'''from pathlib import Path
+
+
+def _read(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
+def test_trend_preview_keeps_full_duration_and_invalidates_old_clip_cache():
+    source = _read("bot/services/trend_preview_service.py")
+    ffmpeg = source.split("def _run_ffmpeg_preview", 1)[1].split(
+        "async def ensure_lightweight_trend_preview_url", 1
+    )[0]
+    assert 'TREND_PREVIEW_VERSION = "full-v2"' in source
+    assert '"-t",' not in ffmpeg
+    assert "TREND_PREVIEW_MAX_SECONDS" not in source
+
+
+def test_trend_photo_selection_does_not_auto_generate():
+    source = _read("frontend/miniapp-v0/components/trend-runner-dialog.tsx")
+    upload_handler = source.split("const handlePhotos", 1)[1].split(
+        "const handleGenerate", 1
+    )[0]
+    generate_handler = source.split("const handleGenerate", 1)[1].split("return (", 1)[0]
+    assert "runTrend(" not in upload_handler
+    assert "runTrend(" in generate_handler
+    assert "setUploadedReferences((current) => [...current, ...uploaded])" in upload_handler
+    assert "Сгенерировать · ${uploadedReferences.length} фото" in source
+
+
+def test_profile_video_grid_uses_video_element_and_fullscreen_normalizes_url():
+    source = _read("frontend/miniapp-v0/components/tabs/profile-tab.tsx")
+    component = source.split("function ProfileFeedVideo", 1)[1].split(
+        "function profileInteractionsEnabled", 1
+    )[0]
+    assert "<video" in component
+    assert "<img" not in component
+    assert 'preload="metadata"' in component
+    assert "videoPreviewFrameUrl(src)" in component
+    assert "normalizeMiniAppMediaUrl(previewItem.result_url)" in source
+
+
+def test_capable_video_models_keep_selected_video_references():
+    source = _read("frontend/miniapp-v0/components/forms/video-generator-form.tsx")
+    assert (
+        "videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 "
+        "? videoReferences.map(r => r.url) : []"
+    ) in source
+
+
+def test_trends_are_default_miniapp_tab():
+    source = _read("frontend/miniapp-v0/lib/app-context.tsx")
+    assert "const [activeTab, setActiveTabState] = useState(5)" in source
+    assert "setTrendToRun(prompt)" in source
+    assert "setActiveTabState(5)" in source
+'''
+          write('tests/test_miniapp_four_fixes_contract.py', test)
+          PY
+
+      - name: Verify Python regression contracts
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet pytest pytest-asyncio
+          pip install --quiet -r requirements.txt
+          python -m pytest \
+            tests/test_miniapp_four_fixes_contract.py \
+            tests/test_trend_video_preview_delivery.py \
+            tests/test_feed_video_media_contract.py \
+            -q
+
+      - name: Verify Mini App build
+        working-directory: frontend/miniapp-v0
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Commit verified fixes and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/_apply_trends_profile_refs_hotfix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            bot/services/trend_preview_service.py \
+            frontend/miniapp-v0/components/trend-runner-dialog.tsx \
+            frontend/miniapp-v0/components/tabs/profile-tab.tsx \
+            frontend/miniapp-v0/components/forms/video-generator-form.tsx \
+            frontend/miniapp-v0/lib/app-context.tsx \
+            tests/test_miniapp_four_fixes_contract.py \
+            .github/workflows/_apply_trends_profile_refs_hotfix.yml
+          git commit -m 'fix(miniapp): repair trends profiles and video refs'
+          git push origin HEAD:tanyapi
