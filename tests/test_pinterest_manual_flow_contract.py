@@ -6,6 +6,7 @@ import pytest
 
 from bot.pinterest_trend_flow_contract import (
     MAX_PINTEREST_REFERENCES,
+    _is_pinterest_prompt,
     _required_measurement,
     _strict_reference_urls,
 )
@@ -59,7 +60,10 @@ def test_pinterest_client_sends_explicit_confirmation() -> None:
 
 
 def test_backend_accepts_scene_user_and_up_to_five_identity_angles() -> None:
-    urls = [f"https://example.com/{index}.jpg" for index in range(MAX_PINTEREST_REFERENCES)]
+    urls = [
+        f"https://example.com/{index}.jpg"
+        for index in range(MAX_PINTEREST_REFERENCES)
+    ]
     assert _strict_reference_urls({"reference_urls": urls}) == tuple(urls)
 
 
@@ -81,9 +85,24 @@ def test_backend_requires_height_and_weight() -> None:
         )
 
 
-def test_route_installs_strict_contract_before_pinterest_routes() -> None:
-    routes = read("bot/handlers/trend_route_compat.py")
-    install_position = routes.index("install_pinterest_trend_flow_contract()")
-    route_position = routes.index("setup_pinterest_trend_routes(app, root)")
+def test_pinterest_prompt_is_recognized_for_legacy_generic_route_guard() -> None:
+    assert _is_pinterest_prompt(
+        {"title": "Anything", "tags": ["trend", "pinterest-repeat"]}
+    )
+    assert _is_pinterest_prompt(
+        {"title": "Повтори фото с Pinterest", "tags": ["trend"]}
+    )
+    assert not _is_pinterest_prompt(
+        {"title": "Обычный тренд", "tags": ["trend", "portrait"]}
+    )
 
-    assert install_position < route_position
+
+def test_route_installs_strict_contract_before_all_trend_routes() -> None:
+    routes = read("bot/handlers/trend_route_compat.py")
+    contract = read("bot/pinterest_trend_flow_contract.py")
+    install_position = routes.index("install_pinterest_trend_flow_contract()")
+    pinterest_route_position = routes.index("setup_pinterest_trend_routes(app, root)")
+    generic_route_position = routes.index("setup_trend_routes(app, root)")
+
+    assert install_position < pinterest_route_position < generic_route_position
+    assert "generic_trend_api.miniapp_run_trend = block_pinterest_on_generic_run" in contract
