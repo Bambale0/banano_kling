@@ -11,6 +11,9 @@ from bot.trend_visibility import (
 )
 
 
+REFERENCE_HINT = "Фото 1 — референс Pinterest, Фото 2 — ваше фото"
+
+
 def _trend() -> dict:
     return {
         "id": 1126,
@@ -27,10 +30,21 @@ def _trend() -> dict:
             "user_input": "photo",
             "model": "seedance_2",
             "ratio": "9:16",
+            "required_reference_count": 2,
+            "reference_hint": REFERENCE_HINT,
             "duration": 10,
             "quality": "4K",
             "kling_negative_prompt": "SECRET NEGATIVE",
         },
+    }
+
+
+def _public_runner_settings() -> dict:
+    return {
+        "kind": "video",
+        "ratio": "9:16",
+        "required_reference_count": 2,
+        "reference_hint": REFERENCE_HINT,
     }
 
 
@@ -59,7 +73,10 @@ def test_public_trend_keeps_only_runner_metadata() -> None:
     assert payload is not None
     assert payload["prompt_text"] == ""
     assert payload["model"] is None
-    assert payload["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert payload["generation_settings"] == _public_runner_settings()
+    assert "duration" not in payload["generation_settings"]
+    assert "quality" not in payload["generation_settings"]
+    assert "kling_negative_prompt" not in payload["generation_settings"]
     assert payload["prompt_hidden"] is True
     assert payload["prompt_actions_allowed"] is False
     assert payload["title"] == "Закрытый тренд"
@@ -83,9 +100,21 @@ def test_prompt_api_payload_redacts_lists_and_details() -> None:
     listing = sanitize_prompt_api_payload({"ok": True, "prompts": [_trend()]})
 
     assert detail["prompt"]["prompt_text"] == ""
-    assert detail["prompt"]["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert detail["prompt"]["generation_settings"] == _public_runner_settings()
     assert listing["prompts"][0]["model"] is None
-    assert listing["prompts"][0]["generation_settings"] == {"kind": "video", "ratio": "9:16"}
+    assert listing["prompts"][0]["generation_settings"] == _public_runner_settings()
+
+
+def test_invalid_reference_metadata_is_not_exposed_publicly() -> None:
+    prompt = _trend()
+    prompt["generation_settings"]["required_reference_count"] = 999
+    prompt["generation_settings"]["reference_hint"] = "x" * 500
+
+    payload = sanitize_prompt_for_public(prompt)
+
+    assert payload is not None
+    assert "required_reference_count" not in payload["generation_settings"]
+    assert len(payload["generation_settings"]["reference_hint"]) == 240
 
 
 def test_admin_bypass_requires_valid_telegram_signature() -> None:
