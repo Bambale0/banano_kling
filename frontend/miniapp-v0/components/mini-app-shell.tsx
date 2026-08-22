@@ -4,6 +4,8 @@ import dynamic from 'next/dynamic'
 import { type ReactNode, useEffect } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
+import { getStartParamFallback } from '@/lib/api'
+import { parseMiniAppStartParam } from '@/lib/start-params'
 import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
 import { Toaster } from '@/components/ui/sonner'
@@ -26,10 +28,33 @@ interface MiniAppShellProps {
   children: ReactNode
 }
 
+interface TelegramActivationBridge {
+  onEvent?: (eventType: string, handler: () => void) => void
+  offEvent?: (eventType: string, handler: () => void) => void
+}
+
 function MiniAppBody({ children }: MiniAppShellProps) {
-  const { state, activeWorkspace } = useApp()
+  const { state, activeWorkspace, setActiveTab } = useApp()
   const isBootstrapping = state.isLoading
   const isLocked = state.mode === 'locked'
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || state.mode !== 'live') return
+
+    const webApp = window.Telegram?.WebApp as unknown as TelegramActivationBridge | undefined
+    const openDefaultTrends = () => {
+      const rawStartParam = getStartParamFallback()
+      const target = rawStartParam ? parseMiniAppStartParam(rawStartParam) : null
+      if (target) return
+      setActiveTab(5)
+    }
+
+    openDefaultTrends()
+    if (!webApp?.onEvent) return
+
+    webApp.onEvent('activated', openDefaultTrends)
+    return () => webApp.offEvent?.('activated', openDefaultTrends)
+  }, [setActiveTab, state.mode])
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background flex flex-col">
