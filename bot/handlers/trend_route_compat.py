@@ -8,6 +8,7 @@ from aiohttp import web
 
 from bot.config import config
 from bot.pinterest_trend_api import setup_pinterest_trend_routes
+from bot.pinterest_trend_catalog import ensure_pinterest_trend_catalog
 from bot.trend_api import setup_trend_routes
 
 
@@ -22,7 +23,9 @@ def install_trend_route_compat() -> None:
     """Patch Mini App setup so exact trend routes cannot be swallowed.
 
     Curated trend endpoints must be registered before ``setup_miniapp_routes``
-    because Mini App owns a generic API catch-all route.
+    because Mini App owns a generic API catch-all route. The Pinterest catalog
+    verifier is a strict startup requirement so production cannot become healthy
+    without the built-in Pinterest tool visible in Trends.
     """
 
     import bot.miniapp as miniapp_module
@@ -36,6 +39,8 @@ def install_trend_route_compat() -> None:
     def setup_with_trend_route(app: web.Application) -> None:
         root = _miniapp_root()
         setup_pinterest_trend_routes(app, root)
+        if ensure_pinterest_trend_catalog not in app.on_startup:
+            app.on_startup.append(ensure_pinterest_trend_catalog)
         setup_trend_routes(app, root)
         current_setup(app)
 
