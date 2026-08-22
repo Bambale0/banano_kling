@@ -2,6 +2,7 @@ from pathlib import Path
 
 from bot.pinterest_trend_catalog import _settings_with_preserved_preview_type
 from bot.trend_preview_admin import _validate_preview_kind, _validate_preview_url
+from bot.trend_visibility import public_trend_settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,25 @@ def test_pinterest_catalog_preserves_admin_selected_preview_type():
     assert video["reference_count"] == 2
 
 
+def test_public_trend_payload_keeps_preview_type_without_exposing_recipe():
+    settings = public_trend_settings(
+        {
+            "category": "photo",
+            "tags": ["trend"],
+            "generation_settings": {
+                "kind": "image",
+                "ratio": "9:16",
+                "preview_type": "video",
+                "model": "banana_pro",
+                "quality": "2K",
+            },
+        }
+    )
+    assert settings == {"kind": "image", "ratio": "9:16", "preview_type": "video"}
+    assert "model" not in settings
+    assert "quality" not in settings
+
+
 def test_admin_preview_route_is_registered_before_miniapp_catchall():
     source = (ROOT / "bot/handlers/trend_route_compat.py").read_text(encoding="utf-8")
     assert "setup_trend_preview_admin_routes(app, root)" in source
@@ -64,4 +84,4 @@ def test_telegram_trends_render_video_previews_as_video():
     source = (ROOT / "bot/handlers/trends_compat.py").read_text(encoding="utf-8")
     assert "InputMediaVideo" in source
     assert "message.answer_video" in source
-    assert '_trend_preview_kind' in source
+    assert "_trend_preview_kind" in source
