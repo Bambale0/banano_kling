@@ -1,2 +1,2 @@
-trigger=trends-pinterest-production-url-final-2026-08-22
-purpose=cancel every stale intermediate CI/deploy run before the final Trends landing, Pinterest self-heal and production Mini App URL repair
+trigger=trends-pinterest-production-repair-final-2026-08-22
+purpose=cancel all stale intermediate runs and execute only the final Trends landing, Pinterest catalog and production Mini App URL repair pipeline
