@@ -125,6 +125,23 @@ def _clean_reference_urls(raw_urls: Any) -> tuple[str, ...]:
     return tuple(cleaned)
 
 
+def _required_reference_count(settings: Mapping[str, Any]) -> int | None:
+    raw_value = settings.get("required_reference_count")
+    if raw_value in (None, "", False):
+        return None
+    try:
+        count = int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise TrendRunValidationError(
+            "Некорректное количество фото в настройках тренда"
+        ) from error
+    if count < 1 or count > MAX_TREND_REFERENCES:
+        raise TrendRunValidationError(
+            f"Количество фото в тренде должно быть от 1 до {MAX_TREND_REFERENCES}"
+        )
+    return count
+
+
 def parse_trend_run_request(body: Any) -> TrendRunRequest:
     """Accept only a trend ID and uploaded references from the client.
 
@@ -178,6 +195,12 @@ def trusted_trend_run(
         raise TrendRunValidationError("Неизвестный тип тренда")
     if str(settings.get("user_input") or "photo") != "photo":
         raise TrendRunValidationError("Этот тренд не поддерживает фото-референсы")
+
+    required_count = _required_reference_count(settings)
+    if required_count is not None and len(reference_urls) != required_count:
+        raise TrendRunValidationError(
+            f"Для этого тренда нужно загрузить ровно {required_count} фото"
+        )
 
     prompt = str(trend.get("prompt_text") or "").strip()
     model = str(settings.get("model") or trend.get("model") or "").strip()
