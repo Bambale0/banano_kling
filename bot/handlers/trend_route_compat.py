@@ -7,6 +7,7 @@ from functools import wraps
 from aiohttp import web
 
 from bot.config import config
+from bot.services.builtin_trends import install_builtin_trend_runtime
 from bot.trend_api import setup_trend_routes
 
 
@@ -25,6 +26,8 @@ def install_trend_route_compat() -> None:
     API catch-all is registered by ``setup_miniapp_routes`` and therefore must come
     after this exact route.
     """
+
+    install_builtin_trend_runtime()
 
     import bot.miniapp as miniapp_module
 
