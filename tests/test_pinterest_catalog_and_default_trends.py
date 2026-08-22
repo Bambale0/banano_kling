@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.asyncio
 async def test_pinterest_catalog_uses_master_system_user_without_admin_ids(monkeypatch):
-    monkeypatch.setattr(catalog.config, "admin_ids", [])
+    monkeypatch.setattr(catalog.config, "ADMIN_IDS_STR", "")
     calls: list[str] = []
 
     async def fake_master_user():
@@ -32,7 +32,7 @@ async def test_pinterest_catalog_uses_master_system_user_without_admin_ids(monke
 
 @pytest.mark.asyncio
 async def test_pinterest_catalog_prefers_configured_admin(monkeypatch):
-    monkeypatch.setattr(catalog.config, "admin_ids", [424242])
+    monkeypatch.setattr(catalog.config, "ADMIN_IDS_STR", "424242")
     calls: list[int] = []
 
     async def fake_admin_user(telegram_id):

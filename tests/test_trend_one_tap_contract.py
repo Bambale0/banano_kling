@@ -49,13 +49,23 @@ def test_trend_runner_only_uploads_references_and_autostarts() -> None:
 
 def test_trend_client_sends_no_generation_settings() -> None:
     trend_api = read("frontend/miniapp-v0/lib/trend-api.ts")
+    run_trend = trend_api.split("export async function runTrend(", 1)[1]
 
-    assert "trend_id: trendId" in trend_api
-    assert "reference_urls: referenceUrls.map(providerReferenceUrl)" in trend_api
-    assert "model:" not in trend_api.split("const payload", 1)[1].split(
-        "const startParam", 1
-    )[0]
-    assert "generation_settings" not in trend_api
+    assert "payload.trend_id = trendId" in run_trend
+    assert "payload.reference_urls = referenceUrls.map(providerReferenceUrl)" in run_trend
+
+    for forbidden_client_field in (
+        "payload.model",
+        "payload.prompt",
+        "payload.ratio",
+        "payload.quality",
+        "payload.duration",
+        "payload.count",
+        "payload.generation_settings",
+    ):
+        assert forbidden_client_field not in run_trend
+
+    assert "payload.generation_settings" not in trend_api
 
 
 def test_backend_loads_trusted_trend_settings_by_id() -> None:
