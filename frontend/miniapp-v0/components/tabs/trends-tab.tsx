@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import type { PromptItem } from '@/lib/types'
+import type { PromptItem, TrendGenerationSettings } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { updateTrendPreview, type TrendPreviewKind } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl } from '@/lib/media-url'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -30,6 +31,8 @@ type TrendKind = 'image' | 'video'
 const TREND_TAG = 'trend'
 const VIDEO_TREND_TAG = 'trend-video'
 const VIDEO_TREND_PREVIEW_MAX_BYTES = 200 * 1024 * 1024
+const VIDEO_PREVIEW_EXTENSIONS = new Set(['mp4', 'mov', 'm4v', 'webm'])
+const IMAGE_PREVIEW_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
 
 function normalizedTags(trend: PromptItem) {
   return new Set((trend.tags || []).map((tag) => String(tag).trim().toLowerCase()))
@@ -43,6 +46,24 @@ function hasVideoTag(trend: PromptItem) {
   return normalizedTags(trend).has(VIDEO_TREND_TAG)
 }
 
+function previewKindFromFile(file: File): TrendPreviewKind | null {
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  if (file.type.startsWith('video/') || VIDEO_PREVIEW_EXTENSIONS.has(extension)) return 'video'
+  if (file.type.startsWith('image/') || IMAGE_PREVIEW_EXTENSIONS.has(extension)) return 'image'
+  return null
+}
+
+function previewKindForTrend(trend: PromptItem, legacyVideoFallback = false): TrendPreviewKind {
+  const explicit = String(trend.generation_settings?.preview_type || '').trim().toLowerCase()
+  if (explicit === 'video' || explicit === 'image') return explicit
+
+  const previewUrl = String(trend.preview_url || '').split('?', 1)[0].split('#', 1)[0]
+  const extension = previewUrl.split('.').pop()?.toLowerCase() || ''
+  if (VIDEO_PREVIEW_EXTENSIONS.has(extension)) return 'video'
+  if (IMAGE_PREVIEW_EXTENSIONS.has(extension)) return 'image'
+  return legacyVideoFallback ? 'video' : 'image'
+}
+
 export function TrendsTab() {
   const { state, trendToRun, setTrendToRun } = useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -53,6 +74,7 @@ export function TrendsTab() {
   const [error, setError] = useState<string | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [trendKind, setTrendKind] = useState<TrendKind>('image')
+  const [previewKind, setPreviewKind] = useState<TrendPreviewKind>('image')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [promptText, setPromptText] = useState('')
@@ -62,6 +84,7 @@ export function TrendsTab() {
   const [imageQuality, setImageQuality] = useState('2K')
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
+  const [updatingPreviewId, setUpdatingPreviewId] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
@@ -104,8 +127,6 @@ export function TrendsTab() {
     setError(null)
     try {
       const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-      // Keep a client-side guard as well, so a backend/cache regression cannot
-      // leak ordinary public prompts into the curated trends section.
       setItems(trends.filter(hasTrendTag))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
@@ -126,13 +147,13 @@ export function TrendsTab() {
   }, [model, state.imageModels, state.videoModels, trendKind])
 
   useEffect(() => {
-  if (trendKind !== 'video' || !selectedTrendVideoModel) return
-  setVideoDuration((current) => (
-    selectedTrendVideoModel.durations.includes(current)
-      ? current
-      : selectedTrendVideoModel.durations[0] || 5
-  ))
-}, [selectedTrendVideoModel, trendKind])
+    if (trendKind !== 'video' || !selectedTrendVideoModel) return
+    setVideoDuration((current) => (
+      selectedTrendVideoModel.durations.includes(current)
+        ? current
+        : selectedTrendVideoModel.durations[0] || 5
+    ))
+  }, [selectedTrendVideoModel, trendKind])
 
   useEffect(() => {
     const selectedModel = trendKind === 'video'
@@ -158,12 +179,18 @@ export function TrendsTab() {
   const changeTrendKind = (nextKind: TrendKind) => {
     if (nextKind === trendKind) return
     setTrendKind(nextKind)
+  }
+
+  const changePreviewKind = (nextKind: TrendPreviewKind) => {
+    if (nextKind === previewKind) return
+    setPreviewKind(nextKind)
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const resetForm = () => {
     setTrendKind('image')
+    setPreviewKind('image')
     setTitle('')
     setDescription('')
     setPromptText('')
@@ -181,21 +208,13 @@ export function TrendsTab() {
 
   const handlePreviewUpload = async (file?: File) => {
     if (!file) return
-    const expectedPrefix = trendKind === 'video' ? 'video/' : 'image/'
-    const extension = file.name.split('.').pop()?.toLowerCase() || ''
-    const fallbackExtensions = trendKind === 'video'
-      ? new Set(['mp4', 'mov', 'm4v', 'webm'])
-      : new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
-    if (!file.type.startsWith(expectedPrefix) && !fallbackExtensions.has(extension)) {
-      setError(
-        trendKind === 'video'
-          ? 'Для видео-тренда нужен видеофайл'
-          : 'Для фото-тренда нужно изображение',
-      )
+    const detectedKind = previewKindFromFile(file)
+    if (!detectedKind || detectedKind !== previewKind) {
+      setError(previewKind === 'video' ? 'Выберите видео MP4/WebM/MOV' : 'Выберите изображение JPG/PNG/WebP')
       return
     }
-    if (trendKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
-      setError('Видео-пример слишком большой, максимум 200MB')
+    if (detectedKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
+      setError('Промо-видео слишком большое, максимум 200MB')
       return
     }
 
@@ -208,9 +227,9 @@ export function TrendsTab() {
       return localPreviewUrl
     })
     const uploadPromise = uploadFile(
-        trendKind === 'video' ? 'trend_video_preview' : 'image_reference',
-        file,
-      )
+      detectedKind === 'video' ? 'trend_video_preview' : 'image_reference',
+      file,
+    )
       .then((uploaded) => uploaded.url)
       .catch((e) => {
         if (previewUploadAttemptRef.current === attemptId) {
@@ -230,6 +249,35 @@ export function TrendsTab() {
         previewUploadPromiseRef.current = null
       }
       URL.revokeObjectURL(localPreviewUrl)
+    }
+  }
+
+  const handleExistingPreviewUpload = async (trend: PromptItem, file?: File) => {
+    if (!file || !isAdmin || updatingPreviewId !== null) return
+    const detectedKind = previewKindFromFile(file)
+    if (!detectedKind) {
+      setError('Превью должно быть фото или видео')
+      return
+    }
+    if (detectedKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
+      setError('Промо-видео слишком большое, максимум 200MB')
+      return
+    }
+
+    setUpdatingPreviewId(trend.id)
+    setError(null)
+    try {
+      const uploaded = await uploadFile(
+        detectedKind === 'video' ? 'trend_video_preview' : 'image_reference',
+        file,
+      )
+      const updated = await updateTrendPreview(trend.id, uploaded.url, detectedKind)
+      setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
+      setPreviewTrend((current) => current?.id === updated.id ? updated : current)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось заменить превью')
+    } finally {
+      setUpdatingPreviewId(null)
     }
   }
 
@@ -257,13 +305,15 @@ export function TrendsTab() {
         setError('Preview еще не сохранен на сервере. Подождите несколько секунд и повторите.')
         return
       }
-      const generationSettings = trendKind === 'video'
+
+      const generationSettings: TrendGenerationSettings = trendKind === 'video'
         ? {
-            kind: 'video' as const,
-            user_input: 'photo' as const,
+            kind: 'video',
+            user_input: 'photo',
             model,
-            scenario: 'imgtxt' as const,
             ratio: trendRatio,
+            preview_type: previewKind,
+            scenario: 'imgtxt',
             duration: videoDuration,
             grok_mode: selectedTrendVideoModel?.grok_modes?.[0] || 'normal',
             grok_resolution: selectedTrendVideoModel?.grok_resolutions?.[0] || '480p',
@@ -291,10 +341,11 @@ export function TrendsTab() {
             omni_character_audio_ids: [],
           }
         : {
-            kind: 'image' as const,
-            user_input: 'photo' as const,
+            kind: 'image',
+            user_input: 'photo',
             model,
             ratio: trendRatio,
+            preview_type: previewKind,
             quality: imageQuality,
             count: 1,
             nsfw_checker: false,
@@ -370,24 +421,30 @@ export function TrendsTab() {
             const modelLabel = videoSection
               ? state.videoModels.find((item) => item.id === trend.model)?.label
               : state.imageModels.find((item) => item.id === trend.model)?.label
+            const mediaKind = previewKindForTrend(trend, videoSection)
             return (
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
-                  {trend.preview_url ? videoSection ? (
-                    <div className="relative w-full">
+                  {trend.preview_url ? mediaKind === 'video' ? (
+                    <div className="relative w-full overflow-hidden bg-black">
                       <video
                         src={normalizeMiniAppMediaUrl(trend.preview_url)}
-                        controls
+                        muted
+                        autoPlay
+                        loop
                         playsInline
                         preload="metadata"
                         onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
                         style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
                         className="w-full bg-black object-contain"
                       />
+                      <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-black/65 px-2.5 py-1 text-[10px] font-medium text-white backdrop-blur">
+                        Как это работает
+                      </span>
                       <button
                         type="button"
                         onClick={() => setPreviewTrend(trend)}
-                        aria-label={`Открыть видео ${trend.title} крупно`}
+                        aria-label={`Открыть промо-видео ${trend.title} крупно`}
                         className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-white backdrop-blur"
                       >
                         <Film className="h-4 w-4" />
@@ -403,10 +460,29 @@ export function TrendsTab() {
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />Повторить</Button>
-                  <div className={isAdmin ? 'grid grid-cols-[1fr_auto] gap-2' : 'grid'}>
+                  <div className={isAdmin ? 'grid grid-cols-2 gap-2' : 'grid'}>
                     <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
-                    {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
+                    {isAdmin ? (
+                      <label className="relative inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80">
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/avif,video/mp4,video/webm,video/quicktime"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                          disabled={updatingPreviewId !== null}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0]
+                            event.currentTarget.value = ''
+                            void handleExistingPreviewUpload(trend, file)
+                          }}
+                        />
+                        {updatingPreviewId === trend.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                        Превью
+                      </label>
+                    ) : null}
                   </div>
+                  {isAdmin ? (
+                    <Button type="button" variant="secondary" size="sm" className="w-full text-destructive" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}Убрать тренд</Button>
+                  ) : null}
                 </div>
               </article>
             )
@@ -446,7 +522,7 @@ export function TrendsTab() {
           <div>
             <p className="text-sm font-semibold text-foreground">Новый тренд</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Пользователи увидят пример и описание, но не увидят скрытый prompt.
+              Пользователи увидят обложку или промо-видео и описание, но не увидят скрытый prompt.
             </p>
           </div>
 
@@ -552,17 +628,37 @@ export function TrendsTab() {
             </div>
           )}
 
-          <div className="space-y-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              {trendKind === 'video' ? 'Видео-пример шаблона' : 'Preview шаблона'}
-            </span>
+          <div className="space-y-3">
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">Промо / превью карточки</span>
+              <p className="mt-1 text-xs text-muted-foreground">Это отдельный медиа-пример. Фото-тренд может иметь видео-инструкцию «как пользоваться режимом».</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => changePreviewKind('image')}
+                className={`rounded-xl border px-3 py-2.5 text-xs font-medium transition ${previewKind === 'image' ? 'border-gold/50 bg-gold/15 text-gold' : 'border-border/50 bg-secondary/40 text-muted-foreground'}`}
+              >
+                Фото-обложка
+              </button>
+              <button
+                type="button"
+                onClick={() => changePreviewKind('video')}
+                className={`rounded-xl border px-3 py-2.5 text-xs font-medium transition ${previewKind === 'video' ? 'border-gold/50 bg-gold/15 text-gold' : 'border-border/50 bg-secondary/40 text-muted-foreground'}`}
+              >
+                Промо-видео
+              </button>
+            </div>
+
             {previewUrl ? (
               <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-secondary/40">
-                {trendKind === 'video' ? (
+                {previewKind === 'video' ? (
                   <video
                     src={previewUrl}
                     controls
                     muted
+                    autoPlay
+                    loop
                     playsInline
                     preload="metadata"
                     className="h-auto max-h-[70vh] w-full bg-black object-contain"
@@ -571,7 +667,7 @@ export function TrendsTab() {
                   <img
                     src={previewUrl}
                     alt="Preview тренда"
-                    className="aspect-square w-full object-cover"
+                    className="h-auto max-h-[70vh] w-full object-contain"
                   />
                 )}
                 <button
@@ -587,41 +683,27 @@ export function TrendsTab() {
                 </button>
               </div>
             ) : (
-              <div
-                className="relative flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground"
-              >
+              <div className="relative flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition-colors hover:border-gold/40 hover:text-foreground">
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept={
-                    trendKind === 'video'
-                      ? 'video/mp4,video/webm,video/quicktime'
-                      : 'image/jpeg,image/png,image/webp'
-                  }
+                  accept={previewKind === 'video' ? 'video/mp4,video/webm,video/quicktime' : 'image/jpeg,image/png,image/webp,image/avif'}
                   className="relative z-10 block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
                   disabled={uploadingPreview}
                   onChange={(event) => void handlePreviewUpload(event.target.files?.[0])}
                 />
                 {uploadingPreview ? (
                   <Loader2 className="h-6 w-6 animate-spin" />
-                ) : trendKind === 'video' ? (
+                ) : previewKind === 'video' ? (
                   <Film className="h-7 w-7" />
                 ) : (
                   <ImagePlus className="h-7 w-7" />
                 )}
-                {uploadingPreview
-                  ? 'Загружаю…'
-                  : trendKind === 'video'
-                    ? 'Загрузить видео'
-                    : 'Загрузить изображение'}
+                {uploadingPreview ? 'Загружаю…' : previewKind === 'video' ? 'Загрузить промо-видео' : 'Загрузить обложку'}
               </div>
             )}
             {uploadingPreview ? (
-              <p className="text-xs text-muted-foreground">
-                Сохраняю preview на сервере. Не закрывайте mini app до завершения.
-              </p>
-            ) : error ? (
-              <p className="text-xs text-destructive">{error}</p>
+              <p className="text-xs text-muted-foreground">Сохраняю preview на сервере. Не закрывайте mini app до завершения.</p>
             ) : null}
           </div>
 
@@ -635,7 +717,7 @@ export function TrendsTab() {
           <Button
             type="button"
             className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
-            disabled={submitting}
+            disabled={submitting || uploadingPreview}
             onClick={() => void handleCreate()}
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -677,12 +759,13 @@ export function TrendsTab() {
 
       <Dialog open={Boolean(previewTrend)} onOpenChange={(open) => { if (!open) setPreviewTrend(null) }}>
         <DialogContent className="max-w-3xl border-border/60 bg-background p-3">
-          <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Видео-тренд'}</DialogTitle>
+          <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Промо-видео'}</DialogTitle>
           {previewTrend?.preview_url ? (
             <video
               src={normalizeMiniAppMediaUrl(previewTrend.preview_url)}
               controls
               autoPlay
+              muted
               playsInline
               onLoadedMetadata={(event) => rememberVideoAspectRatio(previewTrend.id, event.currentTarget)}
               style={{ aspectRatio: videoAspectRatios[previewTrend.id] || mediaAspectRatio(previewTrend.generation_settings?.ratio) }}
