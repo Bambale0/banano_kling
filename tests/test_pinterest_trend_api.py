@@ -2,11 +2,12 @@ import pytest
 
 from bot.pinterest_trend_api import (
     _augmented_prompt,
+    _lock_pinterest_run,
     _measurement,
     _reference_urls,
     _validated_pinterest_url,
 )
-from bot.trend_api import TrendRunValidationError
+from bot.trend_api import TrustedTrendRun, TrendRunValidationError
 
 
 def test_pinterest_url_accepts_only_expected_hosts():
@@ -43,6 +44,16 @@ def test_pinterest_repeat_requires_exact_reference_then_user_photo():
         with pytest.raises(TrendRunValidationError):
             _reference_urls({"reference_urls": invalid})
 
+    with pytest.raises(TrendRunValidationError):
+        _reference_urls(
+            {
+                "reference_urls": [
+                    "https://i.pinimg.com/same.jpg",
+                    "https://i.pinimg.com/same.jpg",
+                ]
+            }
+        )
+
 
 def test_measurements_are_optional_but_bounded():
     assert _measurement({}, "height_cm", minimum=120, maximum=230) is None
@@ -55,16 +66,50 @@ def test_measurements_are_optional_but_bounded():
         _measurement({"weight_kg": "abc"}, "weight_kg", minimum=30, maximum=250)
 
 
-def test_augmented_prompt_keeps_reference_roles_unambiguous():
+def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
     prompt = _augmented_prompt(
         "Create a realistic portrait.",
         height_cm=165,
         weight_kg=55,
     )
 
-    assert "Input image 1 is the SOURCE / COMPOSITION REFERENCE" in prompt
-    assert "Input image 2 is the USER / IDENTITY REFERENCE" in prompt
-    assert "Do NOT copy the identity or face from image 1" in prompt
+    assert "Image 1 = SCENE_REFERENCE" in prompt
+    assert "Image 2 = USER_IDENTITY_REFERENCE" in prompt
+    assert "only identity anchor" in prompt
+    assert "identity from USER_IDENTITY_REFERENCE always wins" in prompt
+    assert "Do NOT copy the face, identity" in prompt
+    assert "Do NOT beautify, redesign, replace, average, or blend" in prompt
+    assert "Follow the requested transformation as literally as possible" in prompt
+    assert "Prefer faithful execution over artistic reinterpretation" in prompt
     assert "height 165 cm" in prompt
     assert "weight 55 kg" in prompt
-    assert "never render the numbers or any text into the image" in prompt
+    assert "never render these numbers" in prompt
+
+
+def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
+    stored = TrustedTrendRun(
+        trend_id=42,
+        kind="image",
+        prompt="admin changed prompt",
+        model="seedream_edit",
+        ratio="1:1",
+        reference_urls=(
+            "https://i.pinimg.com/reference.jpg",
+            "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+        ),
+        settings={"quality": "4K", "count": 3},
+    )
+
+    locked = _lock_pinterest_run(stored, height_cm=175, weight_kg=78)
+
+    assert locked.model == "banana_pro"
+    assert locked.ratio == "9:16"
+    assert locked.settings["quality"] == "2K"
+    assert locked.settings["count"] == 1
+    assert locked.settings["reference_count"] == 2
+    assert locked.settings["reference_labels"] == ["РЕФЕРЕНС", "ТЫ"]
+    assert "SCENE_REFERENCE" in locked.prompt
+    assert "USER_IDENTITY_REFERENCE" in locked.prompt
+    assert "height 175 cm" in locked.prompt
+    assert "weight 78 kg" in locked.prompt
+    assert "admin changed prompt" not in locked.prompt
