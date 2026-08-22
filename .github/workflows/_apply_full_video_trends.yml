@@ -1,4 +1,4 @@
-# Trigger after workflow registration.
+# Trigger after workflow registration via merge push.
 name: Apply full video trend playback
 
 on:
