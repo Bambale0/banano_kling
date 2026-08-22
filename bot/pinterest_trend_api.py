@@ -16,6 +16,7 @@ from bot.config import config
 from bot.database import get_or_create_user, get_prompt_by_id
 from bot.trend_api import (
     TrendRunValidationError,
+    TrustedTrendRun,
     _run_image_trend,
     trusted_trend_run,
 )
@@ -36,9 +37,9 @@ _PINTEREST_TOOL_TITLE = "Повтори фото с Pinterest"
 _PINTEREST_TOOL_TAG = "pinterest-repeat"
 _PINTEREST_TOOL_PROMPT = (
     "Create a photorealistic recreation of the source photograph using the provided user as the "
-    "subject. Preserve the source composition, camera perspective, pose, lighting, background, "
-    "wardrobe silhouette and mood while keeping the user's identity natural and recognizable. "
-    "No text, no collage, no split-screen, no watermark."
+    "subject. Recreate the scene, pose, framing, camera perspective, lighting, shadows, background, "
+    "wardrobe silhouette and mood from SCENE_REFERENCE while preserving the exact recognizable "
+    "identity of USER_IDENTITY_REFERENCE. No text, no collage, no split-screen, no watermark."
 )
 _PINTEREST_TOOL_SETTINGS = {
     "kind": "image",
@@ -151,19 +152,70 @@ def _augmented_prompt(
 
     return (
         f"{base_prompt.strip()}\n\n"
-        "REFERENCE CONTRACT (mandatory):\n"
-        "- Input image 1 is the SOURCE / COMPOSITION REFERENCE. Copy its camera angle, framing, "
-        "crop, pose, body position, lighting direction, shadow pattern, background, styling mood, "
-        "and overall photographic composition.\n"
-        "- Input image 2 is the USER / IDENTITY REFERENCE. Preserve this person's identity, facial "
-        "geometry, recognizable features, hair, skin characteristics and natural body proportions.\n"
-        "- Do NOT copy the identity or face from image 1. Do NOT change the user into the person from "
-        "image 1. The final image must look like the user from image 2 photographed in the scene from "
-        "image 1.\n"
-        "- Keep anatomy realistic, hands natural, facial expression believable, and the result "
-        "photorealistic rather than composited or face-swapped.\n"
+        "STRICT IDENTITY PRESERVATION CONTRACT\n"
+        "Reference naming:\n"
+        "- Image 1 = SCENE_REFERENCE.\n"
+        "- Image 2 = USER_IDENTITY_REFERENCE.\n"
+        "Priority rules:\n"
+        "- Use SCENE_REFERENCE only for scene-level attributes: composition, framing, camera angle, "
+        "crop, pose, body positioning, lighting direction, shadow pattern, background, wardrobe "
+        "silhouette, styling mood, and overall photographic setup.\n"
+        "- Use USER_IDENTITY_REFERENCE as the only identity anchor.\n"
+        "- If the references conflict, identity from USER_IDENTITY_REFERENCE always wins.\n"
+        "Identity lock:\n"
+        "- Preserve the person from USER_IDENTITY_REFERENCE as the same recognizable real person.\n"
+        "- Keep facial geometry consistent: face shape, jawline, cheekbones, forehead proportions, "
+        "nose shape, eye shape, eye spacing, eyebrow shape, lip shape, ears, skin tone, apparent age, "
+        "and distinctive facial features.\n"
+        "- Preserve hairstyle, hairline, hair color, and other distinctive identity features from "
+        "USER_IDENTITY_REFERENCE.\n"
+        "- Preserve natural body proportions and overall build from USER_IDENTITY_REFERENCE.\n"
         f"- User measurements: {measurement_text}. Use them only to keep body scale and proportions "
-        "plausible; never render the numbers or any text into the image."
+        "realistic; never render these numbers or any measurement text into the image.\n"
+        "Negative identity rules:\n"
+        "- Do NOT copy the face, identity, ethnicity, apparent age, skin tone, or hair from "
+        "SCENE_REFERENCE.\n"
+        "- Do NOT beautify, redesign, replace, average, or blend the user's identity with the person "
+        "from SCENE_REFERENCE.\n"
+        "- Do NOT create a face-swap look, deepfake artifacting, collage, split-screen, or composited "
+        "cutout.\n"
+        "Output goal:\n"
+        "- The final image must look like the person from USER_IDENTITY_REFERENCE was actually "
+        "photographed in the scene from SCENE_REFERENCE.\n"
+        "- Keep the result photorealistic, coherent, believable, and naturally recognizable.\n"
+        "- Keep anatomy, hands, gaze, skin texture, and facial expression natural.\n"
+        "- Keep the face clearly recognizable and visible unless the source composition genuinely "
+        "requires otherwise.\n"
+        "USER EXPECTATION LOCK:\n"
+        "- Follow the requested transformation as literally as possible.\n"
+        "- Prefer faithful execution over artistic reinterpretation.\n"
+        "- Change only what the user expects to change.\n"
+        "- Preserve everything the user expects to remain the same, especially identity, "
+        "recognizability, body scale, composition intent, and scene logic.\n"
+        "- Do not introduce extra people, props, text, accessories, or visual changes that are not "
+        "supported by the references."
+    )
+
+
+def _lock_pinterest_run(
+    trusted: TrustedTrendRun,
+    *,
+    height_cm: int | None,
+    weight_kg: int | None,
+) -> TrustedTrendRun:
+    """Force the product contract even if the stored trend is edited later."""
+
+    locked_settings = dict(_PINTEREST_TOOL_SETTINGS)
+    return replace(
+        trusted,
+        model="banana_pro",
+        ratio="9:16",
+        settings=locked_settings,
+        prompt=_augmented_prompt(
+            _PINTEREST_TOOL_PROMPT,
+            height_cm=height_cm,
+            weight_kg=weight_kg,
+        ),
     )
 
 
@@ -379,13 +431,10 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
         if "pinterest" not in tags and "pinterest" not in title:
             raise TrendRunValidationError("Этот шаблон не является Pinterest-трендом")
 
-        trusted = replace(
+        trusted = _lock_pinterest_run(
             trusted,
-            prompt=_augmented_prompt(
-                trusted.prompt,
-                height_cm=height_cm,
-                weight_kg=weight_kg,
-            ),
+            height_cm=height_cm,
+            weight_kg=weight_kg,
         )
         return await _run_image_trend(
             request,
