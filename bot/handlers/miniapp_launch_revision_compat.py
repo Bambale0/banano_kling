@@ -36,7 +36,7 @@ def install_miniapp_launch_revision_compat(common_module: Any) -> None:
     Telegram clients and intermediary caches may retain an older Mini App entry
     document. The Docker image revision is immutable, so adding it to WebApp
     buttons gives every deployed image a distinct launch URL while preserving
-    referral/startapp query parameters. ``config.mini_app_url`` itself remains
+    referral/startapp query parameters. The configured Mini App base remains
     unchanged because backend redirect and asset routing treat it as a base URL.
     """
 
