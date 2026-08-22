@@ -175,6 +175,8 @@ export interface TrendGenerationSettings {
   user_input: 'photo'
   model: string
   ratio: string
+  required_reference_count?: number
+  reference_hint?: string
   quality?: string
   count?: number
   nsfw_checker?: boolean
