@@ -60,6 +60,8 @@ export function TrendsTab() {
   const [videoDuration, setVideoDuration] = useState(5)
   const [trendRatio, setTrendRatio] = useState('1:1')
   const [imageQuality, setImageQuality] = useState('2K')
+  const [requiredReferenceCount, setRequiredReferenceCount] = useState(1)
+  const [referenceHint, setReferenceHint] = useState('')
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -81,6 +83,9 @@ export function TrendsTab() {
       : selectedTrendImageModel?.qualities?.length
         ? selectedTrendImageModel.qualities
         : ['basic']
+  const maxTrendReferences = trendKind === 'video'
+    ? Math.max(1, (selectedTrendVideoModel?.max_image_references ?? 0) + 1)
+    : Math.max(1, selectedTrendImageModel?.max_references ?? 1)
 
   const videoModelIds = useMemo(
     () => new Set(state.videoModels.map((item) => item.id)),
@@ -126,13 +131,13 @@ export function TrendsTab() {
   }, [model, state.imageModels, state.videoModels, trendKind])
 
   useEffect(() => {
-  if (trendKind !== 'video' || !selectedTrendVideoModel) return
-  setVideoDuration((current) => (
-    selectedTrendVideoModel.durations.includes(current)
-      ? current
-      : selectedTrendVideoModel.durations[0] || 5
-  ))
-}, [selectedTrendVideoModel, trendKind])
+    if (trendKind !== 'video' || !selectedTrendVideoModel) return
+    setVideoDuration((current) => (
+      selectedTrendVideoModel.durations.includes(current)
+        ? current
+        : selectedTrendVideoModel.durations[0] || 5
+    ))
+  }, [selectedTrendVideoModel, trendKind])
 
   useEffect(() => {
     const selectedModel = trendKind === 'video'
@@ -155,6 +160,12 @@ export function TrendsTab() {
     trendRatio,
   ])
 
+  useEffect(() => {
+    setRequiredReferenceCount((current) =>
+      Math.min(maxTrendReferences, Math.max(1, current)),
+    )
+  }, [maxTrendReferences])
+
   const changeTrendKind = (nextKind: TrendKind) => {
     if (nextKind === trendKind) return
     setTrendKind(nextKind)
@@ -171,6 +182,8 @@ export function TrendsTab() {
     setVideoDuration(5)
     setTrendRatio('1:1')
     setImageQuality('2K')
+    setRequiredReferenceCount(1)
+    setReferenceHint('')
     setPreviewUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -264,6 +277,8 @@ export function TrendsTab() {
             model,
             scenario: 'imgtxt' as const,
             ratio: trendRatio,
+            required_reference_count: requiredReferenceCount,
+            reference_hint: referenceHint.trim(),
             duration: videoDuration,
             grok_mode: selectedTrendVideoModel?.grok_modes?.[0] || 'normal',
             grok_resolution: selectedTrendVideoModel?.grok_resolutions?.[0] || '480p',
@@ -295,6 +310,8 @@ export function TrendsTab() {
             user_input: 'photo' as const,
             model,
             ratio: trendRatio,
+            required_reference_count: requiredReferenceCount,
+            reference_hint: referenceHint.trim(),
             quality: imageQuality,
             count: 1,
             nsfw_checker: false,
@@ -494,6 +511,35 @@ export function TrendsTab() {
             className="min-h-[76px] resize-none bg-secondary/50"
             maxLength={240}
           />
+
+          <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
+            <label className="block space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Сколько фото нужно
+              </span>
+              <select
+                value={requiredReferenceCount}
+                onChange={(event) => setRequiredReferenceCount(Number(event.target.value))}
+                className="h-11 w-full rounded-xl border border-border/50 bg-secondary/70 px-3 text-sm text-foreground outline-none focus:border-gold/50"
+              >
+                {Array.from({ length: maxTrendReferences }, (_, index) => index + 1).map((count) => (
+                  <option key={count} value={count}>{count}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Порядок фото для пользователя
+              </span>
+              <input
+                value={referenceHint}
+                onChange={(event) => setReferenceHint(event.target.value)}
+                placeholder="Например: Фото 1 — референс Pinterest, Фото 2 — ваше фото"
+                maxLength={240}
+                className="h-11 w-full rounded-xl border border-border/50 bg-secondary/50 px-3 text-sm outline-none focus:border-gold/50"
+              />
+            </label>
+          </div>
 
           <label className="block space-y-2">
             <span className="text-xs font-medium text-muted-foreground">
