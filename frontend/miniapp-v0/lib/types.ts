@@ -264,23 +264,86 @@ export interface FeedItem {
   is_adult_content?: boolean
 }
 
-export interface SavedReference {
+export interface FeedDeepLink {
+  item: FeedItem
+  action: 'preview' | 'remix'
+}
+
+export interface FeedComment {
   id: number
-  kind: string
-  file_url: string
-  original_filename?: string | null
-  content_type?: string | null
-  source?: string | null
+  gen_id: number
+  text: string
+  author: string
+  author_referral_code?: string | null
+  is_mine: boolean
+  created_at: string
+}
+
+export interface AppState {
+  mode: AppMode
+  isLoading: boolean
+  error: string | null
+  user: {
+    telegramId?: number
+    firstName: string
+    lastName?: string
+    username?: string
+    photoUrl?: string
+    referralCode?: string
+    profileLink?: string
+    referralLink?: string
+    channelUrl?: string
+    promptRepeatBalanceRub?: number
+    promptRepeatTotalRub?: number
+    botUsername?: string
+    credits: number
+    isAdmin: boolean
+  }
+  imageModels: ImageModel[]
+  videoModels: VideoModel[]
+  recentTasks: Task[]
+  savedReferences: UploadedFile[]
+  paymentPackages: PaymentPackage[]
+  lastSync: Date | null
+}
+
+export interface ProfileSummary {
+  referral_code: string
+  first_name?: string
+  last_name?: string
+  username?: string
+  display_name: string
+  photo_url?: string | null
+  profile_link?: string
+  referral_link?: string
+  channel_url?: string
+  posts_count?: number
+  likes_count?: number
+  shares_count?: number
+  remixes_count?: number
+  is_me: boolean
+}
+
+export interface SavedReference {
+  id: string
+  kind: UploadedFileType
+  url: string
+  filename: string
+  content_type?: string
+  source?: string
   created_at?: string | null
-  updated_at?: string | null
   last_used_at?: string | null
 }
 
 export interface UploadedFile {
-  id?: number
+  id: string
+  name: string
   url: string
-  name?: string
-  type?: UploadedFileType
-  content_type?: string
-  size?: number
+  preview_url?: string
+  type: UploadedFileType
+  size: number
+  uploading?: boolean
+  saved_reference_id?: string | null
+  created_at?: string | null
+  source?: string
 }
