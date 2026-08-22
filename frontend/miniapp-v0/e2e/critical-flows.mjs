@@ -501,12 +501,13 @@ try {
   await page.getByRole('button', { name: /Тренды/ }).click()
   await page.getByRole('button', { name: 'Добавить', exact: true }).click()
   await page.getByRole('button', { name: 'Видео-тренд', exact: true }).click()
+  const createTrendForm = page.locator('section').filter({ hasText: 'Новый тренд' })
+  await createTrendForm.getByRole('button', { name: 'Промо-видео', exact: true }).click()
   uploadQueue.push({
     url: 'https://cdn.example/trend-upload.mp4',
     kind: 'video',
     filename: 'trend.mp4',
   })
-  const createTrendForm = page.locator('section').filter({ hasText: 'Новый тренд' })
   await createTrendForm.locator('input[type="file"]').setInputFiles({
     name: 'trend.mp4',
     mimeType: 'video/mp4',
