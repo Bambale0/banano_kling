@@ -13,7 +13,7 @@ from bot.services.media_input_utils import resolve_local_upload_path
 logger = logging.getLogger(__name__)
 
 VIDEO_PREVIEW_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
-TREND_PREVIEW_MAX_SECONDS = int(os.getenv("TREND_PREVIEW_MAX_SECONDS", "6"))
+TREND_PREVIEW_VERSION = "full-v2"
 TREND_PREVIEW_MAX_WIDTH = int(os.getenv("TREND_PREVIEW_MAX_WIDTH", "480"))
 TREND_PREVIEW_FPS = int(os.getenv("TREND_PREVIEW_FPS", "12"))
 TREND_PREVIEW_CRF = int(os.getenv("TREND_PREVIEW_CRF", "32"))
@@ -31,9 +31,9 @@ def _is_video_preview_source(source: Path) -> bool:
 def _preview_digest(source: Path, public_url: str) -> str:
     try:
         stat = source.stat()
-        payload = f"{public_url}|{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+        payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
     except OSError:
-        payload = f"{public_url}|{source}"
+        payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
@@ -58,7 +58,6 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
     tmp_path = output_path.with_suffix(".tmp.mp4")
     tmp_path.unlink(missing_ok=True)
 
-    max_seconds = _safe_int(TREND_PREVIEW_MAX_SECONDS, minimum=1, maximum=15)
     max_width = _safe_int(TREND_PREVIEW_MAX_WIDTH, minimum=240, maximum=960)
     fps = _safe_int(TREND_PREVIEW_FPS, minimum=8, maximum=24)
     crf = _safe_int(TREND_PREVIEW_CRF, minimum=26, maximum=38)
@@ -72,8 +71,6 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
         "error",
         "-i",
         str(source),
-        "-t",
-        str(max_seconds),
         "-an",
         "-vf",
         scale_filter,
@@ -95,7 +92,7 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
         str(crf),
         str(tmp_path),
     ]
-    subprocess.run(command, check=True, timeout=60)
+    subprocess.run(command, check=True, timeout=120)
     tmp_path.replace(output_path)
 
 

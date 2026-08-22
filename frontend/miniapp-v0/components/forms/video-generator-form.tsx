@@ -425,7 +425,7 @@ export function VideoGeneratorForm({
       prompt,
       startImage: isOmniAudio ? null : startImage[0]?.url || null,
       references: isOmniAudio || isOmniCharacter || (model?.max_image_references ?? 8) === 0 ? [] : photoReferences.map(r => r.url),
-      videoReferences: isOmniVideo || selectedScenario === 'video' ? videoReferences.map(r => r.url) : [],
+      videoReferences: isOmniVideo || (model?.max_video_references ?? 0) > 0 ? videoReferences.map(r => r.url) : [],
       audioReference: selectedScenario === 'avatar' ? audioReference[0]?.url || null : null,
     })
     setPrompt('')

@@ -164,7 +164,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [videoPromptPreset, setVideoPromptPreset] = useState<VideoPromptPreset | null>(null)
   const [trendToRun, setTrendToRun] = useState<PromptItem | null>(null)
   const [viewedProfileCode, setViewedProfileCode] = useState<string | null>(null)
-  const [activeTab, setActiveTabState] = useState(0)
+  const [activeTab, setActiveTabState] = useState(5)
   const pollRef = useRef<number | null>(null)
   const handledStartParamRef = useRef<string | null>(null)
 
@@ -222,7 +222,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setVideoPromptPreset(null)
     setTrendToRun(null)
     setViewedProfileCode(null)
-    setActiveTabState(0)
+    setActiveTabState(5)
     setState(createLockedState(message, false))
   }, [])
 

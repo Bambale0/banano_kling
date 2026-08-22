@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import type { FeedComment, FeedItem, ProfileSummary, ScenarioType, UploadedFile } from '@/lib/types'
 import { cn, isHttpUrl } from '@/lib/utils'
+import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
 import { Button } from '@/components/ui/button'
@@ -112,6 +113,40 @@ function ProfileFeedImage({ src, fallbackSrc, blurred, onError }: {
         loading="lazy"
         onLoad={() => setLoaded(true)}
         onError={handleError}
+        className={cn(
+          'relative z-10 h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
+          loaded ? 'opacity-100' : 'opacity-0',
+          blurred && 'scale-110 blur-xl'
+        )}
+      />
+    </>
+  )
+}
+
+function ProfileFeedVideo({ src, blurred, onError }: {
+  src: string
+  blurred?: boolean
+  onError: () => void
+}) {
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setLoaded(false)
+  }, [src])
+
+  return (
+    <>
+      {!loaded ? (
+        <span className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
+      ) : null}
+      <video
+        src={videoPreviewFrameUrl(src)}
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedData={() => setLoaded(true)}
+        onLoadedMetadata={() => setLoaded(true)}
+        onError={onError}
         className={cn(
           'relative z-10 h-full w-full object-cover transition-all duration-500 group-hover:scale-[1.04]',
           loaded ? 'opacity-100' : 'opacity-0',
@@ -765,23 +800,11 @@ export function ProfileTab() {
                   </span>
                 ) : isHttpUrl(item.result_url) ? (
                   item.gen_type === 'video' ? (
-                    isHttpUrl(item.preview_url) ? (
-                      <img
-                        src={item.preview_url}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        onError={() => handleMediaError(item)}
-                        className={cn(
-                          'h-full w-full object-cover opacity-80 transition-all duration-500 group-hover:scale-[1.04]',
-                          item.feed_blurred && !revealedIds.has(item.id) && 'scale-110 blur-xl'
-                        )}
-                      />
-                    ) : (
-                      <span className="flex h-full w-full items-center justify-center text-muted-foreground">
-                        <Play className="h-6 w-6 fill-current" />
-                      </span>
-                    )
+                    <ProfileFeedVideo
+                      src={item.preview_url || item.result_url}
+                      blurred={item.feed_blurred && !revealedIds.has(item.id)}
+                      onError={() => handleMediaError(item)}
+                    />
                   ) : (
                     <ProfileFeedImage
                       src={item.preview_url || item.result_url}
@@ -911,15 +934,14 @@ export function ProfileTab() {
           {isHttpUrl(previewItem.result_url) ? (
             previewItem.gen_type === 'video' ? (
               <video
-                src={previewItem.result_url}
+                src={normalizeMiniAppMediaUrl(previewItem.result_url)}
                 className="max-h-full w-auto max-w-full object-contain"
                 controls
                 autoPlay
+                muted
                 playsInline
-                onError={() => {
-                  handleMediaError(previewItem)
-                  setPreviewItem(null)
-                }}
+                preload="metadata"
+                onError={() => handleMediaError(previewItem)}
               />
             ) : (
               <img

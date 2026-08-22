@@ -6,7 +6,7 @@ import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import { runTrend } from '@/lib/trend-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
-import type { PromptItem } from '@/lib/types'
+import type { PromptItem, UploadedFile } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
@@ -38,6 +38,7 @@ export function TrendRunnerDialog({
   const [phase, setPhase] = useState<RunnerPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
+  const [uploadedReferences, setUploadedReferences] = useState<UploadedFile[]>([])
 
   const busy = phase === 'uploading' || phase === 'generating'
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
@@ -55,6 +56,7 @@ export function TrendRunnerDialog({
     setPhase('idle')
     setError(null)
     clearPreviews()
+    setUploadedReferences([])
     if (inputRef.current) inputRef.current.value = ''
   }, [clearPreviews, open])
 
@@ -62,7 +64,7 @@ export function TrendRunnerDialog({
 
   const handlePhotos = async (selectedFiles: File[]) => {
     if (!trend || busy || !selectedFiles.length) return
-    if (selectedFiles.length > MAX_REFERENCES) {
+    if (uploadedReferences.length + selectedFiles.length > MAX_REFERENCES) {
       setPhase('error')
       setError(`Можно загрузить максимум ${MAX_REFERENCES} фото`)
       return
@@ -78,23 +80,36 @@ export function TrendRunnerDialog({
       return
     }
 
-    clearPreviews()
     const localPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
-    previewRefs.current = localPreviews
-    setPreviewUrls(localPreviews)
+    previewRefs.current = [...previewRefs.current, ...localPreviews]
+    setPreviewUrls((current) => [...current, ...localPreviews])
     setError(null)
     setPhase('uploading')
 
     try {
-      const uploadedReferences = await Promise.all(
+      const uploaded = await Promise.all(
         selectedFiles.map((file) => uploadFile('image_reference', file)),
       )
-      for (const uploaded of uploadedReferences) addSavedReference(uploaded)
+      for (const reference of uploaded) addSavedReference(reference)
+      setUploadedReferences((current) => [...current, ...uploaded])
+      setPhase('idle')
+    } catch (cause) {
+      for (const previewUrl of localPreviews) URL.revokeObjectURL(previewUrl)
+      previewRefs.current = previewRefs.current.filter((url) => !localPreviews.includes(url))
+      setPreviewUrls((current) => current.filter((url) => !localPreviews.includes(url)))
+      setPhase('error')
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фото')
+    }
+  }
 
-      setPhase('generating')
+  const handleGenerate = async () => {
+    if (!trend || busy || !uploadedReferences.length) return
+    setError(null)
+    setPhase('generating')
+    try {
       const result = await runTrend(
         trend.id,
-        uploadedReferences.map((uploaded) => uploaded.url),
+        uploadedReferences.map((reference) => reference.url),
       )
       addTask(result.task)
       setCredits(result.credits)
@@ -147,8 +162,8 @@ export function TrendRunnerDialog({
             Загрузите свои фото
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            После загрузки генерация начнётся сразу. Модель, промпт, формат,
-            качество и остальные параметры уже настроены администратором.
+            Добавьте все нужные фото — можно по одному или несколькими заходами.
+            Генерация начнётся только после нажатия кнопки «Сгенерировать».
           </p>
         </div>
 
@@ -192,12 +207,14 @@ export function TrendRunnerDialog({
               : phase === 'generating'
                 ? 'Запускаю тренд…'
                 : phase === 'error'
-                  ? 'Выбрать фото заново'
-                  : 'Выбрать фото'}
+                  ? 'Добавить фото ещё раз'
+                  : uploadedReferences.length
+                    ? 'Добавить ещё фото'
+                    : 'Выбрать фото'}
           </span>
           {!busy ? (
             <span className="text-xs text-muted-foreground">
-              До {MAX_REFERENCES} изображений
+              Выбрано {uploadedReferences.length} из {MAX_REFERENCES}
             </span>
           ) : null}
         </label>
@@ -207,6 +224,21 @@ export function TrendRunnerDialog({
             {error}
           </p>
         ) : null}
+
+        <Button
+          type="button"
+          disabled={busy || uploadedReferences.length === 0}
+          onClick={() => void handleGenerate()}
+        >
+          {phase === 'generating' ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4" />
+          )}
+          {phase === 'generating'
+            ? 'Генерирую…'
+            : `Сгенерировать · ${uploadedReferences.length} фото`}
+        </Button>
 
         <Button
           type="button"
