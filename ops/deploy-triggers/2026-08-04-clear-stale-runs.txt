@@ -1,2 +1,2 @@
-trigger=miniapp-video-continuity-2026-08-16
-purpose=cancel stale CI/deploy runs from intermediate commits before deploying the final Mini App repeat, link and trends repair
+trigger=trends-default-landing-2026-08-22
+purpose=cancel stale CI/deploy runs from intermediate commits before deploying the final default-Trends Mini App landing and Telegram reactivation fix
