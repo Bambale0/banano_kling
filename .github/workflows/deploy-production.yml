@@ -8,6 +8,7 @@ on:
 permissions:
   actions: read
   contents: read
+  statuses: write
 
 concurrency:
   group: tanya-production
@@ -412,3 +413,35 @@ jobs:
 
           echo "::error::Production was not deployed. github_ssh=$GITHUB_SSH_PASSED nuromix=$NUROMIX_RESULT"
           exit 1
+
+  publish_status:
+    name: Publish production deploy status
+    needs: [ci_gate, github_ssh_deploy, nuromix_deploy, deployment_gate]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Publish tanya/deploy status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_GATE_RESULT: ${{ needs.deployment_gate.result }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          state=failure
+          description="Production deployment failed"
+          if [ "$DEPLOYMENT_GATE_RESULT" = success ]; then
+            state=success
+            description="Production backend and Mini App deployed at exact SHA"
+          fi
+
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -f state="$state" \
+            -f context='tanya/deploy' \
+            -f description="$description" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
