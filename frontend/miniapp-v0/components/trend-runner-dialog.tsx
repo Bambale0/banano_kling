@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ImagePlus, Loader2, RefreshCcw, Sparkles } from 'lucide-react'
+import { ImagePlus, Loader2, RefreshCcw, Sparkles, X } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import { runTrend } from '@/lib/trend-api'
@@ -12,6 +12,11 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 
 type RunnerPhase = 'idle' | 'uploading' | 'generating' | 'error'
 
+type ExactTrendSettings = NonNullable<PromptItem['generation_settings']> & {
+  required_reference_count?: number
+  reference_hint?: string
+}
+
 interface TrendRunnerDialogProps {
   trend: PromptItem | null
   open: boolean
@@ -20,6 +25,13 @@ interface TrendRunnerDialogProps {
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
 const MAX_REFERENCES = 12
+
+function requiredReferenceCount(trend: PromptItem | null): number | null {
+  const settings = trend?.generation_settings as ExactTrendSettings | null | undefined
+  const rawValue = Number(settings?.required_reference_count)
+  if (!Number.isFinite(rawValue) || rawValue < 1) return null
+  return Math.min(MAX_REFERENCES, Math.max(1, Math.trunc(rawValue)))
+}
 
 export function TrendRunnerDialog({
   trend,
@@ -42,6 +54,14 @@ export function TrendRunnerDialog({
 
   const busy = phase === 'uploading' || phase === 'generating'
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
+  const exactReferenceCount = requiredReferenceCount(trend)
+  const referenceLimit = exactReferenceCount ?? MAX_REFERENCES
+  const hasEnoughReferences = exactReferenceCount
+    ? uploadedReferences.length === exactReferenceCount
+    : uploadedReferences.length > 0
+  const referenceHint = String(
+    (trend?.generation_settings as ExactTrendSettings | null | undefined)?.reference_hint || '',
+  ).trim()
 
   const clearPreviews = useCallback(() => {
     for (const previewUrl of previewRefs.current) {
@@ -64,9 +84,13 @@ export function TrendRunnerDialog({
 
   const handlePhotos = async (selectedFiles: File[]) => {
     if (!trend || busy || !selectedFiles.length) return
-    if (uploadedReferences.length + selectedFiles.length > MAX_REFERENCES) {
+    if (uploadedReferences.length + selectedFiles.length > referenceLimit) {
       setPhase('error')
-      setError(`Можно загрузить максимум ${MAX_REFERENCES} фото`)
+      setError(
+        exactReferenceCount
+          ? `Для этого тренда нужно ровно ${exactReferenceCount} фото`
+          : `Можно загрузить максимум ${MAX_REFERENCES} фото`,
+      )
       return
     }
 
@@ -102,8 +126,19 @@ export function TrendRunnerDialog({
     }
   }
 
+  const removeReference = (index: number) => {
+    if (busy) return
+    const previewUrl = previewRefs.current[index]
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl)
+    previewRefs.current = previewRefs.current.filter((_, itemIndex) => itemIndex !== index)
+    setPreviewUrls((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setUploadedReferences((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setPhase('idle')
+    setError(null)
+  }
+
   const handleGenerate = async () => {
-    if (!trend || busy || !uploadedReferences.length) return
+    if (!trend || busy || !hasEnoughReferences) return
     setError(null)
     setPhase('generating')
     try {
@@ -159,65 +194,88 @@ export function TrendRunnerDialog({
         <div className="rounded-2xl border border-gold/25 bg-gold/10 p-4 text-center">
           <Sparkles className="mx-auto h-6 w-6 text-gold" />
           <p className="mt-2 text-sm font-semibold text-foreground">
-            Загрузите свои фото
+            {exactReferenceCount
+              ? `Загрузите ${exactReferenceCount} фото`
+              : 'Загрузите свои фото'}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Добавьте все нужные фото — можно по одному или несколькими заходами.
-            Генерация начнётся только после нажатия кнопки «Сгенерировать».
+            {referenceHint || (
+              exactReferenceCount
+                ? `Можно выбрать все ${exactReferenceCount} фото сразу или добавить их по одному. Генерация начнётся только после нажатия кнопки «Сгенерировать».`
+                : 'Добавьте все нужные фото — можно по одному или несколькими заходами. Генерация начнётся только после нажатия кнопки «Сгенерировать».'
+            )}
           </p>
         </div>
 
         {previewUrls.length ? (
           <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto rounded-2xl bg-secondary/20 p-2">
             {previewUrls.map((previewUrl, index) => (
-              <img
-                key={previewUrl}
-                src={previewUrl}
-                alt={`Референс ${index + 1}`}
-                className="h-28 w-full rounded-xl object-cover"
-              />
+              <div key={previewUrl} className="relative">
+                <img
+                  src={previewUrl}
+                  alt={`Референс ${index + 1}`}
+                  className="h-28 w-full rounded-xl object-cover"
+                />
+                {!busy ? (
+                  <button
+                    type="button"
+                    aria-label={`Удалить фото ${index + 1}`}
+                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white backdrop-blur transition hover:bg-black/85"
+                    onClick={() => removeReference(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                ) : null}
+                {exactReferenceCount ? (
+                  <span className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur">
+                    Фото {index + 1}
+                  </span>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : null}
 
-        <label className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition hover:border-gold/50 hover:text-foreground">
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
-            className="absolute inset-0 cursor-pointer opacity-0"
-            disabled={busy}
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files || [])
-              event.currentTarget.value = ''
-              void handlePhotos(files)
-            }}
-          />
-          {busy ? (
-            <Loader2 className="h-7 w-7 animate-spin text-gold" />
-          ) : phase === 'error' ? (
-            <RefreshCcw className="h-7 w-7 text-gold" />
-          ) : (
-            <ImagePlus className="h-7 w-7 text-gold" />
-          )}
-          <span className="font-medium">
-            {phase === 'uploading'
-              ? 'Загружаю референсы…'
-              : phase === 'generating'
-                ? 'Запускаю тренд…'
-                : phase === 'error'
-                  ? 'Добавить фото ещё раз'
-                  : uploadedReferences.length
-                    ? 'Добавить ещё фото'
-                    : 'Выбрать фото'}
-          </span>
-          {!busy ? (
-            <span className="text-xs text-muted-foreground">
-              Выбрано {uploadedReferences.length} из {MAX_REFERENCES}
+        {uploadedReferences.length < referenceLimit ? (
+          <label className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 bg-secondary/35 p-4 text-sm text-muted-foreground transition hover:border-gold/50 hover:text-foreground">
+            <input
+              ref={inputRef}
+              type="file"
+              multiple={referenceLimit - uploadedReferences.length > 1}
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
+              className="absolute inset-0 cursor-pointer opacity-0"
+              disabled={busy}
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files || [])
+                event.currentTarget.value = ''
+                void handlePhotos(files)
+              }}
+            />
+            {busy ? (
+              <Loader2 className="h-7 w-7 animate-spin text-gold" />
+            ) : phase === 'error' ? (
+              <RefreshCcw className="h-7 w-7 text-gold" />
+            ) : (
+              <ImagePlus className="h-7 w-7 text-gold" />
+            )}
+            <span className="font-medium">
+              {phase === 'uploading'
+                ? 'Загружаю референсы…'
+                : phase === 'generating'
+                  ? 'Запускаю тренд…'
+                  : phase === 'error'
+                    ? 'Добавить фото ещё раз'
+                    : uploadedReferences.length
+                      ? 'Добавить ещё фото'
+                      : 'Выбрать фото'}
             </span>
-          ) : null}
-        </label>
+            {!busy ? (
+              <span className="text-xs text-muted-foreground">
+                Выбрано {uploadedReferences.length} из {referenceLimit}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
 
         {error ? (
           <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -227,7 +285,7 @@ export function TrendRunnerDialog({
 
         <Button
           type="button"
-          disabled={busy || uploadedReferences.length === 0}
+          disabled={busy || !hasEnoughReferences}
           onClick={() => void handleGenerate()}
         >
           {phase === 'generating' ? (
@@ -237,7 +295,9 @@ export function TrendRunnerDialog({
           )}
           {phase === 'generating'
             ? 'Генерирую…'
-            : `Сгенерировать · ${uploadedReferences.length} фото`}
+            : exactReferenceCount && !hasEnoughReferences
+              ? `Добавьте ещё ${exactReferenceCount - uploadedReferences.length} фото`
+              : `Сгенерировать · ${uploadedReferences.length} фото`}
         </Button>
 
         <Button
