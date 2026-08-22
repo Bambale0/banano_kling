@@ -10,6 +10,7 @@ from bot.config import config
 from bot.pinterest_trend_api import setup_pinterest_trend_routes
 from bot.pinterest_trend_catalog import ensure_pinterest_trend_catalog
 from bot.trend_api import setup_trend_routes
+from bot.trend_preview_admin import setup_trend_preview_admin_routes
 
 
 def _miniapp_root() -> str:
@@ -39,6 +40,7 @@ def install_trend_route_compat() -> None:
     def setup_with_trend_route(app: web.Application) -> None:
         root = _miniapp_root()
         setup_pinterest_trend_routes(app, root)
+        setup_trend_preview_admin_routes(app, root)
         if ensure_pinterest_trend_catalog not in app.on_startup:
             app.on_startup.append(ensure_pinterest_trend_catalog)
         setup_trend_routes(app, root)
