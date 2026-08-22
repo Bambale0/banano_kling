@@ -8,11 +8,13 @@ allowed to improve likeness but never trigger generation by themselves.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from aiohttp import web
 
 from bot import pinterest_trend_api as pinterest_api
+from bot import trend_api as generic_trend_api
 from bot.trend_api import TrendRunValidationError
 
 MIN_PINTEREST_REFERENCES = 2
@@ -67,13 +69,31 @@ def _required_measurement(
     return value
 
 
+def _is_pinterest_prompt(prompt: Mapping[str, Any] | None) -> bool:
+    if not prompt:
+        return False
+    tags = {
+        str(tag or "").strip().lower()
+        for tag in list(prompt.get("tags") or [])
+        if str(tag or "").strip()
+    }
+    title = str(prompt.get("title") or "").strip().lower()
+    return (
+        "pinterest" in tags
+        or "pinterest-repeat" in tags
+        or "repeat-pinterest" in tags
+        or "pinterest" in title
+    )
+
+
 def install_pinterest_trend_flow_contract() -> None:
-    """Install guards before Pinterest routes are registered."""
+    """Install guards before Pinterest and generic trend routes are registered."""
 
     if getattr(pinterest_api, "_strict_manual_flow_installed", False):
         return
 
     original_handler = pinterest_api.miniapp_run_pinterest_repeat
+    original_generic_handler = generic_trend_api.miniapp_run_trend
     original_augmented_prompt = pinterest_api._augmented_prompt
 
     async def strict_manual_run(request: web.Request) -> web.Response:
@@ -109,6 +129,32 @@ def install_pinterest_trend_flow_contract() -> None:
 
         return await original_handler(request)
 
+    async def block_pinterest_on_generic_run(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                raw_trend_id = body.get("trend_id")
+                if str(raw_trend_id or "").isdigit():
+                    prompt = await generic_trend_api.get_prompt_by_id(
+                        int(raw_trend_id),
+                        approved_public_only=True,
+                    )
+                    if _is_pinterest_prompt(prompt):
+                        return web.json_response(
+                            {
+                                "ok": False,
+                                "error": (
+                                    "Для Pinterest-тренда загрузите референс и ваше фото, "
+                                    "укажите рост и вес и нажмите «Создать»"
+                                ),
+                            },
+                            status=400,
+                        )
+        except Exception:
+            # Preserve the ordinary generic handler's own validation/error mapping.
+            pass
+        return await original_generic_handler(request)
+
     def augmented_prompt(
         base_prompt: str,
         *,
@@ -134,4 +180,5 @@ def install_pinterest_trend_flow_contract() -> None:
     pinterest_api._reference_urls = _strict_reference_urls
     pinterest_api._augmented_prompt = augmented_prompt
     pinterest_api.miniapp_run_pinterest_repeat = strict_manual_run
+    generic_trend_api.miniapp_run_trend = block_pinterest_on_generic_run
     pinterest_api._strict_manual_flow_installed = True
