@@ -19,6 +19,22 @@ from bot.pinterest_trend_api import (
 logger = logging.getLogger(__name__)
 
 
+def _settings_with_preserved_preview_type(raw_settings) -> dict:
+    settings = dict(_PINTEREST_TOOL_SETTINGS)
+    try:
+        existing = (
+            json.loads(raw_settings)
+            if isinstance(raw_settings, str) and raw_settings.strip()
+            else dict(raw_settings or {})
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        existing = {}
+    preview_type = str(existing.get("preview_type") or "").strip().lower()
+    if preview_type in {"image", "video"}:
+        settings["preview_type"] = preview_type
+    return settings
+
+
 async def _system_trend_author():
     """Return a valid DB author even when production has no ADMIN_IDS configured."""
 
@@ -41,12 +57,11 @@ async def ensure_pinterest_trend_catalog(_: web.Application) -> None:
 
     author = await _system_trend_author()
     tags_json = json.dumps(_PINTEREST_TOOL_TAGS, ensure_ascii=False)
-    settings_json = json.dumps(_PINTEREST_TOOL_SETTINGS, ensure_ascii=False)
 
     async with db_backend.connect() as db:
         cursor = await db.execute(
             """
-            SELECT id
+            SELECT id, generation_settings
             FROM user_prompts
             WHERE title = ? OR tags LIKE ?
             ORDER BY id ASC
@@ -55,6 +70,12 @@ async def ensure_pinterest_trend_catalog(_: web.Application) -> None:
             (_PINTEREST_TOOL_TITLE, f'%"{_PINTEREST_TOOL_TAG}"%'),
         )
         row = await cursor.fetchone()
+        settings_json = json.dumps(
+            _settings_with_preserved_preview_type(
+                row["generation_settings"] if row else None
+            ),
+            ensure_ascii=False,
+        )
 
         if row:
             await db.execute(
