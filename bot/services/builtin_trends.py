@@ -64,20 +64,23 @@ def get_builtin_trend(prompt_id: int | str) -> dict[str, Any] | None:
     return deepcopy(pinterest_repeat_trend())
 
 
-def ensure_builtin_image_model_capabilities(image_models: Any) -> None:
-    """Expose provider-supported `auto` ratio for Nano Banana Pro.
+def is_builtin_auto_ratio_trend(
+    trend_id: int | str,
+    *,
+    model: str,
+    ratio: str,
+) -> bool:
+    """Allow provider-supported auto sizing only for the built-in recipe."""
 
-    Kie accepts `auto` for Nano Banana Pro image editing. The tuple of model
-    metadata contains mutable dictionaries, so this can be installed without
-    replacing the established Mini App model registry.
-    """
-
-    for item in image_models or ():
-        if not isinstance(item, dict) or item.get("id") != "banana_pro":
-            continue
-        ratios = item.get("ratios")
-        if isinstance(ratios, list) and "auto" not in ratios:
-            ratios.append("auto")
+    try:
+        normalized_id = int(trend_id)
+    except (TypeError, ValueError):
+        return False
+    return (
+        normalized_id == PINTEREST_REPEAT_TREND_ID
+        and model == "banana_pro"
+        and ratio == "auto"
+    )
 
 
 def install_builtin_trend_runtime() -> None:
@@ -123,8 +126,4 @@ def install_builtin_trend_runtime() -> None:
 
     trend_api_module.get_prompt_by_id = get_prompt_by_id_with_builtins
     trend_api_module.use_prompt = use_prompt_with_builtins
-
-    from bot import miniapp as miniapp_module
-
-    ensure_builtin_image_model_capabilities(miniapp_module.IMAGE_MODELS)
     trend_api_module._builtin_trends_installed = True
