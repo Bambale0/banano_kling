@@ -175,6 +175,7 @@ export interface TrendGenerationSettings {
   user_input: 'photo'
   model: string
   ratio: string
+  preview_type?: 'image' | 'video'
   reference_count?: number
   reference_labels?: string[]
   quality?: string
