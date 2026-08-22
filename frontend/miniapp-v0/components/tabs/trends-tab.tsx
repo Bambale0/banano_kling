@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { isBuiltinTrend, withBuiltinTrends } from '@/lib/builtin-trends'
 import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -111,7 +112,7 @@ export function TrendsTab() {
       const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
       // Keep a client-side guard as well, so a backend/cache regression cannot
       // leak ordinary public prompts into the curated trends section.
-      setItems(trends.filter(hasTrendTag))
+      setItems(withBuiltinTrends(trends.filter(hasTrendTag)))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
     } finally {
@@ -418,12 +419,18 @@ export function TrendsTab() {
                 </div>
                 <div className="space-y-2.5 p-3">
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
-                  <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
+                  <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model || 'Готовый шаблон'}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />Повторить</Button>
-                  <div className={isAdmin ? 'grid grid-cols-[1fr_auto] gap-2' : 'grid'}>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
-                    {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
-                  </div>
+                  {isBuiltinTrend(trend) ? (
+                    <div className="rounded-lg bg-secondary/40 px-2 py-1.5 text-center text-[10px] text-muted-foreground">
+                      Встроенный шаблон
+                    </div>
+                  ) : (
+                    <div className={isAdmin ? 'grid grid-cols-[1fr_auto] gap-2' : 'grid'}>
+                      <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
+                      {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
+                    </div>
+                  )}
                 </div>
               </article>
             )
