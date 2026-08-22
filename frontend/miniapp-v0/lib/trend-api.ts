@@ -33,8 +33,8 @@ export interface RunTrendResult {
 }
 
 export interface PinterestRepeatOptions {
-  heightCm?: number | null
-  weightKg?: number | null
+  heightCm: number
+  weightKg: number
 }
 
 function providerReferenceUrl(value: string): string {
@@ -142,13 +142,14 @@ export async function resolvePinterestReference(url: string): Promise<PinterestR
 export async function runPinterestRepeatTrend(
   trendId: number,
   referenceUrls: string[],
-  options: PinterestRepeatOptions = {},
+  options: PinterestRepeatOptions,
 ): Promise<RunTrendResult> {
   const payload = authorizedPayload()
   payload.trend_id = trendId
   payload.reference_urls = referenceUrls.map(providerReferenceUrl)
-  if (options.heightCm) payload.height_cm = options.heightCm
-  if (options.weightKg) payload.weight_kg = options.weightKg
+  payload.height_cm = options.heightCm
+  payload.weight_kg = options.weightKg
+  payload.confirmed = true
 
   const response = await fetch(`${getApiBasePath()}/trends/pinterest-repeat/run`, {
     method: 'POST',
