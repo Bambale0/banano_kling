@@ -186,8 +186,8 @@ jobs:
             echo "passed=false" >> "$GITHUB_OUTPUT"
           fi
 
-  docker_image:
-    name: GitHub runner — Production Docker image
+  miniapp_e2e:
+    name: GitHub runner — Mini App browser E2E
     runs-on: ubuntu-24.04
     needs: [lint, test]
     if: >-
@@ -195,6 +195,85 @@ jobs:
         always() &&
         needs.lint.outputs.passed == 'true' &&
         needs.test.outputs.passed == 'true'
+      }}
+    timeout-minutes: 35
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+    defaults:
+      run:
+        working-directory: frontend/miniapp-v0
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node 22
+        id: setup_node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/miniapp-v0/package-lock.json
+
+      - name: Install locked Mini App dependencies
+        id: dependencies
+        run: npm ci
+
+      - name: Build production Mini App export
+        id: build
+        run: npm run build
+
+      - name: Install Chromium runtime
+        id: chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare mounted static export
+        id: prepare
+        run: |
+          rm -rf .e2e-server
+          mkdir -p .e2e-server/mini-app
+          cp -R out/. .e2e-server/mini-app/
+
+      - name: Run critical browser E2E flows
+        id: browser_e2e
+        run: node e2e/critical-flows.mjs
+
+      - name: Record Mini App E2E result
+        id: result
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP: ${{ steps.setup_node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          CHROMIUM: ${{ steps.chromium.outcome }}
+          PREPARE: ${{ steps.prepare.outcome }}
+          E2E: ${{ steps.browser_e2e.outcome }}
+        run: |
+          if [ "$CHECKOUT" = success ] \
+            && [ "$SETUP" = success ] \
+            && [ "$DEPENDENCIES" = success ] \
+            && [ "$BUILD" = success ] \
+            && [ "$CHROMIUM" = success ] \
+            && [ "$PREPARE" = success ] \
+            && [ "$E2E" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docker_image:
+    name: GitHub runner — Production Docker image
+    runs-on: ubuntu-24.04
+    needs: [lint, test, miniapp_e2e]
+    if: >-
+      ${{
+        always() &&
+        needs.lint.outputs.passed == 'true' &&
+        needs.test.outputs.passed == 'true' &&
+        needs.miniapp_e2e.outputs.passed == 'true'
       }}
     timeout-minutes: 45
     permissions:
