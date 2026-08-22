@@ -1,2 +1,2 @@
-trigger=tanya-production-verifiable-final-2026-08-22
-purpose=cancel stale runs and execute the final Trends/Pinterest production repair with explicit tanya/ci and tanya/deploy commit statuses
+trigger=tanya-production-observable-final-2026-08-22
+purpose=cancel stale runs and execute only the final Tanya repair while exposing exact CI/deploy run links as commit statuses
