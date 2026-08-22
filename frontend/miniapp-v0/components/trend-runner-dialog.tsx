@@ -201,7 +201,7 @@ export function TrendRunnerDialog({
           <p className="mt-1 text-xs text-muted-foreground">
             {referenceHint || (
               exactReferenceCount
-                ? `Можно выбрать все ${exactReferenceCount} фото сразу или добавить их по одному. Генерация начнётся только после нажатия кнопки «Сгенерировать».`
+                ? `Добавляйте фото по одному в указанном порядке. Генерация начнётся только после нажатия кнопки «Сгенерировать».`
                 : 'Добавьте все нужные фото — можно по одному или несколькими заходами. Генерация начнётся только после нажатия кнопки «Сгенерировать».'
             )}
           </p>
@@ -241,7 +241,7 @@ export function TrendRunnerDialog({
             <input
               ref={inputRef}
               type="file"
-              multiple={referenceLimit - uploadedReferences.length > 1}
+              multiple={!exactReferenceCount && referenceLimit - uploadedReferences.length > 1}
               accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
               className="absolute inset-0 cursor-pointer opacity-0"
               disabled={busy}
@@ -266,8 +266,10 @@ export function TrendRunnerDialog({
                   : phase === 'error'
                     ? 'Добавить фото ещё раз'
                     : uploadedReferences.length
-                      ? 'Добавить ещё фото'
-                      : 'Выбрать фото'}
+                      ? `Добавить фото ${uploadedReferences.length + 1}`
+                      : exactReferenceCount
+                        ? 'Добавить фото 1'
+                        : 'Выбрать фото'}
             </span>
             {!busy ? (
               <span className="text-xs text-muted-foreground">
