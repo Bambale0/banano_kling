@@ -558,62 +558,64 @@ export function TrendRunnerDialog({
               </div>
             ) : null}
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
-                  1–5 ракурсов одного человека
-                </p>
-                <span className="text-[10px] text-muted-foreground">{identityAngles.length}/{MAX_PINTEREST_ANGLES}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {identityAnglePreviews.map((preview, index) => (
-                  <div key={`${preview}-${index}`} className="relative h-14 w-14 overflow-hidden rounded-xl border border-border/60">
-                    <img src={preview} alt={`Дополнительный ракурс ${index + 1}`} className="h-full w-full object-cover" />
-                    {!busy ? (
-                      <button
-                        type="button"
-                        aria-label={`Удалить ракурс ${index + 1}`}
-                        onClick={() => removeIdentityAngle(index)}
-                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-foreground"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+            {pinterestPrimaryReady ? (
+              <>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+                      1–5 ракурсов одного человека
+                    </p>
+                    <span className="text-[10px] text-muted-foreground">{identityAngles.length}/{MAX_PINTEREST_ANGLES}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {identityAnglePreviews.map((preview, index) => (
+                      <div key={`${preview}-${index}`} className="relative h-14 w-14 overflow-hidden rounded-xl border border-border/60">
+                        <img src={preview} alt={`Дополнительный ракурс ${index + 1}`} className="h-full w-full object-cover" />
+                        {!busy ? (
+                          <button
+                            type="button"
+                            aria-label={`Удалить ракурс ${index + 1}`}
+                            onClick={() => removeIdentityAngle(index)}
+                            className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-foreground"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                    {identityAngles.length < MAX_PINTEREST_ANGLES ? (
+                      <label className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border/70 bg-secondary/25 text-muted-foreground hover:border-gold/50 hover:text-foreground">
+                        <input
+                          ref={(node) => { inputRefs.current[2] = node }}
+                          type="file"
+                          multiple
+                          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          disabled={busy}
+                          onChange={(event) => {
+                            const files = Array.from(event.currentTarget.files || [])
+                            event.currentTarget.value = ''
+                            void uploadPinterestAngles(files)
+                          }}
+                        />
+                        {phase === 'uploading' ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Plus className="h-5 w-5" />
+                        )}
+                      </label>
                     ) : null}
                   </div>
-                ))}
-                {identityAngles.length < MAX_PINTEREST_ANGLES ? (
-                  <label className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border/70 bg-secondary/25 text-muted-foreground hover:border-gold/50 hover:text-foreground">
-                    <input
-                      ref={(node) => { inputRefs.current[2] = node }}
-                      type="file"
-                      multiple
-                      accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
-                      className="absolute inset-0 cursor-pointer opacity-0"
-                      disabled={busy}
-                      onChange={(event) => {
-                        const files = Array.from(event.currentTarget.files || [])
-                        event.currentTarget.value = ''
-                        void uploadPinterestAngles(files)
-                      }}
-                    />
-                    {phase === 'uploading' ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <Plus className="h-5 w-5" />
-                    )}
-                  </label>
-                ) : null}
-              </div>
-              <p className="text-[10px] leading-relaxed text-muted-foreground">
-                Дополнительные ракурсы необязательны, но помогают точнее сохранить лицо, волосы и пропорции.
-              </p>
-            </div>
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    Дополнительные ракурсы необязательны, но помогают точнее сохранить лицо, волосы и пропорции.
+                  </p>
+                </div>
 
-            {pinterestPrimaryReady ? (
-              <div className="space-y-1 text-[11px] text-muted-foreground">
-                <p><span className="text-emerald-500">●</span> сцена, свет и поза считаны с референса</p>
-                <p><span className="text-emerald-500">●</span> внешность берётся только с ваших фото</p>
-              </div>
+                <div className="space-y-1 text-[11px] text-muted-foreground">
+                  <p><span className="text-emerald-500">●</span> сцена, свет и поза считаны с референса</p>
+                  <p><span className="text-emerald-500">●</span> внешность берётся только с ваших фото</p>
+                </div>
+              </>
             ) : null}
 
             <div className="grid grid-cols-2 gap-3">
