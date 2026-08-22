@@ -220,7 +220,7 @@ export function TrendRunnerDialog({
     } catch (cause) {
       for (const previewUrl of localPreviews) URL.revokeObjectURL(previewUrl)
       previewRefs.current = previewRefs.current.filter((url) => !localPreviews.includes(url))
-      setPreviewUrls((current) => current.filter((url) => !localPreviews.includes(url)))
+      setPreviewUrls((current) => current.filter((url) => !url || !localPreviews.includes(url)))
       setPhase('error')
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фото')
     }
