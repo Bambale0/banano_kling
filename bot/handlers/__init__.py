@@ -19,6 +19,7 @@ from bot.services.publication_scope_postgres_compat import (
 from . import trends_compat as trends_compat_module
 from .feed_model_filter_compat import install_feed_model_filter_compat
 from .feed_model_filter_compat import router as feed_model_filter_compat_router
+from .miniapp_launch_revision_compat import install_miniapp_launch_revision_compat
 from .miniapp_regression_safety import install_miniapp_regression_safety
 from .miniapp_video_continuity_compat import install_miniapp_video_continuity_compat
 from .own_profile_feed_compat import install_own_profile_feed_compat
@@ -100,6 +101,10 @@ install_lava_invoice_compat(payments_module, lava_checkout_module)
 legacy_payments_router = payments_module.router
 lava_checkout_router = lava_checkout_module.router
 legacy_common_router = common_module.router
+
+# Version only Telegram launch URLs with the immutable Docker image revision.
+# The configured Mini App base URL stays clean for backend redirects/assets.
+install_miniapp_launch_revision_compat(common_module)
 
 # Long Telegram prompts may arrive as several messages because a single text
 # message is capped by Telegram. Delay only actual generation prompt handlers
