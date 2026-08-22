@@ -1,2 +1,2 @@
-trigger=tanya-production-repair-final-2026-08-22
-purpose=cancel stale runs and deploy only the final Trends default, Pinterest self-heal, DB portability and production Mini App URL invariant
+trigger=tanya-production-verifiable-final-2026-08-22
+purpose=cancel stale runs and execute the final Trends/Pinterest production repair with explicit tanya/ci and tanya/deploy commit statuses
