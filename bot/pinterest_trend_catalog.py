@@ -84,7 +84,7 @@ async def ensure_pinterest_trend_catalog(_: web.Application) -> None:
             )
             trend_id = int(row["id"])
         else:
-            cursor = await db.execute(
+            await db.execute(
                 """
                 INSERT INTO user_prompts (
                     author_id,
@@ -112,7 +112,20 @@ async def ensure_pinterest_trend_catalog(_: web.Application) -> None:
                     settings_json,
                 ),
             )
-            trend_id = int(cursor.lastrowid)
+            cursor = await db.execute(
+                """
+                SELECT id
+                FROM user_prompts
+                WHERE title = ? OR tags LIKE ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (_PINTEREST_TOOL_TITLE, f'%"{_PINTEREST_TOOL_TAG}"%'),
+            )
+            inserted = await cursor.fetchone()
+            if not inserted:
+                raise RuntimeError("Pinterest trend insert completed without a catalog row")
+            trend_id = int(inserted["id"])
 
         await db.commit()
 
