@@ -17,6 +17,7 @@ from bot.database import (
     touch_saved_references,
     use_prompt,
 )
+from bot.services.builtin_trends import is_builtin_auto_ratio_trend
 from bot.services.media_input_utils import missing_local_upload_sources
 from bot.services.preset_manager import preset_manager
 from bot.video_reference_policy import apply_video_reference_cost
@@ -325,7 +326,12 @@ async def _run_image_trend(
     )
     if not model_meta:
         raise TrendRunValidationError("Модель фото-тренда больше недоступна")
-    if trend.ratio not in model_meta.get("ratios", []):
+    ratio_supported = trend.ratio in model_meta.get("ratios", [])
+    if not ratio_supported and not is_builtin_auto_ratio_trend(
+        trend.trend_id,
+        model=trend.model,
+        ratio=trend.ratio,
+    ):
         raise TrendRunValidationError("Формат фото-тренда больше не поддерживается")
 
     max_references = int(model_meta.get("max_references", 0) or 0)
