@@ -61,6 +61,7 @@ def test_pinterest_catalog_is_a_strict_startup_and_list_requirement():
     assert 'source == "tag" and tag == "trend"' in routes
     assert "await ensure_pinterest_trend_catalog(request.app)" in routes
     assert "get_master_partner_user" in catalog_source
+    assert "db.row_factory = db_backend.Row" in catalog_source
     assert "is_public = TRUE" in catalog_source
     assert "status = 'approved'" in catalog_source
     assert 'model = \'banana_pro\'' in catalog_source
