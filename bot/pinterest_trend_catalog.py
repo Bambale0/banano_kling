@@ -59,6 +59,10 @@ async def ensure_pinterest_trend_catalog(_: web.Application) -> None:
     tags_json = json.dumps(_PINTEREST_TOOL_TAGS, ensure_ascii=False)
 
     async with db_backend.connect() as db:
+        # Both SQLite and the PostgreSQL compatibility layer support the shared
+        # Row mapping. Without this, SQLite returns tuples and the strict
+        # verifier crashes when reading generation_settings by column name.
+        db.row_factory = db_backend.Row
         cursor = await db.execute(
             """
             SELECT id, generation_settings
