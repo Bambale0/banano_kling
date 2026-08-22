@@ -39,7 +39,11 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
     if not ratio:
         ratio = "16:9" if kind == "video" else "1:1"
 
-    return {"kind": kind, "ratio": ratio}
+    public_settings = {"kind": kind, "ratio": ratio}
+    preview_type = str(settings.get("preview_type") or "").strip().lower()
+    if preview_type in {"image", "video"}:
+        public_settings["preview_type"] = preview_type
+    return public_settings
 
 
 def sanitize_prompt_for_public(
