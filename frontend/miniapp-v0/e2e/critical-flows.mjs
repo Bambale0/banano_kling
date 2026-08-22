@@ -177,12 +177,22 @@ try {
 
   await page.addInitScript(() => {
     window.__openedLinks = []
+    window.__telegramEventHandlers = {}
     window.Telegram = {
       WebApp: {
         initData: 'query_id=e2e',
         initDataUnsafe: {},
         ready() {},
         expand() {},
+        onEvent(eventType, handler) {
+          const handlers = window.__telegramEventHandlers[eventType] || []
+          if (!handlers.includes(handler)) handlers.push(handler)
+          window.__telegramEventHandlers[eventType] = handlers
+        },
+        offEvent(eventType, handler) {
+          const handlers = window.__telegramEventHandlers[eventType] || []
+          window.__telegramEventHandlers[eventType] = handlers.filter((item) => item !== handler)
+        },
         openLink(url) {
           window.__openedLinks.push(url)
         },
@@ -341,6 +351,22 @@ try {
     waitUntil: 'networkidle',
   })
   await page.getByText('Онлайн', { exact: true }).waitFor()
+
+  // Default landing E2E: a normal Mini App launch opens Trends before any nav click.
+  await page.getByText('Curated Video', { exact: true }).waitFor()
+  await page.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
+  assert.equal(promptsPayload?.source, 'tag')
+  assert.equal(promptsPayload?.tag, 'trend')
+  assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
+
+  // Telegram can keep the WebView alive between openings. Re-activation must
+  // restore the product default for sessions without an actionable deep link.
+  await page.getByRole('button', { name: 'Фото', exact: true }).click()
+  await page.getByText('Curated Video', { exact: true }).waitFor({ state: 'hidden' })
+  await page.evaluate(() => {
+    for (const handler of window.__telegramEventHandlers?.activated || []) handler()
+  })
+  await page.getByText('Curated Video', { exact: true }).waitFor()
 
   // Payment E2E: form email -> backend payload -> Telegram WebApp.openLink.
   await page.locator('header button').last().click()
