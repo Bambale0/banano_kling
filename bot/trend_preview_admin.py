@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -75,15 +76,23 @@ async def miniapp_admin_update_trend_preview(request: web.Request) -> web.Respon
 
         preview_url = _validate_preview_url(body.get("preview_url"))
         preview_kind = _validate_preview_kind(body.get("preview_kind"), preview_url)
+        generation_settings = dict(prompt.get("generation_settings") or {})
+        generation_settings["preview_type"] = preview_kind
 
         async with db_backend.connect() as db:
             await db.execute(
                 """
                 UPDATE user_prompts
-                SET preview_url = ?, updated_at = CURRENT_TIMESTAMP
+                SET preview_url = ?,
+                    generation_settings = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (preview_url, prompt_id),
+                (
+                    preview_url,
+                    json.dumps(generation_settings, ensure_ascii=False),
+                    prompt_id,
+                ),
             )
             await db.commit()
 
