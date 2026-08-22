@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import parse_qsl
 
+PUBLIC_TREND_MAX_REFERENCES = 12
+PUBLIC_TREND_REFERENCE_HINT_MAX_LENGTH = 240
+
 
 def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     if not prompt:
@@ -17,7 +20,7 @@ def is_trend_prompt(prompt: Mapping[str, Any] | None) -> bool:
     )
 
 
-def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
+def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, Any]:
     raw_settings = prompt.get("generation_settings")
     settings = raw_settings if isinstance(raw_settings, Mapping) else {}
     tags = {
@@ -39,7 +42,23 @@ def public_trend_settings(prompt: Mapping[str, Any]) -> dict[str, str]:
     if not ratio:
         ratio = "16:9" if kind == "video" else "1:1"
 
-    return {"kind": kind, "ratio": ratio}
+    public_settings: dict[str, Any] = {"kind": kind, "ratio": ratio}
+
+    raw_required_count = settings.get("required_reference_count")
+    try:
+        required_count = int(raw_required_count)
+    except (TypeError, ValueError):
+        required_count = 0
+    if 1 <= required_count <= PUBLIC_TREND_MAX_REFERENCES:
+        public_settings["required_reference_count"] = required_count
+
+    reference_hint = str(settings.get("reference_hint") or "").strip()
+    if reference_hint:
+        public_settings["reference_hint"] = reference_hint[
+            :PUBLIC_TREND_REFERENCE_HINT_MAX_LENGTH
+        ]
+
+    return public_settings
 
 
 def sanitize_prompt_for_public(
