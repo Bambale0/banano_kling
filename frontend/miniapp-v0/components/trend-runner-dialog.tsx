@@ -49,7 +49,7 @@ function isPinterestRepeatItem(trend: PromptItem | null): boolean {
   )
 }
 
-function parseRequiredNumber(value: string): number | null {
+function parseOptionalNumber(value: string): number | null {
   const normalized = value.trim()
   if (!normalized) return null
   const parsed = Number(normalized)
@@ -103,8 +103,8 @@ export function TrendRunnerDialog({
   const completedReferences = uploadedReferences.filter(
     (reference): reference is UploadedFile => Boolean(reference),
   )
-  const parsedHeight = parseRequiredNumber(heightCm)
-  const parsedWeight = parseRequiredNumber(weightKg)
+  const parsedHeight = parseOptionalNumber(heightCm)
+  const parsedWeight = parseOptionalNumber(weightKg)
   const validHeight = parsedHeight !== null && parsedHeight >= 120 && parsedHeight <= 230
   const validWeight = parsedWeight !== null && parsedWeight >= 30 && parsedWeight <= 250
   const pinterestPrimaryReady = Boolean(uploadedReferences[0] && uploadedReferences[1])
@@ -364,8 +364,8 @@ export function TrendRunnerDialog({
         : completedReferences.map((reference) => reference.url)
       const result = pinterestRepeat
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
-            heightCm: parsedHeight as number,
-            weightKg: parsedWeight as number,
+            heightCm: parseOptionalNumber(heightCm) as number,
+            weightKg: parseOptionalNumber(weightKg) as number,
           })
         : await runTrend(trend.id, referenceUrls)
       addTask(result.task)
@@ -612,8 +612,8 @@ export function TrendRunnerDialog({
                 </div>
 
                 <div className="space-y-1 text-[11px] text-muted-foreground">
-                  <p><span className="text-emerald-500">●</span> сцена, свет и поза считаны с референса</p>
-                  <p><span className="text-emerald-500">●</span> внешность берётся только с ваших фото</p>
+                  <p><span className="text-emerald-500">●</span> сцена, свет и поза считаются с референса</p>
+                  <p><span className="text-emerald-500">●</span> лицо и внешность берутся только с твоего фото</p>
                 </div>
               </>
             ) : null}
