@@ -506,7 +506,8 @@ try {
     kind: 'video',
     filename: 'trend.mp4',
   })
-  await page.locator('input[type="file"]').setInputFiles({
+  const createTrendDialog = page.getByRole('dialog')
+  await createTrendDialog.locator('input[type="file"]').setInputFiles({
     name: 'trend.mp4',
     mimeType: 'video/mp4',
     buffer: Buffer.from([0, 0, 0, 24, 102, 116, 121, 112]),
