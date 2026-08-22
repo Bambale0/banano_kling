@@ -1,2 +1,2 @@
-trigger=trends-pinterest-production-repair-final-2026-08-22
-purpose=cancel all stale intermediate runs and execute only the final Trends landing, Pinterest catalog and production Mini App URL repair pipeline
+trigger=tanya-production-repair-final-2026-08-22
+purpose=cancel stale runs and deploy only the final Trends default, Pinterest self-heal, DB portability and production Mini App URL invariant
