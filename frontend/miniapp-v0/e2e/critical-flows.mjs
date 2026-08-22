@@ -37,12 +37,14 @@ const bootstrapPayload = {
   image_models: [
     {
       id: 'banana_pro',
-      label: 'Banana Pro',
+      label: 'Nano Banana Pro',
       description: 'Image model',
       cost: 2,
-      ratios: ['1:1'],
+      ratios: ['1:1', '9:16'],
       requires_reference: false,
-      max_references: 3,
+      max_references: 8,
+      qualities: ['1K', '2K', '4K'],
+      quality_costs: { '1K': 8, '2K': 12, '4K': 18 },
     },
   ],
   video_models: [
@@ -96,6 +98,33 @@ const curatedTrend = {
   status: 'approved',
 }
 
+const pinterestTrend = {
+  id: 13,
+  title: 'Повтори фото с Pinterest',
+  description: 'Повтори сцену, свет и позу с Pinterest — со своей внешностью',
+  prompt_text: 'Trusted Pinterest repeat prompt',
+  category: 'photo',
+  tags: ['trend', 'pinterest', 'pinterest-repeat', 'portrait', 'realism'],
+  uses_count: 0,
+  likes: 0,
+  preview_url: null,
+  model: 'banana_pro',
+  generation_settings: {
+    kind: 'image',
+    user_input: 'photo',
+    model: 'banana_pro',
+    ratio: '9:16',
+    quality: '2K',
+    count: 1,
+    reference_count: 2,
+    reference_labels: ['РЕФЕРЕНС', 'ТЫ'],
+    nsfw_checker: false,
+    nsfw_enabled: false,
+  },
+  author_id: 1,
+  status: 'approved',
+}
+
 const ordinaryPrompt = {
   id: 12,
   title: 'Ordinary Prompt',
@@ -142,7 +171,9 @@ try {
   let paymentPayload = null
   let promptsPayload = null
   let trendGenerationPayload = null
-  let trendPhotoUploadExpected = false
+  let pinterestReferencePayload = null
+  let pinterestGenerationPayload = null
+  const uploadQueue = []
 
   await page.addInitScript(() => {
     window.__openedLinks = []
@@ -209,7 +240,46 @@ try {
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          prompts: [curatedTrend, ordinaryPrompt],
+          prompts: [curatedTrend, pinterestTrend, ordinaryPrompt],
+        }),
+      })
+      return
+    }
+
+    if (path.endsWith('/trends/pinterest-reference')) {
+      pinterestReferencePayload = JSON.parse(request.postData() || '{}')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          source_url: pinterestReferencePayload.url,
+          image_url: 'https://i.pinimg.com/736x/e2/e2/e2/reference.jpg',
+        }),
+      })
+      return
+    }
+
+    if (path.endsWith('/trends/pinterest-repeat/run')) {
+      pinterestGenerationPayload = JSON.parse(request.postData() || '{}')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          status: 'done',
+          task_id: 'pinterest-e2e-task',
+          saved_url: 'https://cdn.example/pinterest-result.jpg',
+          task_type: 'image',
+          credits: 103,
+          cost: 12,
+          model: 'banana_pro',
+          model_label: 'Nano Banana Pro',
+          aspect_ratio: '9:16',
+          duration: null,
+          prompt_hidden: true,
+          prompt_actions_allowed: false,
+          trend_id: pinterestTrend.id,
         }),
       })
       return
@@ -241,18 +311,19 @@ try {
     }
 
     if (path.endsWith('/upload')) {
-      const isTrendPhoto = trendPhotoUploadExpected
-      trendPhotoUploadExpected = false
+      const queuedUpload = uploadQueue.shift() || {
+        url: 'https://cdn.example/trend-upload.mp4',
+        kind: 'video',
+        filename: 'trend.mp4',
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          url: isTrendPhoto
-            ? 'https://cdn.example/user-trend-photo.jpg'
-            : 'https://cdn.example/trend-upload.mp4',
-          kind: isTrendPhoto ? 'image' : 'video',
-          filename: isTrendPhoto ? 'user-photo.jpg' : 'trend.mp4',
+          url: queuedUpload.url,
+          kind: queuedUpload.kind,
+          filename: queuedUpload.filename,
           reference: null,
         }),
       })
@@ -288,12 +359,14 @@ try {
   // Trends E2E: server-side tag query + client-side filtering.
   await page.getByRole('button', { name: /Тренды/ }).click()
   await page.getByText('Curated Video', { exact: true }).waitFor()
+  await page.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
   assert.equal(promptsPayload?.source, 'tag')
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
 
-  // User trend E2E: references only, no settings, immediate server-side run.
-  await page.getByRole('button', { name: 'Повторить', exact: true }).click()
+  // Generic user trend E2E: uploading alone must NOT start generation anymore.
+  const curatedCard = page.locator('article').filter({ hasText: curatedTrend.title })
+  await curatedCard.getByRole('button', { name: 'Повторить', exact: true }).click()
   const trendRunner = page.getByRole('dialog')
   await trendRunner.getByText('Загрузите свои фото', { exact: true }).waitFor()
   assert.equal(await trendRunner.locator('select').count(), 0)
@@ -301,15 +374,24 @@ try {
   assert.equal(await trendRunner.getByText('Формат', { exact: true }).count(), 0)
   assert.equal(await trendRunner.getByText('Длительность', { exact: true }).count(), 0)
 
-  trendPhotoUploadExpected = true
-  const generatedResponse = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith('/trends/run'),
-  )
+  uploadQueue.push({
+    url: 'https://cdn.example/user-trend-photo.jpg',
+    kind: 'image',
+    filename: 'user-photo.jpg',
+  })
   await trendRunner.locator('input[type="file"]').setInputFiles({
     name: 'user-photo.jpg',
     mimeType: 'image/jpeg',
     buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
   })
+  await trendRunner.getByText('Сгенерировать · 1 фото', { exact: true }).waitFor()
+  await page.waitForTimeout(100)
+  assert.equal(trendGenerationPayload, null, 'Uploading a trend reference must not auto-run')
+
+  const generatedResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/trends/run'),
+  )
+  await trendRunner.getByRole('button', { name: 'Сгенерировать · 1 фото', exact: true }).click()
   await generatedResponse
 
   assert.equal(trendGenerationPayload?.trend_id, curatedTrend.id)
@@ -337,9 +419,93 @@ try {
   await page.mouse.click(10, 10)
   await taskDetailTitle.waitFor({ state: 'hidden' })
 
+  // Pinterest repeat E2E: Pinterest URL -> identity photo -> measurements -> explicit Create.
+  await page.getByRole('button', { name: /Тренды/ }).click()
+  const pinterestCard = page.locator('article').filter({ hasText: pinterestTrend.title })
+  await pinterestCard.getByRole('button', { name: 'Повторить', exact: true }).click()
+  const pinterestRunner = page.getByRole('dialog')
+  await pinterestRunner.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
+  await pinterestRunner.getByText('РЕФЕРЕНС', { exact: true }).waitFor()
+  await pinterestRunner.getByText('ТЫ', { exact: true }).waitFor()
+
+  const pinterestFileInputs = pinterestRunner.locator('input[type="file"]')
+  assert.equal(await pinterestFileInputs.count(), 2)
+  const createButton = pinterestRunner.getByRole('button', { name: 'Создать →', exact: true })
+  assert.equal(await createButton.isDisabled(), true)
+
+  const pinterestUrl = 'https://www.pinterest.com/pin/123456789/'
+  await pinterestRunner.getByPlaceholder('Ссылка на пин с Pinterest').fill(pinterestUrl)
+  const pinterestReferenceResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/trends/pinterest-reference'),
+  )
+  await pinterestRunner.getByRole('button', { name: 'Загрузить', exact: true }).click()
+  await pinterestReferenceResponse
+
+  assert.equal(pinterestReferencePayload?.url, pinterestUrl)
+  assert.equal(await createButton.isDisabled(), true, 'One reference must not be enough to generate')
+  assert.equal(pinterestGenerationPayload, null)
+
+  uploadQueue.push({
+    url: 'https://cdn.example/pinterest-user.jpg',
+    kind: 'image',
+    filename: 'pinterest-user.jpg',
+  })
+  await pinterestFileInputs.nth(1).setInputFiles({
+    name: 'pinterest-user.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+  })
+
+  const heightInput = pinterestRunner.locator('label').filter({ hasText: 'Рост' }).locator('input')
+  const weightInput = pinterestRunner.locator('label').filter({ hasText: 'Вес' }).locator('input')
+  await heightInput.fill('172')
+  await weightInput.fill('64')
+
+  await pinterestRunner.getByText('Источник', { exact: true }).waitFor()
+  assert.equal(await createButton.isDisabled(), false)
+  assert.equal(pinterestGenerationPayload, null, 'Two references must still require explicit Create')
+
+  const pinterestRunResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith('/trends/pinterest-repeat/run'),
+  )
+  await createButton.click()
+  await pinterestRunResponse
+
+  assert.equal(pinterestGenerationPayload?.trend_id, pinterestTrend.id)
+  assert.deepEqual(pinterestGenerationPayload?.reference_urls, [
+    'https://i.pinimg.com/736x/e2/e2/e2/reference.jpg',
+    'https://cdn.example/pinterest-user.jpg',
+  ])
+  assert.equal(pinterestGenerationPayload?.height_cm, 172)
+  assert.equal(pinterestGenerationPayload?.weight_kg, 64)
+  for (const forbiddenField of [
+    'model',
+    'prompt',
+    'ratio',
+    'quality',
+    'count',
+    'generation_settings',
+  ]) {
+    assert.equal(
+      Object.hasOwn(pinterestGenerationPayload || {}, forbiddenField),
+      false,
+      `Pinterest request must not allow client override of ${forbiddenField}`,
+    )
+  }
+
+  await taskDetailTitle.waitFor()
+  await page.mouse.click(10, 10)
+  await taskDetailTitle.waitFor({ state: 'hidden' })
+
   // Admin upload E2E: uploaded preview survives duration/model changes.
+  await page.getByRole('button', { name: /Тренды/ }).click()
   await page.getByRole('button', { name: 'Добавить', exact: true }).click()
   await page.getByRole('button', { name: 'Видео-тренд', exact: true }).click()
+  uploadQueue.push({
+    url: 'https://cdn.example/trend-upload.mp4',
+    kind: 'video',
+    filename: 'trend.mp4',
+  })
   await page.locator('input[type="file"]').setInputFiles({
     name: 'trend.mp4',
     mimeType: 'video/mp4',
