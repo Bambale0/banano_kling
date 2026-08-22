@@ -386,7 +386,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async function routeStartParam() {
       try {
         if (startTarget.kind === 'ref') {
-          setActiveTabState(0)
+          setActiveTabState(5)
           return
         }
 
