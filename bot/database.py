@@ -3971,7 +3971,21 @@ async def _prune_saved_references_for_user_id(
             [*deleted_urls, *delete_ids],
         )
         still_used_urls = {str(row[0]) for row in await cursor.fetchall() if row[0]}
-        removable_urls = [url for url in deleted_urls if url not in still_used_urls]
+        cursor = await db.execute(
+            f"""
+            SELECT DISTINCT preview_url
+            FROM user_prompts
+            WHERE preview_url IN ({url_placeholders})
+              AND status IN ('pending', 'approved')
+            """,
+            deleted_urls,
+        )
+        prompt_preview_urls = {str(row[0]) for row in await cursor.fetchall() if row[0]}
+        removable_urls = [
+            url
+            for url in deleted_urls
+            if url not in still_used_urls and url not in prompt_preview_urls
+        ]
 
     await db.execute(
         f"DELETE FROM saved_references WHERE id IN ({id_placeholders})",
@@ -4113,6 +4127,16 @@ async def cleanup_orphaned_reference_files(max_age_seconds: int = 24 * 3600) -> 
             "SELECT file_url FROM saved_references WHERE file_url IS NOT NULL AND TRIM(file_url) != ''"
         )
         rows = await cursor.fetchall()
+        prompt_cursor = await db.execute(
+            """
+            SELECT preview_url
+            FROM user_prompts
+            WHERE preview_url IS NOT NULL
+              AND TRIM(preview_url) != ''
+              AND status IN ('pending', 'approved')
+            """
+        )
+        rows.extend(await prompt_cursor.fetchall())
 
     for row in rows:
         local_path = resolve_local_upload_path(str(row[0] or ""))
@@ -5198,6 +5222,27 @@ async def get_prompt_by_id(prompt_id: int, *, approved_public_only: bool = False
         cursor = await db.execute(sql, params)
         row = await cursor.fetchone()
     return _prompt_to_dict(_row_to_user_prompt(row))
+
+
+async def update_prompt_preview_url(prompt_id: int, preview_url: str) -> Optional[dict[str, Any]]:
+    preview_url = str(preview_url or "").strip()
+    if not prompt_id or not preview_url:
+        return None
+
+    async with db_backend.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """
+            UPDATE user_prompts
+            SET preview_url = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND status IN ('pending', 'approved')
+            """,
+            (preview_url, int(prompt_id)),
+        )
+        await db.commit()
+        if cursor.rowcount <= 0:
+            return None
+    return await get_prompt_by_id(prompt_id)
 
 
 async def count_active_prompts_by_author(author_id: int) -> int:

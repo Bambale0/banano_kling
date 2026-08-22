@@ -215,6 +215,7 @@ export interface PromptItem {
   uses_count: number
   likes: number
   preview_url?: string | null
+  preview_poster_url?: string | null
   model?: string | null
   generation_settings?: TrendGenerationSettings | null
   author_id: number

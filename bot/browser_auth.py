@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
-from bot.services.trend_preview_service import ensure_lightweight_trend_preview_url
+from bot.services.trend_preview_service import ensure_trend_preview_assets
 from bot.trend_api import setup_trend_routes
 from bot.trend_task_privacy import sanitize_task_api_payload
 from bot.trend_visibility import (
@@ -173,11 +173,16 @@ async def _with_compatible_trend_previews(payload: Any) -> Any:
         if not preview_url:
             return item
         async with semaphore:
-            optimized_url = await ensure_lightweight_trend_preview_url(preview_url)
-        if not optimized_url or optimized_url == preview_url:
+            assets = await ensure_trend_preview_assets(preview_url)
+        optimized_url = str(assets.get("preview_url") or "").strip()
+        poster_url = str(assets.get("preview_poster_url") or "").strip()
+        if not optimized_url and not poster_url:
             return item
         patched = dict(item)
-        patched["preview_url"] = optimized_url
+        if optimized_url and optimized_url != preview_url:
+            patched["preview_url"] = optimized_url
+        if poster_url:
+            patched["preview_poster_url"] = poster_url
         return patched
 
     result = dict(payload)

@@ -6,9 +6,9 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import type { PromptItem, TrendGenerationSettings } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
-import { updateTrendPreview, type TrendPreviewKind } from '@/lib/trend-admin-api'
-import { mediaAspectRatio, normalizeMiniAppMediaUrl } from '@/lib/media-url'
+import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, updatePromptPreview, uploadFile } from '@/lib/api'
+import type { TrendPreviewKind } from '@/lib/trend-admin-api'
+import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -23,6 +23,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  Pencil,
   X,
 } from 'lucide-react'
 
@@ -67,8 +68,11 @@ function previewKindForTrend(trend: PromptItem, legacyVideoFallback = false): Tr
 export function TrendsTab() {
   const { state, trendToRun, setTrendToRun } = useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const editFileInputRef = useRef<HTMLInputElement>(null)
   const previewUploadAttemptRef = useRef(0)
   const previewUploadPromiseRef = useRef<Promise<string | null> | null>(null)
+  const editUploadAttemptRef = useRef(0)
+  const editUploadPromiseRef = useRef<Promise<string | null> | null>(null)
   const [items, setItems] = useState<PromptItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -84,12 +88,17 @@ export function TrendsTab() {
   const [imageQuality, setImageQuality] = useState('2K')
   const [previewUrl, setPreviewUrl] = useState('')
   const [uploadingPreview, setUploadingPreview] = useState(false)
-  const [updatingPreviewId, setUpdatingPreviewId] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
+  const [editingTrend, setEditingTrend] = useState<PromptItem | null>(null)
+  const [editPreviewUrl, setEditPreviewUrl] = useState('')
+  const [uploadingEditPreview, setUploadingEditPreview] = useState(false)
+  const [savingEdit, setSavingEdit] = useState(false)
   const [previewTrend, setPreviewTrend] = useState<PromptItem | null>(null)
   const [videoAspectRatios, setVideoAspectRatios] = useState<Record<number, string>>({})
+  const [videoPreviewReady, setVideoPreviewReady] = useState<Record<number, boolean>>({})
+  const [videoPreviewFailed, setVideoPreviewFailed] = useState<Record<number, boolean>>({})
 
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
@@ -202,6 +211,13 @@ export function TrendsTab() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const openEditTrend = (trend: PromptItem) => {
+    setEditingTrend(trend)
+    setEditPreviewUrl('')
+    setError(null)
+    if (editFileInputRef.current) editFileInputRef.current.value = ''
+  }
+
   const applyTrend = (trend: PromptItem) => {
     setTrendToRun(trend)
   }
@@ -252,32 +268,54 @@ export function TrendsTab() {
     }
   }
 
-  const handleExistingPreviewUpload = async (trend: PromptItem, file?: File) => {
-    if (!file || !isAdmin || updatingPreviewId !== null) return
-    const detectedKind = previewKindFromFile(file)
-    if (!detectedKind) {
-      setError('Превью должно быть фото или видео')
+  const handleEditPreviewUpload = async (file?: File) => {
+    if (!file || !editingTrend) return
+    const editingVideo = previewKindForTrend(editingTrend, isVideoTrend(editingTrend)) === 'video'
+    const expectedPrefix = editingVideo ? 'video/' : 'image/'
+    const extension = file.name.split('.').pop()?.toLowerCase() || ''
+    const fallbackExtensions = editingVideo
+      ? new Set(['mp4', 'mov', 'm4v', 'webm'])
+      : new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
+    if (!file.type.startsWith(expectedPrefix) && !fallbackExtensions.has(extension)) {
+      setError(editingVideo ? 'Для видео-тренда нужен видеофайл' : 'Для фото-тренда нужно изображение')
       return
     }
-    if (detectedKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
-      setError('Промо-видео слишком большое, максимум 200MB')
+    if (editingVideo && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
+      setError('Видео-пример слишком большой, максимум 200MB')
       return
     }
 
-    setUpdatingPreviewId(trend.id)
+    const attemptId = ++editUploadAttemptRef.current
+    const localPreviewUrl = URL.createObjectURL(file)
+    setUploadingEditPreview(true)
     setError(null)
-    try {
-      const uploaded = await uploadFile(
-        detectedKind === 'video' ? 'trend_video_preview' : 'image_reference',
+    setEditPreviewUrl((current) => {
+      if (current.startsWith('blob:')) URL.revokeObjectURL(current)
+      return localPreviewUrl
+    })
+    const uploadPromise = uploadFile(
+        editingVideo ? 'trend_video_preview' : 'image_reference',
         file,
       )
-      const updated = await updateTrendPreview(trend.id, uploaded.url, detectedKind)
-      setItems((current) => current.map((item) => item.id === updated.id ? updated : item))
-      setPreviewTrend((current) => current?.id === updated.id ? updated : current)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось заменить превью')
+      .then((uploaded) => uploaded.url)
+      .catch((e) => {
+        if (editUploadAttemptRef.current === attemptId) {
+          setEditPreviewUrl((current) => current === localPreviewUrl ? '' : current)
+          setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
+        }
+        return null
+      })
+    editUploadPromiseRef.current = uploadPromise
+    try {
+      const uploadedUrl = await uploadPromise
+      if (editUploadAttemptRef.current !== attemptId) return
+      if (uploadedUrl) setEditPreviewUrl(uploadedUrl)
     } finally {
-      setUpdatingPreviewId(null)
+      if (editUploadAttemptRef.current === attemptId) {
+        setUploadingEditPreview(false)
+        editUploadPromiseRef.current = null
+      }
+      URL.revokeObjectURL(localPreviewUrl)
     }
   }
 
@@ -387,6 +425,46 @@ export function TrendsTab() {
     }
   }
 
+  const handleSaveEdit = async () => {
+    if (!isAdmin || !editingTrend || savingEdit) return
+    if (!editPreviewUrl) {
+      setError('Загрузите новый preview')
+      return
+    }
+    setSavingEdit(true)
+    setError(null)
+    try {
+      let finalPreviewUrl = editPreviewUrl
+      if (finalPreviewUrl.startsWith('blob:') && editUploadPromiseRef.current) {
+        setError('Дожидаюсь сохранения preview на сервере…')
+        const uploadedUrl = await editUploadPromiseRef.current
+        if (!uploadedUrl) {
+          setError('Не удалось сохранить preview. Повторите загрузку файла.')
+          return
+        }
+        finalPreviewUrl = uploadedUrl
+        setEditPreviewUrl(uploadedUrl)
+      }
+      if (finalPreviewUrl.startsWith('blob:')) {
+        setError('Preview еще не сохранен на сервере. Подождите несколько секунд и повторите.')
+        return
+      }
+      const updated = await updatePromptPreview(editingTrend.id, finalPreviewUrl)
+      setItems((prev) => prev.map((item) => (
+        item.id === updated.id
+          ? { ...updated, preview_poster_url: updated.preview_poster_url || null }
+          : item
+      )))
+      setEditingTrend(null)
+      setEditPreviewUrl('')
+      if (editFileInputRef.current) editFileInputRef.current.value = ''
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось обновить тренд')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   const handleCopyLink = async (trend: PromptItem) => {
     try {
       const link = await fetchPromptLink(trend.id)
@@ -408,6 +486,18 @@ export function TrendsTab() {
     })
   }
 
+  const setVideoCardReady = (trendId: number, ready: boolean) => {
+    setVideoPreviewReady((current) => (
+      current[trendId] === ready ? current : { ...current, [trendId]: ready }
+    ))
+  }
+
+  const setVideoCardFailed = (trendId: number, failed: boolean) => {
+    setVideoPreviewFailed((current) => (
+      current[trendId] === failed ? current : { ...current, [trendId]: failed }
+    ))
+  }
+
   const renderTrendGrid = (trendItems: PromptItem[], sectionTitle: string, videoSection: boolean) => {
     if (!trendItems.length) return null
     return (
@@ -422,25 +512,68 @@ export function TrendsTab() {
               ? state.videoModels.find((item) => item.id === trend.model)?.label
               : state.imageModels.find((item) => item.id === trend.model)?.label
             const mediaKind = previewKindForTrend(trend, videoSection)
+            const posterUrl = trend.preview_poster_url
+              ? normalizeMiniAppMediaUrl(trend.preview_poster_url)
+              : ''
             return (
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
                   {trend.preview_url ? mediaKind === 'video' ? (
                     <div className="relative w-full overflow-hidden bg-black">
                       <video
-                        src={normalizeMiniAppMediaUrl(trend.preview_url)}
+                        src={videoPreviewFrameUrl(trend.preview_url)}
+                        poster={posterUrl || undefined}
                         muted
                         autoPlay
                         loop
                         playsInline
-                        preload="metadata"
+                        preload="auto"
                         onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
+                        onLoadedData={() => {
+                          setVideoCardFailed(trend.id, false)
+                          setVideoCardReady(trend.id, true)
+                        }}
+                        onCanPlay={() => {
+                          setVideoCardFailed(trend.id, false)
+                          setVideoCardReady(trend.id, true)
+                        }}
+                        onPlaying={() => {
+                          setVideoCardFailed(trend.id, false)
+                          setVideoCardReady(trend.id, true)
+                        }}
+                        onLoadStart={() => {
+                          setVideoCardFailed(trend.id, false)
+                          setVideoCardReady(trend.id, false)
+                        }}
+                        onWaiting={() => setVideoCardReady(trend.id, false)}
+                        onError={() => {
+                          setVideoCardFailed(trend.id, true)
+                          setVideoCardReady(trend.id, false)
+                        }}
                         style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
                         className="w-full bg-black object-contain"
                       />
                       <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-black/65 px-2.5 py-1 text-[10px] font-medium text-white backdrop-blur">
                         Как это работает
                       </span>
+                      {posterUrl && (!videoPreviewReady[trend.id] || videoPreviewFailed[trend.id]) ? (
+                        <img
+                          src={posterUrl}
+                          alt=""
+                          aria-hidden="true"
+                          loading="lazy"
+                          className="absolute inset-0 h-full w-full bg-secondary/40 object-contain"
+                          style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
+                        />
+                      ) : null}
+                      {!posterUrl && videoPreviewFailed[trend.id] ? (
+                        <div
+                          className="absolute inset-0 flex items-center justify-center bg-secondary/70 text-gold"
+                          style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
+                        >
+                          <Sparkles className="h-8 w-8" />
+                        </div>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => setPreviewTrend(trend)}
@@ -460,29 +593,11 @@ export function TrendsTab() {
                   <div><h4 className="line-clamp-2 text-sm font-semibold text-foreground">{trend.title}</h4>{trend.description ? <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{trend.description}</p> : null}</div>
                   <div className="truncate rounded-lg bg-secondary/55 px-2 py-1.5 text-[10px] text-muted-foreground">{modelLabel || trend.model}</div>
                   <Button type="button" size="sm" className="w-full bg-gold text-primary-foreground hover:bg-gold/90" onClick={() => applyTrend(trend)}><Repeat2 className="h-3.5 w-3.5" />Повторить</Button>
-                  <div className={isAdmin ? 'grid grid-cols-2 gap-2' : 'grid'}>
+                  <div className={isAdmin ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2' : 'grid'}>
                     <Button type="button" size="sm" variant="secondary" onClick={() => void handleCopyLink(trend)}>{copiedId === trend.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copiedId === trend.id ? 'Скопировано' : 'Ссылка'}</Button>
-                    {isAdmin ? (
-                      <label className="relative inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80">
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,image/avif,video/mp4,video/webm,video/quicktime"
-                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                          disabled={updatingPreviewId !== null}
-                          onChange={(event) => {
-                            const file = event.target.files?.[0]
-                            event.currentTarget.value = ''
-                            void handleExistingPreviewUpload(trend, file)
-                          }}
-                        />
-                        {updatingPreviewId === trend.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                        Превью
-                      </label>
-                    ) : null}
+                    {isAdmin ? <Button type="button" variant="secondary" size="sm" className="min-w-0 px-2 text-xs" onClick={() => openEditTrend(trend)} aria-label="Редактировать тренд"><Pencil className="h-3.5 w-3.5" /><span className="truncate">Редактировать</span></Button> : null}
+                    {isAdmin ? <Button type="button" variant="secondary" size="icon" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button> : null}
                   </div>
-                  {isAdmin ? (
-                    <Button type="button" variant="secondary" size="sm" className="w-full text-destructive" onClick={() => void handleRemove(trend)} disabled={removingId === trend.id} aria-label="Убрать тренд">{removingId === trend.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}Убрать тренд</Button>
-                  ) : null}
                 </div>
               </article>
             )
@@ -757,12 +872,82 @@ export function TrendsTab() {
         }}
       />
 
+      <Dialog open={Boolean(editingTrend)} onOpenChange={(open) => {
+        if (!open && !uploadingEditPreview && !savingEdit) {
+          setEditingTrend(null)
+          setEditPreviewUrl('')
+          if (editFileInputRef.current) editFileInputRef.current.value = ''
+        }
+      }}>
+        <DialogContent className="max-w-lg space-y-4 border-border/60 bg-background p-4">
+          <DialogTitle className="pr-8 text-sm">Редактировать</DialogTitle>
+          {editingTrend ? (
+            <div className="space-y-4">
+              <div>
+                <p className="line-clamp-2 text-sm font-semibold text-foreground">{editingTrend.title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview, тренд останется тем же.</p>
+              </div>
+
+              <div className="space-y-2">
+                {(editPreviewUrl || editingTrend.preview_url) ? (
+                  <div className="overflow-hidden rounded-2xl border border-border/50 bg-secondary/40">
+                    {previewKindForTrend(editingTrend, isVideoTrend(editingTrend)) === 'video' ? (
+                      <video
+                        src={normalizeMiniAppMediaUrl(editPreviewUrl || editingTrend.preview_url || '')}
+                        controls
+                        muted
+                        playsInline
+                        preload="metadata"
+                        className="h-auto max-h-[58vh] w-full bg-black object-contain"
+                      />
+                    ) : (
+                      <img
+                        src={normalizeMiniAppMediaUrl(editPreviewUrl || editingTrend.preview_url || '')}
+                        alt={editingTrend.title}
+                        className="aspect-square w-full object-cover"
+                      />
+                    )}
+                  </div>
+                ) : null}
+
+                <input
+                  ref={editFileInputRef}
+                  type="file"
+                  accept={
+                    previewKindForTrend(editingTrend, isVideoTrend(editingTrend)) === 'video'
+                      ? 'video/mp4,video/webm,video/quicktime'
+                      : 'image/jpeg,image/png,image/webp'
+                  }
+                  className="block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
+                  disabled={uploadingEditPreview || savingEdit}
+                  onChange={(event) => void handleEditPreviewUpload(event.target.files?.[0])}
+                />
+                {uploadingEditPreview ? (
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Загружаю preview…</p>
+                ) : null}
+              </div>
+
+              <Button
+                type="button"
+                className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                disabled={uploadingEditPreview || savingEdit || !editPreviewUrl}
+                onClick={() => void handleSaveEdit()}
+              >
+                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Сохранить
+              </Button>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(previewTrend)} onOpenChange={(open) => { if (!open) setPreviewTrend(null) }}>
         <DialogContent className="max-w-3xl border-border/60 bg-background p-3">
           <DialogTitle className="pr-8 text-sm">{previewTrend?.title || 'Промо-видео'}</DialogTitle>
           {previewTrend?.preview_url ? (
             <video
               src={normalizeMiniAppMediaUrl(previewTrend.preview_url)}
+              poster={previewTrend.preview_poster_url ? normalizeMiniAppMediaUrl(previewTrend.preview_poster_url) : undefined}
               controls
               autoPlay
               muted

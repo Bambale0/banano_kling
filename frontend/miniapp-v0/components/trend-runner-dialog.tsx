@@ -75,6 +75,7 @@ export function TrendRunnerDialog({
   const [resolvingPinterest, setResolvingPinterest] = useState(false)
   const [heightCm, setHeightCm] = useState('')
   const [weightKg, setWeightKg] = useState('')
+  const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
   const busy = phase === 'uploading' || phase === 'generating' || resolvingPinterest
@@ -116,6 +117,7 @@ export function TrendRunnerDialog({
     setResolvingPinterest(false)
     setHeightCm('')
     setWeightKg('')
+    setTrendPreviewFailed(false)
     clearPreviews()
     setUploadedReferences(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
@@ -132,6 +134,10 @@ export function TrendRunnerDialog({
     setUploadedReferences(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
   }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id])
+
+  useEffect(() => {
+    setTrendPreviewFailed(false)
+  }, [trend?.id])
 
   useEffect(() => clearPreviews, [clearPreviews])
 
@@ -341,17 +347,30 @@ export function TrendRunnerDialog({
 
         {trend?.preview_url ? (
           isVideoTrend ? (
-            <video
-              src={videoPreviewFrameUrl(trend.preview_url)}
-              muted
-              loop
-              autoPlay
-              controls
-              playsInline
-              preload="metadata"
+            <div
               style={{ aspectRatio: mediaAspectRatio(trend.generation_settings?.ratio) }}
-              className="mx-auto max-h-[38vh] max-w-full rounded-2xl bg-black object-contain"
-            />
+              className="relative mx-auto max-h-[42vh] w-full max-w-full overflow-hidden rounded-2xl bg-black"
+            >
+              <video
+                src={videoPreviewFrameUrl(trend.preview_url)}
+                poster={trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : undefined}
+                muted
+                loop
+                autoPlay
+                controls
+                playsInline
+                preload="metadata"
+                onLoadedData={() => setTrendPreviewFailed(false)}
+                onCanPlay={() => setTrendPreviewFailed(false)}
+                onError={() => setTrendPreviewFailed(true)}
+                className="h-full w-full object-contain"
+              />
+              {trendPreviewFailed && !trend.preview_poster_url ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-secondary/70 text-gold">
+                  <Sparkles className="h-8 w-8" />
+                </div>
+              ) : null}
+            </div>
           ) : pinterestRepeat ? null : (
             <img
               src={normalizeMiniAppMediaUrl(trend.preview_url)}

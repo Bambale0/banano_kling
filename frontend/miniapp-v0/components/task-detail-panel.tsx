@@ -81,6 +81,7 @@ export function TaskDetailPanel() {
   }
 
   const isPublished = Boolean(taskDetail?.is_profile_visible || taskDetail?.is_public_feed)
+  const canCopyPrompt = Boolean(taskDetail?.prompt && !taskDetail?.prompt_hidden)
 
   const handlePublish = async () => {
     if (!taskDetail || publishBusy) return
@@ -366,17 +367,18 @@ export function TaskDetailPanel() {
               <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-medium text-foreground">Промпт</h3>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-8 px-3"
-                    onClick={handleCopyPrompt}
-                    disabled={!taskDetail.prompt || taskDetail.prompt_hidden}
-                  >
-                    <Copy className="mr-2 h-4 w-4" />
-                    Скопировать
-                  </Button>
+                  {canCopyPrompt ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 px-3"
+                      onClick={handleCopyPrompt}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      Скопировать
+                    </Button>
+                  ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground leading-relaxed p-3 rounded-xl bg-secondary/50 whitespace-pre-wrap break-words">
                   {taskDetail.prompt_hidden ? 'Описание автора уже использовано для этой работы.' : taskDetail.prompt || '—'}

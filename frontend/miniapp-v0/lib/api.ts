@@ -906,6 +906,19 @@ export async function deactivatePrompt(promptId: number): Promise<PromptItem | n
   return response.prompt
 }
 
+export async function updatePromptPreview(promptId: number, previewUrl: string): Promise<PromptItem> {
+  const initData = getInitData()
+  if (!initData) {
+    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
+  }
+  const response = await postJson<{ ok: true; prompt: PromptItem }>('admin/prompts/update-preview', {
+    init_data: initData,
+    prompt_id: promptId,
+    preview_url: previewUrl,
+  })
+  return response.prompt
+}
+
 export async function fetchFeed(payload: {
   source?: 'recent' | 'top_day' | 'top'
   model?: string

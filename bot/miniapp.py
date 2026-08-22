@@ -75,6 +75,7 @@ from bot.database import (
     share_to_library,
     touch_saved_references,
     update_transaction_status,
+    update_prompt_preview_url,
     update_user_profile,
     use_prompt,
 )
@@ -3286,6 +3287,33 @@ async def miniapp_prompt_deactivate(request: web.Request) -> web.Response:
         return _miniapp_error_response(e, log_message="Mini App prompt deactivate failed")
 
 
+async def miniapp_prompt_update_preview(request: web.Request) -> web.Response:
+    try:
+        body = await _miniapp_payload(request)
+        init_data = body.get("init_data", "")
+        prompt_id = int(body.get("prompt_id") or 0)
+        preview_url = str(body.get("preview_url", "") or "").strip()
+        telegram_id, _ctx = await _get_user_context(request.app, init_data, body.get("start_param_fallback"))
+        if not config.is_admin(telegram_id):
+            return web.json_response({"ok": False, "error": "Нет доступа"}, status=403)
+        if not prompt_id:
+            return web.json_response({"ok": False, "error": "Тренд не найден"}, status=400)
+        if not preview_url:
+            return web.json_response({"ok": False, "error": "Загрузите новый preview"}, status=400)
+
+        prompt = await get_prompt_by_id(prompt_id)
+        tags = {str(tag).strip().lower() for tag in list((prompt or {}).get("tags") or [])}
+        if not prompt or "trend" not in tags:
+            return web.json_response({"ok": False, "error": "Тренд не найден"}, status=404)
+
+        updated = await update_prompt_preview_url(prompt_id, preview_url)
+        if not updated:
+            return web.json_response({"ok": False, "error": "Не удалось обновить тренд"}, status=400)
+        return web.json_response({"ok": True, "prompt": updated})
+    except Exception as e:
+        return _miniapp_error_response(e, log_message="Mini App prompt preview update failed")
+
+
 async def miniapp_prompt_moderate(request: web.Request) -> web.Response:
     try:
         body = await _miniapp_payload(request)
@@ -5186,6 +5214,7 @@ def setup_miniapp_routes(app: web.Application):
     app.router.add_post(miniapp_root + "/api/prompts/link", miniapp_prompt_link)
     app.router.add_post(miniapp_root + "/api/prompts/submit", miniapp_prompt_submit)
     app.router.add_post(miniapp_root + "/api/prompts/deactivate", miniapp_prompt_deactivate)
+    app.router.add_post(miniapp_root + "/api/admin/prompts/update-preview", miniapp_prompt_update_preview)
     app.router.add_post(miniapp_root + "/api/admin/prompts/moderate", miniapp_prompt_moderate)
     app.router.add_post(miniapp_root + "/api/feed", miniapp_feed)
     app.router.add_post(miniapp_root + "/api/feed/item", miniapp_feed_item)
