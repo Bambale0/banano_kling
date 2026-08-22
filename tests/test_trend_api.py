@@ -79,6 +79,67 @@ def test_trusted_trend_run_falls_back_for_legacy_photo_trend():
     assert run.settings["quality"] == "2K"
 
 
+def test_trusted_trend_run_accepts_exact_reference_count():
+    settings = dict(_trend()["generation_settings"])
+    settings["required_reference_count"] = 2
+
+    run = trusted_trend_run(
+        _trend(generation_settings=settings),
+        (
+            "https://example.test/ref-1.jpg",
+            "https://example.test/ref-2.jpg",
+        ),
+    )
+
+    assert run.reference_urls == (
+        "https://example.test/ref-1.jpg",
+        "https://example.test/ref-2.jpg",
+    )
+    assert run.settings["required_reference_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "reference_urls",
+    [
+        ("https://example.test/ref-1.jpg",),
+        (
+            "https://example.test/ref-1.jpg",
+            "https://example.test/ref-2.jpg",
+            "https://example.test/ref-3.jpg",
+        ),
+    ],
+)
+def test_trusted_trend_run_rejects_wrong_exact_reference_count(reference_urls):
+    settings = dict(_trend()["generation_settings"])
+    settings["required_reference_count"] = 2
+
+    with pytest.raises(
+        TrendRunValidationError,
+        match="ровно 2 фото",
+    ):
+        trusted_trend_run(
+            _trend(generation_settings=settings),
+            reference_urls,
+        )
+
+
+@pytest.mark.parametrize(
+    "required_reference_count",
+    [0, -1, 13, "many"],
+)
+def test_trusted_trend_run_rejects_invalid_reference_count_setting(
+    required_reference_count,
+):
+    settings = dict(_trend()["generation_settings"])
+    settings["required_reference_count"] = required_reference_count
+
+    with pytest.raises(TrendRunValidationError):
+        trusted_trend_run(
+            _trend(generation_settings=settings),
+            ("https://example.test/ref.jpg",),
+        )
+
+
 @pytest.mark.parametrize(
     "trend",
     [
