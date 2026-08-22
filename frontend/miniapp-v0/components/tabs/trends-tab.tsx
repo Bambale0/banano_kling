@@ -7,7 +7,7 @@ import type { PromptItem } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
-import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
+import { mediaAspectRatio, normalizeMiniAppMediaUrl } from '@/lib/media-url'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -374,18 +374,25 @@ export function TrendsTab() {
               <article key={trend.id} className="glass min-w-0 overflow-hidden rounded-2xl border border-border/50">
                 <div className="relative bg-secondary/40">
                   {trend.preview_url ? videoSection ? (
-                    <button type="button" className="block w-full" onClick={() => setPreviewTrend(trend)} aria-label={`Открыть видео ${trend.title}`}>
+                    <div className="relative w-full">
                       <video
-                        src={videoPreviewFrameUrl(trend.preview_url)}
-                        muted
+                        src={normalizeMiniAppMediaUrl(trend.preview_url)}
+                        controls
                         playsInline
                         preload="metadata"
                         onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
                         style={{ aspectRatio: videoAspectRatios[trend.id] || mediaAspectRatio(trend.generation_settings?.ratio) }}
                         className="w-full bg-black object-contain"
                       />
-                      <span className="absolute inset-0 grid place-items-center bg-black/10"><Film className="h-8 w-8 rounded-full bg-black/55 p-1.5 text-white" /></span>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTrend(trend)}
+                        aria-label={`Открыть видео ${trend.title} крупно`}
+                        className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-white backdrop-blur"
+                      >
+                        <Film className="h-4 w-4" />
+                      </button>
+                    </div>
                   ) : (
                     <img src={normalizeMiniAppMediaUrl(trend.preview_url)} alt={trend.title} loading="lazy" className="h-auto max-h-[420px] w-full object-contain" />
                   ) : (
