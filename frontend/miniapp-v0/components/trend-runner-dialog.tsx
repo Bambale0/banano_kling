@@ -5,10 +5,12 @@ import {
   ImagePlus,
   Link2,
   Loader2,
+  Plus,
   RefreshCcw,
   Ruler,
   Sparkles,
   Weight,
+  X,
 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
@@ -32,6 +34,7 @@ interface TrendRunnerDialogProps {
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
 const MAX_REFERENCES = 12
+const MAX_PINTEREST_ANGLES = 5
 const DEFAULT_TWO_PHOTO_LABELS = ['РЕФЕРЕНС', 'ТЫ']
 
 function isPinterestRepeatItem(trend: PromptItem | null): boolean {
@@ -46,7 +49,7 @@ function isPinterestRepeatItem(trend: PromptItem | null): boolean {
   )
 }
 
-function parseOptionalNumber(value: string): number | null {
+function parseRequiredNumber(value: string): number | null {
   const normalized = value.trim()
   if (!normalized) return null
   const parsed = Number(normalized)
@@ -71,6 +74,8 @@ export function TrendRunnerDialog({
   const [error, setError] = useState<string | null>(null)
   const [previewUrls, setPreviewUrls] = useState<Array<string | null>>([])
   const [uploadedReferences, setUploadedReferences] = useState<Array<UploadedFile | null>>([])
+  const [identityAngles, setIdentityAngles] = useState<UploadedFile[]>([])
+  const [identityAnglePreviews, setIdentityAnglePreviews] = useState<string[]>([])
   const [pinterestUrl, setPinterestUrl] = useState('')
   const [resolvingPinterest, setResolvingPinterest] = useState(false)
   const [heightCm, setHeightCm] = useState('')
@@ -81,10 +86,10 @@ export function TrendRunnerDialog({
   const busy = phase === 'uploading' || phase === 'generating' || resolvingPinterest
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
-  const exactReferenceCount = Number.isFinite(configuredReferenceCount) && configuredReferenceCount > 0
-    ? Math.min(MAX_REFERENCES, Math.trunc(configuredReferenceCount))
-    : pinterestRepeat
-      ? 2
+  const exactReferenceCount = pinterestRepeat
+    ? 2
+    : Number.isFinite(configuredReferenceCount) && configuredReferenceCount > 0
+      ? Math.min(MAX_REFERENCES, Math.trunc(configuredReferenceCount))
       : 0
   const exactSlots = exactReferenceCount > 0
   const referenceLabels = exactSlots
@@ -98,9 +103,16 @@ export function TrendRunnerDialog({
   const completedReferences = uploadedReferences.filter(
     (reference): reference is UploadedFile => Boolean(reference),
   )
-  const readyToGenerate = exactSlots
-    ? completedReferences.length === exactReferenceCount
-    : completedReferences.length > 0
+  const parsedHeight = parseRequiredNumber(heightCm)
+  const parsedWeight = parseRequiredNumber(weightKg)
+  const validHeight = parsedHeight !== null && parsedHeight >= 120 && parsedHeight <= 230
+  const validWeight = parsedWeight !== null && parsedWeight >= 30 && parsedWeight <= 250
+  const pinterestPrimaryReady = Boolean(uploadedReferences[0] && uploadedReferences[1])
+  const readyToGenerate = pinterestRepeat
+    ? pinterestPrimaryReady && validHeight && validWeight
+    : exactSlots
+      ? completedReferences.length === exactReferenceCount
+      : completedReferences.length > 0
 
   const clearPreviews = useCallback(() => {
     for (const previewUrl of previewRefs.current) {
@@ -108,6 +120,7 @@ export function TrendRunnerDialog({
     }
     previewRefs.current = []
     setPreviewUrls([])
+    setIdentityAnglePreviews([])
   }, [])
 
   const resetRunner = useCallback(() => {
@@ -117,6 +130,7 @@ export function TrendRunnerDialog({
     setResolvingPinterest(false)
     setHeightCm('')
     setWeightKg('')
+    setIdentityAngles([])
     setTrendPreviewFailed(false)
     clearPreviews()
     setUploadedReferences(exactSlots ? Array(exactReferenceCount).fill(null) : [])
@@ -133,6 +147,8 @@ export function TrendRunnerDialog({
     }
     setUploadedReferences(exactSlots ? Array(exactReferenceCount).fill(null) : [])
     setPreviewUrls(exactSlots ? Array(exactReferenceCount).fill(null) : [])
+    setIdentityAngles([])
+    setIdentityAnglePreviews([])
   }, [exactReferenceCount, exactSlots, open, resetRunner, trend?.id])
 
   useEffect(() => {
@@ -144,6 +160,26 @@ export function TrendRunnerDialog({
   const validateImage = (file: File) => {
     const extension = file.name.split('.').pop()?.toLowerCase() || ''
     return file.type.startsWith('image/') || IMAGE_EXTENSIONS.has(extension)
+  }
+
+  const removePrimaryReference = (slotIndex: number) => {
+    if (busy) return
+    const preview = previewUrls[slotIndex]
+    if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
+    previewRefs.current = previewRefs.current.filter((url) => url !== preview)
+    setPreviewUrls((current) => {
+      const next = [...current]
+      next[slotIndex] = null
+      return next
+    })
+    setUploadedReferences((current) => {
+      const next = [...current]
+      next[slotIndex] = null
+      return next
+    })
+    if (slotIndex === 0) setPinterestUrl('')
+    setError(null)
+    setPhase('idle')
   }
 
   const uploadIntoSlot = async (slotIndex: number, file: File) => {
@@ -232,6 +268,51 @@ export function TrendRunnerDialog({
     }
   }
 
+  const uploadPinterestAngles = async (selectedFiles: File[]) => {
+    if (!trend || busy || !selectedFiles.length) return
+    if (identityAngles.length + selectedFiles.length > MAX_PINTEREST_ANGLES) {
+      setPhase('error')
+      setError(`Можно добавить максимум ${MAX_PINTEREST_ANGLES} дополнительных ракурсов`)
+      return
+    }
+    const invalidFile = selectedFiles.find((file) => !validateImage(file))
+    if (invalidFile) {
+      setPhase('error')
+      setError(`Файл «${invalidFile.name}» не является изображением`)
+      return
+    }
+
+    const localPreviews = selectedFiles.map((file) => URL.createObjectURL(file))
+    previewRefs.current = [...previewRefs.current, ...localPreviews]
+    setIdentityAnglePreviews((current) => [...current, ...localPreviews])
+    setError(null)
+    setPhase('uploading')
+
+    try {
+      const uploaded = await Promise.all(
+        selectedFiles.map((file) => uploadFile('image_reference', file)),
+      )
+      for (const reference of uploaded) addSavedReference(reference)
+      setIdentityAngles((current) => [...current, ...uploaded])
+      setPhase('idle')
+    } catch (cause) {
+      for (const previewUrl of localPreviews) URL.revokeObjectURL(previewUrl)
+      previewRefs.current = previewRefs.current.filter((url) => !localPreviews.includes(url))
+      setIdentityAnglePreviews((current) => current.filter((url) => !localPreviews.includes(url)))
+      setPhase('error')
+      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить дополнительные ракурсы')
+    }
+  }
+
+  const removeIdentityAngle = (index: number) => {
+    if (busy) return
+    const preview = identityAnglePreviews[index]
+    if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
+    previewRefs.current = previewRefs.current.filter((url) => url !== preview)
+    setIdentityAnglePreviews((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setIdentityAngles((current) => current.filter((_, itemIndex) => itemIndex !== index))
+  }
+
   const handlePinterestUrl = async () => {
     if (!pinterestRepeat || busy || !pinterestUrl.trim()) return
     setError(null)
@@ -274,11 +355,17 @@ export function TrendRunnerDialog({
     setError(null)
     setPhase('generating')
     try {
-      const referenceUrls = completedReferences.map((reference) => reference.url)
+      const referenceUrls = pinterestRepeat
+        ? [
+            uploadedReferences[0]?.url || '',
+            uploadedReferences[1]?.url || '',
+            ...identityAngles.map((reference) => reference.url),
+          ].filter(Boolean)
+        : completedReferences.map((reference) => reference.url)
       const result = pinterestRepeat
         ? await runPinterestRepeatTrend(trend.id, referenceUrls, {
-            heightCm: parseOptionalNumber(heightCm),
-            weightKg: parseOptionalNumber(weightKg),
+            heightCm: parsedHeight as number,
+            weightKg: parsedWeight as number,
           })
         : await runTrend(trend.id, referenceUrls)
       addTask(result.task)
@@ -297,38 +384,57 @@ export function TrendRunnerDialog({
     const uploaded = uploadedReferences[index]
     return (
       <div key={`${label}-${index}`} className="space-y-1.5">
-        <p className="px-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-          {label}
-        </p>
-        <label className="relative flex min-h-44 cursor-pointer flex-col overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 text-sm transition hover:border-gold/50">
-          <input
-            ref={(node) => { inputRefs.current[index] = node }}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
-            className="absolute inset-0 z-20 cursor-pointer opacity-0"
-            disabled={busy}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0]
-              event.currentTarget.value = ''
-              if (file) void uploadIntoSlot(index, file)
-            }}
-          />
-          {previewUrl ? (
-            <img src={previewUrl} alt={label} className="h-36 w-full object-cover" />
-          ) : (
-            <div className="flex h-36 flex-col items-center justify-center gap-2 text-muted-foreground">
-              {phase === 'uploading' ? (
-                <Loader2 className="h-7 w-7 animate-spin text-gold" />
-              ) : (
-                <ImagePlus className="h-7 w-7 text-gold" />
-              )}
-              <span className="text-xs font-medium">Загрузить</span>
+        <div className="flex items-center gap-1.5 px-1">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </p>
+          {pinterestRepeat ? (
+            <span className="rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-500">
+              {index === 0 ? 'откуда' : 'кого вставляем'}
+            </span>
+          ) : null}
+        </div>
+        <div className="relative">
+          <label className="relative flex min-h-44 cursor-pointer flex-col overflow-hidden rounded-2xl border border-dashed border-border/70 bg-secondary/35 text-sm transition hover:border-gold/50">
+            <input
+              ref={(node) => { inputRefs.current[index] = node }}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
+              className="absolute inset-0 z-20 cursor-pointer opacity-0"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                if (file) void uploadIntoSlot(index, file)
+              }}
+            />
+            {previewUrl ? (
+              <img src={previewUrl} alt={label} className="h-36 w-full object-cover" />
+            ) : (
+              <div className="flex h-36 flex-col items-center justify-center gap-2 text-muted-foreground">
+                {phase === 'uploading' ? (
+                  <Loader2 className="h-7 w-7 animate-spin text-gold" />
+                ) : (
+                  <ImagePlus className="h-7 w-7 text-gold" />
+                )}
+                <span className="text-xs font-medium">Загрузить</span>
+              </div>
+            )}
+            <div className="flex min-h-10 items-center justify-center px-2 py-2 text-center text-xs font-medium text-foreground">
+              {uploaded ? 'Готово ✓' : index === 0 ? 'Фото, которое повторяем' : 'Ваше фото'}
             </div>
-          )}
-          <div className="flex min-h-10 items-center justify-center px-2 py-2 text-center text-xs font-medium text-foreground">
-            {uploaded ? 'Готово ✓' : index === 0 ? 'Фото, которое повторяем' : 'Ваше фото'}
-          </div>
-        </label>
+          </label>
+          {uploaded && !busy ? (
+            <button
+              type="button"
+              aria-label={`Удалить ${label.toLowerCase()}`}
+              onClick={() => removePrimaryReference(index)}
+              className="absolute right-2 top-2 z-30 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-foreground shadow"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
       </div>
     )
   }
@@ -340,7 +446,7 @@ export function TrendRunnerDialog({
         if (!busy) onOpenChange(nextOpen)
       }}
     >
-      <DialogContent className="max-w-lg border-border/60 bg-background p-4">
+      <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto border-border/60 bg-background p-4">
         <DialogTitle className="pr-8 font-serif text-lg">
           {pinterestRepeat ? 'Повтори фото с Pinterest' : trend?.title || 'Повторить тренд'}
         </DialogTitle>
@@ -383,9 +489,9 @@ export function TrendRunnerDialog({
         {pinterestRepeat ? (
           <>
             <div className="rounded-2xl border border-amber-300/30 bg-amber-200/10 p-3">
-              <p className="text-xs font-semibold text-foreground">🔐 Как получить идеальное фото?</p>
+              <p className="text-xs font-semibold text-foreground">Как получить результат 1 в 1</p>
               <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                Ищи понравившийся кадр в Pinterest. Мы возьмём из него сцену, свет и позу, а внешность — из твоего фото.
+                Слева — кадр, который повторяем. Справа — ваше основное фото. Генерация не запускается после загрузки: сначала добавьте все данные и нажмите «Создать».
               </p>
             </div>
 
@@ -403,7 +509,7 @@ export function TrendRunnerDialog({
               </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <Link2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Link2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-red-500" />
                   <input
                     value={pinterestUrl}
                     onChange={(event) => setPinterestUrl(event.target.value)}
@@ -421,7 +527,94 @@ export function TrendRunnerDialog({
                   {resolvingPinterest ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Загрузить'}
                 </Button>
               </div>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                Вставьте ссылку на пин — мы сами вытащим картинку и разберём сцену.
+              </p>
             </div>
+
+            {uploadedReferences[0] ? (
+              <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Источник</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-500/10 text-sm font-bold text-red-500">P</div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground">
+                      {pinterestUrl ? 'Pinterest' : 'Референс с устройства'}
+                    </p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {pinterestUrl || uploadedReferences[0]?.name || 'Референс загружен'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Удалить источник"
+                    disabled={busy}
+                    onClick={() => removePrimaryReference(0)}
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+                  1–5 ракурсов одного человека
+                </p>
+                <span className="text-[10px] text-muted-foreground">{identityAngles.length}/{MAX_PINTEREST_ANGLES}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {identityAnglePreviews.map((preview, index) => (
+                  <div key={`${preview}-${index}`} className="relative h-14 w-14 overflow-hidden rounded-xl border border-border/60">
+                    <img src={preview} alt={`Дополнительный ракурс ${index + 1}`} className="h-full w-full object-cover" />
+                    {!busy ? (
+                      <button
+                        type="button"
+                        aria-label={`Удалить ракурс ${index + 1}`}
+                        onClick={() => removeIdentityAngle(index)}
+                        className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {identityAngles.length < MAX_PINTEREST_ANGLES ? (
+                  <label className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-border/70 bg-secondary/25 text-muted-foreground hover:border-gold/50 hover:text-foreground">
+                    <input
+                      ref={(node) => { inputRefs.current[2] = node }}
+                      type="file"
+                      multiple
+                      accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      disabled={busy}
+                      onChange={(event) => {
+                        const files = Array.from(event.currentTarget.files || [])
+                        event.currentTarget.value = ''
+                        void uploadPinterestAngles(files)
+                      }}
+                    />
+                    {phase === 'uploading' ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Plus className="h-5 w-5" />
+                    )}
+                  </label>
+                ) : null}
+              </div>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                Дополнительные ракурсы необязательны, но помогают точнее сохранить лицо, волосы и пропорции.
+              </p>
+            </div>
+
+            {pinterestPrimaryReady ? (
+              <div className="space-y-1 text-[11px] text-muted-foreground">
+                <p><span className="text-emerald-500">●</span> сцена, свет и поза считаны с референса</p>
+                <p><span className="text-emerald-500">●</span> внешность берётся только с ваших фото</p>
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-3">
               <label className="space-y-1.5">
@@ -435,6 +628,7 @@ export function TrendRunnerDialog({
                     onChange={(event) => setHeightCm(event.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
                     placeholder="165"
                     disabled={busy}
+                    aria-invalid={Boolean(heightCm) && !validHeight}
                     className="h-11 w-full rounded-xl border border-border/70 bg-secondary/25 px-3 pr-9 text-base outline-none transition focus:border-gold/60"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">см</span>
@@ -451,6 +645,7 @@ export function TrendRunnerDialog({
                     onChange={(event) => setWeightKg(event.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
                     placeholder="55"
                     disabled={busy}
+                    aria-invalid={Boolean(weightKg) && !validWeight}
                     className="h-11 w-full rounded-xl border border-border/70 bg-secondary/25 px-3 pr-9 text-base outline-none transition focus:border-gold/60"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">кг</span>
@@ -458,35 +653,13 @@ export function TrendRunnerDialog({
               </label>
             </div>
             <p className="-mt-1 text-[10px] leading-relaxed text-muted-foreground">
-              Рост и вес нужны, чтобы масштаб тела и пропорции результата совпадали с тобой.
+              Рост и вес обязательны, чтобы руки, шея и пропорции тела совпали с вами.
             </p>
-
-            {readyToGenerate ? (
-              <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Источник</p>
-                <div className="mt-2 flex items-center gap-2">
-                  {previewUrls.slice(0, 2).map((url, index) => url ? (
-                    <img
-                      key={`${url}-${index}`}
-                      src={url}
-                      alt={index === 0 ? 'Референс' : 'Вы'}
-                      className="h-9 w-9 rounded-full border border-border/60 object-cover"
-                    />
-                  ) : null)}
-                  {pinterestUrl ? (
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-foreground">Pinterest</p>
-                      <p className="truncate text-[10px] text-muted-foreground">{pinterestUrl}</p>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Референс загружен с устройства</p>
-                  )}
-                </div>
-                <div className="mt-3 space-y-1 text-[11px] text-muted-foreground">
-                  <p><span className="text-emerald-500">●</span> сцена, свет и поза считаются с референса</p>
-                  <p><span className="text-emerald-500">●</span> лицо и внешность берутся только с твоего фото</p>
-                </div>
-              </div>
+            {heightCm && !validHeight ? (
+              <p className="text-[10px] text-destructive">Рост должен быть от 120 до 230 см.</p>
+            ) : null}
+            {weightKg && !validWeight ? (
+              <p className="text-[10px] text-destructive">Вес должен быть от 30 до 250 кг.</p>
             ) : null}
           </>
         ) : (
@@ -590,6 +763,12 @@ export function TrendRunnerDialog({
                 ? `Сгенерировать · ${completedReferences.length}/${exactReferenceCount}`
                 : `Сгенерировать · ${completedReferences.length} фото`}
         </Button>
+
+        {pinterestRepeat && !readyToGenerate ? (
+          <p className="text-center text-[10px] text-muted-foreground">
+            Для запуска нужны референс, ваше фото, рост и вес. Загрузка фото сама генерацию не запускает.
+          </p>
+        ) : null}
 
         {!pinterestRepeat ? (
           <Button
