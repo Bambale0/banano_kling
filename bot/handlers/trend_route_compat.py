@@ -9,6 +9,7 @@ from aiohttp import web
 from bot.config import config
 from bot.pinterest_trend_api import _ensure_pinterest_tool, setup_pinterest_trend_routes
 from bot.pinterest_trend_catalog import ensure_pinterest_trend_catalog
+from bot.pinterest_trend_flow_contract import install_pinterest_trend_flow_contract
 from bot.trend_api import setup_trend_routes
 from bot.trend_preview_admin import setup_trend_preview_admin_routes
 
@@ -58,6 +59,7 @@ def install_trend_route_compat() -> None:
     @wraps(current_setup)
     def setup_with_trend_route(app: web.Application) -> None:
         root = _miniapp_root()
+        install_pinterest_trend_flow_contract()
         setup_pinterest_trend_routes(app, root)
         # setup_pinterest_trend_routes still registers its historical best-effort
         # seed. Production uses the strict catalog verifier below instead, so an
