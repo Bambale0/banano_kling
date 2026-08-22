@@ -5,8 +5,8 @@ import pytest
 from bot.services.builtin_trends import (
     PINTEREST_REPEAT_REFERENCE_HINT,
     PINTEREST_REPEAT_TREND_ID,
-    ensure_builtin_image_model_capabilities,
     get_builtin_trend,
+    is_builtin_auto_ratio_trend,
     pinterest_repeat_trend,
 )
 from bot.trend_api import TrendRunValidationError, trusted_trend_run
@@ -58,17 +58,23 @@ def test_builtin_lookup_returns_copy_and_does_not_shadow_other_prompts() -> None
     assert get_builtin_trend(42) is None
 
 
-def test_builtin_enables_provider_supported_auto_ratio_for_banana_pro() -> None:
-    image_models = (
-        {"id": "banana_pro", "ratios": ["1:1", "3:4"]},
-        {"id": "other", "ratios": ["1:1"]},
+def test_auto_ratio_exception_is_scoped_to_builtin_pinterest_trend() -> None:
+    assert is_builtin_auto_ratio_trend(
+        PINTEREST_REPEAT_TREND_ID,
+        model="banana_pro",
+        ratio="auto",
     )
-
-    ensure_builtin_image_model_capabilities(image_models)
-    ensure_builtin_image_model_capabilities(image_models)
-
-    assert image_models[0]["ratios"] == ["1:1", "3:4", "auto"]
-    assert image_models[1]["ratios"] == ["1:1"]
+    assert not is_builtin_auto_ratio_trend(42, model="banana_pro", ratio="auto")
+    assert not is_builtin_auto_ratio_trend(
+        PINTEREST_REPEAT_TREND_ID,
+        model="banana_2",
+        ratio="auto",
+    )
+    assert not is_builtin_auto_ratio_trend(
+        PINTEREST_REPEAT_TREND_ID,
+        model="banana_pro",
+        ratio="1:1",
+    )
 
 
 def test_catalog_and_runtime_install_builtin_pinterest_trend() -> None:
@@ -81,8 +87,10 @@ def test_catalog_and_runtime_install_builtin_pinterest_trend() -> None:
     route_source = Path("bot/handlers/trend_route_compat.py").read_text(
         encoding="utf-8"
     )
+    trend_api_source = Path("bot/trend_api.py").read_text(encoding="utf-8")
 
     assert "Повтори фото с Pinterest" in catalog_source
     assert "required_reference_count: 2" in catalog_source
     assert "withBuiltinTrends(trends.filter(hasTrendTag))" in trends_tab_source
     assert "install_builtin_trend_runtime()" in route_source
+    assert "is_builtin_auto_ratio_trend" in trend_api_source
