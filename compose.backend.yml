@@ -26,7 +26,7 @@ services:
       WEBHOOK_BIND_HOST: "127.0.0.1"
       WEBHOOK_PORT: ${WEBHOOK_PORT:-1888}
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/bot.db}
-      MINI_APP_URL: ${MINI_APP_URL:-https://cdn.chillcreative.ru/mini-app/}
+      MINI_APP_URL: ${MINI_APP_URL:-https://tanyapp.xn--e1aikcel5c5a.online/mini-app/}
 
     volumes:
       - ./data:/app/data
