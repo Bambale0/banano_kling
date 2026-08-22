@@ -17,6 +17,8 @@ HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 SKIP_BACKUP="${SKIP_BACKUP:-0}"
 PULL_IMAGE="${PULL_IMAGE:-0}"
 ACTION="${1:-deploy}"
+PRODUCTION_BRANCH="${PRODUCTION_BRANCH:-tanyapi}"
+PRODUCTION_MINI_APP_URL="${PRODUCTION_MINI_APP_URL:-https://tanyapp.xn--e1aikcel5c5a.online/mini-app/}"
 
 log() {
     printf '[docker-deploy] %s\n' "$*"
@@ -44,6 +46,58 @@ require_tools() {
 
 compose() {
     docker compose --project-directory "$PROJECT_DIR" -f "$COMPOSE_FILE" "$@"
+}
+
+current_git_branch() {
+    git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true
+}
+
+is_production_branch() {
+    [ "$(current_git_branch)" = "$PRODUCTION_BRANCH" ]
+}
+
+prepare_deploy_environment() {
+    if is_production_branch; then
+        # Production frontend is published by deploy_miniapp_local.sh to this
+        # canonical URL. Exporting it here overrides stale MINI_APP_URL values
+        # from .env during Docker Compose interpolation, so Telegram buttons and
+        # backend runtime config cannot point at an old Mini App deployment.
+        export MINI_APP_URL="$PRODUCTION_MINI_APP_URL"
+        log "Pinned production MINI_APP_URL=$MINI_APP_URL"
+    fi
+}
+
+verify_configured_miniapp_url() {
+    if ! is_production_branch; then
+        return 0
+    fi
+
+    local configured_url=""
+    configured_url="$(
+        compose run --rm --no-deps bot \
+            python -c 'from bot.config import config; print(config.mini_app_url)' \
+            | tail -n 1 \
+            | tr -d '\r'
+    )"
+    [ "$configured_url" = "$PRODUCTION_MINI_APP_URL" ] \
+        || die "production MINI_APP_URL mismatch before cutover: expected=$PRODUCTION_MINI_APP_URL actual=$configured_url"
+    log "Verified production Mini App runtime URL: $configured_url"
+}
+
+verify_running_miniapp_url() {
+    if ! is_production_branch; then
+        return 0
+    fi
+
+    local running_url=""
+    running_url="$(
+        compose exec -T bot python -c 'from bot.config import config; print(config.mini_app_url)' \
+            | tail -n 1 \
+            | tr -d '\r'
+    )"
+    [ "$running_url" = "$PRODUCTION_MINI_APP_URL" ] \
+        || die "running production MINI_APP_URL mismatch: expected=$PRODUCTION_MINI_APP_URL actual=$running_url"
+    log "Running backend points to production Mini App: $running_url"
 }
 
 service_exists() {
@@ -89,6 +143,7 @@ build_or_pull_image() {
     compose run --rm --no-deps bot python -m compileall -q bot scripts
     compose run --rm --no-deps --entrypoint ffmpeg bot -version >/dev/null
     compose run --rm --no-deps --entrypoint pg_dump bot --version >/dev/null
+    verify_configured_miniapp_url
 }
 
 backup_database() {
@@ -159,6 +214,7 @@ deploy() {
     local systemd_was_active=0
 
     cd "$PROJECT_DIR"
+    prepare_deploy_environment
     prepare_runtime_dirs
     compose config --quiet
     build_or_pull_image
@@ -182,6 +238,7 @@ deploy() {
         die "Docker backend failed health check"
     fi
 
+    verify_running_miniapp_url
     backfill_public_feed_videos
 
     if service_exists; then
@@ -227,6 +284,8 @@ Environment overrides:
   PULL_IMAGE=1 BANANO_IMAGE=ghcr.io/bambale0/banano-kling-bot:tanyapi
   HEALTH_TIMEOUT_SECONDS=180
   FEED_VIDEO_BACKFILL_LIMIT=50
+  PRODUCTION_BRANCH=tanyapi
+  PRODUCTION_MINI_APP_URL=https://tanyapp.xn--e1aikcel5c5a.online/mini-app/
 USAGE
 }
 
