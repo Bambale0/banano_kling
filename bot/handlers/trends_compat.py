@@ -17,6 +17,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    InputMediaVideo,
     WebAppInfo,
 )
 
@@ -33,6 +34,7 @@ TREND_TAG = "trend"
 TREND_LIMIT = 80
 _COMMAND_TASKS: set[asyncio.Task[Any]] = set()
 _INSTALLED = False
+_VIDEO_PREVIEW_EXTENSIONS = (".mp4", ".webm", ".mov", ".m4v")
 
 
 def is_trend_prompt(prompt: dict[str, Any] | None) -> bool:
@@ -40,6 +42,16 @@ def is_trend_prompt(prompt: dict[str, Any] | None) -> bool:
         return False
     tags = {str(item or "").strip().lower() for item in prompt.get("tags", []) or []}
     return TREND_TAG in tags
+
+
+def _trend_preview_kind(prompt: dict[str, Any]) -> str:
+    settings = prompt.get("generation_settings")
+    if isinstance(settings, dict):
+        explicit = str(settings.get("preview_type") or "").strip().lower()
+        if explicit in {"image", "video"}:
+            return explicit
+    preview_url = str(prompt.get("preview_url") or "").lower().split("?", 1)[0].split("#", 1)[0]
+    return "video" if preview_url.endswith(_VIDEO_PREVIEW_EXTENSIONS) else "image"
 
 
 def _clean_model_label(value: Any) -> str:
@@ -126,6 +138,7 @@ async def _render_trends(
     safe_index = max(0, min(index, len(trends) - 1))
     trend = trends[safe_index]
     preview_url = str(trend.get("preview_url") or "").strip()
+    preview_kind = _trend_preview_kind(trend)
     caption = _trend_caption(trend, index=safe_index, total=len(trends))
     markup = _trend_keyboard(
         trend,
@@ -134,24 +147,35 @@ async def _render_trends(
         is_admin=config.is_admin(admin_telegram_id),
     )
 
-    if preview_url and getattr(message, "photo", None):
+    if preview_url and (getattr(message, "photo", None) or getattr(message, "video", None)):
         try:
-            await message.edit_media(
-                InputMediaPhoto(media=preview_url, caption=caption, parse_mode="HTML"),
-                reply_markup=markup,
+            media = (
+                InputMediaVideo(media=preview_url, caption=caption, parse_mode="HTML")
+                if preview_kind == "video"
+                else InputMediaPhoto(media=preview_url, caption=caption, parse_mode="HTML")
             )
+            await message.edit_media(media, reply_markup=markup)
             return
         except Exception:
             logger.debug("Unable to edit trend media", exc_info=True)
 
     if preview_url:
         try:
-            await message.answer_photo(
-                preview_url,
-                caption=caption,
-                reply_markup=markup,
-                parse_mode="HTML",
-            )
+            if preview_kind == "video":
+                await message.answer_video(
+                    preview_url,
+                    caption=caption,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                    supports_streaming=True,
+                )
+            else:
+                await message.answer_photo(
+                    preview_url,
+                    caption=caption,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                )
             return
         except Exception:
             logger.debug("Unable to send trend preview", exc_info=True)
@@ -289,7 +313,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
             )
             trends = await database.get_prompts_by_tag(TREND_TAG, limit)
             return miniapp_module.web.json_response({"ok": True, "prompts": trends})
-        except Exception as error:  # noqa: BLE001 - Mini App API boundary
+        except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App trends list failed",
@@ -313,7 +337,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                     status=404,
                 )
             return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
-        except Exception as error:  # noqa: BLE001 - Mini App API boundary
+        except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App trend detail failed",
@@ -376,7 +400,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
             if prompt:
                 prompt = await database.approve_prompt(prompt["id"])
             return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
-        except Exception as error:  # noqa: BLE001 - Mini App API boundary
+        except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App trend submit failed",
@@ -405,7 +429,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                 )
             prompt = await database.deactivate_prompt(prompt_id)
             return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
-        except Exception as error:  # noqa: BLE001 - Mini App API boundary
+        except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App trend deactivate failed",
@@ -429,7 +453,7 @@ def _install_miniapp_trends(miniapp_module: Any) -> None:
                 )
             prompt = await database.use_prompt(prompt_id, ctx["user"].id)
             return miniapp_module.web.json_response({"ok": True, "prompt": prompt})
-        except Exception as error:  # noqa: BLE001 - Mini App API boundary
+        except Exception as error:
             return miniapp_module._miniapp_error_response(
                 error,
                 log_message="Mini App trend use failed",
