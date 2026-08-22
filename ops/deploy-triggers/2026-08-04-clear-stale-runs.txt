@@ -1,2 +1,2 @@
-trigger=tanya-production-observable-final-2026-08-22
-purpose=cancel stale runs and execute only the final Tanya repair while exposing exact CI/deploy run links as commit statuses
+trigger=tanya-trends-pinterest-cache-final-2026-08-22
+purpose=cancel intermediate runs and deploy the final Trends/Pinterest repair with revisioned Telegram Mini App launch URLs and observable CI/deploy statuses
