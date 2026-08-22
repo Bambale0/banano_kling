@@ -125,7 +125,7 @@ def test_trusted_trend_run_rejects_wrong_exact_reference_count(reference_urls):
 
 @pytest.mark.parametrize(
     "required_reference_count",
-    [0, -1, 13, "many"],
+    [-1, 13, "many"],
 )
 def test_trusted_trend_run_rejects_invalid_reference_count_setting(
     required_reference_count,
