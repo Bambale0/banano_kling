@@ -1,25 +1,23 @@
 from pathlib import Path
 
-from bot.pinterest_trend_catalog import _settings_with_preserved_preview_type
-from bot.trend_preview_admin import _validate_preview_kind, _validate_preview_url
-from bot.trend_visibility import public_trend_settings
+from bot import pinterest_trend_catalog, trend_preview_admin, trend_visibility
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_preview_kind_supports_photo_or_video_independent_of_trend_kind():
-    assert _validate_preview_kind("image", "/uploads/demo.jpg") == "image"
-    assert _validate_preview_kind("video", "/uploads/demo.mp4") == "video"
-    assert _validate_preview_kind("", "/uploads/demo.webm") == "video"
-    assert _validate_preview_kind("", "/uploads/demo.webp") == "image"
+    assert trend_preview_admin._validate_preview_kind("image", "/uploads/demo.jpg") == "image"
+    assert trend_preview_admin._validate_preview_kind("video", "/uploads/demo.mp4") == "video"
+    assert trend_preview_admin._validate_preview_kind("", "/uploads/demo.webm") == "video"
+    assert trend_preview_admin._validate_preview_kind("", "/uploads/demo.webp") == "image"
 
 
 def test_preview_url_rejects_browser_local_values():
-    assert _validate_preview_url("/uploads/trends/demo.mp4") == "/uploads/trends/demo.mp4"
+    assert trend_preview_admin._validate_preview_url("/uploads/trends/demo.mp4") == "/uploads/trends/demo.mp4"
     for value in ("blob:https://example.test/1", "data:video/mp4;base64,AA", "file:///tmp/a.mp4"):
         try:
-            _validate_preview_url(value)
+            trend_preview_admin._validate_preview_url(value)
         except ValueError:
             pass
         else:
@@ -27,8 +25,12 @@ def test_preview_url_rejects_browser_local_values():
 
 
 def test_pinterest_catalog_preserves_admin_selected_preview_type():
-    video = _settings_with_preserved_preview_type('{"preview_type":"video","quality":"1K"}')
-    image = _settings_with_preserved_preview_type({"preview_type": "image"})
+    video = pinterest_trend_catalog._settings_with_preserved_preview_type(
+        '{"preview_type":"video","quality":"1K"}'
+    )
+    image = pinterest_trend_catalog._settings_with_preserved_preview_type(
+        {"preview_type": "image"}
+    )
 
     assert video["preview_type"] == "video"
     assert image["preview_type"] == "image"
@@ -39,7 +41,7 @@ def test_pinterest_catalog_preserves_admin_selected_preview_type():
 
 
 def test_public_trend_payload_keeps_preview_type_without_exposing_recipe():
-    settings = public_trend_settings(
+    settings = trend_visibility.public_trend_settings(
         {
             "category": "photo",
             "tags": ["trend"],
