@@ -27,6 +27,11 @@ def install_trend_route_compat() -> None:
     because Mini App owns a generic API catch-all route. The strict Pinterest
     catalog verifier replaces the legacy best-effort seed: unlike the old seed,
     it preserves admin-managed promo preview metadata and cannot fail silently.
+
+    The prompts-list wrapper is a second product guarantee: every request for
+    the Trends catalog repairs a missing/deactivated Pinterest system row before
+    the list query runs. This covers accidental DB deletion and deployments that
+    started before the system row existed without inventing a synthetic trend id.
     """
 
     import bot.miniapp as miniapp_module
@@ -35,6 +40,20 @@ def install_trend_route_compat() -> None:
         return
 
     current_setup = miniapp_module.setup_miniapp_routes
+    current_prompts = miniapp_module.miniapp_prompts
+
+    @wraps(current_prompts)
+    async def prompts_with_required_system_trends(request: web.Request) -> web.Response:
+        payload = await miniapp_module._miniapp_payload(request)
+        source = (
+            "my"
+            if request.path.endswith("/prompts/my")
+            else str(payload.get("source", "catalog") or "catalog")
+        )
+        tag = str(payload.get("tag", "") or "").strip().lower()
+        if source == "tag" and tag == "trend":
+            await ensure_pinterest_trend_catalog(request.app)
+        return await current_prompts(request)
 
     @wraps(current_setup)
     def setup_with_trend_route(app: web.Application) -> None:
@@ -49,6 +68,7 @@ def install_trend_route_compat() -> None:
         if ensure_pinterest_trend_catalog not in app.on_startup:
             app.on_startup.append(ensure_pinterest_trend_catalog)
         setup_trend_routes(app, root)
+        miniapp_module.miniapp_prompts = prompts_with_required_system_trends
         current_setup(app)
 
     miniapp_module.setup_miniapp_routes = setup_with_trend_route
