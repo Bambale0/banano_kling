@@ -1,6 +1,7 @@
 'use client'
 
 export type MiniAppStartTarget =
+  | { kind: 'ref'; referralCode: string }
   | { kind: 'profile'; referralCode: string; referralCodeForAttribution?: string }
   | { kind: 'feed'; genId: number; referralCodeForAttribution?: string }
   | { kind: 'remix'; genId: number; referralCodeForAttribution?: string }
