@@ -1,7 +1,6 @@
 'use client'
 
 export type MiniAppStartTarget =
-  | { kind: 'ref'; referralCode: string }
   | { kind: 'profile'; referralCode: string; referralCodeForAttribution?: string }
   | { kind: 'feed'; genId: number; referralCodeForAttribution?: string }
   | { kind: 'remix'; genId: number; referralCodeForAttribution?: string }
@@ -37,10 +36,10 @@ export function parseMiniAppStartParam(rawValue: string): MiniAppStartTarget | n
   const raw = rawValue.trim()
   if (!raw) return null
 
-  if (raw.startsWith('ref_')) {
-    const referralCode = normalizeCode(raw.slice(4))
-    return referralCode ? { kind: 'ref', referralCode } : null
-  }
+  // A plain referral start parameter is attribution data, not a navigation
+  // target. bootstrapApp still sends the original start_param_fallback to the
+  // backend, while returning null here preserves the product default: Trends.
+  if (raw.startsWith('ref_')) return null
 
   if (raw.startsWith('profile_') || raw.startsWith('posts_')) {
     const payload = raw.slice(raw.indexOf('_') + 1)
