@@ -28,8 +28,22 @@ def test_pinterest_repeat_matches_reference_video_flow():
         assert expected in runner
 
     assert "pinterestRepeat\n        ? await runPinterestRepeatTrend" in runner
+    assert "heightCm: parseOptionalNumber(heightCm)" in runner
+    assert "weightKg: parseOptionalNumber(weightKg)" in runner
     assert "completedReferences.length === exactReferenceCount" in runner
     assert "disabled={busy || !readyToGenerate}" in runner
+
+
+def test_height_and_weight_reach_backend_payload():
+    client = read("frontend/miniapp-v0/lib/trend-api.ts")
+    backend = read("bot/pinterest_trend_api.py")
+
+    assert "payload.height_cm = options.heightCm" in client
+    assert "payload.weight_kg = options.weightKg" in client
+    assert '_measurement(body, "height_cm", minimum=120, maximum=230)' in backend
+    assert '_measurement(body, "weight_kg", minimum=30, maximum=250)' in backend
+    assert "height_cm=height_cm" in backend
+    assert "weight_kg=weight_kg" in backend
 
 
 def test_uploading_a_reference_does_not_auto_start_generation():
@@ -58,6 +72,7 @@ def test_system_pinterest_trend_is_seeded_idempotently():
 
     for expected in (
         '_PINTEREST_TOOL_TITLE = "Повтори фото с Pinterest"',
+        '"model": "banana_pro"',
         '"reference_count": 2',
         '"reference_labels": ["РЕФЕРЕНС", "ТЫ"]',
         '"ratio": "9:16"',
@@ -69,3 +84,12 @@ def test_system_pinterest_trend_is_seeded_idempotently():
         "app.on_startup.append(_ensure_pinterest_tool)",
     ):
         assert expected in backend
+
+
+def test_runtime_lock_prevents_database_drift_from_changing_model_or_quality():
+    backend = read("bot/pinterest_trend_api.py")
+
+    assert 'model="banana_pro"' in backend
+    assert 'ratio="9:16"' in backend
+    assert "locked_settings = dict(_PINTEREST_TOOL_SETTINGS)" in backend
+    assert "trusted = _lock_pinterest_run(" in backend
