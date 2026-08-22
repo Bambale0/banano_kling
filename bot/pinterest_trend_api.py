@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
 import re
 from dataclasses import replace
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from aiohttp import web
 
-from bot.database import get_prompt_by_id
+from bot import db as db_backend
+from bot.config import config
+from bot.database import get_or_create_user, get_prompt_by_id
 from bot.trend_api import (
     TrendRunValidationError,
     _run_image_trend,
@@ -28,6 +31,34 @@ _PINTEREST_HOSTS = {
     "pinimg.com",
     "www.pinimg.com",
 }
+_PINTEREST_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_PINTEREST_TOOL_TITLE = "Повтори фото с Pinterest"
+_PINTEREST_TOOL_TAG = "pinterest-repeat"
+_PINTEREST_TOOL_PROMPT = (
+    "Create a photorealistic recreation of the source photograph using the provided user as the "
+    "subject. Preserve the source composition, camera perspective, pose, lighting, background, "
+    "wardrobe silhouette and mood while keeping the user's identity natural and recognizable. "
+    "No text, no collage, no split-screen, no watermark."
+)
+_PINTEREST_TOOL_SETTINGS = {
+    "kind": "image",
+    "user_input": "photo",
+    "model": "banana_pro",
+    "ratio": "9:16",
+    "quality": "2K",
+    "count": 1,
+    "reference_count": 2,
+    "reference_labels": ["РЕФЕРЕНС", "ТЫ"],
+    "nsfw_checker": False,
+    "nsfw_enabled": False,
+}
+_PINTEREST_TOOL_TAGS = [
+    "trend",
+    "pinterest",
+    _PINTEREST_TOOL_TAG,
+    "portrait",
+    "realism",
+]
 _OG_IMAGE_RE = re.compile(
     r'<meta\s+(?:[^>]*?property=["\']og:image["\'][^>]*?content=["\']([^"\']+)["\']|'
     r'[^>]*?content=["\']([^"\']+)["\'][^>]*?property=["\']og:image["\'])[^>]*>',
@@ -41,7 +72,11 @@ _IMAGE_SRC_RE = re.compile(
 
 def _is_pinterest_host(hostname: str) -> bool:
     host = str(hostname or "").strip().lower().rstrip(".")
-    return host in _PINTEREST_HOSTS or host.endswith(".pinterest.com") or host.endswith(".pinimg.com")
+    return (
+        host in _PINTEREST_HOSTS
+        or host.endswith(".pinterest.com")
+        or host.endswith(".pinimg.com")
+    )
 
 
 def _validated_pinterest_url(value: Any) -> str:
@@ -52,12 +87,23 @@ def _validated_pinterest_url(value: Any) -> str:
         parsed = urlparse(url)
     except ValueError as exc:
         raise TrendRunValidationError("Некорректная ссылка Pinterest") from exc
-    if parsed.scheme not in {"http", "https"} or not _is_pinterest_host(parsed.hostname or ""):
-        raise TrendRunValidationError("Нужна ссылка с pinterest.com, pin.it или pinimg.com")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not _is_pinterest_host(parsed.hostname or "")
+    ):
+        raise TrendRunValidationError(
+            "Нужна ссылка с pinterest.com, pin.it или pinimg.com"
+        )
     return url
 
 
-def _measurement(body: dict[str, Any], key: str, *, minimum: int, maximum: int) -> int | None:
+def _measurement(
+    body: dict[str, Any],
+    key: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int | None:
     raw = body.get(key)
     if raw in (None, ""):
         return None
@@ -74,10 +120,14 @@ def _measurement(body: dict[str, Any], key: str, *, minimum: int, maximum: int) 
 def _reference_urls(body: dict[str, Any]) -> tuple[str, str]:
     raw = body.get("reference_urls")
     if not isinstance(raw, list) or len(raw) != 2:
-        raise TrendRunValidationError("Для этого тренда нужны ровно 2 фото: референс и ваше фото")
+        raise TrendRunValidationError(
+            "Для этого тренда нужны ровно 2 фото: референс и ваше фото"
+        )
     cleaned = tuple(str(item or "").strip() for item in raw)
     if any(not item for item in cleaned):
         raise TrendRunValidationError("Загрузите оба фото")
+    if cleaned[0] == cleaned[1]:
+        raise TrendRunValidationError("Референс и ваше фото должны быть разными")
     for item in cleaned:
         if item.startswith(("blob:", "data:", "file:")):
             raise TrendRunValidationError("Дождитесь окончания загрузки фото")
@@ -86,7 +136,12 @@ def _reference_urls(body: dict[str, Any]) -> tuple[str, str]:
     return cleaned[0], cleaned[1]
 
 
-def _augmented_prompt(base_prompt: str, *, height_cm: int | None, weight_kg: int | None) -> str:
+def _augmented_prompt(
+    base_prompt: str,
+    *,
+    height_cm: int | None,
+    weight_kg: int | None,
+) -> str:
     measurements: list[str] = []
     if height_cm is not None:
         measurements.append(f"height {height_cm} cm")
@@ -113,10 +168,10 @@ def _augmented_prompt(base_prompt: str, *, height_cm: int | None, weight_kg: int
 
 
 async def _resolve_pinterest_image(source_url: str) -> str:
-    parsed = urlparse(source_url)
-    host = (parsed.hostname or "").lower()
-    if host.endswith("pinimg.com"):
-        return source_url
+    current_url = _validated_pinterest_url(source_url)
+    parsed = urlparse(current_url)
+    if (parsed.hostname or "").lower().endswith("pinimg.com"):
+        return current_url
 
     timeout = aiohttp.ClientTimeout(total=12, connect=5, sock_read=7)
     headers = {
@@ -126,17 +181,33 @@ async def _resolve_pinterest_image(source_url: str) -> str:
         ),
         "Accept": "text/html,application/xhtml+xml",
     }
+    text = ""
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        async with session.get(source_url, allow_redirects=True, max_redirects=5) as response:
-            final_host = (response.url.host or "").lower()
-            if not _is_pinterest_host(final_host):
-                raise TrendRunValidationError("Pinterest перенаправил на неподдерживаемый сайт")
-            if response.status >= 400:
-                raise TrendRunValidationError("Не удалось открыть ссылку Pinterest")
-            content_type = str(response.headers.get("Content-Type") or "").lower()
-            if content_type.startswith("image/"):
-                return str(response.url)
-            text = await response.text(errors="ignore")
+        for _ in range(6):
+            _validated_pinterest_url(current_url)
+            async with session.get(current_url, allow_redirects=False) as response:
+                if response.status in _PINTEREST_REDIRECT_STATUSES:
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise TrendRunValidationError(
+                            "Pinterest вернул некорректное перенаправление"
+                        )
+                    next_url = urljoin(str(response.url), location)
+                    current_url = _validated_pinterest_url(next_url)
+                    continue
+                if response.status >= 400:
+                    raise TrendRunValidationError("Не удалось открыть ссылку Pinterest")
+                content_type = str(
+                    response.headers.get("Content-Type") or ""
+                ).lower()
+                if content_type.startswith("image/"):
+                    return str(response.url)
+                text = await response.text(errors="ignore")
+                break
+        else:
+            raise TrendRunValidationError(
+                "Слишком много перенаправлений Pinterest"
+            )
 
     match = _OG_IMAGE_RE.search(text)
     candidate = ""
@@ -150,13 +221,94 @@ async def _resolve_pinterest_image(source_url: str) -> str:
             "Не удалось получить изображение из этого пина. Загрузите референс файлом."
         )
 
+    return _validated_pinterest_url(candidate)
+
+
+async def _ensure_pinterest_tool(_: web.Application) -> None:
+    """Idempotently expose the system Pinterest repeat tool in Trends."""
+
+    if not config.admin_ids:
+        logger.warning(
+            "Pinterest trend seed skipped: ADMIN_IDS is empty"
+        )
+        return
+
     try:
-        candidate_host = urlparse(candidate).hostname or ""
-    except ValueError as exc:
-        raise TrendRunValidationError("Pinterest вернул некорректную ссылку на изображение") from exc
-    if not _is_pinterest_host(candidate_host):
-        raise TrendRunValidationError("Pinterest вернул неподдерживаемый источник изображения")
-    return candidate
+        author = await get_or_create_user(config.admin_ids[0])
+        tags_json = json.dumps(_PINTEREST_TOOL_TAGS, ensure_ascii=False)
+        settings_json = json.dumps(_PINTEREST_TOOL_SETTINGS, ensure_ascii=False)
+
+        async with db_backend.connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT id
+                FROM user_prompts
+                WHERE title = ? OR tags LIKE ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (_PINTEREST_TOOL_TITLE, f'%"{_PINTEREST_TOOL_TAG}"%'),
+            )
+            row = await cursor.fetchone()
+            if row:
+                await db.execute(
+                    """
+                    UPDATE user_prompts
+                    SET title = ?,
+                        description = ?,
+                        category = 'photo',
+                        prompt_text = ?,
+                        model = 'banana_pro',
+                        tags = ?,
+                        generation_settings = ?,
+                        is_public = TRUE,
+                        status = 'approved',
+                        reject_reason = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        _PINTEREST_TOOL_TITLE,
+                        "Повтори сцену, свет и позу с Pinterest — со своей внешностью",
+                        _PINTEREST_TOOL_PROMPT,
+                        tags_json,
+                        settings_json,
+                        int(row["id"]),
+                    ),
+                )
+            else:
+                await db.execute(
+                    """
+                    INSERT INTO user_prompts (
+                        author_id,
+                        title,
+                        description,
+                        category,
+                        prompt_text,
+                        preview_url,
+                        model,
+                        tags,
+                        generation_settings,
+                        likes,
+                        uses_count,
+                        is_public,
+                        status,
+                        created_at
+                    ) VALUES (?, ?, ?, 'photo', ?, NULL, 'banana_pro', ?, ?, 0, 0, TRUE, 'approved', CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        int(author.id),
+                        _PINTEREST_TOOL_TITLE,
+                        "Повтори сцену, свет и позу с Pinterest — со своей внешностью",
+                        _PINTEREST_TOOL_PROMPT,
+                        tags_json,
+                        settings_json,
+                    ),
+                )
+            await db.commit()
+        logger.info("Pinterest repeat trend is ready")
+    except Exception:
+        logger.exception("Failed to seed Pinterest repeat trend")
 
 
 async def miniapp_resolve_pinterest_reference(request: web.Request) -> web.Response:
@@ -214,7 +366,9 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
         prompt = await get_prompt_by_id(int(raw_trend_id), approved_public_only=True)
         trusted = trusted_trend_run(prompt, references)
         if trusted.kind != "image":
-            raise TrendRunValidationError("Повтор фото с Pinterest доступен только для фото-тренда")
+            raise TrendRunValidationError(
+                "Повтор фото с Pinterest доступен только для фото-тренда"
+            )
 
         tags = {
             str(tag or "").strip().lower()
@@ -259,3 +413,5 @@ def setup_pinterest_trend_routes(app: web.Application, miniapp_root: str) -> Non
         f"{root}/api/trends/pinterest-repeat/run",
         miniapp_run_pinterest_repeat,
     )
+    if _ensure_pinterest_tool not in app.on_startup:
+        app.on_startup.append(_ensure_pinterest_tool)
