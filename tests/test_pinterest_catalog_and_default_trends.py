@@ -51,12 +51,15 @@ async def test_pinterest_catalog_prefers_configured_admin(monkeypatch):
     assert calls == [424242]
 
 
-def test_pinterest_catalog_is_a_strict_startup_requirement():
+def test_pinterest_catalog_is_a_strict_startup_and_list_requirement():
     routes = (ROOT / "bot/handlers/trend_route_compat.py").read_text(encoding="utf-8")
     catalog_source = (ROOT / "bot/pinterest_trend_catalog.py").read_text(encoding="utf-8")
 
     assert "ensure_pinterest_trend_catalog" in routes
     assert "app.on_startup.append(ensure_pinterest_trend_catalog)" in routes
+    assert "prompts_with_required_system_trends" in routes
+    assert 'source == "tag" and tag == "trend"' in routes
+    assert "await ensure_pinterest_trend_catalog(request.app)" in routes
     assert "get_master_partner_user" in catalog_source
     assert "is_public = TRUE" in catalog_source
     assert "status = 'approved'" in catalog_source
@@ -75,6 +78,12 @@ def test_referral_launch_preserves_trends_as_default_tab():
 
     assert "useState(5)" in app_context
     assert "if (raw.startsWith('ref_')) return null" in start_params
+    assert "if (startTarget.kind === 'ref')" in app_context
+    referral_branch = app_context.split("if (startTarget.kind === 'ref')", 1)[1].split(
+        "if (startTarget.kind === 'profile')", 1
+    )[0]
+    assert "setActiveTabState(5)" in referral_branch
+    assert "setActiveTabState(0)" not in referral_branch
 
     # Explicit navigation deep-links must remain supported.
     for prefix in (
