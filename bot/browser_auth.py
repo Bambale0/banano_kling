@@ -10,7 +10,10 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
-from bot.services.trend_preview_service import ensure_trend_preview_assets
+from bot.services.trend_preview_service import (
+    ensure_lightweight_trend_preview_url,
+    ensure_trend_preview_assets,
+)
 from bot.trend_api import setup_trend_routes
 from bot.trend_task_privacy import sanitize_task_api_payload
 from bot.trend_visibility import (
@@ -173,8 +176,13 @@ async def _with_compatible_trend_previews(payload: Any) -> Any:
         if not preview_url:
             return item
         async with semaphore:
+            # Keep the legacy single-URL seam monkeypatchable while also
+            # producing a poster for modern Mini App cards. The second call is
+            # cheap after the first one because generated assets are cached.
+            optimized_url = str(
+                await ensure_lightweight_trend_preview_url(preview_url) or ""
+            ).strip()
             assets = await ensure_trend_preview_assets(preview_url)
-        optimized_url = str(assets.get("preview_url") or "").strip()
         poster_url = str(assets.get("preview_poster_url") or "").strip()
         if not optimized_url and not poster_url:
             return item
