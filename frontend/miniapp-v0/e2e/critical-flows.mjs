@@ -353,8 +353,9 @@ try {
   await page.getByText('Онлайн', { exact: true }).waitFor()
 
   // Default landing E2E: a normal Mini App launch opens Trends before any nav click.
+  // Pinterest AI is excluded from the showcase; it is reachable via Services only.
   await page.getByText('Curated Video', { exact: true }).waitFor()
-  await page.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
+  assert.equal(await page.getByText('Повтори фото с Pinterest', { exact: true }).count(), 0)
   assert.equal(promptsPayload?.source, 'tag')
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
@@ -385,7 +386,7 @@ try {
   // Trends E2E: server-side tag query + client-side filtering.
   await page.getByRole('button', { name: /Тренды/ }).click()
   await page.getByText('Curated Video', { exact: true }).waitFor()
-  await page.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
+  assert.equal(await page.getByText('Повтори фото с Pinterest', { exact: true }).count(), 0)
   assert.equal(promptsPayload?.source, 'tag')
   assert.equal(promptsPayload?.tag, 'trend')
   assert.equal(await page.getByText('Ordinary Prompt', { exact: true }).count(), 0)
@@ -445,10 +446,12 @@ try {
   await page.mouse.click(10, 10)
   await taskDetailTitle.waitFor({ state: 'hidden' })
 
-  // Pinterest repeat E2E: Pinterest URL -> identity photo -> measurements -> explicit Create.
-  await page.getByRole('button', { name: /Тренды/ }).click()
-  const pinterestCard = page.locator('article').filter({ hasText: pinterestTrend.title })
-  await pinterestCard.getByRole('button', { name: 'Повторить', exact: true }).click()
+  // Pinterest repeat E2E: entry only via Services -> Pinterest AI tile,
+  // then Pinterest URL -> identity photo -> measurements -> explicit Create.
+  await page.getByRole('button', { name: /Сервисы/ }).click()
+  const pinterestTile = page.getByRole('button', { name: /Pinterest AI/ })
+  await pinterestTile.waitFor()
+  await pinterestTile.click()
   const pinterestRunner = page.getByRole('dialog')
   await pinterestRunner.getByText('Повтори фото с Pinterest', { exact: true }).waitFor()
   await pinterestRunner.getByText('РЕФЕРЕНС', { exact: true }).waitFor()
