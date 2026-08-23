@@ -6,8 +6,8 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import type { PromptItem, TrendGenerationSettings } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, updatePromptPreview, uploadFile } from '@/lib/api'
-import type { TrendPreviewKind } from '@/lib/trend-admin-api'
+import { deactivatePrompt, fetchPromptLink, fetchPrompts, submitPrompt, uploadFile } from '@/lib/api'
+import { updateTrendPreview } from '@/lib/trend-admin-api'
 import { mediaAspectRatio, normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 
 type TrendKind = 'image' | 'video'
+type TrendPreviewKind = 'image' | 'video'
 
 const TREND_TAG = 'trend'
 const VIDEO_TREND_TAG = 'trend-video'
@@ -270,18 +271,14 @@ export function TrendsTab() {
 
   const handleEditPreviewUpload = async (file?: File) => {
     if (!file || !editingTrend) return
-    const editingVideo = previewKindForTrend(editingTrend, isVideoTrend(editingTrend)) === 'video'
-    const expectedPrefix = editingVideo ? 'video/' : 'image/'
-    const extension = file.name.split('.').pop()?.toLowerCase() || ''
-    const fallbackExtensions = editingVideo
-      ? new Set(['mp4', 'mov', 'm4v', 'webm'])
-      : new Set(['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'avif'])
-    if (!file.type.startsWith(expectedPrefix) && !fallbackExtensions.has(extension)) {
-      setError(editingVideo ? 'Для видео-тренда нужен видеофайл' : 'Для фото-тренда нужно изображение')
+    const trend = editingTrend
+    const detectedKind = previewKindFromFile(file)
+    if (!detectedKind) {
+      setError('Выберите изображение JPG/PNG/WebP или видео MP4/WebM/MOV')
       return
     }
-    if (editingVideo && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
-      setError('Видео-пример слишком большой, максимум 200MB')
+    if (detectedKind === 'video' && file.size > VIDEO_TREND_PREVIEW_MAX_BYTES) {
+      setError('Промо-видео слишком большое, максимум 200MB')
       return
     }
 
@@ -294,22 +291,29 @@ export function TrendsTab() {
       return localPreviewUrl
     })
     const uploadPromise = uploadFile(
-        editingVideo ? 'trend_video_preview' : 'image_reference',
-        file,
-      )
-      .then((uploaded) => uploaded.url)
+      detectedKind === 'video' ? 'trend_video_preview' : 'image_reference',
+      file,
+    )
+      .then(async (uploaded) => {
+        const updated = await updateTrendPreview(trend.id, uploaded.url, detectedKind)
+        return { uploadedUrl: uploaded.url, updated }
+      })
       .catch((e) => {
         if (editUploadAttemptRef.current === attemptId) {
           setEditPreviewUrl((current) => current === localPreviewUrl ? '' : current)
-          setError(e instanceof Error ? e.message : 'Не удалось загрузить preview')
+          setError(e instanceof Error ? e.message : 'Не удалось обновить preview')
         }
         return null
       })
-    editUploadPromiseRef.current = uploadPromise
+    editUploadPromiseRef.current = uploadPromise.then((result) => result?.uploadedUrl || null)
     try {
-      const uploadedUrl = await uploadPromise
+      const result = await uploadPromise
       if (editUploadAttemptRef.current !== attemptId) return
-      if (uploadedUrl) setEditPreviewUrl(uploadedUrl)
+      if (result) {
+        setEditPreviewUrl(result.uploadedUrl)
+        setEditingTrend(result.updated)
+        setItems((prev) => prev.map((item) => item.id === result.updated.id ? result.updated : item))
+      }
     } finally {
       if (editUploadAttemptRef.current === attemptId) {
         setUploadingEditPreview(false)
@@ -432,34 +436,10 @@ export function TrendsTab() {
       return
     }
     setSavingEdit(true)
-    setError(null)
     try {
-      let finalPreviewUrl = editPreviewUrl
-      if (finalPreviewUrl.startsWith('blob:') && editUploadPromiseRef.current) {
-        setError('Дожидаюсь сохранения preview на сервере…')
-        const uploadedUrl = await editUploadPromiseRef.current
-        if (!uploadedUrl) {
-          setError('Не удалось сохранить preview. Повторите загрузку файла.')
-          return
-        }
-        finalPreviewUrl = uploadedUrl
-        setEditPreviewUrl(uploadedUrl)
-      }
-      if (finalPreviewUrl.startsWith('blob:')) {
-        setError('Preview еще не сохранен на сервере. Подождите несколько секунд и повторите.')
-        return
-      }
-      const updated = await updatePromptPreview(editingTrend.id, finalPreviewUrl)
-      setItems((prev) => prev.map((item) => (
-        item.id === updated.id
-          ? { ...updated, preview_poster_url: updated.preview_poster_url || null }
-          : item
-      )))
       setEditingTrend(null)
       setEditPreviewUrl('')
       if (editFileInputRef.current) editFileInputRef.current.value = ''
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось обновить тренд')
     } finally {
       setSavingEdit(false)
     }
@@ -885,7 +865,7 @@ export function TrendsTab() {
             <div className="space-y-4">
               <div>
                 <p className="line-clamp-2 text-sm font-semibold text-foreground">{editingTrend.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview, тренд останется тем же.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.</p>
               </div>
 
               <div className="space-y-2">
@@ -913,17 +893,13 @@ export function TrendsTab() {
                 <input
                   ref={editFileInputRef}
                   type="file"
-                  accept={
-                    previewKindForTrend(editingTrend, isVideoTrend(editingTrend)) === 'video'
-                      ? 'video/mp4,video/webm,video/quicktime'
-                      : 'image/jpeg,image/png,image/webp'
-                  }
+                  accept="image/jpeg,image/png,image/webp,image/avif,video/mp4,video/webm,video/quicktime"
                   className="block w-full cursor-pointer rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-60 file:mr-3 file:rounded-md file:border-0 file:bg-gold file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
                   disabled={uploadingEditPreview || savingEdit}
                   onChange={(event) => void handleEditPreviewUpload(event.target.files?.[0])}
                 />
                 {uploadingEditPreview ? (
-                  <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Загружаю preview…</p>
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Загружаю и сохраняю preview…</p>
                 ) : null}
               </div>
 
@@ -933,8 +909,8 @@ export function TrendsTab() {
                 disabled={uploadingEditPreview || savingEdit || !editPreviewUrl}
                 onClick={() => void handleSaveEdit()}
               >
-                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                Сохранить
+                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Готово
               </Button>
             </div>
           ) : null}
@@ -951,6 +927,7 @@ export function TrendsTab() {
               controls
               autoPlay
               muted
+              loop
               playsInline
               onLoadedMetadata={(event) => rememberVideoAspectRatio(previewTrend.id, event.currentTarget)}
               style={{ aspectRatio: videoAspectRatios[previewTrend.id] || mediaAspectRatio(previewTrend.generation_settings?.ratio) }}
