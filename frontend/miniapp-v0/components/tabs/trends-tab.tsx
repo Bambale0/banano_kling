@@ -48,6 +48,20 @@ function hasVideoTag(trend: PromptItem) {
   return normalizedTags(trend).has(VIDEO_TREND_TAG)
 }
 
+const PINTEREST_TAGS = new Set(['pinterest', 'pinterest-repeat', 'repeat-pinterest'])
+
+// Pinterest AI is intentionally excluded from the Trends showcase: it is
+// reachable only via Services -> Pinterest AI, which launches the regular
+// TrendRunnerDialog flow. Mirrors TrendRunnerDialog's isPinterestRepeatItem
+// detection.
+function isPinterestRepeatTrend(trend: PromptItem) {
+  const tags = normalizedTags(trend)
+  for (const tag of PINTEREST_TAGS) {
+    if (tags.has(tag)) return true
+  }
+  return String(trend.title || '').toLowerCase().includes('pinterest')
+}
+
 function previewKindFromFile(file: File): TrendPreviewKind | null {
   const extension = file.name.split('.').pop()?.toLowerCase() || ''
   if (file.type.startsWith('video/') || VIDEO_PREVIEW_EXTENSIONS.has(extension)) return 'video'
@@ -137,7 +151,7 @@ export function TrendsTab() {
     setError(null)
     try {
       const trends = await fetchPrompts({ source: 'tag', tag: TREND_TAG, limit: 80 })
-      setItems(trends.filter(hasTrendTag))
+      setItems(trends.filter((trend) => hasTrendTag(trend) && !isPinterestRepeatTrend(trend)))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды')
     } finally {
