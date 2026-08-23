@@ -86,10 +86,26 @@ def test_system_pinterest_trend_is_seeded_idempotently():
         assert expected in backend
 
 
+def test_trends_showcase_excludes_pinterest_ai_launch():
+    trends_tab = read("frontend/miniapp-v0/components/tabs/trends-tab.tsx")
+    services_tab = read("frontend/miniapp-v0/components/tabs/services-tab.tsx")
+
+    # Trends grid filters Pinterest prompts out entirely; Services is the only
+    # entry point and renders the existing TrendRunnerDialog directly.
+    assert "hasTrendTag(trend) && !isPinterestRepeatTrend(trend)" in trends_tab
+    assert "'pinterest-ai'" in services_tab
+    assert "setPinterestTrend(trend)" in services_tab
+    assert "<TrendRunnerDialog" in services_tab
+
+
 def test_runtime_lock_prevents_database_drift_from_changing_model_or_quality():
     backend = read("bot/pinterest_trend_api.py")
 
     assert 'model="banana_pro"' in backend
-    assert 'ratio="9:16"' in backend
+    # Ratio is only a configured default: at runtime it is matched to the
+    # scene reference aspect so a 3:4 source stays 3:4.
+    assert '"ratio": "9:16"' in backend
+    assert 'ratio = str(locked_settings.get("ratio") or trusted.ratio)' in backend
+    assert '_scene_matched_ratio(' in backend
     assert "locked_settings = dict(_PINTEREST_TOOL_SETTINGS)" in backend
-    assert "trusted = _lock_pinterest_run(" in backend
+    assert "await _lock_pinterest_run(" in backend
