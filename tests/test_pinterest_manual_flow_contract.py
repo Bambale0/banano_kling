@@ -119,6 +119,13 @@ def test_runtime_prompt_assigns_non_overlapping_scene_and_identity_roles() -> No
     assert "hairstyle arrangement from SCENE_REFERENCE" in prompt
     assert "USER's real hair length and hair color/shade" in prompt
     assert "Returning SCENE_REFERENCE unchanged or nearly unchanged is an invalid result" in prompt
+    assert "PARTIAL TRANSFER GUARD" in prompt
+    assert (
+        "Do not take ONLY hair color, hair length or body cues from "
+        "USER_IDENTITY_REFERENCE while keeping the SCENE_REFERENCE person's face"
+    ) in prompt
+    assert "Do not copy person from scene reference." in prompt
+    assert "Do not replace identity. Keep facial structure unchanged." in prompt
     assert "Do not output prompt text, explanations, URLs" in prompt
     assert "height 165 cm" in prompt
     assert "weight 48 kg" in prompt
@@ -168,6 +175,47 @@ def test_trend_task_persistence_does_not_store_private_recipe() -> None:
     assert private["request_data"]["provider_model"] == "nano-banana-pro"
     assert private["request_data"]["prompt_hidden"] is True
     assert private["request_data"]["prompt_actions_allowed"] is False
+
+
+def test_trend_task_persistence_stores_internal_reference_roles_for_pinterest() -> None:
+    original = {
+        "action_type": "trend",
+        "prompt": f"Recreate.\n\n{PINTEREST_PROMPT_MARKER}\n...",
+        "request_data": {
+            "prompt": "runtime copy",
+            "effective_prompt": f"EDIT REQUEST: ... {PINTEREST_PROMPT_MARKER}",
+            "reference_images": [
+                "https://example.com/scene.jpg",
+                "https://example.com/user.jpg",
+                "https://example.com/angle.jpg",
+            ],
+        },
+    }
+
+    private = _private_trend_task_kwargs(original)
+
+    assert private["request_data"]["reference_roles"] == [
+        "scene",
+        "identity",
+        "identity",
+    ]
+
+
+def test_generic_trend_tasks_do_not_get_pinterest_reference_roles() -> None:
+    original = {
+        "action_type": "trend",
+        "prompt": "Ordinary curated trend without pinterest marker",
+        "request_data": {
+            "reference_images": [
+                "https://example.com/a.jpg",
+                "https://example.com/b.jpg",
+            ],
+        },
+    }
+
+    private = _private_trend_task_kwargs(original)
+
+    assert "reference_roles" not in private["request_data"]
 
 
 def test_route_installs_strict_contract_before_all_trend_routes() -> None:

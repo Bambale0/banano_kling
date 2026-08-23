@@ -109,6 +109,24 @@ Pose/camera/framing/expression/clothing/hairstyle arrangement/scene -> Image 1
 Face/identity/body build/hair length/hair color -> user identity images
 ```
 
+The runtime prompt must also contain the PARTIAL TRANSFER GUARD:
+
+```text
+Do not take ONLY hair color/hair length/body cues from the user while keeping
+the SCENE_REFERENCE person's face.
+Do not copy person from scene reference.
+Do not replace identity. Keep facial structure unchanged.
+```
+
+### Output aspect ratio
+
+The configured trend ratio is only a default. Before launch the backend probes
+the scene reference dimensions (`bot.generation_context.probe_image_size`) and
+picks the closest supported ratio of the model (`_scene_matched_ratio`). A 3:4
+source stays 3:4 instead of being stretched into the default 9:16 canvas.
+If probing fails, the configured ratio is kept (probing is best-effort and
+never blocks generation).
+
 ## 7. Generic Nano Banana bypass
 
 Generic Nano Banana reference guidance must not be applied to Pinterest runtime prompt if that guidance implies:

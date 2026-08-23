@@ -1,5 +1,6 @@
 import pytest
 
+from bot import pinterest_trend_api as pinterest_api
 from bot.pinterest_trend_api import (
     _augmented_prompt,
     _lock_pinterest_run,
@@ -86,7 +87,7 @@ def test_augmented_prompt_keeps_reference_roles_and_identity_unambiguous():
     assert "never render these numbers" in prompt
 
 
-def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
+async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
     stored = TrustedTrendRun(
         trend_id=42,
         kind="image",
@@ -100,10 +101,12 @@ def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
         settings={"quality": "4K", "count": 3},
     )
 
-    locked = _lock_pinterest_run(stored, height_cm=175, weight_kg=78)
+    # No scene URL probe available: keep the configured default ratio.
+    locked = await _lock_pinterest_run(stored, height_cm=175, weight_kg=78)
 
     assert locked.model == "banana_pro"
     assert locked.ratio == "9:16"
+    assert locked.settings["ratio"] == "9:16"
     assert locked.settings["quality"] == "2K"
     assert locked.settings["count"] == 1
     assert locked.settings["reference_count"] == 2
@@ -113,3 +116,64 @@ def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
     assert "height 175 cm" in locked.prompt
     assert "weight 78 kg" in locked.prompt
     assert "admin changed prompt" not in locked.prompt
+
+
+async def test_lock_pinterest_run_matches_ratio_to_scene_reference(monkeypatch):
+    async def fake_probe(url: str):
+        assert url == "https://i.pinimg.com/reference.jpg"
+        return 3000, 4000
+
+    monkeypatch.setattr(pinterest_api, "probe_image_size", fake_probe)
+
+    stored = TrustedTrendRun(
+        trend_id=42,
+        kind="image",
+        prompt="base",
+        model="banana_pro",
+        ratio="9:16",
+        reference_urls=(
+            "https://i.pinimg.com/reference.jpg",
+            "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+        ),
+        settings={"quality": "2K", "count": 1},
+    )
+
+    locked = await _lock_pinterest_run(
+        stored,
+        height_cm=170,
+        weight_kg=60,
+        scene_url="https://i.pinimg.com/reference.jpg",
+    )
+
+    # A 3:4 source must stay 3:4 instead of being stretched to 9:16.
+    assert locked.ratio == "3:4"
+    assert locked.settings["ratio"] == "3:4"
+
+
+async def test_lock_pinterest_run_keeps_ratio_when_probe_fails(monkeypatch):
+    async def failing_probe(url: str):
+        return None
+
+    monkeypatch.setattr(pinterest_api, "probe_image_size", failing_probe)
+
+    stored = TrustedTrendRun(
+        trend_id=42,
+        kind="image",
+        prompt="base",
+        model="banana_pro",
+        ratio="9:16",
+        reference_urls=(
+            "https://i.pinimg.com/broken.jpg",
+            "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+        ),
+        settings={"quality": "2K", "count": 1},
+    )
+
+    locked = await _lock_pinterest_run(
+        stored,
+        height_cm=170,
+        weight_kg=60,
+        scene_url="https://i.pinimg.com/broken.jpg",
+    )
+
+    assert locked.ratio == "9:16"

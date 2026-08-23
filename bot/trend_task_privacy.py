@@ -20,6 +20,7 @@ _PRIVATE_REQUEST_FIELDS = {
     "pinterest_url",
     "reference_images",
     "source_reference_images",
+    "reference_roles",
 }
 
 

@@ -14,6 +14,11 @@ from aiohttp import web
 from bot import db as db_backend
 from bot.config import config
 from bot.database import get_or_create_user, get_prompt_by_id
+from bot.generation_context import (
+    parse_ratio,
+    pick_closest_ratio,
+    probe_image_size,
+)
 from bot.trend_api import (
     TrendRunValidationError,
     TrustedTrendRun,
@@ -197,19 +202,75 @@ def _augmented_prompt(
     )
 
 
-def _lock_pinterest_run(
+def _supported_image_ratios(model: str) -> list[str]:
+    """Ratios supported by the image model, from the Mini App model catalog."""
+
+    try:
+        from bot import miniapp as miniapp_module
+
+        meta = next(
+            (item for item in miniapp_module.IMAGE_MODELS if item["id"] == model),
+            None,
+        )
+    except Exception:  # noqa: BLE001 - catalog lookup must never break runs
+        meta = None
+    ratios = [str(item).strip() for item in (meta or {}).get("ratios") or []]
+    valid = [item for item in ratios if parse_ratio(item)]
+    return valid or ["1:1", "3:4", "4:3", "9:16", "16:9"]
+
+
+async def _scene_matched_ratio(
+    scene_url: str,
+    model: str,
+    current_ratio: str,
+) -> str:
+    """Match the output ratio to the scene reference aspect.
+
+    A 3:4 source must not be stretched into the default 9:16 canvas. Falls
+    back to the configured ratio when probing fails or the closest supported
+    ratio is within a small tolerance of the configured one.
+    """
+
+    size = await probe_image_size(scene_url)
+    if not size:
+        return current_ratio
+    candidate = pick_closest_ratio(size[0], size[1], _supported_image_ratios(model))
+    if not candidate:
+        return current_ratio
+    candidate_value = parse_ratio(candidate)
+    current_value = parse_ratio(current_ratio)
+    if not candidate_value or not current_value:
+        return current_ratio
+    if abs(candidate_value / current_value - 1.0) <= 0.05:
+        return current_ratio
+    logger.info(
+        "Pinterest scene ratio override: %s -> %s (source %dx%d)",
+        current_ratio,
+        candidate,
+        size[0],
+        size[1],
+    )
+    return candidate
+
+
+async def _lock_pinterest_run(
     trusted: TrustedTrendRun,
     *,
     height_cm: int | None,
     weight_kg: int | None,
+    scene_url: str | None = None,
 ) -> TrustedTrendRun:
     """Force the product contract even if the stored trend is edited later."""
 
     locked_settings = dict(_PINTEREST_TOOL_SETTINGS)
+    ratio = str(locked_settings.get("ratio") or trusted.ratio)
+    if scene_url:
+        ratio = await _scene_matched_ratio(scene_url, "banana_pro", ratio)
+    locked_settings["ratio"] = ratio
     return replace(
         trusted,
         model="banana_pro",
-        ratio="9:16",
+        ratio=ratio,
         settings=locked_settings,
         prompt=_augmented_prompt(
             _PINTEREST_TOOL_PROMPT,
@@ -431,10 +492,11 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
         if "pinterest" not in tags and "pinterest" not in title:
             raise TrendRunValidationError("Этот шаблон не является Pinterest-трендом")
 
-        trusted = _lock_pinterest_run(
+        trusted = await _lock_pinterest_run(
             trusted,
             height_cm=height_cm,
             weight_kg=weight_kg,
+            scene_url=references[0] if references else None,
         )
         return await _run_image_trend(
             request,

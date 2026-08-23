@@ -21,6 +21,11 @@ from aiohttp import web
 
 from bot import pinterest_trend_api as pinterest_api
 from bot import trend_api as generic_trend_api
+from bot.generation_context import (
+    GenerationContextError,
+    PrivacyPolicy,
+    ensure_pinterest_reference_gate,
+)
 from bot.trend_api import TrendRunValidationError
 
 MIN_PINTEREST_REFERENCES = 2
@@ -139,6 +144,13 @@ def _build_pinterest_recreation_prompt(
         f"- User measurements: {measurement_text}. Use them only as body-scale evidence; never render these numbers or measurement text.\n"
         "- Images 3..N must never override pose, camera, framing, expression, clothing, hairstyle arrangement, background or lighting from SCENE_REFERENCE.\n"
         "\n"
+        "PARTIAL TRANSFER GUARD\n"
+        "- Partial identity transfer is invalid. Do not take ONLY hair color, hair length or body cues from USER_IDENTITY_REFERENCE while keeping the SCENE_REFERENCE person's face.\n"
+        "- Every identity attribute must come from the user together: facial structure, face geometry, skin tone, apparent age, hair color and hair length.\n"
+        "- If the hair color differs between SCENE_REFERENCE and the user, render the user's hair color on the user's head shape adapted to the scene styling.\n"
+        "- Do not copy person from scene reference.\n"
+        "- Do not replace identity. Keep facial structure unchanged.\n"
+        "\n"
         "CONFLICT PRIORITY\n"
         "- Pose/camera/framing/expression/clothing/hairstyle arrangement/scene always come from SCENE_REFERENCE.\n"
         "- Face/identity/body build/hair length/hair color always come from USER identity images.\n"
@@ -171,12 +183,26 @@ def _private_trend_task_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     if str(clean.get("action_type") or "").strip().lower() != "trend":
         return clean
 
+    marker_present = PINTEREST_PROMPT_MARKER in str(clean.get("prompt") or "")
     clean["prompt"] = ""
     request_data = clean.get("request_data")
     if isinstance(request_data, Mapping):
         private_request = dict(request_data)
+        marker_present = marker_present or any(
+            PINTEREST_PROMPT_MARKER in str(private_request.get(key) or "")
+            for key in ("prompt", "effective_prompt")
+        )
         for key in _PRIVATE_TREND_REQUEST_KEYS:
             private_request.pop(key, None)
+        if marker_present:
+            # Internal-only role metadata for retry/debugging. It is stripped
+            # from every public payload by trend_task_privacy sanitizers.
+            references = private_request.get("reference_images")
+            if isinstance(references, list) and references:
+                private_request["reference_roles"] = [
+                    "scene",
+                    *("identity" for _ in references[1:]),
+                ]
         private_request["prompt_hidden"] = True
         private_request["prompt_actions_allowed"] = False
         clean["request_data"] = private_request
@@ -219,6 +245,7 @@ def install_pinterest_trend_flow_contract() -> None:
                 maximum=250,
                 label="Вес",
             )
+            validated_urls = _strict_reference_urls(body)
         except TrendRunValidationError as error:
             return web.json_response({"ok": False, "error": str(error)}, status=400)
         except Exception:
@@ -226,6 +253,21 @@ def install_pinterest_trend_flow_contract() -> None:
                 {"ok": False, "error": "Некорректные параметры Pinterest-тренда"},
                 status=400,
             )
+
+        try:
+            # Validation gate: scene exists, identity exists, roles valid,
+            # privacy mode enabled. Runs before task creation and credit debit.
+            ensure_pinterest_reference_gate(
+                validated_urls,
+                privacy_policy=PrivacyPolicy(
+                    private_recipe=True,
+                    hide_prompt=True,
+                    allow_prompt_actions=False,
+                    feed_prompt_visible=False,
+                ),
+            )
+        except GenerationContextError as error:
+            return web.json_response({"ok": False, "error": str(error)}, status=400)
 
         return await original_handler(request)
 

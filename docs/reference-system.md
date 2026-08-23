@@ -100,9 +100,7 @@ references = []
 
 ## 5. GenerationContext
 
-Внутренний backend-контракт должен разделять public payload и internal generation context.
-
-Рекомендуемая структура:
+Реализовано в `bot/generation_context.py` как типизированный контракт:
 
 ```text
 GenerationContext
@@ -113,10 +111,14 @@ GenerationContext
     style_references[]
   model_config
   privacy_policy
-  provider_options
 ```
 
-Public API response не должен быть сериализацией `GenerationContext` напрямую.
+Правила:
+
+- роли назначаются только через резолверы `resolve_pinterest_reference_roles` / `resolve_standard_reference_roles` / `resolve_text_to_image_context`;
+- Pinterest-гейт `ensure_pinterest_reference_gate` проверяет scene/identity/roles и включённый privacy mode до создания задачи и списания кредитов;
+- `validate_generation_context` дополнительно проверяет лимит референсов провайдера и схемы URL;
+- Public API response не должен быть сериализацией `GenerationContext` напрямую.
 
 ## 6. Provider mapping
 
