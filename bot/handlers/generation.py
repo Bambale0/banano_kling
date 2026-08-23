@@ -2637,8 +2637,74 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
 
 @router.callback_query(F.data.startswith("repeat_result_"))
 async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMContext):
-    """Быстрый повтор генерации изображения с теми же параметрами (из кнопки «🔁 Повторить»)."""
+    """Показывает подтверждение перед повтором: без списаний и запуска сразу."""
     task_id = callback.data.replace("repeat_result_", "", 1)
+    task = await get_task_by_id(task_id)
+
+    if not task or task.type != "image":
+        await callback.answer("Не удалось найти данные для повтора.", show_alert=True)
+        return
+
+    try:
+        request_data = json.loads(task.request_data) if task.request_data else {}
+    except Exception:
+        await callback.answer("Данные исходной задачи повреждены.", show_alert=True)
+        return
+
+    user = await get_or_create_user(callback.from_user.id)
+    img_service = request_data.get("img_service", task.model or "banana_pro")
+    img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
+    is_admin = config.is_admin(callback.from_user.id)
+    unit_cost = task.cost or 0
+
+    if task.user_id == user.id:
+        reference_images = _source_reference_images_from_request(request_data)
+    else:
+        reference_images = []
+    reference_images, missing_reference_images = _available_reference_images(reference_images)
+    if missing_reference_images:
+        reference_images = []
+
+    cost_line = "бесплатно" if unit_cost <= 0 or is_admin else f"{unit_cost}🍌"
+    warning_line = ""
+    if unit_cost > 0 and not is_admin:
+        if not await check_can_afford(callback.from_user.id, unit_cost):
+            await callback.answer("Недостаточно бананов для повтора.", show_alert=True)
+            return
+        warning_line = "\nБананы спишутся только после подтверждения."
+
+    model_label = get_image_model_label(img_service)
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"✅ Запустить за {cost_line}", callback_data=f"repeat_run_confirm_{task_id}")
+    builder.button(text="❌ Отмена", callback_data=f"repeat_run_cancel_{task_id}")
+    builder.adjust(1, 1)
+
+    await callback.message.answer(
+        "🔁 <b>Повторить эту генерацию?</b>\n"
+        f"• Модель: <code>{model_label}</code>\n"
+        f"• Формат: <code>{img_ratio.replace(':', '∶')}</code>\n"
+        f"• Референсы: <code>{len(reference_images)}</code>\n"
+        f"• Цена: <code>{cost_line}</code>"
+        f"{warning_line}",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("repeat_run_cancel_"))
+async def quick_repeat_image_cancel(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        await callback.message.edit_text("❌ Повтор отменён. Бананы не списывались.")
+    except TelegramBadRequest:
+        pass
+    await callback.answer("Отменено")
+
+
+@router.callback_query(F.data.startswith("repeat_run_confirm_"))
+async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """Запускает повтор только после явного подтверждения пользователя."""
+    task_id = callback.data.replace("repeat_run_confirm_", "", 1)
     task = await get_task_by_id(task_id)
 
     if not task or task.type != "image":
