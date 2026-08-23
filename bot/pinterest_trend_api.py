@@ -267,10 +267,15 @@ async def _lock_pinterest_run(
     if scene_url:
         ratio = await _scene_matched_ratio(scene_url, "banana_pro", ratio)
     locked_settings["ratio"] = ratio
+    # Provider order for nano-banana-pro: the USER comes first so the model
+    # treats the user as the subject and the scene as the frame to re-shoot.
+    # Semantic roles stay unchanged: urls[0] was SCENE, urls[1:] identity.
+    reordered_references = (*trusted.reference_urls[1:], trusted.reference_urls[0])
     return replace(
         trusted,
         model="banana_pro",
         ratio=ratio,
+        reference_urls=reordered_references,
         settings=locked_settings,
         prompt=_augmented_prompt(
             _PINTEREST_TOOL_PROMPT,

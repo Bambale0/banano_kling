@@ -124,9 +124,13 @@ def _build_pinterest_recreation_prompt(
         f"{base_prompt.strip()}\n\n"
         f"{PINTEREST_PROMPT_MARKER}\n"
         "REFERENCE ROLES — DO NOT SWAP THEM\n"
-        "- Image 1 = SCENE_REFERENCE. It is the master for the photographed setup, never for identity.\n"
-        "- Image 2 = USER_IDENTITY_REFERENCE. It is the primary identity master.\n"
+        "- Image 1 = USER_IDENTITY_REFERENCE. It is the primary identity master.\n"
+        "- Image 2 = SCENE_REFERENCE. It is the master for the photographed setup, never for identity.\n"
         "- Images 3..N, when present, are ADDITIONAL_USER_IDENTITY_ANGLES of the SAME user. They only strengthen identity/body evidence.\n"
+        "\n"
+        "TASK — RE-PHOTOGRAPH, NOT EDIT\n"
+        "- Take Image 2 (SCENE_REFERENCE) as the base frame and replace its person completely with the person from Image 1 (USER_IDENTITY_REFERENCE).\n"
+        "- Do not preserve, retouch or lightly edit the person visible in Image 2: that person must not remain recognizable anywhere in the output.\n"
         "\n"
         "SCENE_REFERENCE LOCK — MATCH THESE ATTRIBUTES 1:1\n"
         "- Recreate the exact pose and body geometry: head tilt, torso rotation, shoulder angle, arm position, hand placement, leg position and weight distribution.\n"
@@ -197,11 +201,12 @@ def _private_trend_task_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
         if marker_present:
             # Internal-only role metadata for retry/debugging. It is stripped
             # from every public payload by trend_task_privacy sanitizers.
+            # Provider order is identity-first, scene-last for nano-banana-pro.
             references = private_request.get("reference_images")
             if isinstance(references, list) and references:
                 private_request["reference_roles"] = [
+                    *("identity" for _ in references[:-1]),
                     "scene",
-                    *("identity" for _ in references[1:]),
                 ]
         private_request["prompt_hidden"] = True
         private_request["prompt_actions_allowed"] = False

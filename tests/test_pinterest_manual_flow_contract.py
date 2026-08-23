@@ -109,8 +109,9 @@ def test_runtime_prompt_assigns_non_overlapping_scene_and_identity_roles() -> No
     )
 
     assert PINTEREST_PROMPT_MARKER in prompt
-    assert "Image 1 = SCENE_REFERENCE" in prompt
-    assert "Image 2 = USER_IDENTITY_REFERENCE" in prompt
+    assert "Image 1 = USER_IDENTITY_REFERENCE" in prompt
+    assert "Image 2 = SCENE_REFERENCE" in prompt
+    assert "Take Image 2 (SCENE_REFERENCE) as the base frame and replace its person completely with the person from Image 1" in prompt
     assert "Images 3..N" in prompt
     assert "exact pose and body geometry" in prompt
     assert "exact camera viewpoint" in prompt
@@ -195,9 +196,9 @@ def test_trend_task_persistence_stores_internal_reference_roles_for_pinterest() 
     private = _private_trend_task_kwargs(original)
 
     assert private["request_data"]["reference_roles"] == [
+        "identity",
+        "identity",
         "scene",
-        "identity",
-        "identity",
     ]
 
 

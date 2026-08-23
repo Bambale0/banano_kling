@@ -22,13 +22,24 @@ STYLE_REFERENCE       -> стиль, цвет, визуальная манера
 
 Pinterest flow — специальный production-пайплайн. Он не является обычным image-to-image и не должен проходить через generic правило `first uploaded image = identity`.
 
-Порядок входных изображений:
+Порядок входных изображений от пользователя:
 
 ```text
 Image 1      = SCENE_REFERENCE
 Image 2      = USER_IDENTITY_REFERENCE
 Images 3..N  = ADDITIONAL_USER_IDENTITY_ANGLES
 ```
+
+Провайдерный payload для nano-banana-pro передаётся в другом порядке —
+identity-first, scene-last (модель трактует первое изображение как субъект):
+
+```text
+provider_images[0]      = USER_IDENTITY_REFERENCE
+provider_images[1..N-1] = ADDITIONAL_USER_IDENTITY_ANGLES
+provider_images[N]      = SCENE_REFERENCE
+```
+
+Runtime prompt нумерует роли в провайдерском порядке.
 
 Image 1 используется только для:
 

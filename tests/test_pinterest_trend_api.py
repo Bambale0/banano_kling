@@ -107,6 +107,11 @@ async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
     assert locked.model == "banana_pro"
     assert locked.ratio == "9:16"
     assert locked.settings["ratio"] == "9:16"
+    # Provider order is identity-first, scene-last for nano-banana-pro.
+    assert locked.reference_urls == (
+        "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+        "https://i.pinimg.com/reference.jpg",
+    )
     assert locked.settings["quality"] == "2K"
     assert locked.settings["count"] == 1
     assert locked.settings["reference_count"] == 2
