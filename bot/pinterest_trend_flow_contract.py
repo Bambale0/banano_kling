@@ -4,6 +4,12 @@ The Pinterest flow is intentionally different from ordinary one-tap trends:
 users must provide a scene reference, their own identity photo, body
 measurements, and explicitly confirm generation. Additional identity angles are
 allowed to improve likeness but never trigger generation by themselves.
+
+This module also isolates the Pinterest prompt from the generic Nano Banana
+reference guidance. The generic editor assumes the first image is the identity
+master, while Pinterest deliberately uses Image 1 as the scene master. Mixing
+those contracts makes the provider copy the source person/composition instead
+of recreating the scene with the user's identity.
 """
 
 from __future__ import annotations
@@ -20,6 +26,14 @@ from bot.trend_api import TrendRunValidationError
 MIN_PINTEREST_REFERENCES = 2
 MAX_PINTEREST_IDENTITY_ANGLES = 5
 MAX_PINTEREST_REFERENCES = MIN_PINTEREST_REFERENCES + MAX_PINTEREST_IDENTITY_ANGLES
+PINTEREST_PROMPT_MARKER = "PINTEREST_RECREATION_CONTRACT_V2"
+
+_PRIVATE_TREND_REQUEST_KEYS = {
+    "prompt",
+    "effective_prompt",
+    "source_url",
+    "pinterest_url",
+}
 
 
 def _strict_reference_urls(body: dict[str, Any]) -> tuple[str, ...]:
@@ -86,15 +100,101 @@ def _is_pinterest_prompt(prompt: Mapping[str, Any] | None) -> bool:
     )
 
 
+def _build_pinterest_recreation_prompt(
+    base_prompt: str,
+    *,
+    height_cm: int | None,
+    weight_kg: int | None,
+) -> str:
+    """Build the provider prompt with explicit, non-overlapping reference roles."""
+
+    measurements: list[str] = []
+    if height_cm is not None:
+        measurements.append(f"height {height_cm} cm")
+    if weight_kg is not None:
+        measurements.append(f"weight {weight_kg} kg")
+    measurement_text = ", ".join(measurements) if measurements else "not provided"
+
+    return (
+        f"{base_prompt.strip()}\n\n"
+        f"{PINTEREST_PROMPT_MARKER}\n"
+        "REFERENCE ROLES — DO NOT SWAP THEM\n"
+        "- Image 1 = SCENE_REFERENCE. It is the master for the photographed setup, never for identity.\n"
+        "- Image 2 = USER_IDENTITY_REFERENCE. It is the primary identity master.\n"
+        "- Images 3..N, when present, are ADDITIONAL_USER_IDENTITY_ANGLES of the SAME user. They only strengthen identity/body evidence.\n"
+        "\n"
+        "SCENE_REFERENCE LOCK — MATCH THESE ATTRIBUTES 1:1\n"
+        "- Recreate the exact pose and body geometry: head tilt, torso rotation, shoulder angle, arm position, hand placement, leg position and weight distribution.\n"
+        "- Recreate the exact camera viewpoint: camera height, camera angle, perspective, subject distance, framing, crop and subject placement. Do not invent a new angle or crop.\n"
+        "- Recreate the exact facial expression, gaze direction and mouth/eye expression from SCENE_REFERENCE. Do not invent a different expression.\n"
+        "- Recreate the exact outfit and styling from SCENE_REFERENCE: garment types, silhouette, colors, layers, fabric appearance, accessories and visible details. Do not redesign or replace the clothing.\n"
+        "- Recreate the hairstyle arrangement from SCENE_REFERENCE: parting, bangs/fringe, waves/curls, volume, tied/loose structure and styling.\n"
+        "- Recreate the background, lighting direction, shadow pattern, scene geometry and photographic mood from SCENE_REFERENCE.\n"
+        "\n"
+        "USER IDENTITY LOCK\n"
+        "- The final person must be the same recognizable person as USER_IDENTITY_REFERENCE and Images 3..N, not the person from SCENE_REFERENCE.\n"
+        "- Preserve the user's facial geometry, face shape, jawline, cheekbones, forehead proportions, eyes, eye spacing, brows, nose, lips, ears, skin tone, apparent age, hairline and distinctive facial features.\n"
+        "- Preserve the user's natural body build and proportions.\n"
+        "- Preserve the USER's real hair length and hair color/shade. Adapt the SCENE_REFERENCE hairstyle arrangement to the user's real length and color instead of copying the source person's hair identity.\n"
+        f"- User measurements: {measurement_text}. Use them only as body-scale evidence; never render these numbers or measurement text.\n"
+        "- Images 3..N must never override pose, camera, framing, expression, clothing, hairstyle arrangement, background or lighting from SCENE_REFERENCE.\n"
+        "\n"
+        "CONFLICT PRIORITY\n"
+        "- Pose/camera/framing/expression/clothing/hairstyle arrangement/scene always come from SCENE_REFERENCE.\n"
+        "- Face/identity/body build/hair length/hair color always come from USER identity images.\n"
+        "- Never average, blend or morph the source person's identity with the user's identity.\n"
+        "\n"
+        "SOURCE-COPY GUARD\n"
+        "- Returning SCENE_REFERENCE unchanged or nearly unchanged is an invalid result.\n"
+        "- Do not reuse the source person's face. Replace the person identity with the user while preserving the source setup exactly.\n"
+        "- The result should look as if the USER was genuinely photographed in the exact source pose, camera angle, expression, outfit and scene.\n"
+        "\n"
+        "OUTPUT PRIVACY\n"
+        "- Produce the image only. Do not output prompt text, explanations, URLs, source attribution, metadata, captions, watermarks, collages, split screens or UI text.\n"
+        "- Prefer faithful 1:1 recreation over artistic reinterpretation."
+    )
+
+
+def _is_pinterest_runtime_prompt(prompt: str | None) -> bool:
+    return PINTEREST_PROMPT_MARKER in str(prompt or "")
+
+
+def _private_trend_task_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail closed when persisting curated trend recipes.
+
+    The provider still receives the full runtime prompt. Only the database copy
+    is redacted, so Telegram webhook/history code cannot accidentally expose a
+    paid trend recipe later.
+    """
+
+    clean = dict(kwargs)
+    if str(clean.get("action_type") or "").strip().lower() != "trend":
+        return clean
+
+    clean["prompt"] = ""
+    request_data = clean.get("request_data")
+    if isinstance(request_data, Mapping):
+        private_request = dict(request_data)
+        for key in _PRIVATE_TREND_REQUEST_KEYS:
+            private_request.pop(key, None)
+        private_request["prompt_hidden"] = True
+        private_request["prompt_actions_allowed"] = False
+        clean["request_data"] = private_request
+    return clean
+
+
 def install_pinterest_trend_flow_contract() -> None:
     """Install guards before Pinterest and generic trend routes are registered."""
 
     if getattr(pinterest_api, "_strict_manual_flow_installed", False):
         return
 
+    from bot.handlers import generation as generation_module
+
     original_handler = pinterest_api.miniapp_run_pinterest_repeat
     original_generic_handler = generic_trend_api.miniapp_run_trend
-    original_augmented_prompt = pinterest_api._augmented_prompt
+    original_reference_guidance = generation_module._apply_reference_detail_preservation
+    original_add_generation_task = generation_module.add_generation_task
 
     async def strict_manual_run(request: web.Request) -> web.Response:
         try:
@@ -161,24 +261,34 @@ def install_pinterest_trend_flow_contract() -> None:
         height_cm: int | None,
         weight_kg: int | None,
     ) -> str:
-        prompt = original_augmented_prompt(
+        return _build_pinterest_recreation_prompt(
             base_prompt,
             height_cm=height_cm,
             weight_kg=weight_kg,
         )
-        return (
-            f"{prompt}\n"
-            "ADDITIONAL USER ANGLES CONTRACT\n"
-            "- Image 1 is always the scene/composition reference.\n"
-            "- Image 2 and every later image are photographs of the SAME user.\n"
-            "- Treat Images 2..N only as additional identity/body-angle evidence.\n"
-            "- Never copy identity from Image 1 into the result.\n"
-            "- Resolve disagreements between user angles by preserving the consistent identity "
-            "visible across Images 2..N."
+
+    def reference_guidance(
+        img_service: str,
+        prompt: str,
+        reference_images: list[str],
+    ) -> str:
+        if _is_pinterest_runtime_prompt(prompt):
+            # The Pinterest prompt already assigns every image a precise role.
+            # The generic Banana guidance assumes Image 1 is the identity master
+            # and therefore directly contradicts this workflow.
+            return str(prompt or "").strip()
+        return original_reference_guidance(img_service, prompt, reference_images)
+
+    async def private_add_generation_task(*args, **kwargs):
+        return await original_add_generation_task(
+            *args,
+            **_private_trend_task_kwargs(kwargs),
         )
 
     pinterest_api._reference_urls = _strict_reference_urls
     pinterest_api._augmented_prompt = augmented_prompt
     pinterest_api.miniapp_run_pinterest_repeat = strict_manual_run
     generic_trend_api.miniapp_run_trend = block_pinterest_on_generic_run
+    generation_module._apply_reference_detail_preservation = reference_guidance
+    generation_module.add_generation_task = private_add_generation_task
     pinterest_api._strict_manual_flow_installed = True

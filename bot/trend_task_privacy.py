@@ -9,6 +9,19 @@ from bot.database import DATABASE_PATH, get_prompts_by_tag
 
 logger = logging.getLogger(__name__)
 
+_PRIVATE_TASK_FIELDS = {
+    "source_url",
+    "pinterest_url",
+}
+_PRIVATE_REQUEST_FIELDS = {
+    "prompt",
+    "effective_prompt",
+    "source_url",
+    "pinterest_url",
+    "reference_images",
+    "source_reference_images",
+}
+
 
 async def _protected_task_ids(task_ids: list[str]) -> set[str]:
     normalized = [
@@ -62,11 +75,24 @@ def _task_objects(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return tasks
 
 
+def _redact_private_request_data(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    clean = dict(value)
+    for key in _PRIVATE_REQUEST_FIELDS:
+        clean.pop(key, None)
+    clean["prompt_hidden"] = True
+    clean["prompt_actions_allowed"] = False
+    return clean
+
+
 async def sanitize_task_api_payload(payload: Any) -> Any:
-    """Remove curated trend recipes from Mini App task/history responses.
+    """Remove curated trend recipes and private source links from task APIs.
 
     This also covers tasks created before the dedicated trend runner existed by
-    matching their stored prompt against approved curated trend prompts.
+    matching their stored prompt against approved curated trend prompts. Privacy
+    fails closed: protected trend prompts, source/reference URLs and prompt
+    actions never reach a Mini App task/history payload.
     """
 
     if not isinstance(payload, Mapping):
@@ -97,6 +123,9 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
         clean["prompt_hidden"] = True
         clean["prompt_actions_allowed"] = False
         clean["feed_prompt_visible"] = False
+        clean["request_data"] = _redact_private_request_data(clean.get("request_data"))
+        for key in _PRIVATE_TASK_FIELDS:
+            clean.pop(key, None)
         return clean
 
     if isinstance(result.get("task"), dict):

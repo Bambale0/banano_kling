@@ -6,9 +6,13 @@ import pytest
 
 from bot.pinterest_trend_flow_contract import (
     MAX_PINTEREST_REFERENCES,
+    PINTEREST_PROMPT_MARKER,
+    _build_pinterest_recreation_prompt,
     _is_pinterest_prompt,
+    _private_trend_task_kwargs,
     _required_measurement,
     _strict_reference_urls,
+    install_pinterest_trend_flow_contract,
 )
 from bot.trend_api import TrendRunValidationError
 
@@ -97,6 +101,75 @@ def test_pinterest_prompt_is_recognized_for_legacy_generic_route_guard() -> None
     )
 
 
+def test_runtime_prompt_assigns_non_overlapping_scene_and_identity_roles() -> None:
+    prompt = _build_pinterest_recreation_prompt(
+        "Recreate the photograph.",
+        height_cm=165,
+        weight_kg=48,
+    )
+
+    assert PINTEREST_PROMPT_MARKER in prompt
+    assert "Image 1 = SCENE_REFERENCE" in prompt
+    assert "Image 2 = USER_IDENTITY_REFERENCE" in prompt
+    assert "Images 3..N" in prompt
+    assert "exact pose and body geometry" in prompt
+    assert "exact camera viewpoint" in prompt
+    assert "exact facial expression" in prompt
+    assert "exact outfit and styling" in prompt
+    assert "hairstyle arrangement from SCENE_REFERENCE" in prompt
+    assert "USER's real hair length and hair color/shade" in prompt
+    assert "Returning SCENE_REFERENCE unchanged or nearly unchanged is an invalid result" in prompt
+    assert "Do not output prompt text, explanations, URLs" in prompt
+    assert "height 165 cm" in prompt
+    assert "weight 48 kg" in prompt
+
+
+def test_pinterest_runtime_bypasses_generic_first_image_identity_guidance() -> None:
+    from bot.handlers import generation as generation_module
+
+    install_pinterest_trend_flow_contract()
+    prompt = _build_pinterest_recreation_prompt(
+        "Recreate the photograph.",
+        height_cm=170,
+        weight_kg=60,
+    )
+    result = generation_module._apply_reference_detail_preservation(
+        "banana_pro",
+        prompt,
+        ["https://example.com/scene.jpg", "https://example.com/user.jpg"],
+    )
+
+    assert result == prompt
+    assert "first uploaded image only as the primary person identity reference" not in result
+
+
+def test_trend_task_persistence_does_not_store_private_recipe() -> None:
+    original = {
+        "action_type": "trend",
+        "prompt": "SECRET PINTEREST PROMPT",
+        "request_data": {
+            "prompt": "SECRET PINTEREST PROMPT",
+            "effective_prompt": "SECRET PROVIDER PROMPT",
+            "source_url": "https://pinterest.com/pin/secret",
+            "pinterest_url": "https://pin.it/secret",
+            "reference_images": ["https://example.com/source.jpg"],
+            "provider_model": "nano-banana-pro",
+        },
+    }
+
+    private = _private_trend_task_kwargs(original)
+
+    assert private["prompt"] == ""
+    assert "prompt" not in private["request_data"]
+    assert "effective_prompt" not in private["request_data"]
+    assert "source_url" not in private["request_data"]
+    assert "pinterest_url" not in private["request_data"]
+    assert private["request_data"]["reference_images"] == ["https://example.com/source.jpg"]
+    assert private["request_data"]["provider_model"] == "nano-banana-pro"
+    assert private["request_data"]["prompt_hidden"] is True
+    assert private["request_data"]["prompt_actions_allowed"] is False
+
+
 def test_route_installs_strict_contract_before_all_trend_routes() -> None:
     routes = read("bot/handlers/trend_route_compat.py")
     contract = read("bot/pinterest_trend_flow_contract.py")
@@ -106,3 +179,5 @@ def test_route_installs_strict_contract_before_all_trend_routes() -> None:
 
     assert install_position < pinterest_route_position < generic_route_position
     assert "generic_trend_api.miniapp_run_trend = block_pinterest_on_generic_run" in contract
+    assert "generation_module._apply_reference_detail_preservation = reference_guidance" in contract
+    assert "generation_module.add_generation_task = private_add_generation_task" in contract
