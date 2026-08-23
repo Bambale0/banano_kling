@@ -9,11 +9,20 @@ import {
   MoreHorizontal,
   ArrowRight,
   Mic2,
+  Sparkles,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
 const primaryServices = [
+  {
+    id: 'pinterest-ai',
+    icon: Sparkles,
+    title: 'Pinterest AI',
+    description: 'Повторяй трендовые сцены с твоим лицом, телом и дополнительными ракурсами.',
+    badge: 'НОВИНКА',
+    tone: 'gold',
+  },
   {
     id: 'prompt-by-photo',
     icon: Wand2,
@@ -96,7 +105,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
             Сервисы
           </h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Быстрые инструменты для подготовки промптов, редактирования, анимации и поддержки.
+            Быстрые инструменты для трендовых фото, подготовки промптов, редактирования, анимации и поддержки.
           </p>
         </div>
       </div>
@@ -104,7 +113,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-serif text-lg text-foreground">Основные</h3>
-          <span className="text-xs text-muted-foreground">4 сценария</span>
+          <span className="text-xs text-muted-foreground">5 сценариев</span>
         </div>
 
         <div className="grid gap-3">
@@ -128,6 +137,11 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                     : 'border-border/55 bg-card/45 hover:border-border hover:bg-card/70'
                 )}
               >
+                {service.id === 'pinterest-ai' ? (
+                  <div className="pointer-events-none absolute right-3 top-3 rounded-full border border-gold/40 bg-gold/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gold">
+                    NEW
+                  </div>
+                ) : null}
                 <div className="flex items-start gap-4">
                   <div
                     className={cn(
