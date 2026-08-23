@@ -462,15 +462,17 @@ try {
   const createButton = pinterestRunner.getByRole('button', { name: 'Создать →', exact: true })
   assert.equal(await createButton.isDisabled(), true)
 
-  const pinterestUrl = 'https://www.pinterest.com/pin/123456789/'
-  await pinterestRunner.getByPlaceholder('Ссылка на пин с Pinterest').fill(pinterestUrl)
-  const pinterestReferenceResponse = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith('/trends/pinterest-reference'),
-  )
-  await pinterestRunner.getByRole('button', { name: 'Загрузить', exact: true }).click()
-  await pinterestReferenceResponse
+  uploadQueue.push({
+    url: 'https://cdn.example/pinterest-reference.jpg',
+    kind: 'image',
+    filename: 'pinterest-reference.jpg',
+  })
+  await pinterestFileInputs.nth(0).setInputFiles({
+    name: 'pinterest-reference.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]),
+  })
 
-  assert.equal(pinterestReferencePayload?.url, pinterestUrl)
   assert.equal(await createButton.isDisabled(), true, 'One reference must not be enough to generate')
   assert.equal(pinterestGenerationPayload, null)
 
@@ -502,7 +504,7 @@ try {
 
   assert.equal(pinterestGenerationPayload?.trend_id, pinterestTrend.id)
   assert.deepEqual(pinterestGenerationPayload?.reference_urls, [
-    'https://i.pinimg.com/736x/e2/e2/e2/reference.jpg',
+    'https://cdn.example/pinterest-reference.jpg',
     'https://cdn.example/pinterest-user.jpg',
   ])
   assert.equal(pinterestGenerationPayload?.height_cm, 172)

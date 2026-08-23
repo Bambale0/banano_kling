@@ -14,18 +14,20 @@ def test_pinterest_repeat_matches_reference_video_flow():
         "Повтори фото с Pinterest",
         "РЕФЕРЕНС",
         "ТЫ",
-        "или вставь ссылку",
-        "Ссылка на пин с Pinterest",
         "Загрузить",
         "Рост",
         "Вес",
         "Создать →",
-        "resolvePinterestReference",
         "runPinterestRepeatTrend",
         "сцена, свет и поза считаются с референса",
         "лицо и внешность берутся только с твоего фото",
     ):
         assert expected in runner
+
+    # The Pinterest URL shortcut is removed: only device uploads are allowed,
+    # because external image hosts block provider-side fetches.
+    assert "resolvePinterestReference" not in runner
+    assert "Ссылка на пин с Pinterest" not in runner
 
     assert "pinterestRepeat\n        ? await runPinterestRepeatTrend" in runner
     assert "heightCm: parseOptionalNumber(heightCm)" in runner

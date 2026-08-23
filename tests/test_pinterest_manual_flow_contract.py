@@ -65,10 +65,19 @@ def test_pinterest_client_sends_explicit_confirmation() -> None:
 
 def test_backend_accepts_scene_user_and_up_to_five_identity_angles() -> None:
     urls = [
-        f"https://example.com/{index}.jpg"
+        f"https://tanyapi.chillcreative.ru/uploads/user-{index}.jpg"
         for index in range(MAX_PINTEREST_REFERENCES)
     ]
     assert _strict_reference_urls({"reference_urls": urls}) == tuple(urls)
+
+
+def test_backend_rejects_external_reference_hosts() -> None:
+    urls = [
+        "https://i.pinimg.com/736x/a/b/c/source.jpg",
+        "https://tanyapi.chillcreative.ru/uploads/user.jpg",
+    ]
+    with pytest.raises(TrendRunValidationError, match="файлом"):
+        _strict_reference_urls({"reference_urls": urls})
 
 
 @pytest.mark.parametrize("count", [0, 1, MAX_PINTEREST_REFERENCES + 1])

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 from aiohttp import web
 
@@ -26,6 +27,7 @@ from bot.generation_context import (
     PrivacyPolicy,
     ensure_pinterest_reference_gate,
 )
+from bot.services.media_input_utils import _static_upload_hosts
 from bot.trend_api import TrendRunValidationError
 
 MIN_PINTEREST_REFERENCES = 2
@@ -63,6 +65,16 @@ def _strict_reference_urls(body: dict[str, Any]) -> tuple[str, ...]:
             raise TrendRunValidationError("Дождитесь окончания загрузки всех фото")
         if not url.startswith(("https://", "http://", "/uploads/")):
             raise TrendRunValidationError("Некорректная ссылка на фото")
+        # External hosts (e.g. i.pinimg.com) reject datacenter fetches, which
+        # made provider input randomly incomplete. Only our own uploads are
+        # guaranteed fetchable by the provider.
+        if not url.startswith("/uploads/"):
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").strip().lower().lstrip(".")
+            if host not in _static_upload_hosts():
+                raise TrendRunValidationError(
+                    "Загрузите фото файлом — ссылки на внешние сайты не поддерживаются"
+                )
         cleaned.append(url)
 
     return tuple(cleaned)

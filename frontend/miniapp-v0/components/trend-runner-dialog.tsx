@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ImagePlus,
-  Link2,
   Loader2,
   Plus,
   RefreshCcw,
@@ -15,7 +14,6 @@ import {
 import { useApp } from '@/lib/app-context'
 import { uploadFile } from '@/lib/api'
 import {
-  resolvePinterestReference,
   runPinterestRepeatTrend,
   runTrend,
 } from '@/lib/trend-api'
@@ -76,14 +74,12 @@ export function TrendRunnerDialog({
   const [uploadedReferences, setUploadedReferences] = useState<Array<UploadedFile | null>>([])
   const [identityAngles, setIdentityAngles] = useState<UploadedFile[]>([])
   const [identityAnglePreviews, setIdentityAnglePreviews] = useState<string[]>([])
-  const [pinterestUrl, setPinterestUrl] = useState('')
-  const [resolvingPinterest, setResolvingPinterest] = useState(false)
   const [heightCm, setHeightCm] = useState('')
   const [weightKg, setWeightKg] = useState('')
   const [trendPreviewFailed, setTrendPreviewFailed] = useState(false)
 
   const pinterestRepeat = isPinterestRepeatItem(trend)
-  const busy = phase === 'uploading' || phase === 'generating' || resolvingPinterest
+  const busy = phase === 'uploading' || phase === 'generating'
   const isVideoTrend = trend?.generation_settings?.kind === 'video'
   const configuredReferenceCount = Number(trend?.generation_settings?.reference_count || 0)
   const exactReferenceCount = pinterestRepeat
@@ -126,8 +122,6 @@ export function TrendRunnerDialog({
   const resetRunner = useCallback(() => {
     setPhase('idle')
     setError(null)
-    setPinterestUrl('')
-    setResolvingPinterest(false)
     setHeightCm('')
     setWeightKg('')
     setIdentityAngles([])
@@ -177,7 +171,6 @@ export function TrendRunnerDialog({
       next[slotIndex] = null
       return next
     })
-    if (slotIndex === 0) setPinterestUrl('')
     setError(null)
     setPhase('idle')
   }
@@ -200,7 +193,6 @@ export function TrendRunnerDialog({
       next[slotIndex] = localPreview
       return next
     })
-    if (pinterestRepeat && slotIndex === 0) setPinterestUrl('')
     setError(null)
     setPhase('uploading')
 
@@ -311,43 +303,6 @@ export function TrendRunnerDialog({
     previewRefs.current = previewRefs.current.filter((url) => url !== preview)
     setIdentityAnglePreviews((current) => current.filter((_, itemIndex) => itemIndex !== index))
     setIdentityAngles((current) => current.filter((_, itemIndex) => itemIndex !== index))
-  }
-
-  const handlePinterestUrl = async () => {
-    if (!pinterestRepeat || busy || !pinterestUrl.trim()) return
-    setError(null)
-    setResolvingPinterest(true)
-    try {
-      const resolved = await resolvePinterestReference(pinterestUrl)
-      const previousPreview = previewUrls[0]
-      if (previousPreview?.startsWith('blob:')) URL.revokeObjectURL(previousPreview)
-      previewRefs.current = previewRefs.current.filter((url) => url !== previousPreview)
-      setPreviewUrls((current) => {
-        const next = [...current]
-        next[0] = resolved.image_url
-        return next
-      })
-      setUploadedReferences((current) => {
-        const next = [...current]
-        next[0] = {
-          id: `pinterest:${resolved.image_url}`,
-          name: 'Pinterest reference',
-          url: resolved.image_url,
-          preview_url: resolved.image_url,
-          type: 'image',
-          size: 0,
-          source: 'pinterest',
-        }
-        return next
-      })
-      setPinterestUrl(resolved.source_url)
-      setPhase('idle')
-    } catch (cause) {
-      setPhase('error')
-      setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фото из Pinterest')
-    } finally {
-      setResolvingPinterest(false)
-    }
   }
 
   const handleGenerate = async () => {
@@ -499,39 +454,6 @@ export function TrendRunnerDialog({
               {referenceLabels.map(renderExactSlot)}
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-border/70" />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  или вставь ссылку
-                </span>
-                <div className="h-px flex-1 bg-border/70" />
-              </div>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Link2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-red-500" />
-                  <input
-                    value={pinterestUrl}
-                    onChange={(event) => setPinterestUrl(event.target.value)}
-                    placeholder="Ссылка на пин с Pinterest"
-                    disabled={busy}
-                    className="h-10 w-full rounded-xl border border-border/70 bg-secondary/25 pl-9 pr-3 text-sm outline-none transition focus:border-gold/60"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy || !pinterestUrl.trim()}
-                  onClick={() => void handlePinterestUrl()}
-                >
-                  {resolvingPinterest ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Загрузить'}
-                </Button>
-              </div>
-              <p className="text-[10px] leading-relaxed text-muted-foreground">
-                Вставьте ссылку на пин — мы сами вытащим картинку и разберём сцену.
-              </p>
-            </div>
-
             {uploadedReferences[0] ? (
               <div className="rounded-2xl border border-border/60 bg-secondary/20 p-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Источник</p>
@@ -539,10 +461,10 @@ export function TrendRunnerDialog({
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-500/10 text-sm font-bold text-red-500">P</div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">
-                      {pinterestUrl ? 'Pinterest' : 'Референс с устройства'}
+                      Референс с устройства
                     </p>
                     <p className="truncate text-[10px] text-muted-foreground">
-                      {pinterestUrl || uploadedReferences[0]?.name || 'Референс загружен'}
+                      {uploadedReferences[0]?.name || 'Референс загружен'}
                     </p>
                   </div>
                   <button
