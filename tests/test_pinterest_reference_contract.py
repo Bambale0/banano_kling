@@ -8,9 +8,9 @@ Enforces the strict scene-first reference contract:
                              individual features).
 - Images 3..N = IDENTITY_EVIDENCE (improve likeness only; never source).
 
-Identity-first reordering is forbidden. A Pinterest result must look like the
-user was photographed inside the scene, never like an edited Pinterest photo,
-a lookalike, or one of the uploaded identity images returned unchanged.
+Identity-first reordering is forbidden in stored product state. The provider
+adapter may use a provider-specific safe order when a plain image array cannot
+carry roles, but history/repeat must remain scene-first.
 """
 
 from __future__ import annotations
@@ -21,6 +21,10 @@ from bot.pinterest_trend_flow_contract import (
     PINTEREST_PROMPT_MARKER,
     _build_pinterest_recreation_prompt,
     _private_trend_task_kwargs,
+)
+from bot.services.nano_banana_pro_service import (
+    PINTEREST_PROVIDER_SAFE_MARKER,
+    _pinterest_provider_payload,
 )
 from bot.trend_api import TrustedTrendRun
 
@@ -100,6 +104,46 @@ def test_pinterest_runtime_prompt_is_scene_first() -> None:
     assert prompt.index("Image 1 = SCENE_REFERENCE") < prompt.index(
         "Image 2 = USER_IDENTITY_REFERENCE"
     )
+
+
+def test_banana_pro_provider_payload_uses_identity_then_scene_pair() -> None:
+    urls = [
+        SCENE,
+        USER,
+        "https://example.com/extra1.jpg",
+        "https://example.com/extra2.jpg",
+    ]
+    prompt = _build_pinterest_recreation_prompt(
+        "Recreate the photograph.",
+        height_cm=170,
+        weight_kg=60,
+    )
+
+    provider_prompt, provider_refs = _pinterest_provider_payload(prompt, urls)
+
+    assert provider_refs == [USER, SCENE]
+    assert PINTEREST_PROVIDER_SAFE_MARKER in provider_prompt
+    assert "Image 1 = USER_IDENTITY_REFERENCE" in provider_prompt
+    assert "Image 2 = SCENE_REFERENCE" in provider_prompt
+    assert "No Images 3..N are sent to the provider" in provider_prompt
+    assert "Image 1 = SCENE_REFERENCE" not in provider_prompt
+    assert "Image 2 = USER_IDENTITY_REFERENCE" not in provider_prompt
+
+
+def test_banana_pro_provider_payload_is_idempotent() -> None:
+    prompt = _build_pinterest_recreation_prompt(
+        "Recreate the photograph.",
+        height_cm=170,
+        weight_kg=60,
+    )
+    provider_prompt, provider_refs = _pinterest_provider_payload(prompt, [SCENE, USER])
+    second_prompt, second_refs = _pinterest_provider_payload(
+        provider_prompt,
+        provider_refs,
+    )
+
+    assert second_prompt == provider_prompt
+    assert second_refs == provider_refs
 
 
 def _persisted_run(urls: list[str]) -> dict:
