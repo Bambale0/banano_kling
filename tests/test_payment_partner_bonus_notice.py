@@ -1,23 +1,20 @@
 """Regression tests for payer-facing payment success notices."""
 
-from pathlib import Path
+from __future__ import annotations
+
+from bot.handlers.payments import _build_bonus_text
 
 
-PAYMENTS_SOURCE = Path("bot/handlers/payments.py")
-
-
-def test_partner_commission_is_not_rendered_as_payer_bonus():
+def test_partner_commission_is_not_rendered_as_payer_bonus() -> None:
     """Partner RUB commission belongs to referrers, not the buyer receipt."""
-    source = PAYMENTS_SOURCE.read_text(encoding="utf-8")
+    text = _build_bonus_text({"mode": "partner", "value": 300.0})
 
-    assert "Партнёрский бонус" not in source
-    assert "Partner commission is an internal/referrer-facing accrual" in source
-    assert 'if referral_bonus.get("mode") == "partner":' in source
-    assert 'return ""' in source
+    assert text == ""
 
 
-def test_banana_referral_bonus_still_renders_for_payer():
-    source = PAYMENTS_SOURCE.read_text(encoding="utf-8")
+def test_banana_referral_bonus_still_renders_for_payer() -> None:
+    text = _build_bonus_text({"mode": "banana", "value": 5})
 
-    assert "Реферальный бонус" in source
-    assert "бананов" in source
+    assert "Реферальный бонус" in text
+    assert "5" in text
+    assert "бананов" in text
