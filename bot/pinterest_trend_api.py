@@ -267,11 +267,13 @@ async def _lock_pinterest_run(
     if scene_url:
         ratio = await _scene_matched_ratio(scene_url, "banana_pro", ratio)
     locked_settings["ratio"] = ratio
-    # Keep provider input in the same role order as the runtime prompt:
-    # Image 1 is the scene, Image 2 is the primary identity, Images 3..N are
-    # identity-only evidence. Reordering identity refs first made the provider
-    # copy or return an additional user reference instead of replacing the
-    # person inside the Pinterest scene.
+    # Pinterest is a person-into-scene transfer. Image 1 stays the SCENE master
+    # and Image 2+ carry the USER identity. Identity-first reordering is forbidden:
+    # it makes the provider treat a user selfie as the source composition, which
+    # reproduced one of the user's uploaded photos or copied an extra reference
+    # unchanged instead of transferring the user into the scene. The prompt below
+    # names every image role explicitly, and generic identity-first guidance is
+    # disabled for Pinterest runs (see pinterest_trend_flow_contract).
     return replace(
         trusted,
         model="banana_pro",
@@ -518,3 +520,18 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
             {"ok": False, "error": "Не удалось запустить повтор фото"},
             status=500,
         )
+
+
+def setup_pinterest_trend_routes(app: web.Application, miniapp_root: str) -> None:
+    """Register Pinterest trend routes before Mini App's API catch-all route."""
+    root = str(miniapp_root or "/mini-app").rstrip("/") or "/mini-app"
+    app.router.add_post(
+        f"{root}/api/trends/pinterest-reference",
+        miniapp_resolve_pinterest_reference,
+    )
+    app.router.add_post(
+        f"{root}/api/trends/pinterest-repeat/run",
+        miniapp_run_pinterest_repeat,
+    )
+    if _ensure_pinterest_tool not in app.on_startup:
+        app.on_startup.append(_ensure_pinterest_tool)

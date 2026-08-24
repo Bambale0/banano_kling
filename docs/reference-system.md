@@ -27,19 +27,23 @@ Pinterest flow — специальный production-пайплайн. Он не
 ```text
 Image 1      = SCENE_REFERENCE
 Image 2      = USER_IDENTITY_REFERENCE
-Images 3..N  = ADDITIONAL_USER_IDENTITY_ANGLES
+Images 3..N  = IDENTITY_EVIDENCE
 ```
 
-Провайдерный payload для nano-banana-pro передаётся в другом порядке —
-identity-first, scene-last (модель трактует первое изображение как субъект):
+Провайдерный payload для nano-banana-pro передаётся в том же порядке —
+scene-first (это перенос личности в сцену, поэтому сцена остаётся базовым кадром):
 
 ```text
-provider_images[0]      = USER_IDENTITY_REFERENCE
-provider_images[1..N-1] = ADDITIONAL_USER_IDENTITY_ANGLES
-provider_images[N]      = SCENE_REFERENCE
+provider_images[0]      = SCENE_REFERENCE
+provider_images[1]      = USER_IDENTITY_REFERENCE
+provider_images[2..N]   = IDENTITY_EVIDENCE
 ```
 
-Runtime prompt нумерует роли в провайдерском порядке.
+Runtime prompt нумерует роли в провайдерском порядке. Identity-first
+переупорядочивание запрещено: оно трактовало пользовательское селфи как
+исходную композицию, из-за чего модель возвращала одно из загруженных фото
+пользователя, копировала доп. референс как кадр или сохраняла исходник
+вместо переноса пользователя в сцену.
 
 Image 1 используется только для:
 

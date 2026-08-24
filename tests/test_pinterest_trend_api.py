@@ -107,10 +107,12 @@ async def test_pinterest_run_is_hard_locked_to_banana_pro_2k():
     assert locked.model == "banana_pro"
     assert locked.ratio == "9:16"
     assert locked.settings["ratio"] == "9:16"
-    # Provider order is identity-first, scene-last for nano-banana-pro.
+    # Pinterest is a person-into-scene transfer: the SCENE stays the composition
+    # master (Image 1) and the USER identity follows. Identity-first reordering is
+    # forbidden because it reproduced the uploaded user photo instead of the scene.
     assert locked.reference_urls == (
-        "https://tanyapi.chillcreative.ru/uploads/user.jpg",
         "https://i.pinimg.com/reference.jpg",
+        "https://tanyapi.chillcreative.ru/uploads/user.jpg",
     )
     assert locked.settings["quality"] == "2K"
     assert locked.settings["count"] == 1

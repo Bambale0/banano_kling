@@ -138,10 +138,10 @@ def _build_pinterest_recreation_prompt(
         "REFERENCE ROLES — DO NOT SWAP THEM\n"
         "- Image 1 = SCENE_REFERENCE. It is the master for the photographed setup, never for identity.\n"
         "- Image 2 = USER_IDENTITY_REFERENCE. It is the primary identity master.\n"
-        "- Images 3..N, when present, are ADDITIONAL_USER_IDENTITY_ANGLES of the SAME user. They only strengthen identity/body evidence.\n"
+        "- Images 3..N, when present, are IDENTITY_EVIDENCE of the SAME user. They only improve likeness and must never drive composition.\n"
         "\n"
-        "TASK — RE-PHOTOGRAPH, NOT EDIT\n"
-        "- Take Image 1 (SCENE_REFERENCE) as the base frame and replace its person completely with the person from Image 2 (USER_IDENTITY_REFERENCE) and Images 3..N.\n"
+        "TASK — TRANSFER THE PERSON INTO THE SCENE, DO NOT EDIT THE SCENE PERSON\n"
+        "- Take Image 1 (SCENE_REFERENCE) as the base frame and replace its person completely with the person from Image 2 (USER_IDENTITY_REFERENCE).\n"
         "- Do not preserve, retouch or lightly edit the person visible in Image 1: that person must not remain recognizable anywhere in the output.\n"
         "\n"
         "SCENE_REFERENCE LOCK — MATCH THESE ATTRIBUTES 1:1\n"
@@ -177,6 +177,11 @@ def _build_pinterest_recreation_prompt(
         "- Do not reuse the source person's face. Replace the person identity with the user while preserving the source setup exactly.\n"
         "- The result should look as if the USER was genuinely photographed in the exact source pose, camera angle, expression, outfit and scene.\n"
         "\n"
+        "IDENTITY EVIDENCE GUARD — ADDITIONAL PHOTOS ARE NEVER SOURCE\n"
+        "- Additional identity images are evidence only. Never reproduce them. Never use them as source composition. Never return any uploaded reference image unchanged.\n"
+        "- Do not use ANY user identity image (Image 2 or Images 3..N) as the composition, pose, wardrobe, background, camera, or finished result.\n"
+        "- If the output looks like one of the uploaded identity images directly instead of being a new photograph of the user inside the scene, the result is invalid and must be regenerated.\n"
+        "\n"
         "OUTPUT PRIVACY\n"
         "- Produce the image only. Do not output prompt text, explanations, URLs, source attribution, metadata, captions, watermarks, collages, split screens or UI text.\n"
         "- Prefer faithful 1:1 recreation over artistic reinterpretation."
@@ -185,6 +190,18 @@ def _build_pinterest_recreation_prompt(
 
 def _is_pinterest_runtime_prompt(prompt: str | None) -> bool:
     return PINTEREST_PROMPT_MARKER in str(prompt or "")
+
+
+def disable_generic_identity_reference_rules(prompt: str | None) -> bool:
+    """Return True when the generic Nano Banana identity-first guidance must be off.
+
+    The generic banana editor assumes Image 1 is the identity master, which is
+    exactly what must NOT happen in a Pinterest person-into-scene transfer. When
+    this guard reports a Pinterest run, the caller must skip the generic guidance
+    (``_apply_reference_detail_preservation``) because the Pinterest prompt already
+    assigns every image an explicit, non-overlapping role.
+    """
+    return _is_pinterest_runtime_prompt(prompt)
 
 
 def _private_trend_task_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -213,14 +230,17 @@ def _private_trend_task_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
         if marker_present:
             # Internal-only role metadata for retry/debugging. It is stripped
             # from every public payload by trend_task_privacy sanitizers.
-            # Provider order follows the Pinterest contract: scene first,
-            # primary identity second, then optional identity angles.
+            # Provider order is scene-first, identity-second, then evidence.
             references = private_request.get("reference_images")
             if isinstance(references, list) and references:
-                private_request["reference_roles"] = [
-                    "scene",
-                    *("identity" for _ in references[1:]),
-                ]
+                if len(references) == 1:
+                    private_request["reference_roles"] = ["identity"]
+                else:
+                    private_request["reference_roles"] = [
+                        "scene",
+                        "identity",
+                        *("identity_evidence" for _ in references[2:]),
+                    ]
         private_request["prompt_hidden"] = True
         private_request["prompt_actions_allowed"] = False
         clean["request_data"] = private_request
@@ -332,7 +352,7 @@ def install_pinterest_trend_flow_contract() -> None:
         prompt: str,
         reference_images: list[str],
     ) -> str:
-        if _is_pinterest_runtime_prompt(prompt):
+        if disable_generic_identity_reference_rules(prompt):
             # The Pinterest prompt already assigns every image a precise role.
             # The generic Banana guidance assumes Image 1 is the identity master
             # and therefore directly contradicts this workflow.
