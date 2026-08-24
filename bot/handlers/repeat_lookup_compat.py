@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 TaskLookup = Callable[[str], Awaitable[Any]]
 _IMG_ID_RE = re.compile(r"img_[0-9a-fA-F]{8,32}")
 _HEX_SHORT_RE = re.compile(r"[0-9a-fA-F]{8,32}")
+_ORIGINAL_LOOKUP: TaskLookup | None = None
+_PATCHED_LOOKUP: TaskLookup | None = None
 
 
 def _candidate_task_ids(raw: Any) -> list[str]:
@@ -79,28 +81,35 @@ async def _find_canonical_task_id_by_serialized_alias(
 def install_repeat_lookup_compat(*modules: Any) -> None:
     """Patch repeat handlers to resolve local ids, provider ids and aliases."""
 
-    original_lookup: TaskLookup = database_module.get_task_by_id
+    global _ORIGINAL_LOOKUP, _PATCHED_LOOKUP
+    if _ORIGINAL_LOOKUP is None:
+        _ORIGINAL_LOOKUP = database_module.get_task_by_id
+    original_lookup = _ORIGINAL_LOOKUP
 
-    async def compatible_get_task_by_id(task_id: str):
-        candidates = _candidate_task_ids(task_id)
-        for candidate in candidates:
-            task = await original_lookup(candidate)
-            if task:
-                return task
+    if _PATCHED_LOOKUP is None:
 
-        canonical = await _find_canonical_task_id_by_serialized_alias(candidates)
-        if canonical:
-            task = await original_lookup(canonical)
-            if task:
-                logger.info(
-                    "Repeat lookup recovered task: requested=%s canonical=%s",
-                    task_id,
-                    canonical,
-                )
-                return task
-        return None
+        async def compatible_get_task_by_id(task_id: str):
+            candidates = _candidate_task_ids(task_id)
+            for candidate in candidates:
+                task = await original_lookup(candidate)
+                if task:
+                    return task
 
-    database_module.get_task_by_id = compatible_get_task_by_id
+            canonical = await _find_canonical_task_id_by_serialized_alias(candidates)
+            if canonical:
+                task = await original_lookup(canonical)
+                if task:
+                    logger.info(
+                        "Repeat lookup recovered task: requested=%s canonical=%s",
+                        task_id,
+                        canonical,
+                    )
+                    return task
+            return None
+
+        _PATCHED_LOOKUP = compatible_get_task_by_id
+
+    database_module.get_task_by_id = _PATCHED_LOOKUP
     for module in modules:
         if module is not None and hasattr(module, "get_task_by_id"):
-            setattr(module, "get_task_by_id", compatible_get_task_by_id)
+            setattr(module, "get_task_by_id", _PATCHED_LOOKUP)
