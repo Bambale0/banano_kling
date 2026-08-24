@@ -267,15 +267,16 @@ async def _lock_pinterest_run(
     if scene_url:
         ratio = await _scene_matched_ratio(scene_url, "banana_pro", ratio)
     locked_settings["ratio"] = ratio
-    # Provider order for nano-banana-pro: the USER comes first so the model
-    # treats the user as the subject and the scene as the frame to re-shoot.
-    # Semantic roles stay unchanged: urls[0] was SCENE, urls[1:] identity.
-    reordered_references = (*trusted.reference_urls[1:], trusted.reference_urls[0])
+    # Keep provider input in the same role order as the runtime prompt:
+    # Image 1 is the scene, Image 2 is the primary identity, Images 3..N are
+    # identity-only evidence. Reordering identity refs first made the provider
+    # copy or return an additional user reference instead of replacing the
+    # person inside the Pinterest scene.
     return replace(
         trusted,
         model="banana_pro",
         ratio=ratio,
-        reference_urls=reordered_references,
+        reference_urls=trusted.reference_urls,
         settings=locked_settings,
         prompt=_augmented_prompt(
             _PINTEREST_TOOL_PROMPT,
@@ -517,17 +518,3 @@ async def miniapp_run_pinterest_repeat(request: web.Request) -> web.Response:
             {"ok": False, "error": "Не удалось запустить повтор фото"},
             status=500,
         )
-
-
-def setup_pinterest_trend_routes(app: web.Application, miniapp_root: str) -> None:
-    root = str(miniapp_root or "/mini-app").rstrip("/") or "/mini-app"
-    app.router.add_post(
-        f"{root}/api/trends/pinterest-reference",
-        miniapp_resolve_pinterest_reference,
-    )
-    app.router.add_post(
-        f"{root}/api/trends/pinterest-repeat/run",
-        miniapp_run_pinterest_repeat,
-    )
-    if _ensure_pinterest_tool not in app.on_startup:
-        app.on_startup.append(_ensure_pinterest_tool)
