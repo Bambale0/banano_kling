@@ -112,4 +112,4 @@ def install_repeat_lookup_compat(*modules: Any) -> None:
     database_module.get_task_by_id = _PATCHED_LOOKUP
     for module in modules:
         if module is not None and hasattr(module, "get_task_by_id"):
-            setattr(module, "get_task_by_id", _PATCHED_LOOKUP)
+            module.get_task_by_id = _PATCHED_LOOKUP
