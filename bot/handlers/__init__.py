@@ -33,6 +33,7 @@ from .publication_scope_compat import (
     install_publication_scope_compat,
 )
 from .publication_scope_compat import router as publication_scope_compat_router
+from .repeat_lookup_compat import install_repeat_lookup_compat
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
@@ -54,6 +55,7 @@ from . import (
 from . import (
     payments as payments_module,
 )
+from . import repeat_result_compat as repeat_result_compat_module
 from .admin_user_ban import router as admin_user_ban_router
 from .batch_generation import router as batch_generation_router
 from .freekassa_payments import router as freekassa_payments_router
@@ -63,7 +65,7 @@ from .partner_approval import admin_router as partner_approval_admin_router
 from .partner_approval import user_router as partner_approval_user_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
-from .repeat_result_compat import router as repeat_result_compat_router
+repeat_result_compat_router = repeat_result_compat_module.router
 from .seedance_25_chunk_upload import install_seedance_25_chunk_upload
 from .seedance_25_client_compat import install_seedance_25_client_compat
 from .seedance_25_fullstack import install_seedance_25_fullstack
@@ -85,6 +87,8 @@ from .seedance_multimodal_compat import (
 from .support import router as support_router
 from .trend_route_compat import install_trend_route_compat
 from .trend_seedance_25_compat import install_trend_seedance_25_compat
+
+install_repeat_lookup_compat(generation_module, repeat_result_compat_module)
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
