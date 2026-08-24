@@ -34,6 +34,8 @@ from .publication_scope_compat import (
 )
 from .publication_scope_compat import router as publication_scope_compat_router
 from .repeat_lookup_compat import install_repeat_lookup_compat
+from .repeat_run_confirm_compat import install_repeat_run_confirm_compat
+from .repeat_run_confirm_compat import router as repeat_run_confirm_compat_router
 from .trend_text_upload import install_text_trend_upload
 from .trend_text_upload import router as trend_text_upload_router
 from .trend_video_compat import install_trend_video_compat
@@ -89,6 +91,7 @@ from .trend_route_compat import install_trend_route_compat
 from .trend_seedance_25_compat import install_trend_seedance_25_compat
 
 install_repeat_lookup_compat(generation_module, repeat_result_compat_module)
+install_repeat_run_confirm_compat(generation_module)
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
@@ -156,6 +159,7 @@ generation_router.include_router(seedance_25_telegram_compat_router)
 generation_router.include_router(seedance_25_fullstack_router)
 generation_router.include_router(seedance_25_preview_router)
 generation_router.include_router(seedance_multimodal_compat_router)
+generation_router.include_router(repeat_run_confirm_compat_router)
 generation_router.include_router(generation_module.router)
 
 # Provider-specific payment handlers run before the broad legacy payments router,
@@ -204,6 +208,7 @@ __all__ = [
     "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
     "repeat_result_compat_router",
+    "repeat_run_confirm_compat_router",
     "seedance_25_fullstack_router",
     "seedance_25_preview_router",
     "seedance_25_telegram_compat_router",
