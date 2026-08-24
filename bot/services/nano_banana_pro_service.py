@@ -8,7 +8,6 @@ from bot.config import config
 from bot.services.media_input_utils import (
     image_sources_to_data_uris,
     image_sources_to_supported_image_urls,
-    is_local_upload_source,
 )
 from bot.services.kie_file_upload_service import kie_file_upload_service
 from bot.services.nexus_image_provider import NexusImageProvider
@@ -22,6 +21,8 @@ RESOLUTION_ALIASES = {
     "2K": "2K",
     "4K": "4K",
 }
+PINTEREST_PROMPT_MARKER = "PINTEREST_RECREATION_CONTRACT_V2"
+PINTEREST_PROVIDER_SAFE_MARKER = "PINTEREST_PROVIDER_SAFE_PAYLOAD_V1"
 
 
 def _extract_image_bytes_from_gemini_response(
@@ -88,6 +89,96 @@ def _normalize_resolution(resolution: str) -> str:
             "Nano Banana Pro resolution normalized: %s -> %s", raw, normalized
         )
     return normalized
+
+
+def _pinterest_measurement_line(prompt: str) -> str:
+    marker = "User measurements:"
+    start = str(prompt or "").find(marker)
+    if start < 0:
+        return "- User measurements: not provided. Use only visual evidence for body scale."
+    end = str(prompt).find("\n", start)
+    line = str(prompt)[start:end if end >= 0 else None].strip()
+    return f"- {line}" if line else "- User measurements: not provided."
+
+
+def _pinterest_provider_payload(
+    prompt: str,
+    image_input: List[str] = None,
+) -> tuple[str, List[str]]:
+    """Build a provider-safe Pinterest payload for plain image_input arrays.
+
+    The product/runtime contract stores references scene-first:
+    [scene, primary_identity, identity_evidence...]
+
+    Kie/Nano Banana Pro receives an untyped image_input array. In production it
+    copied the scene person when the scene was first, and it copied extra user
+    selfies when all identity evidence photos were sent. For this provider call
+    we therefore send the minimum unambiguous pair and rewrite the prompt to the
+    exact provider order:
+    [primary_identity, scene].
+    """
+
+    refs = list(image_input or [])
+    raw_prompt = str(prompt or "")
+    if (
+        PINTEREST_PROMPT_MARKER not in raw_prompt
+        or PINTEREST_PROVIDER_SAFE_MARKER in raw_prompt
+        or len(refs) < 2
+    ):
+        return raw_prompt, refs
+
+    scene_reference = refs[0]
+    identity_reference = refs[1]
+    evidence_count = max(0, len(refs) - 2)
+    base_prompt = raw_prompt.split(PINTEREST_PROMPT_MARKER, 1)[0].strip()
+    measurement_line = _pinterest_measurement_line(raw_prompt)
+    prefix = f"{base_prompt}\n\n" if base_prompt else ""
+
+    provider_prompt = (
+        f"{prefix}"
+        f"{PINTEREST_PROMPT_MARKER}\n"
+        f"{PINTEREST_PROVIDER_SAFE_MARKER}\n"
+        "PROVIDER-SAFE PINTEREST PERSON TRANSFER\n"
+        "The original app stores references as [scene, user, extra user evidence]. "
+        "This provider request intentionally sends only the two decisive images "
+        "in identity-first order to prevent source-image copying.\n\n"
+        "REFERENCE ORDER FOR THIS PROVIDER REQUEST — DO NOT SWAP:\n"
+        "- Image 1 = USER_IDENTITY_REFERENCE. This is the ONLY identity/person source.\n"
+        "- Image 2 = SCENE_REFERENCE. This is the ONLY composition/source-scene reference.\n"
+        "- No Images 3..N are sent to the provider. Extra identity photos are kept in "
+        "history/debug metadata only because plain provider arrays copied them as outputs.\n\n"
+        "TASK:\n"
+        "- Create a NEW photorealistic photograph of the person from Image 1 inside "
+        "the exact scene/composition of Image 2.\n"
+        "- Use Image 2 for pose, camera angle, framing, crop, clothing, background, "
+        "lighting, shadows, color mood, and overall photographic setup.\n"
+        "- Completely replace the person visible in Image 2 with the person from Image 1.\n"
+        "- The person from Image 2 must not remain recognizable in the output.\n\n"
+        "IDENTITY LOCK:\n"
+        "- Preserve Image 1 face geometry, facial structure, apparent age, skin tone, "
+        "eyes, brows, nose, lips, jawline, cheekbones, hairline, hair color, and hair length.\n"
+        "- Do not blend or average Image 1 identity with the person from Image 2.\n"
+        "- Do not copy Image 1 pose, outfit, background, crop, camera angle, lighting, "
+        "or selfie composition.\n"
+        f"{measurement_line}\n\n"
+        "SOURCE-COPY GUARD:\n"
+        "- Returning Image 2 unchanged or nearly unchanged is invalid.\n"
+        "- Returning Image 1 unchanged or nearly unchanged is invalid.\n"
+        "- The output must not look like an edited scene-person photo and must not "
+        "look like the uploaded user reference photo.\n"
+        "- If identity and scene conflict, identity always comes from Image 1, while "
+        "composition and styling always come from Image 2.\n\n"
+        "OUTPUT:\n"
+        "- Produce only the final image. No captions, no text, no watermark, no collage."
+    )
+
+    logger.info(
+        "Nano Banana Pro Pinterest provider guard: stored_refs=%s provider_refs=2 "
+        "order=identity,scene evidence_held=%s",
+        len(refs),
+        evidence_count,
+    )
+    return provider_prompt, [identity_reference, scene_reference]
 
 
 class ProviderClient:
@@ -200,6 +291,7 @@ class NanoBananaProService:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[str]:
+        prompt, image_input = _pinterest_provider_payload(prompt, image_input)
         if not prompt and not image_input:
             logger.warning("Nano Banana Pro create_task: no prompt and no image_input")
             return None
@@ -281,6 +373,7 @@ class NanoBananaProService:
         output_format: str = "png",
         callback_url: str = None,
     ) -> Optional[Dict]:
+        prompt, image_input = _pinterest_provider_payload(prompt, image_input)
         if hasattr(self.primary_provider, "generate_image"):
             result = await self.primary_provider.generate_image(
                 prompt, aspect_ratio, resolution, image_input, output_format
