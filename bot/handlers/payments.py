@@ -89,7 +89,8 @@ async def _notify_user(bot: Bot, telegram_id: int, text: str, *, parse_mode=None
 
 def _build_bonus_text(referral_bonus: dict[str, Any]) -> str:
     if referral_bonus.get("mode") == "partner":
-        return f"\n🎁 Партнёрский бонус: <code>{referral_bonus['value']}</code> ₽"
+        # Partner commission is an internal/referrer-facing accrual, not a payer bonus.
+        return ""
     if referral_bonus.get("mode") == "banana":
         return f"\n🎁 Реферальный бонус: <code>{referral_bonus['value']}</code> бананов"
     return ""
