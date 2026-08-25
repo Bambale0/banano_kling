@@ -23,6 +23,7 @@ from .miniapp_launch_revision_compat import install_miniapp_launch_revision_comp
 from .miniapp_regression_safety import install_miniapp_regression_safety
 from .miniapp_video_continuity_compat import install_miniapp_video_continuity_compat
 from .own_profile_feed_compat import install_own_profile_feed_compat
+from .pinterest_flow_contract_compat import install_pinterest_flow_contract_compat
 from .profile_feed_deeplink_compat import install_profile_feed_deeplink_compat
 
 # Publication scope must be installed before generation/common/miniapp import
@@ -92,6 +93,7 @@ from .trend_seedance_25_compat import install_trend_seedance_25_compat
 
 install_repeat_lookup_compat(generation_module, repeat_result_compat_module)
 install_repeat_run_confirm_compat(generation_module)
+install_pinterest_flow_contract_compat(generation_module)
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
