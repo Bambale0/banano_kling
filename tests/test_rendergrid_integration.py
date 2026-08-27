@@ -97,7 +97,10 @@ def test_rendergrid_test_is_telegram_admin_only_and_wired_before_legacy_admin():
     assert "rendergrid_client.list_models()" in handler
     assert "rendergrid_client.generate_image(payload)" in handler
     assert "rendergrid_client.get_creation(creation_id)" in handler
-    assert "install_rendergrid_test_compat(admin_module)" in handlers_init
+    assert handlers_init.count("install_rendergrid_test_compat(admin_module)") == 1
+    assert handlers_init.index(
+        "install_trends_compat(common_module, generation_module, admin_module)"
+    ) < handlers_init.index("install_rendergrid_test_compat(admin_module)")
     assert "admin_router.include_router(rendergrid_test_router)" in handlers_init
     assert handlers_init.index("admin_router.include_router(rendergrid_test_router)") < handlers_init.index(
         "admin_router.include_router(admin_module.router)"
