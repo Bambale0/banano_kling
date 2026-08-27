@@ -3,9 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aiohttp import web
 
-from bot.rendergrid_admin_api import setup_rendergrid_admin_routes
 from bot.services.rendergrid_service import (
     MIN_CREATION_POLL_INTERVAL_SECONDS,
     RenderGridClient,
@@ -80,39 +78,43 @@ def test_rendergrid_wait_never_polls_faster_than_documented_minimum():
     sleep_mock.assert_awaited_once_with(MIN_CREATION_POLL_INTERVAL_SECONDS)
 
 
-def test_rendergrid_admin_routes_are_explicit_and_use_miniapp_api_prefix():
-    app = web.Application()
-    setup_rendergrid_admin_routes(app)
-
-    paths = {resource.canonical for resource in app.router.resources()}
-
-    root = "/mini-app/api/admin/rendergrid"
-    assert f"{root}/health" in paths
-    assert f"{root}/models" in paths
-    assert f"{root}/balance" in paths
-    assert f"{root}/images/generate" in paths
-    assert f"{root}/creations/{{creation_id}}" in paths
-    assert not any("{tail" in path for path in paths)
-
-
-def test_rendergrid_test_button_and_screen_are_admin_gated():
+def test_rendergrid_test_is_telegram_admin_only_and_wired_before_legacy_admin():
     root = Path(__file__).resolve().parents[1]
-    nav = (root / "frontend/miniapp-v0/components/tab-nav.tsx").read_text(
+    handler = (root / "bot/handlers/rendergrid_test_compat.py").read_text(
         encoding="utf-8"
     )
-    content = (
-        root / "frontend/miniapp-v0/components/tab-content.tsx"
-    ).read_text(encoding="utf-8")
-    backend_api = (root / "bot/rendergrid_admin_api.py").read_text(
+    handlers_init = (root / "bot/handlers/__init__.py").read_text(
         encoding="utf-8"
     )
-    frontend_api = (
-        root / "frontend/miniapp-v0/lib/rendergrid-api.ts"
-    ).read_text(encoding="utf-8")
 
-    assert "state.user?.isAdmin ? [...tabs, adminTestTab] : tabs" in nav
-    assert "activeTab === 8 && !state.user?.isAdmin" in content
-    assert "config.is_admin(telegram_id)" in backend_api
-    assert "X-Telegram-Init-Data" in backend_api
-    assert "getApiBasePath()" in frontend_api
-    assert "/admin/rendergrid" in frontend_api
+    assert 'text="🧪 RenderGrid TEST"' in handler
+    assert 'callback_data="admin_rendergrid_test"' in handler
+    assert "config.is_admin(user_id)" in handler
+    assert 'callback.answer("⛔ Нет доступа"' in handler
+    assert "rendergrid_client.get_balance()" in handler
+    assert "rendergrid_client.list_models()" in handler
+    assert "rendergrid_client.generate_image(payload)" in handler
+    assert "rendergrid_client.get_creation(creation_id)" in handler
+    assert "install_rendergrid_test_compat(admin_module)" in handlers_init
+    assert "admin_router.include_router(rendergrid_test_router)" in handlers_init
+    assert handlers_init.index("admin_router.include_router(rendergrid_test_router)") < handlers_init.index(
+        "admin_router.include_router(admin_module.router)"
+    )
+
+
+def test_rendergrid_test_branch_does_not_depend_on_miniapp_proxy():
+    root = Path(__file__).resolve().parents[1]
+    handler = (root / "bot/handlers/rendergrid_test_compat.py").read_text(
+        encoding="utf-8"
+    )
+    feed_routes = (root / "bot/feed_reference_media.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "miniapp" not in handler.lower()
+    assert "rendergrid" not in feed_routes.lower()
+    assert not (root / "bot/rendergrid_admin_api.py").exists()
+    assert not (root / "frontend/miniapp-v0/lib/rendergrid-api.ts").exists()
+    assert not (
+        root / "frontend/miniapp-v0/components/tabs/rendergrid-test-tab.tsx"
+    ).exists()
