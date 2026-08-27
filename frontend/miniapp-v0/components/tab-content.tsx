@@ -28,14 +28,12 @@ const FeedTab = dynamicTab(() => import('./tabs/feed-tab').then((module) => ({ d
 const TrendsTab = dynamicTab(() => import('./tabs/trends-tab').then((module) => ({ default: module.TrendsTab })))
 const ServicesTab = dynamicTab(() => import('./tabs/services-tab').then((module) => ({ default: module.ServicesTab })))
 const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) => ({ default: module.ProfileTab })))
-const RenderGridTestTab = dynamicTab(() => import('./tabs/rendergrid-test-tab').then((module) => ({ default: module.RenderGridTestTab })))
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab, RenderGridTestTab]
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
 
 export function TabContent() {
-  const { activeTab, state } = useApp()
-  const requestedComponent = tabComponents[activeTab] || StudioTab
-  const ActiveComponent = activeTab === 8 && !state.user?.isAdmin ? StudioTab : requestedComponent
+  const { activeTab } = useApp()
+  const ActiveComponent = tabComponents[activeTab] || StudioTab
 
   useEffect(() => {
     const prefetchTimer = window.setTimeout(() => {
