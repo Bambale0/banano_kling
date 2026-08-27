@@ -34,7 +34,9 @@ function asObject(value: unknown): JsonObject | null {
 }
 
 function extractModels(value: unknown): JsonObject[] {
-  if (Array.isArray(value)) return value.filter((item): item is JsonObject => Boolean(asObject(item)))
+  if (Array.isArray(value)) {
+    return value.filter((item): item is JsonObject => Boolean(asObject(item)))
+  }
   const root = asObject(value)
   if (!root) return []
   for (const key of ['models', 'items', 'data']) {
@@ -43,11 +45,9 @@ function extractModels(value: unknown): JsonObject[] {
       return candidate.filter((item): item is JsonObject => Boolean(asObject(item)))
     }
     const nested = asObject(candidate)
-    if (nested) {
-      const nestedModels = nested.models ?? nested.items
-      if (Array.isArray(nestedModels)) {
-        return nestedModels.filter((item): item is JsonObject => Boolean(asObject(item)))
-      }
+    const nestedModels = nested?.models ?? nested?.items
+    if (Array.isArray(nestedModels)) {
+      return nestedModels.filter((item): item is JsonObject => Boolean(asObject(item)))
     }
   }
   return []
@@ -74,9 +74,9 @@ function stringify(value: unknown) {
 
 function extractResultUrls(creation: RenderGridCreation | null): string[] {
   if (!creation) return []
-  const direct = creation.result_urls
-  if (Array.isArray(direct)) return direct.map(String).filter(Boolean)
-
+  if (Array.isArray(creation.result_urls)) {
+    return creation.result_urls.map(String).filter(Boolean)
+  }
   const result = asObject(creation.result)
   const nested = result?.urls ?? result?.result_urls ?? creation.output_urls
   return Array.isArray(nested) ? nested.map(String).filter(Boolean) : []
@@ -120,7 +120,9 @@ export function RenderGridTestTab() {
   const [modelsRaw, setModelsRaw] = useState<unknown>(null)
   const [balanceRaw, setBalanceRaw] = useState<unknown>(null)
   const [model, setModel] = useState('nano-banana-2')
-  const [prompt, setPrompt] = useState('a cinematic studio portrait, soft light, detailed skin, 35mm photo')
+  const [prompt, setPrompt] = useState(
+    'a cinematic studio portrait, soft light, detailed skin, 35mm photo',
+  )
   const [aspectRatio, setAspectRatio] = useState('1:1')
   const [advancedJson, setAdvancedJson] = useState('{}')
   const [idempotencyKey, setIdempotencyKey] = useState('')
@@ -145,7 +147,9 @@ export function RenderGridTestTab() {
 
   const refreshCreation = useCallback(
     async (idOverride?: string) => {
-      const id = String(idOverride || creationId || creation?.id || creation?.task_id || '').trim()
+      const id = String(
+        idOverride || creationId || creation?.id || creation?.task_id || '',
+      ).trim()
       if (!id) return
       setRefreshing(true)
       setError(null)
@@ -156,7 +160,11 @@ export function RenderGridTestTab() {
         setCreationId(String(next?.id || next?.task_id || id))
         return next
       } catch (requestError) {
-        setError(requestError instanceof Error ? requestError.message : 'Не удалось получить статус RenderGrid')
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : 'Не удалось получить статус RenderGrid',
+        )
         return null
       } finally {
         setRefreshing(false)
@@ -170,22 +178,30 @@ export function RenderGridTestTab() {
     setLoadingMeta(true)
     setError(null)
     try {
-      const [healthResponse, modelsResponse, balanceResponse] = await Promise.all([
-        getRenderGridHealth(),
-        getRenderGridModels(),
-        getRenderGridBalance(),
-      ])
+      const healthResponse = await getRenderGridHealth()
       setHealth({
         configured: healthResponse.configured,
         base_url: healthResponse.base_url,
       })
+      if (!healthResponse.configured) {
+        setModelsRaw(null)
+        setBalanceRaw(null)
+        return
+      }
+      const [modelsResponse, balanceResponse] = await Promise.all([
+        getRenderGridModels(),
+        getRenderGridBalance(),
+      ])
       setModelsRaw(modelsResponse.data)
       setBalanceRaw(balanceResponse.data)
-      const available = extractModels(modelsResponse.data)
-      const first = available.map(modelId).find(Boolean)
+      const first = extractModels(modelsResponse.data).map(modelId).find(Boolean)
       if (first) setModel((current) => current || first)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить RenderGrid')
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось загрузить RenderGrid',
+      )
     } finally {
       setLoadingMeta(false)
     }
@@ -216,10 +232,16 @@ export function RenderGridTestTab() {
     try {
       const parsed = JSON.parse(advancedJson || '{}')
       const object = asObject(parsed)
-      if (!object) throw new Error('Дополнительные параметры должны быть JSON-объектом.')
+      if (!object) {
+        throw new Error('Дополнительные параметры должны быть JSON-объектом.')
+      }
       advanced = object
     } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : 'Проверьте JSON дополнительных параметров.')
+      setError(
+        parseError instanceof Error
+          ? parseError.message
+          : 'Проверьте JSON дополнительных параметров.',
+      )
       return
     }
 
@@ -234,12 +256,19 @@ export function RenderGridTestTab() {
     setError(null)
     stopPolling()
     try {
-      const response = await generateRenderGridImage(payload, idempotencyKey.trim() || undefined)
+      const response = await generateRenderGridImage(
+        payload,
+        idempotencyKey.trim() || undefined,
+      )
       const next = response.data || null
       setCreation(next)
       setCreationId(String(next?.id || next?.task_id || ''))
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'RenderGrid не принял задачу')
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'RenderGrid не принял задачу',
+      )
     } finally {
       setSubmitting(false)
     }
@@ -248,7 +277,9 @@ export function RenderGridTestTab() {
   const copy = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value)
-    } catch {}
+    } catch {
+      // Clipboard may be unavailable in some Telegram WebViews.
+    }
   }
 
   if (!isAdmin) {
@@ -268,11 +299,13 @@ export function RenderGridTestTab() {
           <div>
             <div className="flex items-center gap-2 text-gold">
               <Beaker className="h-5 w-5" />
-              <span className="text-xs font-semibold uppercase tracking-[0.16em]">Admin test</span>
+              <span className="text-xs font-semibold uppercase tracking-[0.16em]">
+                Admin test
+              </span>
             </div>
             <h1 className="mt-2 text-xl font-semibold">RenderGrid</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Прямой тест API без списаний бананов и без участия пользовательского generation flow.
+              Прямой тест API без списаний бананов NEUROMIX. Генерация расходует баланс RenderGrid.
             </p>
           </div>
           <button
@@ -282,21 +315,33 @@ export function RenderGridTestTab() {
             className="rounded-xl border border-border/70 bg-secondary/60 p-2.5 text-muted-foreground transition hover:text-foreground disabled:opacity-50"
             aria-label="Обновить RenderGrid"
           >
-            {loadingMeta ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {loadingMeta ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
           </button>
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <div className="rounded-2xl border border-border/50 bg-background/35 p-3">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Activity className="h-3.5 w-3.5" />Ключ</div>
-            <div className="mt-1 text-sm font-medium">{health?.configured ? 'подключён' : 'не настроен'}</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Activity className="h-3.5 w-3.5" />Ключ
+            </div>
+            <div className="mt-1 text-sm font-medium">
+              {health?.configured ? 'подключён' : 'не настроен'}
+            </div>
           </div>
           <div className="rounded-2xl border border-border/50 bg-background/35 p-3">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><CircleDollarSign className="h-3.5 w-3.5" />Баланс</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CircleDollarSign className="h-3.5 w-3.5" />Баланс
+            </div>
             <div className="mt-1 text-sm font-medium">{balanceText(balanceRaw)}</div>
           </div>
           <div className="col-span-2 rounded-2xl border border-border/50 bg-background/35 p-3 sm:col-span-1">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><ServerCog className="h-3.5 w-3.5" />Модели</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ServerCog className="h-3.5 w-3.5" />Модели
+            </div>
             <div className="mt-1 text-sm font-medium">{models.length || '—'}</div>
           </div>
         </div>
@@ -310,17 +355,25 @@ export function RenderGridTestTab() {
 
       <div className="space-y-4 rounded-3xl border border-border/60 bg-card/75 p-4 shadow-sm backdrop-blur sm:p-5">
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Модель</label>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Модель
+          </label>
           {models.length ? (
             <select
               value={model}
               onChange={(event) => setModel(event.target.value)}
               className="w-full rounded-xl border border-border/70 bg-background/60 px-3 py-2.5 text-sm outline-none focus:border-gold/60"
             >
-              {!models.some((item) => modelId(item) === model) && <option value={model}>{model}</option>}
+              {!models.some((item) => modelId(item) === model) && (
+                <option value={model}>{model}</option>
+              )}
               {models.map((item, index) => {
                 const id = modelId(item)
-                return id ? <option key={`${id}-${index}`} value={id}>{modelLabel(item)}</option> : null
+                return id ? (
+                  <option key={`${id}-${index}`} value={id}>
+                    {modelLabel(item)}
+                  </option>
+                ) : null
               })}
             </select>
           ) : (
@@ -334,7 +387,9 @@ export function RenderGridTestTab() {
         </div>
 
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Промпт</label>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Промпт
+          </label>
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -345,7 +400,9 @@ export function RenderGridTestTab() {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Aspect ratio</label>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Aspect ratio
+            </label>
             <input
               value={aspectRatio}
               onChange={(event) => setAspectRatio(event.target.value)}
@@ -354,7 +411,9 @@ export function RenderGridTestTab() {
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Idempotency key</label>
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+              Idempotency key
+            </label>
             <input
               value={idempotencyKey}
               onChange={(event) => setIdempotencyKey(event.target.value)}
@@ -365,7 +424,9 @@ export function RenderGridTestTab() {
         </div>
 
         <div>
-          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Дополнительные параметры JSON</label>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Дополнительные параметры JSON
+          </label>
           <textarea
             value={advancedJson}
             onChange={(event) => setAdvancedJson(event.target.value)}
@@ -375,7 +436,7 @@ export function RenderGridTestTab() {
             placeholder={'{"resolution":"2K","reference_images":["https://…"],"webhook_url":"https://…"}'}
           />
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-            Сюда можно передать любые поддерживаемые выбранной моделью поля RenderGrid — resolution, референсы, webhook и новые параметры API.
+            Можно передать любые поля, поддерживаемые выбранной моделью RenderGrid.
           </p>
         </div>
 
@@ -385,7 +446,11 @@ export function RenderGridTestTab() {
           disabled={submitting || !health?.configured}
           className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gold px-4 py-3 text-sm font-semibold text-black transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45"
         >
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          {submitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="h-4 w-4" />
+          )}
           {submitting ? 'Отправляю…' : 'Запустить тест'}
         </button>
       </div>
@@ -394,7 +459,9 @@ export function RenderGridTestTab() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">Creation</h2>
-            <p className="text-xs text-muted-foreground">Автообновление не чаще одного раза в 5 секунд.</p>
+            <p className="text-xs text-muted-foreground">
+              Автообновление не чаще одного раза в 5 секунд.
+            </p>
           </div>
           {creation && <StatusBadge status={creation.status} />}
         </div>
@@ -437,9 +504,11 @@ export function RenderGridTestTab() {
                 rel="noreferrer"
                 className="overflow-hidden rounded-2xl border border-border/60 bg-background/50"
               >
-                {/* RenderGrid returns CDN URLs dynamically; a plain img avoids a static Next remote-host allowlist. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={url} alt={`RenderGrid result ${index + 1}`} className="aspect-square w-full object-cover" />
+                <img
+                  src={url}
+                  alt={`RenderGrid result ${index + 1}`}
+                  className="aspect-square w-full object-cover"
+                />
               </a>
             ))}
           </div>
@@ -447,7 +516,9 @@ export function RenderGridTestTab() {
 
         {creation && (
           <details className="rounded-2xl border border-border/50 bg-background/35">
-            <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-muted-foreground">Raw response</summary>
+            <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-muted-foreground">
+              Raw response
+            </summary>
             <pre className="max-h-80 overflow-auto border-t border-border/40 p-3 text-[11px] leading-relaxed text-muted-foreground">
               {stringify(creation)}
             </pre>
@@ -456,7 +527,9 @@ export function RenderGridTestTab() {
       </div>
 
       {health?.base_url && (
-        <p className="px-1 text-center text-[10px] text-muted-foreground/70">{health.base_url}</p>
+        <p className="px-1 text-center text-[10px] text-muted-foreground/70">
+          {health.base_url}
+        </p>
       )}
     </div>
   )
