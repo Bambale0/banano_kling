@@ -37,13 +37,23 @@ def test_rendergrid_wait_never_polls_faster_than_documented_minimum():
     responses = iter(
         [
             {"id": "creation-1", "status": "queued"},
-            {"id": "creation-1", "status": "completed", "result_urls": ["https://cdn.example/result.jpg"]},
+            {
+                "id": "creation-1",
+                "status": "completed",
+                "result_urls": ["https://cdn.example/result.jpg"],
+            },
         ]
     )
-    client.get_creation = AsyncMock(side_effect=lambda _creation_id: next(responses))
+    client.get_creation = AsyncMock(
+        side_effect=lambda _creation_id: next(responses)
+    )
 
     async def run_wait():
-        with patch("bot.services.rendergrid_service.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        sleep_mock = AsyncMock()
+        with patch(
+            "bot.services.rendergrid_service.asyncio.sleep",
+            new=sleep_mock,
+        ):
             result = await client.wait_for_creation(
                 "creation-1",
                 timeout_seconds=60,
@@ -57,27 +67,39 @@ def test_rendergrid_wait_never_polls_faster_than_documented_minimum():
     sleep_mock.assert_awaited_once_with(MIN_CREATION_POLL_INTERVAL_SECONDS)
 
 
-def test_rendergrid_admin_routes_are_explicit_and_do_not_add_generic_proxy():
+def test_rendergrid_admin_routes_are_explicit_and_use_miniapp_api_prefix():
     app = web.Application()
     setup_rendergrid_admin_routes(app)
 
     paths = {resource.canonical for resource in app.router.resources()}
 
-    assert "/api/admin/rendergrid/health" in paths
-    assert "/api/admin/rendergrid/models" in paths
-    assert "/api/admin/rendergrid/balance" in paths
-    assert "/api/admin/rendergrid/images/generate" in paths
-    assert "/api/admin/rendergrid/creations/{creation_id}" in paths
+    root = "/mini-app/api/admin/rendergrid"
+    assert f"{root}/health" in paths
+    assert f"{root}/models" in paths
+    assert f"{root}/balance" in paths
+    assert f"{root}/images/generate" in paths
+    assert f"{root}/creations/{{creation_id}}" in paths
     assert not any("{tail" in path for path in paths)
 
 
 def test_rendergrid_test_button_and_screen_are_admin_gated():
     root = Path(__file__).resolve().parents[1]
-    nav = (root / "frontend/miniapp-v0/components/tab-nav.tsx").read_text(encoding="utf-8")
-    content = (root / "frontend/miniapp-v0/components/tab-content.tsx").read_text(encoding="utf-8")
-    api = (root / "bot/rendergrid_admin_api.py").read_text(encoding="utf-8")
+    nav = (root / "frontend/miniapp-v0/components/tab-nav.tsx").read_text(
+        encoding="utf-8"
+    )
+    content = (
+        root / "frontend/miniapp-v0/components/tab-content.tsx"
+    ).read_text(encoding="utf-8")
+    backend_api = (root / "bot/rendergrid_admin_api.py").read_text(
+        encoding="utf-8"
+    )
+    frontend_api = (
+        root / "frontend/miniapp-v0/lib/rendergrid-api.ts"
+    ).read_text(encoding="utf-8")
 
     assert "state.user?.isAdmin ? [...tabs, adminTestTab] : tabs" in nav
     assert "activeTab === 8 && !state.user?.isAdmin" in content
-    assert "config.is_admin(telegram_id)" in api
-    assert "X-Telegram-Init-Data" in api
+    assert "config.is_admin(telegram_id)" in backend_api
+    assert "X-Telegram-Init-Data" in backend_api
+    assert "getApiBasePath()" in frontend_api
+    assert "/admin/rendergrid" in frontend_api
