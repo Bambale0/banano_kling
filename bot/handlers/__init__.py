@@ -96,7 +96,6 @@ from .trend_seedance_25_compat import install_trend_seedance_25_compat
 install_repeat_lookup_compat(generation_module, repeat_result_compat_module)
 install_repeat_run_confirm_compat(generation_module)
 install_pinterest_flow_contract_compat(generation_module)
-install_rendergrid_test_compat(admin_module)
 
 # Partner applications and moderation handlers must run before the legacy admin
 # router. Existing partners continue to use partner_agreed_at as the financial
@@ -180,6 +179,9 @@ payments_router.include_router(legacy_payments_router)
 install_common_publication_scope_compat(common_module)
 install_profile_feed_deeplink_compat(common_module)
 install_trends_compat(common_module, generation_module, admin_module)
+# Trends replaces the admin keyboard factory, so the test-only RenderGrid patch
+# must be installed after it to remain present in the final /admin keyboard.
+install_rendergrid_test_compat(admin_module)
 install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
