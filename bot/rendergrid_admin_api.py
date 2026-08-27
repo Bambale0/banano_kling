@@ -8,7 +8,11 @@ from typing import Any
 from aiohttp import web
 
 from bot.config import config
-from bot.services.rendergrid_service import RenderGridClient, RenderGridError, rendergrid_client
+from bot.services.rendergrid_service import (
+    RenderGridClient,
+    RenderGridError,
+    rendergrid_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,14 @@ async def _require_admin(request: web.Request) -> int:
     return telegram_id
 
 
+def _http_error_response(error: web.HTTPException) -> web.Response:
+    message = error.text or error.reason or "Request rejected"
+    return web.json_response(
+        {"ok": False, "error": message},
+        status=error.status,
+    )
+
+
 def rendergrid_admin_endpoint(handler: Handler) -> Handler:
     @wraps(handler)
     async def wrapped(request: web.Request) -> web.StreamResponse:
@@ -66,8 +78,8 @@ def rendergrid_admin_endpoint(handler: Handler) -> Handler:
                 exc.code,
             )
             return _rendergrid_error_response(exc)
-        except web.HTTPException:
-            raise
+        except web.HTTPException as exc:
+            return _http_error_response(exc)
         except (TypeError, ValueError) as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         except Exception:
@@ -81,8 +93,8 @@ def rendergrid_admin_endpoint(handler: Handler) -> Handler:
 
 
 def _client() -> RenderGridClient:
-    # Use a fresh instance so env changes applied at process restart are reflected
-    # and so route tests can replace the module singleton without leaking sessions.
+    # Use a fresh instance when the import-time singleton has no key. This keeps
+    # test/runtime startup safe if the environment is populated before first use.
     if rendergrid_client.configured:
         return rendergrid_client
     return RenderGridClient()
@@ -121,8 +133,13 @@ async def rendergrid_generate_image(request: web.Request) -> web.Response:
             status=400,
         )
 
-    idempotency_key = str(request.headers.get("Idempotency-Key") or "").strip() or None
-    data = await _client().generate_image(payload, idempotency_key=idempotency_key)
+    idempotency_key = (
+        str(request.headers.get("Idempotency-Key") or "").strip() or None
+    )
+    data = await _client().generate_image(
+        payload,
+        idempotency_key=idempotency_key,
+    )
     return web.json_response({"ok": True, "data": data}, status=202)
 
 
