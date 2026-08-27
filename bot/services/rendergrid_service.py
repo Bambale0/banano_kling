@@ -6,6 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import aiohttp
@@ -208,7 +209,8 @@ class RenderGridClient:
         creation_id = str(creation_id or "").strip()
         if not creation_id:
             raise ValueError("creation_id is required")
-        result = await self._request("GET", f"/creations/{creation_id}")
+        encoded_creation_id = quote(creation_id, safe="")
+        result = await self._request("GET", f"/creations/{encoded_creation_id}")
         if not isinstance(result, dict):
             raise RenderGridError(
                 "RenderGrid returned an invalid creation response",
