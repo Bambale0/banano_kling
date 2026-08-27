@@ -1,25 +1,30 @@
-# RenderGrid admin test client
+# RenderGrid Telegram test branch
 
-Эта интеграция изолирована в `feature/rendergrid-admin-test` и не подключена к пользовательскому биллингу/генерационному flow NEUROMIX.
+`feature/rendergrid-admin-test` — отдельная экспериментальная ветка. Её назначение: руками проверить RenderGrid API прямо из Telegram-бота под админом. В `tanyapi` её мержить не нужно.
 
-## Назначение
+## Что появляется в боте
 
-В Mini App у пользователей из `ADMIN_IDS` появляется вкладка **«Тест»**. Она позволяет напрямую проверить RenderGrid:
+В существующей Telegram админ-панели добавляется кнопка:
 
-- состояние конфигурации;
-- каталог доступных моделей;
-- баланс RenderGrid;
-- `POST /images/generate`;
-- статус creation через `GET /creations/{id}`;
-- итоговые `result_urls`;
-- idempotency key;
-- model-specific параметры через дополнительный JSON, включая поддерживаемые RenderGrid поля для resolution, reference images и `webhook_url`.
+```text
+🧪 RenderGrid TEST
+```
 
-Обычный пользователь не видит вкладку. Backend повторно проверяет подписанный Telegram Mini App `initData` и `config.is_admin(telegram_id)`, поэтому скрытие кнопки не является единственной защитой.
+Она видна только внутри админского контура, а каждый callback дополнительно проверяет `config.is_admin(user_id)`.
+
+После открытия доступны:
+
+- `💰 Баланс` — прямой `GET /balance`;
+- `📦 Модели` — прямой `GET /models`;
+- `⚡ Генерация` — отправка произвольного JSON в `POST /images/generate`;
+- `🔎 Creation ID` — ручная проверка `GET /creations/{id}`;
+- `🔄 Проверить статус` — повторная проверка последнего creation.
+
+Никакие бананы, пользовательский биллинг, история генераций и Mini App не используются.
 
 ## Environment
 
-На backend добавить:
+На backend тестового запуска:
 
 ```dotenv
 RENDERGRID_API_KEY=rg_live_REPLACE_ME
@@ -32,60 +37,65 @@ RENDERGRID_BASE_URL=https://api.rendergrid.io/api/public/v1
 RENDERGRID_TIMEOUT_SECONDS=60
 ```
 
-`RENDERGRID_API_KEY` является серверным секретом. Не добавлять его в `NEXT_PUBLIC_*`, frontend env, исходники или Mini App bundle.
+Ключ остаётся только на backend.
 
 ## Поток
 
 ```text
-Telegram Mini App admin
-  -> /mini-app/api/admin/rendergrid/*
-  -> Telegram initData validation
-  -> ADMIN_IDS validation
+Telegram admin
+  -> Админ-панель
+  -> 🧪 RenderGrid TEST
+  -> bot/handlers/rendergrid_test_compat.py
   -> bot/services/rendergrid_service.py
   -> https://api.rendergrid.io/api/public/v1
 ```
 
-Маршруты прокси регистрируются до generic `/mini-app/api/{tail:.*}` catch-all и используют существующий production proxy `/mini-app/api/*`.
+## Генерация
 
-## Backend API для тестового экрана
+Бот просит прислать JSON одним сообщением. Например:
 
-```text
-GET  /mini-app/api/admin/rendergrid/health
-GET  /mini-app/api/admin/rendergrid/models
-GET  /mini-app/api/admin/rendergrid/balance
-POST /mini-app/api/admin/rendergrid/images/generate
-GET  /mini-app/api/admin/rendergrid/creations/{creation_id}
+```json
+{
+  "model": "MODEL_FROM_RENDERGRID",
+  "prompt": "A cinematic portrait of a red fox",
+  "aspect_ratio": "1:1"
+}
 ```
 
-Каждый маршрут требует `X-Telegram-Init-Data` и admin Telegram ID.
+JSON передаётся в RenderGrid как есть. Клиент проверяет только обязательные `model` и `prompt`, добавляет `Idempotency-Key` и возвращает сырой ответ API в Telegram.
 
-## Polling и retry
+Если ответ содержит creation id, бот сохраняет его в FSM и показывает кнопку повторной проверки статуса.
 
-RenderGrid возвращает generation request асинхронно. Клиент:
+## Клиент
 
-- считает `completed` и `failed` terminal status;
-- не poll-ит creation чаще одного раза в 5 секунд;
-- обрабатывает `429` и временные `5xx` с backoff;
-- учитывает `Retry-After`, когда он присутствует;
-- повторяет POST с тем же idempotency key, чтобы сетевой retry не создавал намеренно новый request.
+`bot/services/rendergrid_service.py` содержит изолированный async client:
 
-Mini App использует 5.5 секунды между автоматическими status checks.
+- Bearer auth;
+- `POST /images/generate`;
+- `GET /creations/{id}`;
+- `GET /models`;
+- `GET /balance`;
+- idempotency key;
+- retry для `429` и временных `5xx`;
+- `Retry-After`;
+- polling не чаще одного раза в 5 секунд;
+- URL-encoding creation id как одного path segment.
 
-## Проверка перед использованием
-
-Backend:
+## Проверка
 
 ```bash
 python -m pytest tests/test_rendergrid_integration.py -q
 ```
 
-Frontend:
+После запуска тестовой ветки с `RENDERGRID_API_KEY`:
 
-```bash
-cd frontend/miniapp-v0
-npm ci
-npm run lint
-npm run build
-```
+1. открыть Telegram админ-панель;
+2. нажать `🧪 RenderGrid TEST`;
+3. проверить баланс;
+4. открыть список моделей;
+5. взять реальный model id;
+6. отправить тестовый JSON генерации;
+7. проверить creation до `completed`/`failed`;
+8. посмотреть сырой ответ и `result_urls`.
 
-После настройки `RENDERGRID_API_KEY` открыть Mini App из Telegram под ID, входящим в `ADMIN_IDS`, открыть **«Тест»**, проверить `Ключ: подключён`, баланс/модели и выполнить одну тестовую generation.
+Ветка предназначена только для ручного теста провайдера и не должна становиться production-фичей автоматически.
