@@ -1,8 +1,10 @@
 'use client'
 
-import { getInitData } from './api'
+import { getApiBasePath, getInitData } from './api'
 
-const RENDERGRID_ADMIN_ROOT = '/api/admin/rendergrid'
+function renderGridAdminRoot() {
+  return `${getApiBasePath()}/admin/rendergrid`
+}
 
 export interface RenderGridEnvelope<T = unknown> {
   ok: boolean
@@ -33,7 +35,7 @@ async function renderGridFetch<T>(
     throw new Error('Откройте Mini App через Telegram.')
   }
 
-  const response = await fetch(`${RENDERGRID_ADMIN_ROOT}${path}`, {
+  const response = await fetch(`${renderGridAdminRoot()}${path}`, {
     ...options,
     headers: {
       Accept: 'application/json',
@@ -41,6 +43,7 @@ async function renderGridFetch<T>(
       'X-Telegram-Init-Data': initData,
       ...options.headers,
     },
+    cache: 'no-store',
   })
 
   const payload = (await response.json().catch(() => ({}))) as RenderGridEnvelope<T>
