@@ -130,4 +130,6 @@ def setup_feed_reference_media_routes(
         root + "/api/feed/reference-image/{gen_id}/{index}/full",
         feed_reference_image_full,
     )
-    setup_rendergrid_admin_routes(app)
+    # Keep RenderGrid on the same proxied Mini App API prefix. main.py registers
+    # this module before miniapp.py, so these explicit routes win over its catch-all.
+    setup_rendergrid_admin_routes(app, miniapp_root=root)
