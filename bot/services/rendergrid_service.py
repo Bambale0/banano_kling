@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 import aiohttp
 
@@ -191,7 +191,7 @@ class RenderGridClient:
         if not prompt:
             raise ValueError("RenderGrid prompt is required")
 
-        key = (idempotency_key or str(uuid.uuid4())).strip()
+        key = (idempotency_key or str(uuid4())).strip()
         result = await self._request(
             "POST",
             "/images/generate",
