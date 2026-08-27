@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any
 
 from aiohttp import web
 
