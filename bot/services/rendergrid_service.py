@@ -139,7 +139,7 @@ class RenderGridClient:
         elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
             raw_items = value
         else:
-            raise ValueError("RenderGrid reference_images must be a list of public image URLs")
+            raise TypeError("RenderGrid reference_images must be a list of public image URLs")
 
         normalized: list[str] = []
         seen: set[str] = set()
