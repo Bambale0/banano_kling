@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any
 
 from aiogram import F, Router, types
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -59,6 +60,18 @@ def _result_keyboard(*, has_creation: bool = False) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def _menu_text() -> str:
+    configured = "✅ задан" if rendergrid_client.configured else "❌ не задан"
+    return (
+        "🧪 <b>RenderGrid TEST</b>\n\n"
+        "Это изолированная проверка API из Telegram-бота. "
+        "Бананы и пользовательские генерации не затрагиваются.\n\n"
+        f"API key: <b>{configured}</b>\n"
+        f"Base URL: <code>{html.escape(rendergrid_client.base_url)}</code>\n\n"
+        "Выберите, что проверить."
+    )
+
+
 def _provider_error_text(exc: Exception) -> str:
     if isinstance(exc, RenderGridError):
         parts = [f"❌ <b>RenderGrid:</b> {html.escape(str(exc))}"]
@@ -95,6 +108,12 @@ def _patch_admin_keyboard(admin_module: ModuleType) -> None:
     def patched_admin_keyboard(*args, **kwargs):
         markup = current(*args, **kwargs)
         rows = [list(row) for row in markup.inline_keyboard]
+        if any(
+            button.callback_data == "admin_rendergrid_test"
+            for row in rows
+            for button in row
+        ):
+            return markup
         test_row = [
             InlineKeyboardButton(
                 text="🧪 RenderGrid TEST",
@@ -117,24 +136,35 @@ def install_rendergrid_test_compat(admin_module: ModuleType) -> None:
     _patch_admin_keyboard(admin_module)
 
 
+async def _ensure_admin_keyboard_patch_on_startup(**_kwargs: Any) -> None:
+    if _admin_module is not None:
+        _patch_admin_keyboard(_admin_module)
+
+
+router.startup.register(_ensure_admin_keyboard_patch_on_startup)
+
+
+@router.message(Command("rendergrid"))
+async def rendergrid_test_command(message: types.Message, state: FSMContext) -> None:
+    if message.from_user is None or not _is_admin(message.from_user.id):
+        return
+    await state.clear()
+    await message.answer(
+        _menu_text(),
+        reply_markup=_menu_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 @router.callback_query(F.data == "admin_rendergrid_test")
 async def rendergrid_test_open(callback: types.CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await state.clear()
-    configured = "✅ задан" if rendergrid_client.configured else "❌ не задан"
-    text = (
-        "🧪 <b>RenderGrid TEST</b>\n\n"
-        "Это изолированная проверка API из Telegram-бота. "
-        "Бананы и пользовательские генерации не затрагиваются.\n\n"
-        f"API key: <b>{configured}</b>\n"
-        f"Base URL: <code>{html.escape(rendergrid_client.base_url)}</code>\n\n"
-        "Выберите, что проверить."
-    )
     if callback.message is not None:
         await callback.message.edit_text(
-            text,
+            _menu_text(),
             reply_markup=_menu_keyboard(),
             parse_mode="HTML",
         )
