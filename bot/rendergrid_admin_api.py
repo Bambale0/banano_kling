@@ -150,10 +150,14 @@ async def rendergrid_creation(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "data": data})
 
 
-def setup_rendergrid_admin_routes(app: web.Application) -> None:
-    """Register admin-only RenderGrid routes before Mini App's catch-all route."""
+def setup_rendergrid_admin_routes(
+    app: web.Application,
+    *,
+    miniapp_root: str = "/mini-app",
+) -> None:
+    """Register admin-only routes before Mini App's generic API catch-all."""
 
-    root = "/api/admin/rendergrid"
+    root = f"{miniapp_root.rstrip('/')}/api/admin/rendergrid"
     app.router.add_get(root + "/health", rendergrid_health)
     app.router.add_get(root + "/models", rendergrid_models)
     app.router.add_get(root + "/balance", rendergrid_balance)
