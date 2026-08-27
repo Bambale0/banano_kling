@@ -6,6 +6,7 @@ from aiohttp import web
 from PIL import Image, ImageOps
 
 from bot.database import get_feed_generation_card
+from bot.rendergrid_admin_api import setup_rendergrid_admin_routes
 from bot.services.media_input_utils import resolve_local_upload_path
 
 REFERENCE_THUMB_CACHE_DIR = Path("static/uploads/feed-reference-thumbs")
@@ -129,3 +130,4 @@ def setup_feed_reference_media_routes(
         root + "/api/feed/reference-image/{gen_id}/{index}/full",
         feed_reference_image_full,
     )
+    setup_rendergrid_admin_routes(app)
