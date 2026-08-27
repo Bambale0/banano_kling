@@ -4,8 +4,9 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 import aiohttp
 
@@ -107,14 +108,17 @@ class RenderGridClient:
         return f"RenderGrid request failed ({status})", None
 
     @staticmethod
-    def _retry_after_seconds(response: aiohttp.ClientResponse, attempt: int) -> float:
+    def _retry_after_seconds(
+        response: aiohttp.ClientResponse,
+        attempt: int,
+    ) -> float:
         raw = response.headers.get("Retry-After", "").strip()
         if raw:
             try:
                 return max(0.0, min(float(raw), 30.0))
             except ValueError:
                 pass
-        return min(2.0 ** attempt, 8.0)
+        return min(2.0**attempt, 8.0)
 
     async def _request(
         self,
@@ -166,7 +170,7 @@ class RenderGridClient:
                     )
                     if attempt >= self.max_retries:
                         raise last_error from exc
-                    await asyncio.sleep(min(2.0 ** attempt, 8.0))
+                    await asyncio.sleep(min(2.0**attempt, 8.0))
 
         if last_error is not None:
             raise last_error
@@ -195,7 +199,10 @@ class RenderGridClient:
             idempotency_key=key,
         )
         if not isinstance(result, dict):
-            raise RenderGridError("RenderGrid returned an invalid generation response", payload=result)
+            raise RenderGridError(
+                "RenderGrid returned an invalid generation response",
+                payload=result,
+            )
         return result
 
     async def get_creation(self, creation_id: str) -> dict[str, Any]:
@@ -204,7 +211,10 @@ class RenderGridClient:
             raise ValueError("creation_id is required")
         result = await self._request("GET", f"/creations/{creation_id}")
         if not isinstance(result, dict):
-            raise RenderGridError("RenderGrid returned an invalid creation response", payload=result)
+            raise RenderGridError(
+                "RenderGrid returned an invalid creation response",
+                payload=result,
+            )
         return result
 
     async def list_models(self) -> Any:
@@ -224,7 +234,10 @@ class RenderGridClient:
             MIN_CREATION_POLL_INTERVAL_SECONDS,
             float(poll_interval_seconds),
         )
-        deadline = asyncio.get_running_loop().time() + max(0.0, float(timeout_seconds))
+        deadline = asyncio.get_running_loop().time() + max(
+            0.0,
+            float(timeout_seconds),
+        )
 
         while True:
             creation = await self.get_creation(creation_id)
@@ -232,7 +245,9 @@ class RenderGridClient:
             if status in TERMINAL_CREATION_STATUSES:
                 return creation
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"RenderGrid creation {creation_id} did not finish in time")
+                raise TimeoutError(
+                    f"RenderGrid creation {creation_id} did not finish in time"
+                )
             await asyncio.sleep(poll_interval)
 
 
