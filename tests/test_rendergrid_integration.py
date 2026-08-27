@@ -32,6 +32,19 @@ def test_rendergrid_generate_requires_model_and_prompt_before_network_call():
         asyncio.run(client.generate_image({"model": "nano-banana-2"}))
 
 
+def test_rendergrid_creation_id_is_encoded_as_single_path_segment():
+    client = RenderGridClient(api_key="rg_live_test")
+    client._request = AsyncMock(return_value={"id": "creation-1", "status": "queued"})
+
+    result = asyncio.run(client.get_creation("../status?x=1"))
+
+    assert result["status"] == "queued"
+    client._request.assert_awaited_once_with(
+        "GET",
+        "/creations/..%2Fstatus%3Fx%3D1",
+    )
+
+
 def test_rendergrid_wait_never_polls_faster_than_documented_minimum():
     client = RenderGridClient(api_key="rg_live_test")
     responses = iter(
