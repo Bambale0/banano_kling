@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import aiohttp
 
-
 DEFAULT_RENDERGRID_BASE_URL = "https://api.rendergrid.io/api/public/v1"
 MIN_CREATION_POLL_INTERVAL_SECONDS = 5.0
 TERMINAL_CREATION_STATUSES = frozenset({"completed", "failed"})
