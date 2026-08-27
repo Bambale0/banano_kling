@@ -89,6 +89,8 @@ def test_rendergrid_test_is_telegram_admin_only_and_wired_before_legacy_admin():
 
     assert 'text="🧪 RenderGrid TEST"' in handler
     assert 'callback_data="admin_rendergrid_test"' in handler
+    assert 'Command("rendergrid")' in handler
+    assert "router.startup.register(_ensure_admin_keyboard_patch_on_startup)" in handler
     assert "config.is_admin(user_id)" in handler
     assert 'callback.answer("⛔ Нет доступа"' in handler
     assert "rendergrid_client.get_balance()" in handler
@@ -100,6 +102,16 @@ def test_rendergrid_test_is_telegram_admin_only_and_wired_before_legacy_admin():
     assert handlers_init.index("admin_router.include_router(rendergrid_test_router)") < handlers_init.index(
         "admin_router.include_router(admin_module.router)"
     )
+
+
+def test_rendergrid_admin_keyboard_patch_is_idempotent():
+    root = Path(__file__).resolve().parents[1]
+    handler = (root / "bot/handlers/rendergrid_test_compat.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'button.callback_data == "admin_rendergrid_test"' in handler
+    assert "return markup" in handler
 
 
 def test_rendergrid_test_branch_does_not_depend_on_miniapp_proxy():
