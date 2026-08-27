@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 import aiohttp
@@ -15,6 +15,16 @@ DEFAULT_RENDERGRID_BASE_URL = "https://api.rendergrid.io/api/public/v1"
 MIN_CREATION_POLL_INTERVAL_SECONDS = 5.0
 TERMINAL_CREATION_STATUSES = frozenset({"completed", "failed"})
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+REFERENCE_IDENTITY_MARKER = "[REFERENCE IDENTITY LOCK]"
+REFERENCE_IDENTITY_INSTRUCTION = (
+    f"{REFERENCE_IDENTITY_MARKER}\n"
+    "Use the provided reference image as the source of truth for the referenced subject. "
+    "If the reference contains a person, preserve the exact same person's identity: facial "
+    "structure, proportions, age, skin tone, hair, and distinctive features. Do not replace "
+    "the person with a lookalike or a newly invented face. Apply the user's requested changes "
+    "to that same subject. If the reference contains an object or product, preserve its "
+    "identity, shape, proportions, materials, markings, and distinctive details."
+)
 
 
 @dataclass(slots=True)
@@ -120,6 +130,48 @@ class RenderGridClient:
                 pass
         return min(2.0**attempt, 8.0)
 
+    @staticmethod
+    def _normalize_reference_images(value: Any) -> list[str]:
+        if value in (None, "", []):
+            return []
+        if isinstance(value, str):
+            raw_items: Sequence[Any] = [value]
+        elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            raw_items = value
+        else:
+            raise ValueError("RenderGrid reference_images must be a list of public image URLs")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_items:
+            url = str(raw or "").strip()
+            if not url:
+                continue
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    "RenderGrid reference image must be available through a public HTTP(S) URL"
+                )
+            if url not in seen:
+                seen.add(url)
+                normalized.append(url)
+        if raw_items and not normalized:
+            raise ValueError("RenderGrid reference_images is empty")
+        return normalized
+
+    @classmethod
+    def _prepare_generation_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        prepared = dict(payload)
+        prompt = str(prepared.get("prompt") or "").strip()
+        references = cls._normalize_reference_images(prepared.get("reference_images"))
+        if references:
+            prepared["reference_images"] = references
+            if REFERENCE_IDENTITY_MARKER not in prompt:
+                prepared["prompt"] = f"{REFERENCE_IDENTITY_INSTRUCTION}\n\nUser request:\n{prompt}"
+        else:
+            prepared.pop("reference_images", None)
+        return prepared
+
     async def _request(
         self,
         method: str,
@@ -191,11 +243,12 @@ class RenderGridClient:
         if not prompt:
             raise ValueError("RenderGrid prompt is required")
 
+        prepared_payload = self._prepare_generation_payload(payload)
         key = (idempotency_key or str(uuid4())).strip()
         result = await self._request(
             "POST",
             "/images/generate",
-            json_body=payload,
+            json_body=prepared_payload,
             idempotency_key=key,
         )
         if not isinstance(result, dict):
