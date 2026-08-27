@@ -6,6 +6,7 @@ import pytest
 
 from bot.services.rendergrid_service import (
     MIN_CREATION_POLL_INTERVAL_SECONDS,
+    REFERENCE_IDENTITY_INSTRUCTION,
     RenderGridClient,
 )
 
@@ -24,6 +25,59 @@ def test_rendergrid_generate_requires_model_and_prompt_before_network_call():
         asyncio.run(client.generate_image({"prompt": "hello"}))
     with pytest.raises(ValueError, match="prompt"):
         asyncio.run(client.generate_image({"model": "nano-banana-2"}))
+
+
+def test_rendergrid_reference_generation_keeps_reference_and_locks_identity():
+    client = RenderGridClient(api_key="rg_live_test")
+    client._request = AsyncMock(return_value={"id": "creation-ref", "status": "queued"})
+    reference_url = "https://tanyapi.chillcreative.ru/uploads/refs/image/admin/ref.png"
+
+    result = asyncio.run(
+        client.generate_image(
+            {
+                "model": "nano-banana-2",
+                "prompt": "Put the same woman in a red evening dress",
+                "aspect_ratio": "1:1",
+                "reference_images": [reference_url],
+            },
+            idempotency_key="ref-request",
+        )
+    )
+
+    assert result["id"] == "creation-ref"
+    expected_prompt = (
+        f"{REFERENCE_IDENTITY_INSTRUCTION}\n\n"
+        "User request:\nPut the same woman in a red evening dress"
+    )
+    client._request.assert_awaited_once_with(
+        "POST",
+        "/images/generate",
+        json_body={
+            "model": "nano-banana-2",
+            "prompt": expected_prompt,
+            "aspect_ratio": "1:1",
+            "reference_images": [reference_url],
+        },
+        idempotency_key="ref-request",
+    )
+
+
+def test_rendergrid_reference_generation_rejects_non_public_reference_path():
+    client = RenderGridClient(api_key="rg_live_test")
+    client._request = AsyncMock(return_value={"id": "should-not-run"})
+
+    with pytest.raises(ValueError, match="public HTTP"):
+        asyncio.run(
+            client.generate_image(
+                {
+                    "model": "nano-banana-2",
+                    "prompt": "Keep the same person",
+                    "reference_images": ["static/uploads/ref.png"],
+                }
+            )
+        )
+
+    client._request.assert_not_awaited()
 
 
 def test_rendergrid_creation_id_is_encoded_as_single_path_segment():
