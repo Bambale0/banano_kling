@@ -16,6 +16,7 @@ from bot.services.rendergrid_service import RenderGridError, rendergrid_client
 
 router = Router(name="rendergrid_test_compat")
 _admin_module: ModuleType | None = None
+_PROVIDER_ERRORS = (RenderGridError, ValueError, TypeError, TimeoutError)
 
 
 class RenderGridTestStates(StatesGroup):
@@ -132,7 +133,11 @@ async def rendergrid_test_open(callback: types.CallbackQuery, state: FSMContext)
         "Выберите, что проверить."
     )
     if callback.message is not None:
-        await callback.message.edit_text(text, reply_markup=_menu_keyboard(), parse_mode="HTML")
+        await callback.message.edit_text(
+            text,
+            reply_markup=_menu_keyboard(),
+            parse_mode="HTML",
+        )
     await callback.answer()
 
 
@@ -145,10 +150,14 @@ async def rendergrid_test_balance(callback: types.CallbackQuery) -> None:
     try:
         payload = await rendergrid_client.get_balance()
         text = "💰 <b>RenderGrid balance</b>\n\n" + _pretty(payload)
-    except Exception as exc:
+    except _PROVIDER_ERRORS as exc:
         text = _provider_error_text(exc)
     if callback.message is not None:
-        await callback.message.edit_text(text, reply_markup=_result_keyboard(), parse_mode="HTML")
+        await callback.message.edit_text(
+            text,
+            reply_markup=_result_keyboard(),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "rendergrid_test_models")
@@ -160,14 +169,21 @@ async def rendergrid_test_models(callback: types.CallbackQuery) -> None:
     try:
         payload = await rendergrid_client.list_models()
         text = "📦 <b>RenderGrid models</b>\n\n" + _pretty(payload)
-    except Exception as exc:
+    except _PROVIDER_ERRORS as exc:
         text = _provider_error_text(exc)
     if callback.message is not None:
-        await callback.message.edit_text(text, reply_markup=_result_keyboard(), parse_mode="HTML")
+        await callback.message.edit_text(
+            text,
+            reply_markup=_result_keyboard(),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "rendergrid_test_generate")
-async def rendergrid_test_generate(callback: types.CallbackQuery, state: FSMContext) -> None:
+async def rendergrid_test_generate(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
@@ -186,12 +202,19 @@ async def rendergrid_test_generate(callback: types.CallbackQuery, state: FSMCont
         + "\n\nДля отмены нажмите кнопку ниже."
     )
     if callback.message is not None:
-        await callback.message.edit_text(text, reply_markup=_result_keyboard(), parse_mode="HTML")
+        await callback.message.edit_text(
+            text,
+            reply_markup=_result_keyboard(),
+            parse_mode="HTML",
+        )
     await callback.answer()
 
 
 @router.message(RenderGridTestStates.waiting_generation_payload)
-async def rendergrid_test_generate_payload(message: types.Message, state: FSMContext) -> None:
+async def rendergrid_test_generate_payload(
+    message: types.Message,
+    state: FSMContext,
+) -> None:
     if message.from_user is None or not _is_admin(message.from_user.id):
         await state.clear()
         return
@@ -215,7 +238,7 @@ async def rendergrid_test_generate_payload(message: types.Message, state: FSMCon
     await message.answer("⏳ Отправляю запрос в RenderGrid…")
     try:
         result = await rendergrid_client.generate_image(payload)
-    except Exception as exc:
+    except _PROVIDER_ERRORS as exc:
         await message.answer(
             _provider_error_text(exc),
             reply_markup=_result_keyboard(),
@@ -238,7 +261,10 @@ async def rendergrid_test_generate_payload(message: types.Message, state: FSMCon
 
 
 @router.callback_query(F.data == "rendergrid_test_creation")
-async def rendergrid_test_creation(callback: types.CallbackQuery, state: FSMContext) -> None:
+async def rendergrid_test_creation(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
@@ -253,13 +279,19 @@ async def rendergrid_test_creation(callback: types.CallbackQuery, state: FSMCont
 
 
 @router.message(RenderGridTestStates.waiting_creation_id)
-async def rendergrid_test_creation_id(message: types.Message, state: FSMContext) -> None:
+async def rendergrid_test_creation_id(
+    message: types.Message,
+    state: FSMContext,
+) -> None:
     if message.from_user is None or not _is_admin(message.from_user.id):
         await state.clear()
         return
     creation_id = (message.text or "").strip()
     if not creation_id:
-        await message.answer("❌ Пустой Creation ID.", reply_markup=_result_keyboard())
+        await message.answer(
+            "❌ Пустой Creation ID.",
+            reply_markup=_result_keyboard(),
+        )
         return
     await state.set_state(None)
     await state.update_data(rendergrid_creation_id=creation_id)
@@ -274,7 +306,7 @@ async def _send_creation_status(
     try:
         payload = await rendergrid_client.get_creation(creation_id)
         text = "🔎 <b>RenderGrid creation</b>\n\n" + _pretty(payload)
-    except Exception as exc:
+    except _PROVIDER_ERRORS as exc:
         text = _provider_error_text(exc)
     await state.update_data(rendergrid_creation_id=creation_id)
     await target.answer(
@@ -285,7 +317,10 @@ async def _send_creation_status(
 
 
 @router.callback_query(F.data == "rendergrid_test_refresh")
-async def rendergrid_test_refresh(callback: types.CallbackQuery, state: FSMContext) -> None:
+async def rendergrid_test_refresh(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
@@ -298,7 +333,7 @@ async def rendergrid_test_refresh(callback: types.CallbackQuery, state: FSMConte
     try:
         payload = await rendergrid_client.get_creation(creation_id)
         text = "🔄 <b>RenderGrid status</b>\n\n" + _pretty(payload)
-    except Exception as exc:
+    except _PROVIDER_ERRORS as exc:
         text = _provider_error_text(exc)
     if callback.message is not None:
         await callback.message.edit_text(
@@ -309,7 +344,10 @@ async def rendergrid_test_refresh(callback: types.CallbackQuery, state: FSMConte
 
 
 @router.callback_query(F.data == "rendergrid_test_back")
-async def rendergrid_test_back(callback: types.CallbackQuery, state: FSMContext) -> None:
+async def rendergrid_test_back(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
     if not _is_admin(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
