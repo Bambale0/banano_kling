@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from bot.handlers.generation_started_ux_compat import (
@@ -7,7 +9,8 @@ from bot.handlers.generation_started_ux_compat import (
     build_generation_started_text,
     sanitize_generation_started_text,
 )
-from bot import miniapp as miniapp_module
+
+miniapp_module = importlib.import_module("bot.miniapp")
 
 
 class _FakeMessage:
