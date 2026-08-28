@@ -138,6 +138,15 @@ class _FriendlyMessageProxy:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._message, name)
 
+    def model_copy(self, *args: Any, **kwargs: Any) -> "_FriendlyMessageProxy":
+        """Keep the UX wrapper when prompt coalescing clones an aiogram Message."""
+
+        cloned = self._message.model_copy(*args, **kwargs)
+        return _FriendlyMessageProxy(
+            cloned,
+            reference_count=self._reference_count,
+        )
+
     async def answer(self, text: Any, **kwargs: Any) -> Any:
         return await self._message.answer(
             sanitize_generation_started_text(
