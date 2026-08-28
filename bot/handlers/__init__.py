@@ -68,6 +68,8 @@ from .partner_approval import admin_router as partner_approval_admin_router
 from .partner_approval import user_router as partner_approval_user_router
 from .photo_prompt_vk_result_compat import install_vk_photo_prompt_result_compat
 from .prompt_analyzer_v2 import router as prompt_analyzer_v2_router
+from .rendergrid_test_compat import install_rendergrid_test_compat
+from .rendergrid_test_compat import router as rendergrid_test_router
 repeat_result_compat_router = repeat_result_compat_module.router
 from .seedance_25_chunk_upload import install_seedance_25_chunk_upload
 from .seedance_25_client_compat import install_seedance_25_client_compat
@@ -101,6 +103,7 @@ install_pinterest_flow_contract_compat(generation_module)
 admin_router = Router()
 admin_router.include_router(partner_approval_admin_router)
 admin_router.include_router(admin_user_ban_router)
+admin_router.include_router(rendergrid_test_router)
 admin_router.include_router(admin_module.router)
 
 # Keep payment safety fixes without changing the established user-facing flow.
@@ -176,6 +179,9 @@ payments_router.include_router(legacy_payments_router)
 install_common_publication_scope_compat(common_module)
 install_profile_feed_deeplink_compat(common_module)
 install_trends_compat(common_module, generation_module, admin_module)
+# Trends replaces the admin keyboard factory, so the test-only RenderGrid patch
+# must be installed after it to remain present in the final /admin keyboard.
+install_rendergrid_test_compat(admin_module)
 install_text_trend_upload(trends_compat_module)
 install_trend_video_compat(trends_compat_module)
 install_feed_model_filter_compat(common_module)
@@ -209,6 +215,7 @@ __all__ = [
     "payments_router",
     "prompt_analyzer_v2_router",
     "publication_scope_compat_router",
+    "rendergrid_test_router",
     "repeat_result_compat_router",
     "repeat_run_confirm_compat_router",
     "seedance_25_fullstack_router",
