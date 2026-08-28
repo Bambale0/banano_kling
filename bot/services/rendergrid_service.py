@@ -256,21 +256,29 @@ class RenderGridClient:
             )
             form.add_field("kind", "image")
             timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.post(
                     f"{self.base_url}/uploads",
-                    headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Accept": "application/json",
+                    },
                     data=form,
-                ) as response:
-                    raw = await response.text()
-                    payload = self._decode_payload(raw)
-                    if response.status < 200 or response.status >= 300:
-                        message, code = self._error_details(payload, response.status)
-                        raise RenderGridError(message, response.status, code, payload)
-                    file_id = payload.get("file_id") if isinstance(payload, dict) else None
-                    if not file_id:
-                        raise RenderGridError("RenderGrid upload returned no file_id", payload=payload)
-                    return str(file_id)
+                ) as response,
+            ):
+                raw = await response.text()
+                payload = self._decode_payload(raw)
+                if response.status < 200 or response.status >= 300:
+                    message, code = self._error_details(payload, response.status)
+                    raise RenderGridError(message, response.status, code, payload)
+                file_id = payload.get("file_id") if isinstance(payload, dict) else None
+                if not file_id:
+                    raise RenderGridError(
+                        "RenderGrid upload returned no file_id",
+                        payload=payload,
+                    )
+                return str(file_id)
         except RenderGridError:
             raise
         except (OSError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
