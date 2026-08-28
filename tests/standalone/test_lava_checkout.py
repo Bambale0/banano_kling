@@ -126,9 +126,7 @@ def test_payment_menu_lists_freekassa_reserve_separately_from_direct_sbp():
         crypto=False,
         freekassa=True,
     )
-    labels = [
-        button.text for row in keyboard.inline_keyboard for button in row
-    ]
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
     callbacks = [
         button.callback_data
         for row in keyboard.inline_keyboard
@@ -159,8 +157,7 @@ def test_payment_menu_lists_freekassa_reserve_separately_from_direct_sbp():
 async def test_legacy_lava_sbp_buttons_are_migrated_to_freekassa(
     monkeypatch, legacy_callback, expected_package
 ):
-    from bot.handlers import freekassa_payments
-    from bot.handlers import lava_checkout
+    from bot.handlers import freekassa_payments, lava_checkout
 
     routed = {}
 
