@@ -31,13 +31,15 @@ class _FakeBot:
         return kwargs
 
 
-def test_public_generation_started_text_has_no_technical_ids() -> None:
+def test_public_generation_started_text_keeps_trace_ids() -> None:
     text = build_generation_started_text(
         model_label="Nano Banana Pro",
         aspect_ratio="9:16",
         launched_count=1,
         unit_cost=2.5,
         reference_count=2,
+        local_task_id="img_a642ba273747",
+        provider_task_id="b73caaef54145e94e221414a09d76b04",
     )
 
     assert "🚀 <b>Генерация запущена</b>" in text
@@ -46,12 +48,12 @@ def test_public_generation_started_text_has_no_technical_ids() -> None:
     assert "Референсов: <code>2</code>" in text
     assert "Запущено задач: <code>1</code>" in text
     assert "Списано: <code>2.5</code>🍌" in text
+    assert "ID задачи: <code>img_a642ba273747</code>" in text
+    assert "ID провайдера: <code>b73caaef54145e94e221414a09d76b04</code>" in text
     assert "Я пришлю его сюда сразу после готовности." in text
-    assert "ID провайдера" not in text
-    assert "task_id" not in text
 
 
-def test_legacy_telegram_summary_is_sanitized_without_losing_useful_fields() -> None:
+def test_legacy_telegram_summary_is_normalized_without_losing_trace_ids() -> None:
     legacy = (
         "🚀 <b>Генерация запущена</b>\n"
         "• Модель: <code>Nano Banana Pro</code>\n"
@@ -70,9 +72,8 @@ def test_legacy_telegram_summary_is_sanitized_without_losing_useful_fields() -> 
     assert "Референсов: <code>1</code>" in text
     assert "Запущено задач: <code>1</code>" in text
     assert "Списано: <code>2.5</code>🍌" in text
-    assert "img_a642ba273747" not in text
-    assert "b73caaef54145e94e221414a09d76b04" not in text
-    assert "ID провайдера" not in text
+    assert "ID задачи: <code>img_a642ba273747</code>" in text
+    assert "ID провайдера: <code>b73caaef54145e94e221414a09d76b04</code>" in text
     assert "1–3 минут" in text
     assert text.endswith("Я пришлю его сюда сразу после готовности.")
 
@@ -83,7 +84,7 @@ def test_non_generation_message_is_unchanged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_message_proxy_sanitizes_real_handler_answer() -> None:
+async def test_message_proxy_preserves_trace_ids_and_adds_task_label() -> None:
     message = _FakeMessage()
     proxy = _FriendlyMessageProxy(message, reference_count=3)
 
@@ -99,8 +100,8 @@ async def test_message_proxy_sanitizes_real_handler_answer() -> None:
     assert len(message.calls) == 1
     sent_text = message.calls[0][0]
     assert "Референсов: <code>3</code>" in sent_text
-    assert "img_internal" not in sent_text
-    assert "provider_internal" not in sent_text
+    assert "ID задачи: <code>img_internal</code>" in sent_text
+    assert "ID провайдера: <code>provider_internal</code>" in sent_text
 
 
 @pytest.mark.asyncio
@@ -113,8 +114,8 @@ async def test_miniapp_and_pinterest_success_always_send_started_confirmation(st
         123,
         {
             "status": status,
-            "task_id": "provider-secret-id",
-            "local_task_id": "img-secret-id",
+            "task_id": "provider-trace-id",
+            "local_task_id": "img-trace-id",
         },
         img_service="banana_pro",
         img_ratio="9:16",
@@ -127,9 +128,8 @@ async def test_miniapp_and_pinterest_success_always_send_started_confirmation(st
     assert sent["parse_mode"] == "HTML"
     assert "🚀 <b>Генерация запущена</b>" in sent["text"]
     assert "Nano Banana Pro" in sent["text"]
-    assert "provider-secret-id" not in sent["text"]
-    assert "img-secret-id" not in sent["text"]
-    assert "ID провайдера" not in sent["text"]
+    assert "ID задачи: <code>img-trace-id</code>" in sent["text"]
+    assert "ID провайдера: <code>provider-trace-id</code>" in sent["text"]
     assert "Я пришлю его сюда сразу после готовности." in sent["text"]
 
 
